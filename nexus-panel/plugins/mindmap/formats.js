@@ -266,6 +266,9 @@ export function toFreemind(content) {
 
   function emit(n, depth) {
     const attrs = [`TEXT="${escXml(nodeText(n))}"`];
+    // BUG 113：备注走 richcontent TYPE="NOTE"（FreeMind / Freeplane 的标准）。
+    // 不写的话往返丢，别的软件打开我们导出的 .mm 也看不到备注。
+    const noteHtml = noteToRichcontent(n?.data?.note, depth + 1);
     // BUG 111：LINK 是 FreeMind 的标准属性（Freeplane / XMind 都认）。
     // 不写的话往返丢，别的软件打开我们导出的 .mm 也看不到链接。
     const href = String(n?.data?.hyperlink || '').trim();
@@ -273,13 +276,29 @@ export function toFreemind(content) {
     // 根节点不需要 FOLDED（根永远展开）
     if (depth > 0 && isCollapsed(n)) attrs.push('FOLDED="true"');
     const kids = n?.children || [];
-    if (!kids.length) {
+    if (!kids.length && !noteHtml) {
       lines.push('  '.repeat(depth + 1) + `<node ${attrs.join(' ')}/>`);
       return;
     }
     lines.push('  '.repeat(depth + 1) + `<node ${attrs.join(' ')}>`);
+    if (noteHtml) lines.push(noteHtml);
     for (const c of kids) emit(c, depth + 1);
     lines.push('  '.repeat(depth + 1) + '</node>');
+  }
+
+  /**
+   * 纯文本备注 → `<richcontent TYPE="NOTE">` 的 XHTML 片段。
+   *
+   * 备注里写「a < b」不转义就会变成 XHTML 标签让整段备注显示不出来，
+   * 所以正文走 escXml（它同时清掉 XML 1.0 不允许的控制字符 —— 不清理的话
+   * 整份 .mm 会变成别的软件打不开的坏 XML，见 BUG 74）。
+   */
+  function noteToRichcontent(note, depth) {
+    const t = String(note ?? '').trim();
+    if (!t) return '';
+    const inner = t.split(/\n{2,}/).map((p) => `<p>${escXml(p).replace(/\n/g, '<br/>')}</p>`).join('');
+    return '  '.repeat(depth + 1)
+      + `<richcontent TYPE="NOTE"><html><body>${inner}</body></html></richcontent>`;
   }
 }
 
@@ -313,7 +332,7 @@ function freemindNodeText(el) {
  * 一概忽略 —— 它们承载的都是样式，本工具的主题体系不认。
  */
 export function fromFreemind(text) {
-  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText, 'LINK');
+  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText, 'LINK', freemindNote);
   if (!rows) return null;
   if (!rows.length) return null;
   const { root } = rowsToKm(rows);
@@ -321,6 +340,8 @@ export function fromFreemind(text) {
   applyCollapsed(root, rows.map((r) => r.collapsed));
   // BUG 111：超链接回填（LINK 是 FreeMind 的标准属性）
   applyLinks(root, rows.map((r) => r.link));
+  // BUG 113：备注回填（richcontent TYPE="NOTE"）
+  applyNotes(root, rows.map((r) => r.note));
   return stringifyKm(root);
 }
 
@@ -644,7 +665,7 @@ export function fromPlantUml(text) {
  * @param {string} attr 取文字的属性名
  * @returns {Array|null} null = 解析失败（不是「空」）
  */
-function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null) {
+function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null, noteReader = null) {
   const src = String(text || '').trim();
   if (!src) return null;
   let doc = null;
@@ -673,6 +694,8 @@ function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null) {
       // 普遍读写。早先只读 TEXT/text，于是导入别人的文件时节点上的链接
       // 全部静默消失 —— 不报错，用户只会觉得"这软件不支持超链接"。
       link: linkAttr ? String(el.getAttribute(linkAttr) || '') : '',
+      // BUG 113：FreeMind 的备注在 `<richcontent TYPE="NOTE">` 里（XHTML）。
+      note: noteReader ? String(noteReader(el) || '') : '',
     });
   }
   return rows;
@@ -697,6 +720,60 @@ function applyLinks(root, links) {
     if (href) {
       n.data = n.data || {};
       n.data.hyperlink = href;
+    }
+    i++;
+  });
+}
+
+/**
+ * 取 <node> 的备注：`<richcontent TYPE="NOTE">`（FreeMind / Freeplane 的标准写法）。
+ *
+ * ⓘ 与 `freemindNodeText` 的区别：那边要的是**正文**（TYPE="NODE"），
+ *   这边要的是**备注**（TYPE="NOTE"），两者互斥 —— 把 NOTE 当正文会让节点
+ *   文字变成备注内容（BUG 113 之前这里根本不读，备注整条静默消失）。
+ */
+function freemindNote(el) {
+  const kids = el ? (el.children || el.childNodes) : null;
+  if (!kids) return '';
+  for (const c of Array.from(kids)) {
+    if (String(c.nodeName || '').toLowerCase() !== 'richcontent') continue;
+    if (String(c.getAttribute?.('TYPE') || '').toUpperCase() !== 'NOTE') continue;
+    const txt = elToPlain(c);
+    if (txt) return txt;
+  }
+  return '';
+}
+
+/**
+ * XHTML **元素** → 纯文本（带换行）。
+ *
+ * 不能直接用 `textContent`：DOM 解析完标签已经没了，`<br/>` 和 `</p>` 都
+ * 无从判断 —— 实测「第一行<br/>第二行」会变成「第一行第二行」，
+ * 两个段落也会被拼成一段（BUG 113）。所以得自己走一遍子节点：
+ * `<br>` 是换行，块级标签**结束**时补一个换行，其余只取文字。
+ * XML 里的实体（`&lt;` `&amp;`）在文本节点里已经还原好了。
+ */
+function elToPlain(el) {
+  let out = '';
+  for (const c of Array.from(el.childNodes || [])) {
+    if (c.nodeType === 3) { out += String(c.nodeValue || ''); continue; }
+    if (c.nodeType !== 1) continue;
+    const tag = String(c.nodeName || '').toLowerCase();
+    if (tag === 'br') { out += '\n'; continue; }
+    out += elToPlain(c);
+    if (/^(p|div|li|h[1-6]|tr|blockquote|ul|ol|table|pre)$/.test(tag)) out += '\n';
+  }
+  return normalizeNoteText(out);
+}
+
+/** 行序列里的备注回填到树上（与 applyCollapsed / applyLinks 同构） */
+function applyNotes(root, notes) {
+  let i = 0;
+  walkKm(root, (n) => {
+    const t = notes && String(notes[i] || '').trim();
+    if (t) {
+      n.data = n.data || {};
+      n.data.note = t;
     }
     i++;
   });
@@ -803,9 +880,10 @@ const NODE_STYLE_KEYS = [
  *   都不带 —— 早先 exportExchange 的注释写「只带文字+层级+折叠状态」，
  *   把这三种也算进去了，与实测不符（BUG 111）。
  * ⓘ 超链接：FreeMind 走 `LINK`、OPML 走 `url`，都是规范属性（BUG 111 补上）。
+ * ⓘ 备注：FreeMind 走 `<richcontent TYPE="NOTE">`（BUG 113 补上）。
  */
 export const EXCHANGE_KEEP = {
-  freemind: { hyperlink: true, collapsed: true },
+  freemind: { hyperlink: true, collapsed: true, note: true },
   opml: { hyperlink: true },
   mermaid: {},
   plantuml: {},
@@ -839,7 +917,7 @@ export function exchangeLoss(content, kind) {
   };
   walkKm(km.root, (n) => {
     const d = n?.data || {};
-    if (String(d.note || '').trim()) bump(n, 'note');
+    if (!keep.note && String(d.note || '').trim()) bump(n, 'note');
     if (!keep.hyperlink && String(d.hyperlink || '').trim()) bump(n, 'hyperlink');
     const pri = Number(d.priority);
     if (pri >= 1 && pri <= 9) bump(n, 'priority');
@@ -851,6 +929,57 @@ export function exchangeLoss(content, kind) {
   });
   out.nodes = touched.size;
   return out;
+}
+
+/**
+ * XMind 备注的 **XHTML → 纯文本**。
+ *
+ * XMind 把备注同时存成两份（见 buildTopic 的说明）：`plain` 是纯文本，
+ * `realHTML` 是 XHTML。别的软件（XMind 2020+、各类生成工具）常常**只写
+ * realHTML**，于是只认 plain 的读法会把备注**整条静默丢掉** —— 实测
+ * `{realHTML:{content:'<p>这是备注</p>'}}` 导入后 `data.note` 是 undefined，
+ * 节点上看着像从来没写过备注，也不报错。
+ *
+ * 直接把 XHTML 当文本存更糟：面板那个单行输入框会原样显示 `<p>第一行</p>`，
+ * 用户看到的是一串标签。所以块级标签要变成换行、行内标签去掉、实体还原。
+ *
+ * ⓘ FreeMind 的 `<richcontent TYPE="NOTE">` 同样是 XHTML（BUG 113），
+ *   所以这两个函数从 xmind.js 提到这里共用 —— 各写一份迟早对不上。
+ */
+export function htmlToPlain(html) {
+  let s = String(html ?? '');
+  if (!s) return '';
+  s = s.replace(/<br\s*\/?>/gi, '\n');
+  s = s.replace(/<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, '\n');
+  s = s.replace(/<[^>]*>/g, '');                    // 剩下的（含行内标签）直接去掉
+  s = s.replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&');                       // & 必须最后解，否则二次反转义
+  return normalizeNoteText(s);
+}
+
+/** 备注纯文本的收尾归一化（去行尾空白、合并空行、去首尾空行） */
+function normalizeNoteText(s) {
+  return String(s ?? '').replace(/[ \t]*\n[ \t]*/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * 纯文本 → XMind 备注的 XHTML（写 realHTML 时用）。
+ *
+ * 段落按空行/换行拆成 `<p>`；`&<>` 必须转义，否则 XMind 解析这段 XHTML
+ * 时会把它当成标签 —— 备注里写「a < b」就足以让整段备注显示不出来。
+ */
+export function plainToHtml(text) {
+  const esc = (s) => String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const ps = String(text ?? '').split(/\n{2,}/).map((p) =>
+    `<p>${esc(p).replace(/\n/g, '<br/>')}</p>`);
+  return ps.join('');
 }
 
 export const FORMAT_META = {

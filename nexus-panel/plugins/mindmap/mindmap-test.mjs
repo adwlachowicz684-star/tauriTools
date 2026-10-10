@@ -6722,6 +6722,139 @@ group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
       而界面只说「已保存」。用户拿 .opml 当备份是最常见的用法，等导回来
       才发现没了 —— 导入是**整体替换且不可撤销**，那时已经晚了。
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 113：FreeMind 的备注（<richcontent TYPE="NOTE">）必须双向支持
+
+   FreeMind / Freeplane 把节点备注写在 `<richcontent TYPE="NOTE">` 里
+   （XHTML），把带格式的**正文**写在 `TYPE="NODE"` 里 —— 两者长得很像。
+   早先读侧只认 `TYPE="NODE"` 当正文、备注那半**根本不读**，导出也不写：
+
+     · 导入别人的 .mm → 备注整条静默消失（不报错，看着像从来没写过）
+     · 自己导出 → 备注也没了，往返同样丢
+
+   两个必须守住的边界：
+     · TYPE="NODE" 是正文，**不能**被当成备注（否则节点文字会变成备注内容）
+     · 不能只用 textContent：DOM 解析完标签已经没了，`<br/>` 与 `</p>`
+       无从判断 —— 实测「第一行<br/>第二行」会被拼成「第一行第二行」
+   ------------------------------------------------------------------ */
+group('BUG 113 · FreeMind 备注（richcontent TYPE=NOTE）双向');
+
+{
+  const fmt = await import('file://' + path.join(HERE, 'formats.js'));
+
+  // ① 导入**别人的** .mm：备注要读出来
+  {
+    const mm = `<map version="1.0.1"><node TEXT="根">
+<richcontent TYPE="NOTE"><html><body><p>根的备注</p></body></html></richcontent>
+ <node TEXT="带备注"><richcontent TYPE="NOTE"><html><body><p>第一行<br/>第二行</p></body></html></richcontent></node>
+ <node TEXT="带正文格式"><richcontent TYPE="NODE"><html><body><p>这才是正文</p></body></html></richcontent></node>
+ <node TEXT="无TYPE的richcontent"><richcontent><html><body><p>这是正文不是备注</p></body></html></richcontent></node>
+ <node TEXT="无备注"/>
+</node></map>`;
+    const r = JSON.parse(fmt.fromFreemind(mm));
+    eq(r.root.data.note, '根的备注', '★ 导入别人的 .mm：根上的备注读出来了');
+    eq(r.root.data.text, '根', '导入别人的 .mm：根文字仍是正文（没被备注顶掉）');
+    eq(r.root.children[0].data.note, '第一行\n第二行',
+      '★ 导入别人的 .mm：<br/> 变成换行（不能拼成一行）');
+    eq(r.root.children[1].data.note, undefined,
+      '★ TYPE="NODE" 是正文，不能被当成备注');
+    eq(r.root.children[1].data.text, '带正文格式',
+      'TYPE="NODE" 时文字取 TEXT 属性（往返不受影响）');
+    ok(!r.root.children[2].data.note, '没有备注的节点不长出备注');
+    // TYPE 缺省时 richcontent 是**正文**不是备注（判据必须写"只认 NOTE"，
+    // 写成"跳过 NODE"的话这条的正文会被抄进备注）
+    eq(r.root.children[2].data.text, '无TYPE的richcontent', '无 TYPE 的 richcontent：文字仍取 TEXT');
+    eq(r.root.children[2].data.note, undefined,
+      '★ 无 TYPE 的 richcontent 是正文，不能被当成备注');
+    ok(!r.root.children[3].data.note, '没有备注的节点不长出备注');
+  }
+
+  // ② 多段落：段落之间必须是换行（不能拼成一段）
+  {
+    const mm = `<map version="1.0.1"><node TEXT="根">
+<richcontent TYPE="NOTE"><html><body><p>段一</p><p>段二</p></body></html></richcontent>
+</node></map>`;
+    eq(JSON.parse(fmt.fromFreemind(mm)).root.data.note, '段一\n段二',
+      '★ 多段落：段落间有换行（不是「段一段二」）');
+  }
+
+  // ③ 往返：自己导出再导回，备注要保住（含需要转义的字符）
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note: '根备注' }, children: [
+      { data: { id: 'c1', text: '子1', note: '含 < 尖括号 & 和号' }, children: [] },
+      { data: { id: 'c2', text: '子2', note: '段一\n\n段二' }, children: [] },
+      { data: { id: 'c3', text: '子3', note: 'a\x07b' }, children: [] },
+      { data: { id: 'c4', text: '子4' }, children: [] },
+    ] } });
+    const out = fmt.toFreemind(c);
+    ok(/<richcontent TYPE="NOTE">/.test(out), '★ 导出写了 richcontent TYPE="NOTE"');
+    const raw = fmt.fromFreemind(out);
+    // 必须先判 null 再取值：备注不转义时导出的是**坏 XML**，导回直接失败，
+    // 裸取 .root 会抛 TypeError 让整个测试进程崩掉 —— 那看着像"抓到了"，
+    // 实际后面几条一条都没跑。
+    ok(!!raw, '★ 导出的 .mm 必须是合法 XML（备注未转义会让整份文件报废）');
+    const back = raw ? JSON.parse(raw) : { root: { data: {}, children: [] } };
+    eq(back.root.data.note, '根备注', '往返：根备注保住');
+    eq(back.root.children[0].data.note, '含 < 尖括号 & 和号',
+      '★ 往返：含 < 与 & 的备注保住（必须转义，否则整段变标签）');
+    eq(back.root.children[1].data.note, '段一\n段二', '★ 往返：多段落备注保住');
+    eq(back.root.children[2].data.note, 'a b',
+      '★ 往返：控制字符被换成空格（XML 1.0 不允许，不换整份 .mm 会打不开）');
+    ok(!back.root.children[3].data.note, '往返：无备注节点不长出备注');
+    // 层级不能因为多了 richcontent 子元素而错位
+    eq(back.root.children.length, 4, '往返：子节点数不变（richcontent 不算子节点）');
+    eq(back.root.children[0].children.length, 0, '往返：叶子节点仍没有子节点');
+  }
+
+  // ④ 叶子节点带备注时不能写成自闭合（自闭合标签里放不下子元素）
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'c1', text: '叶', note: '叶子的备注' }, children: [] },
+    ] } });
+    const out = fmt.toFreemind(c);
+    ok(!/<node TEXT="叶"[^>]*\/>/.test(out),
+      '★ 带备注的叶子节点不是自闭合（否则备注塞不进去）');
+    eq(JSON.parse(fmt.fromFreemind(out)).root.children[0].data.note, '叶子的备注',
+      '带备注的叶子节点往返保住');
+  }
+
+  // ⑤ 深层：索引必须一一对齐（applyNotes 与 applyLinks / applyCollapsed 同走前序）
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note: 'N0' }, children: [
+      { data: { id: 'a', text: 'A', note: 'NA', hyperlink: 'https://a.x', expandState: 'collapse' },
+        children: [{ data: { id: 'a1', text: 'A1', note: 'NA1' }, children: [] }] },
+      { data: { id: 'b', text: 'B', note: 'NB' }, children: [] },
+    ] } });
+    const back = JSON.parse(fmt.fromFreemind(fmt.toFreemind(c)));
+    eq(back.root.data.note, 'N0', '深层：根备注不错位');
+    eq(back.root.children[0].data.note, 'NA', '★ 深层：A 的备注不错位');
+    eq(back.root.children[0].data.hyperlink, 'https://a.x', '深层：A 的链接仍在（备注不挤掉 LINK）');
+    eq(back.root.children[0].data.expandState, 'collapse', '深层：A 的折叠仍在（备注不挤掉 FOLDED）');
+    eq(back.root.children[0].children[0].data.note, 'NA1', '★ 深层：A1 的备注不错位');
+    eq(back.root.children[1].data.note, 'NB', '★ 深层：B 的备注不错位');
+  }
+
+  // ⑥ exchangeLoss：FreeMind 现在带得走备注，OPML 仍然不带
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note: '备注' }, children: [] } });
+    eq(fmt.exchangeLoss(c, 'freemind').note, 0, '★ FreeMind 带得走备注 → 不计入丢失');
+    eq(fmt.exchangeLoss(c, 'opml').note, 1, 'OPML 仍装不下备注 → 计入丢失');
+    eq(fmt.exchangeLoss(c, 'mermaid').note, 1, 'Mermaid 仍装不下备注');
+  }
+
+  // ⑦ 两处共用同一份 XHTML 转换（各写一份迟早对不上）
+  {
+    const fsrc = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
+    const xsrc = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
+    ok(/import \{ htmlToPlain, plainToHtml \} from '\.\/formats\.js'/.test(xsrc),
+      '★ xmind.js 从 formats.js 引入，不再各写一份');
+    ok(!/^function htmlToPlain/m.test(xsrc), '★ xmind.js 里没有 htmlToPlain 的私有副本');
+    ok(!/^function plainToHtml/m.test(xsrc), '★ xmind.js 里没有 plainToHtml 的私有副本');
+    ok(/^export function htmlToPlain/m.test(fsrc), 'formats.js 导出 htmlToPlain');
+    ok(/^export function plainToHtml/m.test(fsrc), 'formats.js 导出 plainToHtml');
+  }
+}
+
 group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
 
 {
@@ -6817,7 +6950,7 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
 
     eq(fm.hyperlink, 0, '★ FreeMind 带得走超链接（LINK），不计入丢失');
     eq(fm.collapsed, 0, '★ FreeMind 带得走折叠状态（FOLDED），不计入丢失');
-    eq(fm.note, 1, 'FreeMind 装不下备注');
+    eq(fm.note, 0, '★ FreeMind 带得走备注（richcontent NOTE），不计入丢失（BUG 113）');
     eq(fm.priority, 1, 'FreeMind 装不下优先级');
     eq(fm.progress, 1, 'FreeMind 装不下进度');
     eq(fm.labels, 1, 'FreeMind 装不下标签');
@@ -6826,6 +6959,7 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
 
     eq(op.hyperlink, 0, '★ OPML 带得走超链接（url），不计入丢失');
     eq(op.collapsed, 1, '★ OPML **装不下折叠状态**（早先注释 wrongly 说它带）');
+    eq(op.note, 1, 'OPML 装不下备注（只有 FreeMind 带得走）');
     eq(mm.hyperlink, 1, '★ Mermaid 装不下超链接');
     eq(mm.collapsed, 1, '★ Mermaid 装不下折叠状态');
     eq(pu.hyperlink, 1, '★ PlantUML 装不下超链接');

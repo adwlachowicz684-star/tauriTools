@@ -65,6 +65,8 @@ async function deflateRaw(bytes) {
  *
  * 对齐 mediainfo.js 的做法：那里对同等不可信的二进制输入也设了 guard++/depth 上限。
  */
+import { htmlToPlain, plainToHtml } from './formats.js';
+
 export const MAX_INFLATE_BYTES = 64 * 1024 * 1024;
 
 /** 整个包解压后的总量上限（防止「很多个刚好卡在单条上限下的条目」叠加） */
@@ -561,49 +563,6 @@ function sanitizeFileName(name) {
  */
 function stripPackSeq(name) {
   return String(name || '').replace(/^kma_\d+_/, '');
-}
-
-/**
- * XMind 备注的 **XHTML → 纯文本**。
- *
- * XMind 把备注同时存成两份（见 buildTopic 的说明）：`plain` 是纯文本，
- * `realHTML` 是 XHTML。别的软件（XMind 2020+、各类生成工具）常常**只写
- * realHTML**，于是只认 plain 的读法会把备注**整条静默丢掉** —— 实测
- * `{realHTML:{content:'<p>这是备注</p>'}}` 导入后 `data.note` 是 undefined，
- * 节点上看着像从来没写过备注，也不报错。
- *
- * 直接把 XHTML 当文本存更糟：面板那个单行输入框会原样显示 `<p>第一行</p>`，
- * 用户看到的是一串标签。所以块级标签要变成换行、行内标签去掉、实体还原。
- */
-function htmlToPlain(html) {
-  let s = String(html ?? '');
-  if (!s) return '';
-  s = s.replace(/<br\s*\/?>/gi, '\n');
-  s = s.replace(/<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, '\n');
-  s = s.replace(/<[^>]*>/g, '');                    // 剩下的（含行内标签）直接去掉
-  s = s.replace(/&nbsp;/gi, ' ')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&amp;/gi, '&');                       // & 必须最后解，否则二次反转义
-  return s.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-}
-
-/**
- * 纯文本 → XMind 备注的 XHTML（写 realHTML 时用）。
- *
- * 段落按空行/换行拆成 `<p>`；`&<>` 必须转义，否则 XMind 解析这段 XHTML
- * 时会把它当成标签 —— 备注里写「a < b」就足以让整段备注显示不出来。
- */
-function plainToHtml(text) {
-  const esc = (s) => String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  const ps = String(text ?? '').split(/\n{2,}/).map((p) =>
-    `<p>${esc(p).replace(/\n/g, '<br/>')}</p>`);
-  return ps.join('');
 }
 
 /**
