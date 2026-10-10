@@ -273,6 +273,12 @@ export function toFreemind(content) {
     // 不写的话往返丢，别的软件打开我们导出的 .mm 也看不到链接。
     const href = String(n?.data?.hyperlink || '').trim();
     if (href) attrs.push(`LINK="${escXml(href)}"`);
+    // BUG 114：颜色走 `COLOR` / `BACKGROUND_COLOR`（FreeMind 的标准属性）。
+    // 不写的话往返丢，别的软件打开我们导出的 .mm 看不到节点的配色。
+    const fg = normColor(n?.data?.color);
+    if (fg) attrs.push(`COLOR="${escXml(fg)}"`);
+    const bg = normColor(n?.data?.background);
+    if (bg) attrs.push(`BACKGROUND_COLOR="${escXml(bg)}"`);
     // 根节点不需要 FOLDED（根永远展开）
     if (depth > 0 && isCollapsed(n)) attrs.push('FOLDED="true"');
     const kids = n?.children || [];
@@ -332,7 +338,7 @@ function freemindNodeText(el) {
  * 一概忽略 —— 它们承载的都是样式，本工具的主题体系不认。
  */
 export function fromFreemind(text) {
-  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText, 'LINK', freemindNote);
+  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText, 'LINK', freemindNote, freemindStyle);
   if (!rows) return null;
   if (!rows.length) return null;
   const { root } = rowsToKm(rows);
@@ -342,6 +348,8 @@ export function fromFreemind(text) {
   applyLinks(root, rows.map((r) => r.link));
   // BUG 113：备注回填（richcontent TYPE="NOTE"）
   applyNotes(root, rows.map((r) => r.note));
+  // BUG 114：颜色回填（COLOR / BACKGROUND_COLOR）
+  applyStyles(root, rows.map((r) => r.style));
   return stringifyKm(root);
 }
 
@@ -665,7 +673,7 @@ export function fromPlantUml(text) {
  * @param {string} attr 取文字的属性名
  * @returns {Array|null} null = 解析失败（不是「空」）
  */
-function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null, noteReader = null) {
+function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null, noteReader = null, styleReader = null) {
   const src = String(text || '').trim();
   if (!src) return null;
   let doc = null;
@@ -696,6 +704,8 @@ function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null, not
       link: linkAttr ? String(el.getAttribute(linkAttr) || '') : '',
       // BUG 113：FreeMind 的备注在 `<richcontent TYPE="NOTE">` 里（XHTML）。
       note: noteReader ? String(noteReader(el) || '') : '',
+      // BUG 114：颜色（COLOR / BACKGROUND_COLOR）
+      style: styleReader ? styleReader(el) : null,
     });
   }
   return rows;
@@ -774,6 +784,36 @@ function applyNotes(root, notes) {
     if (t) {
       n.data = n.data || {};
       n.data.note = t;
+    }
+    i++;
+  });
+}
+
+/**
+ * 取 <node> 的颜色：`COLOR`（文字色）与 `BACKGROUND_COLOR`（填充色）。
+ *
+ * ⓘ 这两个是 FreeMind 1.0.1 的**标准属性**（Freeplane / XMind 的 FreeMind
+ *   导入都认）。早先读侧一眼不看、写侧也不写，于是导入别人的 .mm 时节点
+ *   颜色**静默丢失**，自己导出的 .mm 往返同样丢 —— 与 BUG 106（XMind 的
+ *   样式键名写错）是同一类：给用户标色的节点导出再打开变回默认。
+ */
+function freemindStyle(el) {
+  const out = {};
+  const c = normColor(el?.getAttribute?.('COLOR'));
+  if (c) out.color = c;
+  const b = normColor(el?.getAttribute?.('BACKGROUND_COLOR'));
+  if (b) out.background = b;
+  return out;
+}
+
+/** 行序列里的颜色回填到树上（与 applyCollapsed / applyLinks / applyNotes 同构） */
+function applyStyles(root, styles) {
+  let i = 0;
+  walkKm(root, (n) => {
+    const st = styles && styles[i];
+    if (st) {
+      n.data = n.data || {};
+      for (const k of Object.keys(st)) n.data[k] = st[k];
     }
     i++;
   });
@@ -881,9 +921,12 @@ const NODE_STYLE_KEYS = [
  *   把这三种也算进去了，与实测不符（BUG 111）。
  * ⓘ 超链接：FreeMind 走 `LINK`、OPML 走 `url`，都是规范属性（BUG 111 补上）。
  * ⓘ 备注：FreeMind 走 `<richcontent TYPE="NOTE">`（BUG 113 补上）。
+ * ⓘ 样式：FreeMind 只带得走**颜色**两项（`COLOR` / `BACKGROUND_COLOR`，
+ *   BUG 114 补上）—— 字号 / 圆角 / 连线等一概没有对应属性，仍是丢的。
  */
 export const EXCHANGE_KEEP = {
-  freemind: { hyperlink: true, collapsed: true, note: true },
+  freemind: { hyperlink: true, collapsed: true, note: true,
+    styleKeys: ['color', 'background'] },
   opml: { hyperlink: true },
   mermaid: {},
   plantuml: {},
@@ -925,7 +968,11 @@ export function exchangeLoss(content, kind) {
     if (pg > 0) bump(n, 'progress');
     if (Array.isArray(d.labels) && d.labels.length) bump(n, 'labels');
     if (!keep.collapsed && isCollapsed(n)) bump(n, 'collapsed');
-    if (NODE_STYLE_KEYS.some((k) => d[k] != null && String(d[k]) !== '')) bump(n, 'style');
+    // BUG 114：按格式细分 —— FreeMind 带得走颜色两项，只设了颜色的节点
+    // 不该被算成"样式丢失"（早先一刀切会误报）。
+    const keepStyles = keep.styleKeys || [];
+    if (NODE_STYLE_KEYS.some((k) => d[k] != null && String(d[k]) !== ''
+      && !keepStyles.includes(k))) bump(n, 'style');
   });
   out.nodes = touched.size;
   return out;
@@ -959,6 +1006,31 @@ export function htmlToPlain(html) {
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&amp;/gi, '&');                       // & 必须最后解，否则二次反转义
   return normalizeNoteText(s);
+}
+
+/**
+ * 颜色归一到 FreeMind 认得的 `#rrggbb`。
+ *
+ * FreeMind / Freeplane 的 `COLOR` / `BACKGROUND_COLOR` 只吃 `#rrggbb`；
+ * 而 kityminder 的色值是 CSS，什么写法都可能有（`#f00` 缩写、`rgb()`、
+ * 具名色）。能算出来的都算；算不出来的原样返回 —— 至少本工具自己往返
+ * 不丢（写进 .mm 是转义过的字符串，不会把文件搞成坏 XML）。
+ */
+function normColor(v) {
+  let s = String(v ?? '').trim();
+  if (!s) return '';
+  if (/^#[0-9a-f]{3}$/i.test(s)) {
+    return '#' + s.slice(1).split('').map((ch) => ch + ch).join('').toLowerCase();
+  }
+  if (/^#[0-9a-f]{6}$/i.test(s)) return s.toLowerCase();
+  const m = s.match(/^rgba?\(\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})\s*[,\s]\s*(\d{1,3})/i);
+  if (m) {
+    const hex = m.slice(1, 4)
+      .map((x) => Math.max(0, Math.min(255, Number(x))).toString(16).padStart(2, '0'))
+      .join('');
+    return '#' + hex;
+  }
+  return s;
 }
 
 /** 备注纯文本的收尾归一化（去行尾空白、合并空行、去首尾空行） */

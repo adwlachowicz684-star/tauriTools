@@ -6737,6 +6737,125 @@ group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
      · 不能只用 textContent：DOM 解析完标签已经没了，`<br/>` 与 `</p>`
        无从判断 —— 实测「第一行<br/>第二行」会被拼成「第一行第二行」
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 114：FreeMind 的节点颜色（COLOR / BACKGROUND_COLOR）必须双向支持
+
+   `COLOR`（文字色）与 `BACKGROUND_COLOR`（填充色）是 FreeMind 1.0.1 的
+   **标准属性**（Freeplane / XMind 的 FreeMind 导入都认）。早先读侧一眼不看、
+   写侧也不写，于是：
+
+     · 导入别人的 .mm → 节点颜色静默丢失（不报错，看着像从来没上过色）
+     · 自己导出 → 往返同样丢，别的软件打开我们导出的 .mm 看不到配色
+
+   与 BUG 106（XMind 的样式键名写错）是同一类：给用户标色的节点导出再
+   打开变回默认。
+
+   两个必须守住的边界：
+     · FreeMind 只吃 `#rrggbb`：kityminder 的色值是 CSS（可能是 `#f00`
+       缩写、`rgb()`、具名色），写之前要归一，算不出来的原样写（至少本工具
+       自己往返不丢，且是转义过的字符串不会搞坏 XML）
+     · 只带得走**颜色两项**：字号 / 圆角 / 连线等一概没有对应属性，仍是丢的
+       —— exchangeLoss 不能一刀切，只设了颜色的节点不该被算成"样式丢失"
+   ------------------------------------------------------------------ */
+group('BUG 114 · FreeMind 节点颜色（COLOR / BACKGROUND_COLOR）双向');
+
+{
+  const fmt = await import('file://' + path.join(HERE, 'formats.js'));
+
+  // ① 导入**别人的** .mm：颜色要读出来
+  {
+    const mm = `<map version="1.0.1"><node TEXT="根" COLOR="#ff0000">
+ <node TEXT="红字" COLOR="#ff0000"/>
+ <node TEXT="填充" BACKGROUND_COLOR="#00ff00"/>
+ <node TEXT="两者" COLOR="#00f" BACKGROUND_COLOR="rgb(0, 0, 255)"/>
+ <node TEXT="无样式"/>
+</node></map>`;
+    const r = JSON.parse(fmt.fromFreemind(mm));
+    eq(r.root.data.color, '#ff0000', '★ 导入别人的 .mm：根的文字色读出来了');
+    eq(r.root.children[0].data.color, '#ff0000', '★ 导入别人的 .mm：COLOR → data.color');
+    ok(!r.root.children[0].data.background, '只写了 COLOR 就不该长出 background');
+    eq(r.root.children[1].data.background, '#00ff00', '★ 导入别人的 .mm：BACKGROUND_COLOR → data.background');
+    ok(!r.root.children[1].data.color, '只写了 BACKGROUND_COLOR 就不该长出 color');
+    eq(r.root.children[2].data.color, '#0000ff', '★ 缩写 #00f 归一成 #0000ff');
+    eq(r.root.children[2].data.background, '#0000ff', '★ rgb() 归一成 #rrggbb');
+    ok(!r.root.children[3].data.color && !r.root.children[3].data.background,
+      '没写颜色的节点不长出颜色');
+  }
+
+  // ② 往返：自己导出再导回，颜色要保住（含各种写法）
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'c1', text: '红字', color: '#ff0000' }, children: [] },
+      { data: { id: 'c2', text: '填充', background: '#00ff00' }, children: [] },
+      { data: { id: 'c3', text: '两者', color: '#00f', background: 'rgb(0,0,255)' }, children: [] },
+      { data: { id: 'c4', text: '具名', color: 'red' }, children: [] },
+      { data: { id: 'c5', text: '默认' }, children: [] },
+    ] } });
+    const out = fmt.toFreemind(c);
+    ok(/COLOR="#ff0000"/.test(out), '★ 导出写了 COLOR');
+    ok(/BACKGROUND_COLOR="#00ff00"/.test(out), '★ 导出写了 BACKGROUND_COLOR');
+    const back = JSON.parse(fmt.fromFreemind(out));
+    eq(back.root.children[0].data.color, '#ff0000', '往返：文字色保住');
+    eq(back.root.children[1].data.background, '#00ff00', '往返：填充色保住');
+    eq(back.root.children[2].data.color, '#0000ff', '往返：缩写色归一后保住');
+    eq(back.root.children[2].data.background, '#0000ff', '往返：rgb() 归一后保住');
+    eq(back.root.children[3].data.color, 'red',
+      '往返：算不出 #rrggbb 的具名色原样保住（不能因为归一不了就丢）');
+    ok(!back.root.children[4].data.color && !back.root.children[4].data.background,
+      '往返：没设色的节点不长出颜色');
+  }
+
+  // ③ 颜色不影响其它字段的索引对齐（applyStyles 与 applyLinks / applyNotes 同走前序）
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note: 'N0' }, children: [
+      { data: { id: 'a', text: 'A', color: '#123456', hyperlink: 'https://a.x', expandState: 'collapse' },
+        children: [{ data: { id: 'a1', text: 'A1', background: '#654321' }, children: [] }] },
+      { data: { id: 'b', text: 'B', color: '#abcdef' }, children: [] },
+    ] } });
+    const back = JSON.parse(fmt.fromFreemind(fmt.toFreemind(c)));
+    eq(back.root.children[0].data.color, '#123456', '★ 深层：A 的颜色不错位');
+    eq(back.root.children[0].data.hyperlink, 'https://a.x', '深层：颜色不挤掉 LINK');
+    eq(back.root.children[0].data.expandState, 'collapse', '深层：颜色不挤掉 FOLDED');
+    eq(back.root.children[0].children[0].data.background, '#654321', '★ 深层：A1 的颜色不错位');
+    eq(back.root.children[1].data.color, '#abcdef', '★ 深层：B 的颜色不错位');
+    eq(back.root.data.note, 'N0', '深层：颜色不挤掉备注');
+    eq(back.root.children.length, 2, '深层：子节点数不变');
+  }
+
+  // ④ 颜色值里带引号/尖括号：必须转义，否则整份 .mm 是坏 XML
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'c1', text: '子', color: 'a"b<c' }, children: [] },
+    ] } });
+    const raw = fmt.fromFreemind(fmt.toFreemind(c));
+    ok(!!raw, '★ 色值带引号/尖括号也必须导出成合法 XML');
+    const back = raw ? JSON.parse(raw) : { root: { children: [] } };
+    eq(back.root.children[0]?.data?.color, 'a"b<c', '色值带特殊字符往返保住');
+  }
+
+  // ⑤ exchangeLoss：只设颜色不算丢，设了字号才算丢
+  {
+    const onlyColor = JSON.stringify({ root: { data: { id: 'r', text: '根', color: '#ff0000' }, children: [] } });
+    eq(fmt.exchangeLoss(onlyColor, 'freemind').style, 0, '★ 只设了颜色 → FreeMind 带得走，不计入丢失');
+    const withFont = JSON.stringify({ root: { data: { id: 'r', text: '根', 'font-size': 20 }, children: [] } });
+    eq(fmt.exchangeLoss(withFont, 'freemind').style, 1, '★ 设了字号 → 仍是丢的（FreeMind 没有对应属性）');
+    eq(fmt.exchangeLoss(onlyColor, 'opml').style, 1, 'OPML 连颜色都带不走');
+    eq(fmt.exchangeLoss(onlyColor, 'mermaid').style, 1, 'Mermaid 连颜色都带不走');
+  }
+
+  // ⑥ normColor 的归一规则（写出去的必须是 FreeMind 认得的 #rrggbb）
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'c1', text: 'a', color: '#ABC' }, children: [] },
+      { data: { id: 'c2', text: 'b', background: '#AABBCC' }, children: [] },
+    ] } });
+    const out = fmt.toFreemind(c);
+    ok(/COLOR="#aabbcc"/.test(out), '★ #ABC 展开并小写成 #aabbcc');
+    ok(/BACKGROUND_COLOR="#aabbcc"/.test(out), '★ #AABBCC 统一小写');
+    ok(!/COLOR="#abc"/.test(out), '缩写不能原样写出去（FreeMind 认不得）');
+  }
+}
+
 group('BUG 113 · FreeMind 备注（richcontent TYPE=NOTE）双向');
 
 {
@@ -6795,10 +6914,10 @@ group('BUG 113 · FreeMind 备注（richcontent TYPE=NOTE）双向');
     ok(!!raw, '★ 导出的 .mm 必须是合法 XML（备注未转义会让整份文件报废）');
     const back = raw ? JSON.parse(raw) : { root: { data: {}, children: [] } };
     eq(back.root.data.note, '根备注', '往返：根备注保住');
-    eq(back.root.children[0].data.note, '含 < 尖括号 & 和号',
+    eq(back.root.children[0]?.data?.note, '含 < 尖括号 & 和号',
       '★ 往返：含 < 与 & 的备注保住（必须转义，否则整段变标签）');
-    eq(back.root.children[1].data.note, '段一\n段二', '★ 往返：多段落备注保住');
-    eq(back.root.children[2].data.note, 'a b',
+    eq(back.root.children[1]?.data?.note, '段一\n段二', '★ 往返：多段落备注保住');
+    eq(back.root.children[2]?.data?.note, 'a b',
       '★ 往返：控制字符被换成空格（XML 1.0 不允许，不换整份 .mm 会打不开）');
     ok(!back.root.children[3].data.note, '往返：无备注节点不长出备注');
     // 层级不能因为多了 richcontent 子元素而错位
@@ -6940,7 +7059,8 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
   {
     const c = mkContent({ id: 'r', text: '根', note: '备注', hyperlink: 'https://a.x',
       priority: 4, progress: 7, labels: ['A'] }, [
-      { data: { id: 'c1', text: '子1', expandState: 'collapse', background: '#f00' }, children: [] },
+      // background 是 FreeMind 带得走的（BUG 114），font-size 才是装不下的
+      { data: { id: 'c1', text: '子1', expandState: 'collapse', background: '#f00', 'font-size': 20 }, children: [] },
       { data: { id: 'c2', text: '子2' }, children: [] },
     ]);
     const fm = fmt.exchangeLoss(c, 'freemind');
@@ -6954,7 +7074,7 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
     eq(fm.priority, 1, 'FreeMind 装不下优先级');
     eq(fm.progress, 1, 'FreeMind 装不下进度');
     eq(fm.labels, 1, 'FreeMind 装不下标签');
-    eq(fm.style, 1, 'FreeMind 装不下自定义样式');
+    eq(fm.style, 1, '★ FreeMind 装不下的自定义样式（font-size）—— 颜色两项带得走，不算');
     eq(fm.nodes, 2, 'FreeMind：受影响节点数（去重）');
 
     eq(op.hyperlink, 0, '★ OPML 带得走超链接（url），不计入丢失');
