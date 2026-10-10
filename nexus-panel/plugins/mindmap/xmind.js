@@ -65,7 +65,7 @@ async function deflateRaw(bytes) {
  *
  * 对齐 mediainfo.js 的做法：那里对同等不可信的二进制输入也设了 guard++/depth 上限。
  */
-import { htmlToPlain, plainToHtml } from './formats.js';
+import { htmlToPlain, plainToHtml, isCollapsed } from './formats.js';
 
 export const MAX_INFLATE_BYTES = 64 * 1024 * 1024;
 
@@ -671,6 +671,24 @@ function buildTopic(kmNode, packs) {
     title: str(data.text) ?? '',
   };
 
+  /*
+   * **折叠状态走 `branch: "folded"`**。
+   *
+   * XMind 把这个状态挂在主题上，键是 `branch`、值是字符串 `folded`
+   * —— 不是 `folded: true`。早先写侧不写、读侧也不读，于是：
+   *
+   *   · 文件被别的 XMind 软件存过一遍（本工具的无损快照 kityminder.json
+   *     被丢掉）→ 导回时**折叠状态全部丢失**，展开/收起全乱
+   *   · 别的软件打开我们导出的文件 → 看不到哪些分支是收起的
+   *
+   * 折叠是看得见的结构（节点旁那个带数字的小圆点就是折叠徽标），
+   * 静默丢掉会让人以为文件被改过。
+   *
+   * ⓘ 只走 zen 档（content.json）；XMind 8 的 content.xml 那套老格式
+   *   折叠字段写法不统一，不在本次范围内。
+   */
+  if (isCollapsed(kmNode)) topic.branch = 'folded';
+
   const note = str(data.note);
   /*
    * **plain 与 realHTML 两份都写**。
@@ -1071,6 +1089,10 @@ function buildKmNode(topic, depth = 0, counter = null) {
   }
 
   applyStyle(data, topic.style);
+
+  // BUG 115：折叠状态（`branch: "folded"`）。只认这一个字面值 —— 别的
+  // 软件若写了别的取值，不该被当成"已折叠"（宁可展开，不要静默改结构）。
+  if (str(topic.branch) === 'folded') data.expandState = 'collapse';
 
   const children = [];
   const pairs = [];

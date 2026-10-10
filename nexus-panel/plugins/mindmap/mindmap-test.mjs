@@ -6757,6 +6757,121 @@ group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
      · 只带得走**颜色两项**：字号 / 圆角 / 连线等一概没有对应属性，仍是丢的
        —— exchangeLoss 不能一刀切，只设了颜色的节点不该被算成"样式丢失"
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 115：XMind 的折叠状态（`branch: "folded"`）必须双向支持
+
+   XMind 把折叠挂在主题上，键是 `branch`、值是字符串 `folded`
+   —— **不是** `folded: true`。早先写侧不写、读侧也不读：
+
+     · 文件被别的 XMind 软件存过一遍（本工具的无损快照 kityminder.json
+       被丢掉）→ 导回时折叠状态**全部丢失**，展开/收起全乱
+     · 别的软件打开我们导出的文件 → 看不到哪些分支是收起的
+
+   折叠是看得见的结构（节点旁那个带数字的小圆点就是折叠徽标），
+   静默丢掉会让人以为文件被改过。
+
+   ⓘ 只走 zen 档（content.json）：XMind 8 的 content.xml 那套老格式
+     折叠字段写法不统一，不在本次范围内 —— 老档仍按原样回落。
+   ⓘ 读侧只认 `folded` **这一个字面值**：别的软件若写了 `expand`、
+     `true` 之类，不该被当成"已折叠"（宁可展开，不要静默改结构）。
+   ------------------------------------------------------------------ */
+group('BUG 115 · XMind 折叠状态（branch: "folded"）双向');
+
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  /** 把包里除 content.json 以外的条目丢掉 —— 模拟"被别的软件存过一遍" */
+  const zenOnly = async (x, blob) => {
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await x.zipRead(buf);
+    const files = [...entries].filter(([k]) => k === 'content.json')
+      .map(([k, v]) => ({ name: k, data: v }));
+    return x.zipWrite(files);
+  };
+  const contentOf = async (x, blob) => {
+    const got = await x.readXMind(blob);
+    return JSON.parse(got.sheets[0].content);
+  };
+  const at = (t, ...idx) => { let n = t.root; for (const i of idx) n = n.children[i]; return n?.data || {}; };
+
+  const sheets = [{
+    id: 'sh1', name: '甲',
+    content: JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'a', text: 'A', expandState: 'collapse' },
+        children: [{ data: { id: 'a1', text: 'A1' }, children: [] }] },
+      { data: { id: 'b', text: 'B' },
+        children: [{ data: { id: 'b1', text: 'B1' }, children: [] }] },
+    ] } }),
+  }];
+
+  // ① 被别的软件存过一遍（无损快照丢失）→ 折叠状态必须保住
+  {
+    const X = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const blob = await X.writeXMind(sheets, 'sh1');
+    const t = await contentOf(X, await zenOnly(X, blob));
+    eq(at(t, 0).expandState, 'collapse', '★ 过一遍别的软件：折叠状态保住（原来会丢）');
+    ok(!at(t, 1).expandState, '★ 没折叠的节点不长出 expandState');
+    eq(at(t, 0, 0).text, 'A1', '折叠节点的子节点仍在（读侧不能连子树一起吞掉）');
+    eq(t.root.children.length, 2, '子节点数不变');
+  }
+
+  // ② 写出去的确实是 `branch: "folded"` 这个字面形态
+  {
+    const X = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const blob = await X.writeXMind(sheets, 'sh1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await X.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(entries.get('content.json')));
+    const a = cj[0].rootTopic.children.attached[0];
+    eq(a.branch, 'folded', '★ 写的是 branch:"folded"（不是 folded:true）');
+    ok(!('folded' in a), '不能写成 folded:true —— XMind 不认');
+    ok(!cj[0].rootTopic.children.attached[1].branch, '没折叠的节点不写 branch');
+  }
+
+  // ③ 导入**别人的**文件：`branch:"folded"` 要读出来
+  {
+    const X = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const cj = [{ rootTopic: { id: 'r', class: 'topic', title: '根', children: { attached: [
+      { id: 'a', class: 'topic', title: 'A', branch: 'folded', children: { attached: [
+        { id: 'a1', class: 'topic', title: 'A1' },
+      ] } },
+      { id: 'b', class: 'topic', title: 'B' },
+      { id: 'c', class: 'topic', title: 'C', branch: 'expand' },
+      { id: 'd', class: 'topic', title: 'D', branch: 'folded ' },
+    ] } } }];
+    const blob = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const t = await contentOf(X, blob);
+    eq(at(t, 0).expandState, 'collapse', '★ 导入别人的文件：branch:"folded" → 折叠');
+    ok(!at(t, 1).expandState, '没写 branch 的不折叠');
+    ok(!at(t, 2).expandState, '★ branch:"expand" 不是折叠（只认 folded 这一个值）');
+    ok(!at(t, 3).expandState, '★ 带空格的 "folded " 不算（严格比对）');
+    eq(at(t, 0, 0).text, 'A1', '折叠节点的子节点照常导入');
+  }
+
+  // ④ 完整往返（带本工具快照）不受影响
+  {
+    const X = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const blob = await X.writeXMind(sheets, 'sh1');
+    const t = await contentOf(X, blob);
+    eq(at(t, 0).expandState, 'collapse', '完整往返：折叠保住');
+    ok(!at(t, 1).expandState, '完整往返：没折叠的不长出');
+  }
+
+  // ⑤ 折叠判定复用 formats.js 的 isCollapsed（不许各写一份）
+  {
+    const xsrc = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
+    ok(/import \{ htmlToPlain, plainToHtml, isCollapsed \} from '\.\/formats\.js'/.test(xsrc),
+      '★ 折叠判定也从 formats.js 引入（与 FreeMind 的 FOLDED 同一份判据）');
+    // ⓘ 光"引入了"不算 —— 必须真的**用**上。断言只写 `isCollapsed(` 会被
+    //   import 那一行本身命中（删掉调用点照样绿），所以先剥掉 import 行再数。
+    const xbody = xsrc.split('\n').filter((l) => !/^import /.test(l.trim())).join('\n');
+    const uses = xbody.split('isCollapsed(').length - 1;
+    ok(uses >= 1, '★ xmind.js 真的调用了 isCollapsed（不是引了不用）—— 实测 ' + uses + ' 处');
+  }
+}
+
 group('BUG 114 · FreeMind 节点颜色（COLOR / BACKGROUND_COLOR）双向');
 
 {
@@ -6965,7 +7080,7 @@ group('BUG 113 · FreeMind 备注（richcontent TYPE=NOTE）双向');
   {
     const fsrc = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
     const xsrc = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
-    ok(/import \{ htmlToPlain, plainToHtml \} from '\.\/formats\.js'/.test(xsrc),
+    ok(/import \{ htmlToPlain, plainToHtml, isCollapsed \} from '\.\/formats\.js'/.test(xsrc),
       '★ xmind.js 从 formats.js 引入，不再各写一份');
     ok(!/^function htmlToPlain/m.test(xsrc), '★ xmind.js 里没有 htmlToPlain 的私有副本');
     ok(!/^function plainToHtml/m.test(xsrc), '★ xmind.js 里没有 plainToHtml 的私有副本');
