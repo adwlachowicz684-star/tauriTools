@@ -882,6 +882,10 @@ function encodeCanvas(src, dims, mime, q) {
 export async function imageToInline(file, opt = {}) {
   if (!file) return { error: '文件为空' };
   const name = String(file.name || '图片');
+  /* 失败时的**动作词**。默认是"未添加"（新增路径）；
+     存量压缩（shrinkDataUrl）走同一套判据，但它并没有在"添加"任何东西 ——
+     说"未添加"会让人以为这张图被拿掉了，其实原样留着。 */
+  const verb = opt.verb === undefined ? '未添加' : String(opt.verb);
   const size = Number(file.size) || 0;
   const maxInline = Number(opt.maxInline) > 0 ? Number(opt.maxInline) : IMG_INLINE_MAX;
   const maxSource = Number(opt.maxSource) > 0 ? Number(opt.maxSource) : IMG_SOURCE_MAX;
@@ -893,7 +897,7 @@ export async function imageToInline(file, opt = {}) {
     : Math.max(0, Number(opt.skipBelow) || 0);
 
   if (size > maxSource) {
-    return { error: `「${name}」${formatSize(size)} 超过单张上限 ${formatSize(maxSource)}，未添加` };
+    return { error: `「${name}」${formatSize(size)} 超过单张上限 ${formatSize(maxSource)}，${verb}` };
   }
 
   const type = String(file.type || '').toLowerCase();
@@ -905,7 +909,7 @@ export async function imageToInline(file, opt = {}) {
     const url = await readDataURL(file);
     if (!url) return { error: `「${name}」读取失败` };
     if (url.length > maxInline) {
-      return { error: `「${name}」矢量图 ${formatSize(url.length)} 超过内联上限 ${formatSize(maxInline)}，未添加` };
+      return { error: `「${name}」矢量图 ${formatSize(url.length)} 超过内联上限 ${formatSize(maxInline)}，${verb}` };
     }
     return { url, w: 0, h: 0, before: size, after: url.length, scaled: false, alpha: true };
   }
@@ -918,7 +922,7 @@ export async function imageToInline(file, opt = {}) {
     if (url.length <= maxInline) {
       return { url, w: 0, h: 0, before: size, after: url.length, scaled: false, alpha: true };
     }
-    return { error: `「${name}」是动图（${formatSize(size)}），压缩会丢掉动画，未添加` };
+    return { error: `「${name}」是动图（${formatSize(size)}），压缩会丢掉动画，${verb}` };
   }
 
   // 小图直通：压缩收益只有几十 KB，却要付出一次重编码的画质损失
@@ -961,7 +965,7 @@ export async function imageToInline(file, opt = {}) {
     // 走到这里说明所有档位都压不进阈值。**要把实测的最小值说出来** ——
     // 只说"失败"用户无从判断该把图裁多小
     const got = best ? `（已压到 ${formatSize(best.url.length)}）` : '';
-    return { error: `「${name}」压缩后仍超过内联上限 ${formatSize(maxInline)}${got}，未添加` };
+    return { error: `「${name}」压缩后仍超过内联上限 ${formatSize(maxInline)}${got}，${verb}` };
   } finally {
     // 必须释放：一次拖 20 张图，不释放会把解码后的整张位图全留在内存里
     try { dec.bitmap?.close?.(); } catch { /* 已关闭 */ }
@@ -980,18 +984,45 @@ export async function imageToInline(file, opt = {}) {
  * 调用它的前提就是"这张图超了阈值"，直通等于什么都不做；
  * 而且这里的 size 是解码后的字节数，与 dataURL 字符数不是一回事。
  */
+/**
+ * MIME → 落盘扩展名（纯函数，可单测）。
+ *
+ * 早先这里写的是 `type === 'image/png' ? 'png' : 'jpg'`，于是 GIF / SVG /
+ * WebP 的内联图一律被叫成 `inline.jpg`。而这个名字**只在失败提示里出现**，
+ * 用户看到的就成了一句指向不存在文件的报错：
+ *   「inline.jpg」是动图（2.1 MB），压缩会丢掉动画，未添加
+ * 既没有这张文件、也没在"添加"任何东西 —— 两张失败时两条提示还长得一模一样。
+ *
+ * 认不出的类型仍按 jpg（最常见的兜底，且 jpg 分支走有损压缩，是安全的）。
+ */
+const MIME_EXT = {
+  'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif',
+  'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/bmp': 'bmp',
+  'image/avif': 'avif', 'image/x-icon': 'ico',
+};
+export function extOfMime(mime) {
+  return MIME_EXT[String(mime || '').toLowerCase().trim()] || 'jpg';
+}
+
 export async function shrinkDataUrl(dataUrl, opt = {}) {
   const blob = dataUrlToBlob(dataUrl);
   if (!blob || !blob.size) return { error: '图片数据已损坏，无法压缩' };
   const type = blob.type || 'image/png';
-  const ext = type === 'image/png' ? 'png' : 'jpg';
+  const ext = extOfMime(type);
+  // 名字只进提示；调用方传「第 k 张」这种序号，多张失败才分得清是哪一张
+  const name = String(opt.name || 'inline');
   let f;
   try {
-    f = new File([blob], 'inline.' + ext, { type });
+    f = new File([blob], `${name}.${ext}`, { type });
   } catch {
     return { error: '当前环境不支持重新压缩图片' };
   }
-  return imageToInline(f, { ...opt, skipBelow: 0 });
+  return imageToInline(f, {
+    ...opt,
+    skipBelow: 0,
+    // 存量压缩没有"添加"这个动作，沿用默认的「未添加」会把人带偏
+    verb: opt.verb === undefined ? '未压缩' : opt.verb,
+  });
 }
 
 /* --------------------------- 附件 Blob 存储 --------------------------- */
