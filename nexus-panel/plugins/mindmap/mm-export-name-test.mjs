@@ -16,10 +16,16 @@
  * 不靠"源码里有没有这几个字" —— 后者证明不了提示里到底是哪个名字。
  */
 import { readFileSync } from 'node:fs';
-import { join as pjoin } from 'node:path';
+import { dirname, join as pjoin } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as io from './io.js';
 
-const HERE = process.cwd();
+/* ⚠ 必须按**本文件所在目录**解析，不能用 process.cwd()。
+   package.json 里的 test:mm-export-name 是从仓库根跑的，用 cwd 就会去读
+   nexus-panel/index.js → ENOENT → 崩在半路、既没有 ❌ 也没有汇总行。
+   崩 ≠ 红：体检只会把它记成"环境异常"，真正的原因（路径写错）在报错里看不到。
+   同目录其它测试（mindmap-test.mjs）一律用 import.meta.url，这里也必须同源。 */
+const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(pjoin(HERE, p), 'utf8').replace(/\r\n/g, '\n');
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
