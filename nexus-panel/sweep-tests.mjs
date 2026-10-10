@@ -88,23 +88,50 @@ const FIXTURES = [
   { s: '✅ 全部 30 项通过', pass: 30, fail: 0, why: '只报通过数（md-render）' },
 ];
 
-const isBad = (r) => r.status !== 0 || r.pass === null || r.pass === 0;
+// ⚠️ 曾经漏掉「失败数 > 0 但退出码 0」这一组合：
+//    原判据只管 status!==0 / pass===null / pass===0，于是"通过 30 项、失败 2 项、
+//    末尾 process.exit(0)"会被算进 ok，体检单照样报全绿 —— 而 CI 只看退出码，
+//    这种测试等于永远不红。
+//    更能说明问题的是：下面打印 why 时本来就写了 '失败 N 项' 这一档，
+//    却因为根本进不了 bad 而从未生效过（死分支）。
+//    它本想抓的正是这一档，写的人以为抓到了，实际一次都没跑过。
+const isBad = (r) => r.status !== 0 || r.pass === null || r.pass === 0
+  || (r.fail !== null && r.fail > 0);
 
 const selfFails = [];
+// 自检项数必须随实际条数走：这里原先写死成 FIXTURES.length + 2，
+// 后来新增了 2 条自检（failOk / noFalseAlarm）却没同步这个公式，
+// 于是"通过 N 项"永远少算 2 —— 自检增加了、报告看不出增加，
+// 等于新加的守卫不在账上。改成实际计数，以后再加自检自动计入。
+let selfTotal = 0;
 console.log('=== 0. 自检：汇总行格式必须认得全（认不出＝体检单失明）===');
 for (const f of FIXTURES) {
   const got = parseSummary(f.s);
   const good = got.pass === f.pass && got.fail === f.fail;
+  selfTotal++;
   console.log(`${good ? '✅' : '❌'} ${f.why} → ${JSON.stringify(f.s)}`);
   if (!good) selfFails.push(`${f.why}：期望 ${f.pass}/${f.fail}，实得 ${got.pass}/${got.fail}`);
 }
 // 「0 条断言」是本项目最贵的一类失效（崩≠红、空跑），必须判为可疑而不是放过
 const zeroOk = isBad({ status: 0, pass: 0, fail: 0 }) === true;
 const fiveOk = isBad({ status: 0, pass: 5, fail: 0 }) === false;
+// 「失败 N 项但退出码 0」必须判为可疑：CI 只看退出码，不判这一档就等于
+// 这类测试永远绿。这条自检正是上面那个死分支缺的那一环。
+const failOk = isBad({ status: 0, pass: 30, fail: 2 }) === true;
+// 反向：失败 0 项、退出码 0 不能误伤
+const noFalseAlarm = isBad({ status: 0, pass: 30, fail: 0 }) === false;
+selfTotal++;
 console.log(`${zeroOk ? '✅' : '❌'} 0 条断言判为可疑（不能当正常放过）`);
+selfTotal++;
 console.log(`${fiveOk ? '✅' : '❌'} 有断言且退出码 0 判为正常（不能误伤）`);
+selfTotal++;
+console.log(`${failOk ? '✅' : '❌'} 失败 2 项但退出码 0 判为可疑（CI 只看退出码）`);
+selfTotal++;
+console.log(`${noFalseAlarm ? '✅' : '❌'} 失败 0 项且退出码 0 不误伤`);
 if (!zeroOk) selfFails.push('0 条断言未判为可疑');
 if (!fiveOk) selfFails.push('正常测试被误判为可疑');
+if (!failOk) selfFails.push('失败数 > 0 但退出码 0 未判为可疑');
+if (!noFalseAlarm) selfFails.push('失败 0 项被误判为可疑');
 
 const rows = [];
 for (const [name, cmd] of entries) {
@@ -116,17 +143,21 @@ for (const [name, cmd] of entries) {
 }
 
 const bad = rows.filter(isBad);
-const ok = rows.filter(r => r.status === 0 && r.pass !== null && r.pass > 0);
+const ok = rows.filter(r => !isBad(r));
 
 console.log(`\n共 ${rows.length} 个测试脚本${sliceTag}`);
 console.log(`✅ 正常（有汇总行且断言数 > 0）：${ok.length}`);
 console.log(`⚠️  可疑：${bad.length}\n`);
 
 for (const r of bad) {
+  // ⚠️ 顺序要紧：'失败 N 项' 必须排在 'pass===0' 前面。
+  //    原顺序里它排最后，而能走到那里的只有 pass===0 已被前面吃掉之后的情况，
+  //    于是这一档永远打不出来（死分支）。
   const why = r.crashed ? '崩在半路（无汇总行，退出码非 0）'
     : r.pass === null ? '退出码 ' + r.status + ' 但无汇总行'
+    : (r.fail !== null && r.fail > 0) ? '失败 ' + r.fail + ' 项，但退出码 ' + r.status + '（CI 只看退出码，看不出来）'
     : r.pass === 0 ? '0 条断言（等于没守任何东西）'
-    : '失败 ' + r.fail + ' 项';
+    : '未归类';
   console.log(`  ${r.status === 0 && r.pass === 0 ? '⚠️' : '❌'} ${r.name} — ${why}`);
   const tail = r.out.trim().split('\n').slice(-3).join('\n     ');
   if (tail) console.log(`     ${tail}`);
@@ -149,7 +180,7 @@ console.log(`\n明细已写入 ${outFile}`);
 // 标准汇总行：本文件自己也在 package.json 的 test:* 里（已排除自跑），
 // 但别人拿通用规则体检它时，没有这行就会被判成"0 条断言"。
 const totalFail = bad.length + selfFails.length;
-console.log(`通过 ${ok.length + (FIXTURES.length + 2 - selfFails.length)} 项，失败 ${totalFail} 项`);
+console.log(`通过 ${ok.length + (selfTotal - selfFails.length)} 项，失败 ${totalFail} 项`);
 // 可疑项 + 自检失败都要以非 0 退出：体检单本身必须能被 CI 判红，
 // 否则"体检跑了但没人看退出码"又是一次静默。
 process.exit(totalFail ? 1 : 0);
