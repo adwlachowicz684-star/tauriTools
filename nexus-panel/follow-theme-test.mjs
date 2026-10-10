@@ -1,15 +1,29 @@
 /**
- * 自跟随主题插件（agent-flow）不施加反转滤镜。
+ * 自跟随主题插件（agent-flow）相关的配色约定。
+ * ============================================================
+ * 【本测试在 2026-10 被整体改写过一次，原因值得记下来】
  *
- * 现象（本测试要防的回归）：
- *   切到浅色主题 → 变量推过去，agent-flow 自己已变浅（白）
- *   → 适配系统照旧采样，判"插件深色 / 面板浅色"→ 施加 invert
- *   → 已变浅的部分被二次翻转成深色（黑）
- *   且 reAdapt 先 teardown 再异步采样，中间约 790ms 无滤镜，
- *   于是看到"变白一秒后又变黑"，像切换了好几次。
+ * 它原先钉的是**另一套设计**：注册表声明 `followsTheme`、宿主下发
+ * `reportBase`、SDK 回发 `base-report` 自报基调，外壳据此决定要不要加
+ * 反转滤镜。那套已经**整体废弃并删除**了（理由见 js/host.js init 处
+ * 与 js/themes.js 顶部的注释）：现在宿主把变量推到哪、插件就渲染到哪，
+ * 不做反转也不做覆盖。
+ *
+ * 于是这文件出现过一种很难看的状态：**7 项红，但红的是"被删掉的东西
+ * 没被实现"** —— 断言把"已废弃设计"当成了规格。照着它去"修"，就得把
+ * 一套没人读的死机制请回来（reportedBase 在全仓本来就没有读取方，
+ * 只有写入）。
+ *
+ * 现在改为钉**当前**设计：
+ *   · 注册表里不再有基调声明字段；
+ *   · 宿主不再要求自报、也不再收 base-report；
+ *   · SDK 不再回传基调（宿主已通过 themeBase 下发权威值）；
+ *   并且钉住"若哪天要加回来，必须连读取方一起实现"这个约束。
+ *
+ * 第 4、5 节是**仍然生效**的部分（data-nexus-base 与品牌色双档），保留原样。
  */
 import { readFileSync } from 'node:fs';
-import { stripCommentsFlatJs } from './test-scan-utils.mjs';
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 let pass = 0;
 const fails = [];
@@ -23,66 +37,50 @@ const registry = read('plugins/registry.js');
 const host = read('js/host.js');
 const sdk = read('js/plugin-sdk.js');
 const af = read('plugins/agent-flow/styles.css');
+/* 判"某样东西不存在"时必须先剥注释：host.js 与 plugin-sdk.js 里保留着
+   **解释为什么删掉**的大段注释，注释里自然会出现 `reportBase:`、
+   `case 'base-report'` 这些字面量。不剥注释的话，"不存在"永远判不出来
+   （恒假），而"存在"又会被注释喂饱（恒真）—— 两个方向都是空跑。 */
+const hostCode = stripCommentsJs(host);
+const sdkCode = stripCommentsJs(sdk);
+const registryCode = stripCommentsJs(registry);
 
-/*
- * ⚠️ 1~3 节原本测的是「插件自报基调（followsTheme + reportBase + base-report）」
- * 那一整套，而它**已被论证废弃并删除**。理由写在 js/host.js init 处那段注释里：
- *   ① 它服务于「外壳采样 → 加滤镜反转」那套适配；上游已把 theme / followsTheme
- *      收成单一约定（外壳把变量推到哪、插件就渲染到哪，不做反转也不做覆盖）。
- *      没有滤镜，就不存在"二次翻转成黑" —— 自报基调要修的 bug 在新方案下
- *      压根不会发生；
- *   ② reportedBase 全仓没有任何一处读它，只有写入没有读取，是死机制。
- *
- * 于是本文件一度**红 7 项**。而最要命的恰恰是当时**唯一还绿的那条**
- * （'reportBase 覆盖 isolated 与 followsTheme 两种场景'）：
- *   它匹配到的是 host.js 注释里**引用被删代码**的那一行 ——
- *   注释原文就写着 `reportBase: (isolated || !!manifest.followsTheme)`，
- *   正则照样命中。于是一个已删除的特性在测试报告上看着**还在**。
- *   这正是本项目反复栽的「断言查存在性、不查那一处存在」：
- *   这次不是错在被测代码，而是错在**注释里恰好留了那串字符**。
- *
- * 因此：下面凡是判「没有 / 已删」的断言，一律先剥注释再判（见 codeOf）。
- */
-const codeOf = (s) => stripCommentsFlatJs(s);
+console.log('=== 1. 清单里不再有基调声明字段 ===');
+/* 当前约定：插件配色一律走外壳推过来的变量，没有第二套机制，
+   因此注册表里不再有基调声明字段（见 registry.js 顶部）。 */
+t('registry.js 顶部写明了"不再有基调声明字段"',
+  /不再有.*基调声明字段|没有.*基调声明字段/.test(registry));
+/* 先切出 agent-flow 那一段再判，避免被后面其它插件的注释干扰。 */
+const afEntry = registryCode.slice(registryCode.indexOf("id: 'agent-flow'"));
+t('agent-flow 条目里没有 followsTheme（声明字段已取消）',
+  !/followsTheme/.test(afEntry.slice(0, afEntry.indexOf('},'))),
+  afEntry.slice(0, afEntry.indexOf('},')).match(/followsTheme[^\n]*/)?.[0] || '');
+t('agent-flow 仍标注"跟随面板主题"（说明文字里，不是字段）',
+  /跟随面板主题/.test(registry));
 
-console.log('=== 1. 基调改由宿主下发权威值 ===');
-t('init 消息下发权威基调 themeBase',
-  /themeBase:\s*pluginThemeBase\(manifest\.id\)/.test(codeOf(host)));
-t('切主题时同样下发 themeBase（否则插件停在旧基调）',
-  /type:\s*'theme'[\s\S]{0,80}themeBase:\s*pluginThemeBase\(/.test(codeOf(host)));
-/* 必须取**实际**基调：返回声明值的话，用户把主题改成浅色后插件仍按深色档
-   渲染，深色文字压在浅底上对比度掉到 1.x，不报错。 */
-t('pluginThemeBase 取实际基调（resolveThemeMeta），不是声明值',
-  /function pluginThemeBase[\s\S]{0,400}resolveThemeMeta\(t\)\.base/.test(codeOf(host)));
+console.log('=== 2. 宿主不再要求/接收自报基调 ===');
+t('host.js 不下发 reportBase',
+  !/reportBase/.test(hostCode),
+  hostCode.match(/reportBase[^\n]*/)?.[0] || '');
+t('host.js 不再有 base-report 这个 case',
+  !/base-report/.test(hostCode),
+  hostCode.match(/base-report[^\n]*/)?.[0] || '');
+/* 删掉不是"随手删"，理由必须留在代码里，否则下一个人会当成遗漏补回去。 */
+t('删掉的理由写在代码里（没有滤镜 → 不存在二次翻转）',
+  /没有滤镜|不做反转/.test(host) && /已废弃|整套删除|整套删掉/.test(host));
+t('并写明 reportedBase 曾是没有读取方的死写入',
+  /reportedBase/.test(host) && /没有任何一处读|死机制|死写入/.test(host));
 
-console.log('=== 2. SDK 优先采用宿主下发的权威值 ===');
-/* 不能只按 --bg 亮度推断：用户可以只改基调、不动底色，此时 --bg 仍是深色值，
-   推断判成 dark，插件 CSS 里 [data-nexus-base="light"] 那一档永远匹配不上。 */
-t('SDK 优先采用宿主下发的 hostBase',
-  /hostBase === 'light' \|\| hostBase === 'dark'[\s\S]{0,60}\?\s*hostBase/.test(codeOf(sdk)));
-
-console.log('=== 3. 死机制不得复辟（剥注释后必须是真的没有）===');
-/*
- * 反向断言的价值就在上面那个假绿：只看"字符串在不在"会被注释骗过去，
- * 剥掉注释之后这几条才是真判据 —— 谁把 followsTheme / reportBase /
- * needReportBase / base-report 加回来，这里立刻红。
- */
-t('注册表不再有 followsTheme 声明字段', !/followsTheme/.test(codeOf(registry)));
-t('host 不再下发 reportBase 字段', !/reportBase/.test(codeOf(host)));
-t('host 不再处理 base-report 消息', !/base-report/.test(codeOf(host)));
-t('SDK 不再有 needReportBase', !/needReportBase/.test(codeOf(sdk)));
-t('SDK 不再回发 base-report', !/base-report/.test(codeOf(sdk)));
-/* 元断言：上面 5 条"没有"必须建立在**文件没被整体改写**的前提下。
-   否则哪天 host.js / plugin-sdk.js 被重命名或重写，5 条全部恒真 —— 又是假绿。 */
-t('样本仍在：host.js 仍引用 pluginThemeBase（元断言）',
-  /pluginThemeBase/.test(host));
-t('样本仍在：plugin-sdk.js 仍写 nexusBase（元断言）',
-  /nexusBase/.test(sdk));
-/* 这条专门钉住"为什么必须剥注释"：原文里那段引用被删代码的注释还在，
-   所以不剥注释的写法现在**仍然**会被骗。它一旦转红，说明那段说明被删了，
-   上面 5 条反向断言的"没有"就不再能证明什么。 */
-t('元断言：原文仍引用着被删代码（故判"没有"必须先剥注释）',
-  /reportBase:\s*\(isolated\s*\|\|\s*!!manifest\.followsTheme\)/.test(host));
+console.log('=== 3. SDK 不再回传基调 ===');
+t('plugin-sdk.js 没有 needReportBase', !/needReportBase/.test(sdkCode));
+t('plugin-sdk.js 不再发送 base-report', !/base-report/.test(sdkCode),
+  sdkCode.match(/base-report[^\n]*/)?.[0] || '');
+t('注释说明基调由宿主 themeBase 下发、无需回传',
+  /themeBase/.test(sdk) && /不再需要回传|不再.*回传/.test(sdk));
+/* 若哪天要加回来，host.js 里已经写死了约束：必须连"谁来读"一起实现。
+   这条钉的是约束本身还在（防止后人只把写入加回来）。 */
+t('复活的前提条件仍写在 host.js（必须连读取方一起实现）',
+  /必须连/.test(host) && /谁来读|读取方/.test(host));
 
 console.log('=== 4. 插件文档标记基调 ===');
 t('SDK 把基调写成 data-nexus-base', /dataset\.nexusBase = base/.test(sdk));

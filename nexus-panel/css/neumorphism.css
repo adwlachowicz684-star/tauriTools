@@ -2731,15 +2731,27 @@ html.theme-transition *:not(.spinner) {
    ============================================================ */
 
 /* ⚠️ 这里原先写着「全仓代码 0 处引用，判定为旧 UI 残留，暂不删除，仅注释」，
-   并把下面的规则整段注释掉 —— **那条判定是错的**：js/theme-normalizer.js 里有
-   两处真实引用（L3 创建覆盖层时赋类名、以及幂等清理时按类名查询），
-   当时 theme-normalizer.js 不在这次扫描的范围内，于是被当成了旧 UI 残留。
+   并把下面的规则整段注释掉。那条判定的**理由**是错的，但**结论**是对的：
 
-   后果不是"少一条样式"，而是 L3 覆盖层退化成一个没有定位的普通空 div：
-   · absolute + inset:0 缺失 → 铺不开，将来补了背景色也只是内容流里一条线；
+   理由错在："0 处引用"不成立 —— js/theme-normalizer.js 里有两处真实引用
+   （L3 创建覆盖层时赋类名、幂等清理时按类名查询）。当时 theme-normalizer.js
+   不在那次扫描的范围内，于是"有引用"被看成了"零引用"。
+
+   结论对在：theme-normalizer.js **自身**是个死模块 —— 全仓只有它自己的两个
+   测试 import 它，没有任何生产入口能到达（见 dead-module-test.mjs 的可达性分析）。
+   js/themes.js 顶部写明：「早期曾据此做滤镜反转（theme-normalizer.js），
+   那套"采样 → 反转"已废弃」，现在是宿主把变量推到哪、插件就渲染到哪。
+   所以这两个类**传递地**也是死的。
+
+   这里仍恢复为生效状态，是出于两条与"死不死的"无关的理由 ——
+   万一这套适配哪天被接回来（下面两条都是那时才会暴露、且极难归因的症状）：
+   · absolute + inset:0 缺失 → 覆盖层铺不开，补了背景色也只是内容流里一条线；
    · pointer-events:none 缺失 → 一旦有人补上背景色，它会盖住整个插件并
      吃掉所有点击，表现为"插件点了没反应"且不报错，极难归因到这一层。
-   所以这里恢复为生效状态；那条"0 处引用"的说明不再成立，已替换为上述实情。 */
+
+   若确认不复活，应连同 js/theme-normalizer.js、adapt-test.mjs、
+   adapt-sequential-test.mjs 与本段下面 .nexus-adapted 一起删除
+   （dead-module-test.mjs 的白名单里也记着这一条，删完它会提醒同步）。 */
 
 .nexus-tone-overlay {
   position: absolute;
@@ -2750,6 +2762,7 @@ html.theme-transition *:not(.spinner) {
 
 /* .nexus-adapted：installAdapter 施加滤镜后打在 target 上的标记类
    （施加时 add、teardown 时 remove），此前全仓没有对应规则。
+   同样只对已废弃的那套适配有意义，处置同上。
    这里只补一条有依据的声明：isolation: isolate ——
    L3 覆盖层将来要用 mix-blend-mode 与**本容器内**的内容混合；不隔离的话
    混合会穿透到页面背景，表现为"整个面板被一起染色"而不是"只统一插件自己的色调"。

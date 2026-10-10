@@ -212,12 +212,39 @@ function guessMime(ext) {
 /**
  * 文件名安全化：剔除路径非法字符（对齐 C# SanitizeFileName）。
  * 用于主题导出等「按内容命名」的场景（stampName 会带时间戳，不适合这类）。
+ *
+ * 注意「对齐 C#」只对齐了一半：C# 的 Path.GetInvalidFileNameChars 只管
+ * 字符，**不管保留设备名**，照它实现就会漏掉下面这一条。
  */
+/*
+ * Windows 保留设备名：**任何目录、带任何扩展名**都建不出来 ——
+ * `CON.pdf` 会被解析到控制台设备而不是文件（报错通常是「拒绝访问」，
+ * 指向一个看着完全正常的名字）。
+ *
+ * 清单与判据与 project-group 的 src-tauri/src/fpx/sys.rs::RESERVED 同一份：
+ *   · 取**第一个点之前**的主名（扩展名不算数）
+ *   · **完全相等**才成立，不能用前缀 —— 否则 config / console / auxiliary
+ *     这些常用名会被误改名，误伤比漏判更难发现
+ *   · 大小写不敏感；主名为空（如 `.CON`）不判 —— 与 Windows 实际行为一致
+ *   · COM0 / LPT0 不在清单内：现代 Windows 上是合法名
+ *
+ * 两处处理手法不同，别混：那边是**拒绝**（用户可自己改个名），
+ * 这里是**改写前缀**（改名不影响文件内容，且落盘提示里显示的是改写后的
+ * 名字，见 index.js 的 openAttachment）—— 目标是"文件一定要存下来"。
+ */
+const RESERVED_WIN = new Set([
+  'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
+  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+]);
 export function safeFileName(name) {
   let s = String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '_').trim();
   // 纯点号（'.' / '..'）在多数文件系统上指向目录本身，不能当落盘名用。
   // 附件名来自导入的 .xmind，是不可信输入。
   if (/^\.+$/.test(s)) s = '_' + s;
+  const dot = s.indexOf('.');
+  const stem = (dot < 0 ? s : s.slice(0, dot)).trim();
+  if (stem && RESERVED_WIN.has(stem.toUpperCase())) s = '_' + s;
   return s || '未命名';
 }
 
