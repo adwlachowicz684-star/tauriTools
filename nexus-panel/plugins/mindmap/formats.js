@@ -266,6 +266,10 @@ export function toFreemind(content) {
 
   function emit(n, depth) {
     const attrs = [`TEXT="${escXml(nodeText(n))}"`];
+    // BUG 111：LINK 是 FreeMind 的标准属性（Freeplane / XMind 都认）。
+    // 不写的话往返丢，别的软件打开我们导出的 .mm 也看不到链接。
+    const href = String(n?.data?.hyperlink || '').trim();
+    if (href) attrs.push(`LINK="${escXml(href)}"`);
     // 根节点不需要 FOLDED（根永远展开）
     if (depth > 0 && isCollapsed(n)) attrs.push('FOLDED="true"');
     const kids = n?.children || [];
@@ -309,12 +313,14 @@ function freemindNodeText(el) {
  * 一概忽略 —— 它们承载的都是样式，本工具的主题体系不认。
  */
 export function fromFreemind(text) {
-  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText);
+  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText, 'LINK');
   if (!rows) return null;
   if (!rows.length) return null;
   const { root } = rowsToKm(rows);
   // 折叠状态回填
   applyCollapsed(root, rows.map((r) => r.collapsed));
+  // BUG 111：超链接回填（LINK 是 FreeMind 的标准属性）
+  applyLinks(root, rows.map((r) => r.link));
   return stringifyKm(root);
 }
 
@@ -349,6 +355,9 @@ export function toOpml(content, title = '脑图') {
     const pad = '  '.repeat(depth);
     const kids = n?.children || [];
     const attrs = [`text="${escXml(nodeText(n))}"`];
+    // BUG 111：url 是 OPML 2.0 规范属性（OmniOutliner / 幕布 等都读写）
+    const href = String(n?.data?.hyperlink || '').trim();
+    if (href) attrs.push(`url="${escXml(href)}"`);
     if (!kids.length) {
       lines.push(`${pad}<outline ${attrs.join(' ')}/>`);
       return;
@@ -367,7 +376,7 @@ export function toOpml(content, title = '脑图') {
  * 不造根的话，除第一个以外的顶层条目会被静默丢掉。
  */
 export function fromOpml(text) {
-  const rows = readXmlNodes(text, 'outline', 'text');
+  const rows = readXmlNodes(text, 'outline', 'text', null, 'url');
   if (!rows) return null;
   if (!rows.length) return null;
   const tops = rows.filter((r) => r.depth === 0);
@@ -378,6 +387,9 @@ export function fromOpml(text) {
       .concat(rows.map((r) => ({ ...r, depth: r.depth + 1 })));
   }
   const { root } = rowsToKm(rows2);
+  // BUG 111：超链接回填（url 是 OPML 2.0 规范属性）。
+  // 用 rows2 而不是 rows —— 多顶层 outline 时会插入虚拟根，索引必须对齐。
+  applyLinks(root, rows2.map((r) => r.link));
   return stringifyKm(root);
 }
 
@@ -632,7 +644,7 @@ export function fromPlantUml(text) {
  * @param {string} attr 取文字的属性名
  * @returns {Array|null} null = 解析失败（不是「空」）
  */
-function readXmlNodes(text, tag, attr, fallbackText = null) {
+function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null) {
   const src = String(text || '').trim();
   if (!src) return null;
   let doc = null;
@@ -657,6 +669,10 @@ function readXmlNodes(text, tag, attr, fallbackText = null) {
       depth: depthOf(el),
       text: t,
       collapsed: String(el.getAttribute('FOLDED') || '').toLowerCase() === 'true',
+      // BUG 111：FreeMind 的 LINK / OPML 的 url 都是**标准属性**，别的软件
+      // 普遍读写。早先只读 TEXT/text，于是导入别人的文件时节点上的链接
+      // 全部静默消失 —— 不报错，用户只会觉得"这软件不支持超链接"。
+      link: linkAttr ? String(el.getAttribute(linkAttr) || '') : '',
     });
   }
   return rows;
@@ -673,6 +689,19 @@ function readXmlNodes(text, tag, attr, fallbackText = null) {
 }
 
 /** 把折叠状态按先序回填到树上 */
+/** 行序列里的链接回填到树上（与 applyCollapsed 同构：按前序一一对齐） */
+function applyLinks(root, links) {
+  let i = 0;
+  walkKm(root, (n) => {
+    const href = links && String(links[i] || '').trim();
+    if (href) {
+      n.data = n.data || {};
+      n.data.hyperlink = href;
+    }
+    i++;
+  });
+}
+
 function applyCollapsed(root, flags) {
   let i = 0;
   walkKm(root, (n) => {
@@ -755,6 +784,75 @@ export function baseTitle(name, fallback = '导入的脑图') {
 }
 
 /** 各格式的显示名与扩展名，供 UI 与提示复用 */
+/**
+ * 节点自定义样式的 data 键 —— 与 xmind.js 的 `StyleMap` 对齐，另加内核用的
+ * 三个字重/字形键。交换格式（.mm / .opml / .mmd / .puml）**一律不带样式**，
+ * 这里只用来数「有多少节点设了样式」，好让导出时说清楚丢了什么。
+ */
+const NODE_STYLE_KEYS = [
+  'background', 'node-stroke', 'node-stroke-width', 'node-radius',
+  'node-line-stroke', 'node-line-width', 'color', 'font-size',
+  'font-family', 'text-align', 'vertical-align',
+  'font-weight', 'font-style', 'font-strikethrough',
+];
+
+/**
+ * 各交换格式**实际带得走**的字段（其余一概装不下）。
+ *
+ * ⓘ 折叠状态只有 FreeMind 带得走（`FOLDED`），OPML / Mermaid / PlantUML
+ *   都不带 —— 早先 exportExchange 的注释写「只带文字+层级+折叠状态」，
+ *   把这三种也算进去了，与实测不符（BUG 111）。
+ * ⓘ 超链接：FreeMind 走 `LINK`、OPML 走 `url`，都是规范属性（BUG 111 补上）。
+ */
+export const EXCHANGE_KEEP = {
+  freemind: { hyperlink: true, collapsed: true },
+  opml: { hyperlink: true },
+  mermaid: {},
+  plantuml: {},
+};
+
+/**
+ * 数一数导成交换格式会**丢**多少东西。
+ *
+ * 这些格式只装得下文字和层级；备注、优先级、进度、标签、自定义样式一概
+ * 不带（超链接与折叠状态看 `EXCHANGE_KEEP`）。不说的话，用户拿 .opml 当
+ * 备份、日后导回来才发现备注和进度全没了 —— 而**导入是整体替换且不可
+ * 撤销**，那时已经晚了。导出那句提示是唯一的机会（同 deepNodeCount）。
+ *
+ * @param {string|object} content 画布内容（kityminder JSON 文本或对象）
+ * @param {string} kind freemind / opml / mermaid / plantuml
+ * @returns {{note:number, hyperlink:number, priority:number, progress:number,
+ *            labels:number, collapsed:number, style:number, nodes:number}}
+ *          各类**受影响节点数**（nodes = 去重后的合计节点数）
+ */
+export function exchangeLoss(content, kind) {
+  const keep = EXCHANGE_KEEP[kind] || {};
+  const out = { note: 0, hyperlink: 0, priority: 0, progress: 0,
+    labels: 0, collapsed: 0, style: 0, nodes: 0 };
+  const km = parseKm(content);
+  if (!km) return out;
+  const touched = new Set();
+  const bump = (node, key) => {
+    if (node?.data?.id != null) touched.add(String(node.data.id));
+    else touched.add(node);
+    out[key]++;
+  };
+  walkKm(km.root, (n) => {
+    const d = n?.data || {};
+    if (String(d.note || '').trim()) bump(n, 'note');
+    if (!keep.hyperlink && String(d.hyperlink || '').trim()) bump(n, 'hyperlink');
+    const pri = Number(d.priority);
+    if (pri >= 1 && pri <= 9) bump(n, 'priority');
+    const pg = Number(d.progress);
+    if (pg > 0) bump(n, 'progress');
+    if (Array.isArray(d.labels) && d.labels.length) bump(n, 'labels');
+    if (!keep.collapsed && isCollapsed(n)) bump(n, 'collapsed');
+    if (NODE_STYLE_KEYS.some((k) => d[k] != null && String(d[k]) !== '')) bump(n, 'style');
+  });
+  out.nodes = touched.size;
+  return out;
+}
+
 export const FORMAT_META = {
   freemind: { label: 'FreeMind', ext: 'mm', mime: 'application/xml', note: 'FreeMind / Freeplane / XMind 可导入' },
   opml: { label: 'OPML', ext: 'opml', mime: 'text/x-opml', note: 'OmniOutliner / Workflowy / 幕布 等大纲工具' },
