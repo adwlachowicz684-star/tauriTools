@@ -6549,6 +6549,140 @@ group('BUG 97 · XMind 必须带上「这是图标还是用户挂的图片」的
      · 导入别的软件的 task-done → 10，超出取值域：进度条被画成 -405°
        （而不是 -360°），且不打勾
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 108：XMind 8 老文件的节点自定义样式必须读出来
+
+   content.xml 的 topic **不带任何视觉属性**，只有一个 style-id 指向
+   styles.xml。早先只解析 content.xml → 节点自定义样式**全丢**（标红、
+   字号、加粗…），而 zen 路径（content.json）早就读得好好的 ——
+   两条路只修了一条。
+   ------------------------------------------------------------------ */
+group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
+
+{
+  const X = await import('./xmind.js');
+
+  const NS = 'xmlns="urn:xmind:xmap:xmlns:content:2.0"'
+    + ' xmlns:fo="http://www.w3.org/1999/XSL/Format"'
+    + ' xmlns:svg="http://www.w3.org/2000/svg"';
+  const mkContent = () => `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<xmap-content ${NS} version="2.0"><sheet id="s1" theme="th1">
+<topic id="t0" style-id="ms0"><title>根</title><children><topics type="attached">
+<topic id="c1" style-id="as1"><title>A</title></topic>
+<topic id="c2" style-id="as2"><title>B</title></topic>
+<topic id="c3"><title>C</title></topic>
+</topics></children></topic><title>画布</title></sheet></xmap-content>`;
+
+  const mkStyles = () => `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<xmap-styles xmlns="urn:xmind:xmap:xmlns:styles:2.0" xmlns:fo="http://www.w3.org/1999/XSL/Format" xmlns:svg="http://www.w3.org/2000/svg" version="2.0">
+<styles>
+<master-styles><style id="ms0" type="topic"><topic-properties svg:fill="#333333"/><font-properties fo:color="#FFFFFF"/></style></master-styles>
+<automatic-styles>
+<style id="as2" type="topic" based-on="as1"><font-properties fo:font-size="24pt" fo:font-weight="bold"/></style>
+<style id="as1" type="topic" based-on="ms0"><topic-properties svg:fill="#FF0000"/><font-properties fo:color="#FFFFFF" fo:font-style="italic" fo:text-decoration="line-through"/></style>
+</automatic-styles>
+</styles></xmap-styles>`;
+
+  /*
+   * 包一层 try/catch：被检查的东西坏掉时**必须报失败，不能把进程崩掉**。
+   *
+   * 早先这里直接 await，于是「坏 styles.xml 向上抛」那次变异让整个测试文件
+   * 在 ⑤ 处直接终止 —— 后面的用例一条都没跑，看着像「抓到了」，其实漏了大半
+   * （M6 变异实测：进程退出码非 0，但没有任何一条 ✗）。
+   */
+  const read = async (extra) => {
+    const files = [{ name: 'content.xml', data: new TextEncoder().encode(mkContent()) }];
+    for (const f of extra || []) files.push(f);
+    const zb = await X.zipWrite(files);
+    try {
+      const r = await X.readXMind(new Uint8Array(zb));
+      const root = JSON.parse(r.sheets[0].content).root;
+      return { root, kids: root.children || [], err: null };
+    } catch (e) {
+      return { root: null, kids: [], err: String(e?.message || e) };
+    }
+  };
+
+  const withStyles = async () => read([
+    { name: 'styles.xml', data: new TextEncoder().encode(mkStyles()) },
+  ]);
+
+  // ① 标红/白字必须回来（早先全丢）
+  {
+    const { kids } = await withStyles();
+    eq(kids[0].data.background, '#FF0000', '★ A 的填充色回来了');
+    eq(kids[0].data.color, '#FFFFFF', '★ A 的文字色回来了');
+    eq(kids[0].data['font-style'], 'italic', '★ A 的斜体回来了');
+    eq(String(kids[0].data['font-strikethrough']), 'true', '★ A 的删除线回来了');
+  }
+
+  // ② based-on 链：自己的覆盖父，父的补自己的缺
+  {
+    const { kids } = await withStyles();
+    eq(kids[1].data.background, '#FF0000', '★ B 继承到 as1 的填充（链末端优先是 as2 自己没有 fill）');
+    eq(kids[1].data['font-size'], '24', '★ B 自己的字号 24pt → 24');
+    eq(kids[1].data['font-weight'], 'bold', '★ B 自己的加粗');
+    eq(kids[1].data['font-style'], 'italic', '★ B 继承 as1 的斜体');
+  }
+
+  // ③ 没有 style-id 的节点不该凭空长出样式
+  {
+    const { kids } = await withStyles();
+    eq(kids[2].data.background, undefined, 'C 没挂 style-id，不带填充');
+    eq(kids[2].data['font-size'], undefined, 'C 不带字号');
+  }
+
+  // ④ 没有 styles.xml 时**退化**，不能崩、也不能编造样式
+  {
+    const { root, kids } = await read([]);
+    ok(!!root, '★ 缺 styles.xml 时仍能导入（坏样式表不该连累正文）');
+    eq(kids[0].data.background, undefined, '缺 styles.xml 时不编造填充色');
+  }
+
+  // ⑤ styles.xml 是坏 XML 时，正文照样导入
+  {
+    const { root, err } = await read([
+      { name: 'styles.xml', data: new TextEncoder().encode('<xmap-styles><style') },
+    ]);
+    ok(!!root && root.data.text === '根',
+      '★ styles.xml 坏掉不影响正文解析（早先会整份导入失败）', err || '');
+  }
+
+  // ⑥ based-on 成环不能死循环
+  {
+    const cyc = `<?xml version="1.0"?><xmap-styles xmlns:svg="http://www.w3.org/2000/svg">
+      <style id="x" type="topic" based-on="y"><topic-properties svg:fill="#111111"/></style>
+      <style id="y" type="topic" based-on="x"><topic-properties svg:fill="#222222"/></style></xmap-styles>`;
+    const t0 = Date.now();
+    const { kids } = await read([
+      { name: 'styles.xml', data: new TextEncoder().encode(cyc) },
+    ]);
+    ok(Date.now() - t0 < 5000, '★ based-on 成环不会卡死');
+    // 把 c1 的 style-id 换成环里的 id 才能真正走到链上
+    const files = [
+      { name: 'content.xml', data: new TextEncoder().encode(mkContent().replace('as1', 'x').replace('as2', 'y')) },
+      { name: 'styles.xml', data: new TextEncoder().encode(cyc) },
+    ];
+    const zb = await X.zipWrite(files);
+    let k = [];
+    try { k = JSON.parse((await X.readXMind(new Uint8Array(zb))).sheets[0].content).root.children; }
+    catch (e) { k = []; }
+    ok(!!(k[0]?.data?.background), '成环时仍能取到样式，不死循环');
+  }
+
+  // ⑦ 源码契约：老版路径必须**读 styles.xml**
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    const i = src.indexOf('parseLegacy(legacy');
+    ok(i >= 0, '能定位老版解析调用点');
+    const seg = src.slice(i, i + 200);
+    ok(/LegacyStylesEntry/.test(seg), '★ 老版解析必须一并读 styles.xml');
+    const j = src.indexOf('function buildKmFromXmlTopic');
+    ok(/applyStyle\(data/.test(src.slice(j, j + 900)),
+      '★ 老版节点构建必须套用样式');
+  }
+}
+
 group('BUG 107 · 进度 progress 1..9 必须在 XMind 往返中原样保住');
 
 {

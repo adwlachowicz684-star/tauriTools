@@ -296,6 +296,8 @@ const NativeEntry = 'kityminder.json';
 const MetadataEntry = 'metadata.json';
 const ManifestEntry = 'manifest.json';
 const LegacyContentEntry = 'content.xml';
+/** XMind 8 的样式表：topic 只带 `style-id`，真正的属性在 styles.xml 里 */
+const LegacyStylesEntry = 'styles.xml';
 
 /**
  * XMind 进度标记（完成百分比升序）↔ kityminder progress(**1..9**）
@@ -353,7 +355,7 @@ const StyleMap = [
 /** 这几个键 XMind 里带 px 单位（其余原样，font-size 走 pt） */
 const StylePxKeys = new Set(['node-radius', 'node-stroke-width', 'node-line-width']);
 
-export const XMIND_ENTRIES = { ContentEntry, NativeEntry, MetadataEntry, ManifestEntry, LegacyContentEntry };
+export const XMIND_ENTRIES = { ContentEntry, NativeEntry, MetadataEntry, ManifestEntry, LegacyContentEntry, LegacyStylesEntry };
 
 /* ---------------- 小工具（对应 C# 的 Str/Num/Bool 等） ---------------- */
 
@@ -1181,15 +1183,16 @@ function ownDescendants(el, name) {
   return out;
 }
 
-function parseLegacy(xml) {
+function parseLegacy(xml, stylesXml = null) {
   const doc = parseXml(xml);
+  const styles = parseLegacyStyles(stylesXml);
   const sheets = [];
   let index = 0;
   for (const sheetEl of descendantsNamed(doc.documentElement, 'sheet')) {
     const topicEls = childrenOf(sheetEl, 'topic');
     if (!topicEls.length) continue;
     index++;
-    const kmRoot = buildKmFromXmlTopic(topicEls[0]);
+    const kmRoot = buildKmFromXmlTopic(topicEls[0], 0, styles);
     if (!kmRoot) continue;   // 根节点就超深 —— 异常文件，跳过这张画布
     const titleEl = childrenOf(sheetEl, 'title')[0];
     const title = titleEl?.textContent?.trim();
@@ -1205,7 +1208,66 @@ function parseLegacy(xml) {
   return { sheets };
 }
 
-function buildKmFromXmlTopic(t, depth = 0) {
+/**
+ * 解析 XMind 8 的 styles.xml → `style-id` → 属性表。
+ *
+ * ⓘ 老版 content.xml 的 topic **不带任何视觉属性**，只有一个 `style-id`
+ *   指向 styles.xml 里的 <style>。不读这个文件，节点自定义样式就**全丢**
+ *   —— 而 zen 路径（content.json）早就读得好好的（见 StyleMap）。
+ *   两条路只修了一条，于是「从 XMind 8 导入 → 标红的重点节点变成默认色」。
+ *
+ * **不逐个枚举 XMind 的属性名**：把 <topic-properties> / <font-properties>
+ *   上的属性**整张收下来**，交给已有的 applyStyle 挑选它认识的那几个键。
+ *   XMind 8 与 zen 在键名上并不完全一致（如圆角/描边各家叫法不同），
+ *   枚举反而会漏；且收到不认识的键也无害 —— applyStyle 只认 StyleMap 里的。
+ *
+ * <style> 可以 `based-on` 继承主样式（主题给的默认配色），要顺着链把父样式
+ *   铺在下面、子样式盖在上面；带环保护，坏文件不至于死循环。
+ */
+function parseLegacyStyles(xml) {
+  const map = new Map();
+  if (!xml || !xml.trim()) return map;
+  let doc;
+  try { doc = parseXml(xml); } catch { return map; }   // 坏样式表不该连累正文
+  for (const st of descendantsNamed(doc.documentElement, 'style')) {
+    const id = st.getAttribute('id');
+    if (!id) continue;
+    const props = {};
+    for (const p of descendantsNamed(st, 'topic-properties')
+      .concat(descendantsNamed(st, 'font-properties'))) {
+      for (const a of p.attributes || []) {
+        const v = String(a.value ?? '').trim();
+        // 用带前缀的限定名（svg:fill / fo:color），与 zen 的 properties 键一致
+        if (v) props[a.name] = v;
+      }
+    }
+    map.set(id, { props, base: st.getAttribute('based-on') || st.getAttribute('basedOn') || '' });
+  }
+  return map;
+}
+
+/** 顺 based-on 链把样式铺开：先父后子，子覆盖父 */
+function resolveLegacyStyle(map, id) {
+  if (!id || !map || !map.size) return null;
+  const chain = [];
+  const seen = new Set();
+  let cur = id;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const e = map.get(cur);
+    if (!e) break;
+    chain.push(e.props);
+    cur = e.base;
+  }
+  // 从最后一个（最老的祖先）往前铺，保证链的末端优先
+  const out = {};
+  for (let i = chain.length - 1; i >= 0; i--) {
+    for (const k of Object.keys(chain[i])) out[k] = chain[i][k];
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function buildKmFromXmlTopic(t, depth = 0, styles = null) {
   if (depth > MAX_DEPTH) return null;   // 超深直接截断，不再下钻
   const data = {
     id: t.getAttribute('id') || newNodeId(),
@@ -1218,6 +1280,10 @@ function buildKmFromXmlTopic(t, depth = 0) {
     const text = (notesEl.textContent || '').trim();
     if (text) data.note = text;
   }
+
+  // 视觉属性在 styles.xml 里（topic 只带 style-id），见 parseLegacyStyles
+  const st = resolveLegacyStyle(styles, t.getAttribute('style-id'));
+  if (st) applyStyle(data, { properties: st });
 
   const href = t.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || t.getAttribute('href');
   if (href && href.trim()) data.hyperlink = href;
@@ -1260,7 +1326,7 @@ function buildKmFromXmlTopic(t, depth = 0) {
   if (topicsEl) {
     for (const topics of childrenOf(topicsEl, 'topics')) {
       for (const child of childrenOf(topics, 'topic')) {
-        const kmChild = buildKmFromXmlTopic(child, depth + 1);
+        const kmChild = buildKmFromXmlTopic(child, depth + 1, styles);
         if (!kmChild) continue;   // 超深被截断
         children.push(kmChild);
         pairs.push({ xid: child.getAttribute('id') || '', km: kmChild });
@@ -1521,7 +1587,9 @@ export async function readXMind(input, saveAsset = null) {
   if (!wb) {
     const legacy = readText(LegacyContentEntry);
     if (legacy) {
-      const r = parseLegacy(legacy);
+      // styles.xml 一起读：topic 的视觉属性全在它里面，只读 content.xml
+      // 会把节点自定义样式（标红、字号、加粗…）全部丢掉
+      const r = parseLegacy(legacy, readText(LegacyStylesEntry));
       if (r.sheets.length) { wb = r; source = 'legacy'; }
     }
   }
