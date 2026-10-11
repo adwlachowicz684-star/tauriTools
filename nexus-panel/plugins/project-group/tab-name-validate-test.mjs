@@ -151,4 +151,52 @@ t('校验在 updateConfig 之前', iVal > 0 && iUpd > 0 && iVal < iUpd, `validat
 t('重名检查仍在（isTabNameTaken）', seg.includes('isTabNameTaken('));
 t('从 utils/tabs 引入 validateTabName', /import\s*\{[^}]*validateTabName[^}]*\}\s*from\s*'\.\.\/utils\/tabs'/.test(fpxTxt));
 
+/* ------------------------------------------------------------------ */
+console.log('\n=== 6. 按解析出的清单逐条验证（清单改了自动跟着变）===');
+/*
+ * 上面第 4 节用的是**手写**的坏名字表。它测得准，但清单在 Rust 侧增删时
+ * 这里不会跟着变 —— 新增一个保留名而前端忘了同步，第 2 节会报红（那是好事），
+ * 但"前端真的挡住了每一个"这件事没人验证。
+ *
+ * 所以这里遍历**第 1 节解析出来的**清单，逐个喂给 validateTabName：
+ * 清单改了，覆盖面自动跟着改，不需要人来维护第二份表。
+ */
+{
+  let missChar = 0;
+  for (const ch of rustChars) {
+    if (validateTabName(`a${ch}b`) === null) missChar++;
+  }
+  t('每个后端非法字符都被前端挡住', missChar === 0, `漏 ${missChar} 个`);
+
+  let missRes = 0;
+  for (const r of rustRes) {
+    /* 大小写不敏感：Windows 上 `con` 与 `CON` 是同一个 */
+    if (validateTabName(r.toLowerCase()) === null) missRes++;
+  }
+  t('每个后端保留名（含小写形式）都被挡住', missRes === 0, `漏 ${missRes} 个`);
+}
+
+/* ------------------------------------------------------------------ */
+console.log('\n=== 7. 报错原因两侧要能对上（否则用户拿到两套说法）===');
+/*
+ * 判据一致还不够：同一条规则两侧给出**不同说法**，用户改一处得到一句、
+ * 换个入口得到另一句，会以为是两个不同的限制。
+ *
+ * ⚠️ 取模板时必须容忍转义引号 —— 非法字符那条写的是 `\" < >`，
+ * 用 `[^"]+` 会在转义引号处**截断**，于是那条永远取不到，
+ * 表现出"前端多了一条后端没有的说法"，把人引向完全错误的方向。
+ */
+{
+  const rsMsgs = [...sysTxt.matchAll(/format!\("\{what\}((?:[^"\\]|\\.)*)"\)/g)]
+    .map((x) => x[1].replace(/\\(.)/g, '$1'));
+  const tsMsgs = [
+    '不能为空', '不能包含控制字符', '不能包含 \\ / : * ? " < > | 等字符',
+    '不能是 . 或 ..', '不能以句点结尾（Windows 会静默去掉，导致配置里的名字与磁盘不一致）',
+    `过长（上限 ${rustMax} 字符）`, '是 Windows 保留设备名（CON / NUL / COM1 等），无法创建',
+  ];
+  t('后端报错模板解析到了', rsMsgs.length >= 7, `${rsMsgs.length} 条`);
+  const missed = tsMsgs.filter((m) => !rsMsgs.some((r) => r === m));
+  t('前端每条报错在后端都有同一说法', missed.length === 0, missed.join(' | '));
+}
+
 done();
