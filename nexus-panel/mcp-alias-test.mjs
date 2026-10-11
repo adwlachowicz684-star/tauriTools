@@ -43,7 +43,12 @@ function fnBody(source, header) {
 console.log('\n=== 1. 别名表 ===');
 t('存在 ALIASES 常量', /const ALIASES:/.test(rs));
 
-const aliasBlock = rs.slice(rs.indexOf('const ALIASES'), rs.indexOf('/// 把可能是原版名字'));
+/*
+ * 两端都锚在**代码**上。终点原先锚的是 `/// 把可能是原版名字` 这条文档注释：
+ * 注释一改写，indexOf 返回 -1，slice(start, -1) 变空串 → 解析出 0 条，
+ * 报错是"解析出别名映射 0 条"，离"改了句注释"十万八千里。
+ */
+const aliasBlock = rs.slice(rs.indexOf('const ALIASES'), rs.indexOf('fn canonical_tool(name: &str)'));
 const pairs = [...aliasBlock.matchAll(/\("([a-z_]+)",\s*"([a-z_]+)",\s*(None|Some\(\("(\w+)",\s*"(\w+)"\)\))/g)]
   .map((m) => ({ old: m[1], neu: m[2], patch: m[3] === 'None' ? null : { k: m[4], v: m[5] } }));
 /* 不写死条数 —— 加别名是正常的，写成常量会变成"每次加都要改测试"，
@@ -117,7 +122,7 @@ t('scan_content 在 root 为空时回退 resolve_target',
 const iRoot = scanSeg.indexOf('s("root")');
 const iFallback = scanSeg.indexOf('resolve_target(&args, true)');
 t('回退在 root 之后判断（显式 root 优先）',
-  iRoot >= 0 && iFallback > iRoot, `root=${iRoot} fallback=${iFallback}`);
+  iRoot >= 0 && iFallback >= 0 && iFallback > iRoot, `root=${iRoot} fallback=${iFallback}`);
 
 /* ---------- 3. 归一化与开关的顺序 ---------- */
 console.log('\n=== 3. 顺序（关键设计）===');

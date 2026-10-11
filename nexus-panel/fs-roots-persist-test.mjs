@@ -23,7 +23,12 @@ const t = (name, cond, extra = '') => {
 };
 
 /** 取 fs_op 授权段的源码（从状态定义到 disallow_root 结束） */
-const i0 = rs.indexOf('/* ---------------- fs_op 授权的持久化');
+/*
+ * 起点锚在**代码**上（`struct FsRootsState {`），不锚在分节注释上：
+ * 注释一改写/重排，indexOf 就返回 -1，slice(a, -1) 变成空串，
+ * 这一段的断言要么集体误红、要么静默变宽 —— 报错离"改了个注释"很远。
+ */
+const i0 = rs.indexOf('struct FsRootsState {');
 const i1 = rs.indexOf('#[tauri::command]\npub fn fs_op');
 const seg = rs.slice(i0, i1);
 
@@ -53,7 +58,7 @@ t('加载时重新 canonicalize', /let Ok\(canon\) = p\.canonicalize\(\) else \{
 t('加载时重新过 is_forbidden_root', /if is_forbidden_root\(&canon\) \{ continue; \}/.test(rs));
 const iCanon = rs.indexOf('let Ok(canon) = p.canonicalize() else { continue };');
 const iForbid = rs.indexOf('if is_forbidden_root(&canon) { continue; }');
-t('顺序：先 canonicalize 再判 forbidden', iCanon > 0 && iForbid > iCanon,
+t('顺序：先 canonicalize 再判 forbidden', iCanon >= 0 && iForbid >= 0 && iForbid > iCanon,
   `canon=${iCanon} forbid=${iForbid}`);
 t('读失败当作空列表（首次启动本就没文件，不该报错）',
   /Err\(_\) => return Vec::new\(\)/.test(rs));
