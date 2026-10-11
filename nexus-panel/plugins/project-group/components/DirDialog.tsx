@@ -60,7 +60,27 @@ export function DirDialog({
       setInput(p);
     } catch (e: any) {
       if (loadSeq.current !== seq) return;
+      /*
+       * 失败时必须把 path 与列表一起清掉，**不能停留在上一个目录**。
+       *
+       * 不清的后果是一组互相矛盾的界面：地址栏已经显示成用户刚敲的那条
+       * （input 是他自己 onChange 敲进去的），列表却还是上一个目录的内容，
+       * 底下只有一行红字。此时点「选择此文件夹」交出去的是**旧目录** ——
+       * 搬家会搬到他根本没打算去的地方、添加卡片会添加错目录，
+       * 而界面从头到尾没有任何一处说明"你选的不是地址栏那个"。
+       *
+       * 这与上面 quickRoots 失败的处理是同一个道理（失败就不该假装成功）：
+       * 那里失败后 path 始终是空，所以「选择此文件夹」自动禁用；
+       * 这里同样靠 `disabled={!path}` 挡住，不额外加状态。
+       *
+       * 刻意**保留** input：留着用户刚敲的路径，他改一下就能再试一次。
+       *
+       * 对照：agent-flow/DirPicker 的 load 失败会 setEntries([])，
+       * 但没清 cwd —— 那是同一处形状的另一半，不属本插件，未动。
+       */
       setErr(e?.message ?? String(e));
+      setPath('');
+      setEntries([]);
     } finally {
       if (loadSeq.current === seq) setLoading(false);
     }
