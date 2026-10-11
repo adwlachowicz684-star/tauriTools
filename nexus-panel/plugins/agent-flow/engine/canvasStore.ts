@@ -9,7 +9,7 @@
  * 类型走 import type（编译后消失），值**不用静态 import**：
  * 用惰性取值而不是在模块顶层直接 import —— 见下面 canvasConfigOf 的实现。
  */
-import { type CanvasConfig, emptyCanvasConfig } from './canvasConfig';
+import { type CanvasConfig, type McpServer, emptyCanvasConfig } from './canvasConfig';
 import type { CanvasParam } from './canvasParams';
 import { SECRET_PATHS } from './sanitize';
 
@@ -395,6 +395,42 @@ export function serialize(state: PersistedState): string {
 }
 
 /**
+ * 反序列化一份画布配置。
+ *
+ * ============ 为什么必须要有这一步 ============
+ *
+ * 存档里的 config 是**手改过 / 旧版本写下的**，字段可能是任何东西：
+ * mcpServers 是对象而不是数组、env.vars 是 null、params 是字符串。
+ * 直接透传的话，validateCanvasConfig 会对着非数组调用 for...of →
+ * 抛在渲染阶段，整张画布打不开。
+ *
+ * 所以这里按字段各自归一化，缺的用 emptyCanvasConfig() 补 ——
+ * 与"没存过配置"拿到的是同一份结构（canvasConfigOf 那条测试盯着这一点）。
+ */
+export function normalizeCanvasConfig(raw: unknown): CanvasConfig {
+  const base = emptyCanvasConfig();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return base;
+
+  const o = raw as Record<string, unknown>;
+
+  const servers = Array.isArray(o.mcpServers)
+    ? (o.mcpServers as unknown[]).filter(
+        (x): x is McpServer => !!x && typeof x === 'object' && !Array.isArray(x),
+      )
+    : base.mcpServers;
+
+  const rawVars = (o.env as { vars?: unknown } | null | undefined)?.vars;
+  const vars: Record<string, string> =
+    rawVars && typeof rawVars === 'object' && !Array.isArray(rawVars)
+      ? (rawVars as Record<string, string>)
+      : {};
+
+  const params = Array.isArray(o.params) ? (o.params as CanvasParam[]) : (base.params ?? []);
+
+  return { mcpServers: servers, env: { vars }, params };
+}
+
+/**
  * 反序列化并做完整性修复。
  *
  * 为什么不能直接用 JSON.parse 的结果：
@@ -429,6 +465,13 @@ export function deserialize(raw: string | null): PersistedState {
       edges: Array.isArray(x.edges) ? x.edges : [],
       createdAt: typeof x.createdAt === 'number' ? x.createdAt : Date.now(),
       updatedAt: typeof x.updatedAt === 'number' ? x.updatedAt : Date.now(),
+      /*
+       * config 必须带上 —— 漏掉它的后果是：画布上配的 MCP 服务与画布参数
+       * **刷新后全部消失**，而节点、连线、名字都在。
+       * 于是用户看到的是"我的流程还在，但服务没了"，且没有任何报错 ——
+       * 他只会以为自己没存过。
+       */
+      config: normalizeCanvasConfig(x.config),
     }));
 
   // 去重 id，避免 React key 冲突导致渲染错乱

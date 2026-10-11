@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, sortForDisplay, serialize, deserialize, toMeta,
-  redactNodes, redactSecrets,
+  redactNodes, redactSecrets, normalizeCanvasConfig,
   saveToStorage, loadFromStorage, STORAGE_KEYS,
 } from '../engine/canvasStore';
 
@@ -518,4 +518,60 @@ test('守卫: 列表组件里不再有未定义的 active / setSel', () => {
     assert.ok(!/\bsetSel\b/.test(src), `${f} 里还有 setSel`);
     assert.ok(!/\bactive\s*&&/.test(src), `${f} 里还有 active &&`);
   }
+});
+
+/*
+ * 【数据丢失】存档里带 config 的画布，读出来 config 必须是同一份。
+ *
+ * deserialize 以前逐字段重建 Canvas 时**把 config 整个漏掉了**：
+ * 节点、连线、名字都在，唯独画布级配置（MCP 服务 + 画布参数）消失。
+ *
+ * 危害在于没有痕迹：用户看到"我的流程还在，但服务没了"，
+ * 只会以为自己没存过 —— 而节点里 {{params.路径}} 的引用会静默取空。
+ */
+test('存档往返：画布级配置（MCP 服务与画布参数）不能被丢掉', () => {
+  const c = {
+    ...makeCanvas('带配置的画布'),
+    config: {
+      mcpServers: [{ id: 's1', name: '文件服务', command: 'npx -y fs' }],
+      env: { vars: { PATH_LIKE: '/tmp' } },
+      params: [{ id: 'p1', name: '路径', value: '/data' }],
+    },
+  };
+  const back = deserialize(serialize({ canvases: [c], activeId: c.id }));
+  const cfg = back.canvases[0].config;
+  assert.ok(cfg, 'config 必须还在 —— 漏掉它就是"流程还在、服务没了"');
+  assert.equal(cfg!.mcpServers.length, 1);
+  assert.equal(cfg!.mcpServers[0].name, '文件服务');
+  assert.equal(cfg!.params?.length, 1);
+  assert.equal(cfg!.env.vars.PATH_LIKE, '/tmp');
+});
+
+/* 没存过配置的画布，读出来要拿到与 emptyCanvasConfig 同构的空配置 */
+test('存档往返：没存过 config 的画布读出来是空配置（不是 undefined）', () => {
+  const c = { ...makeCanvas('没配过') };
+  const back = deserialize(serialize({ canvases: [c], activeId: c.id }));
+  const cfg = back.canvases[0].config;
+  assert.ok(cfg, '给一份空配置，让调用方不必到处判 undefined');
+  assert.deepEqual(cfg!.mcpServers, []);
+  assert.deepEqual(cfg!.env.vars, {});
+});
+
+/*
+ * config 来自存档，可能是手改坏的。
+ * 直接透传会让 validateCanvasConfig 对非数组 for...of → 抛在渲染阶段 → 画布打不开。
+ */
+test('normalizeCanvasConfig: 坏字段归一，但不崩', () => {
+  const a = normalizeCanvasConfig({ mcpServers: 'nope', env: { vars: null }, params: 'nope' });
+  assert.deepEqual(a.mcpServers, []);
+  assert.deepEqual(a.env.vars, {});
+  assert.deepEqual(a.params, []);
+
+  const b = normalizeCanvasConfig(null);
+  assert.deepEqual(b.mcpServers, []);
+
+  // 数组里的非对象条目要丢掉，但不能因此把整份配置丢了
+  const cc = normalizeCanvasConfig({ mcpServers: [{ id: 's1', name: 'ok' }, 'junk', null] });
+  assert.equal(cc.mcpServers.length, 1);
+  assert.equal(cc.mcpServers[0].id, 's1');
 });
