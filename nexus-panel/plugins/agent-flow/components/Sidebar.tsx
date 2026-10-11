@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import NodeDesc from './NodeDesc';
 import { presetsByCategory, getDef, allPresets } from '../nodes';
-import { canPresetOn } from '../nodes/registry';
+/* canPresetOn —— 判据（能不能）；hasDef —— 原因（是没有，还是有但已废弃） */
+import { canPresetOn, hasDef } from '../nodes/registry';
 import { confirm, alert, prompt } from '../../../js/dialog.js';
 import { useNexus } from '../../../src/nexus-react';
 import {
@@ -327,7 +328,24 @@ export default function Sidebar({
        * 而侧栏里根本不列出 legacy 的自定义预设 —— 做完了却看不见，
        * 用户只会以为导入丢了。
        */
-      const r = importCustomPresets(text, { isKnownType: (t) => canPresetOn(t) });
+      /*
+       * 判据与 allPresets() / 存为自定义同一条（canPresetOn）。
+       *
+       * 但**原因**要分开说：canPresetOn 不成立有两种情况 ——
+       *   ① 本机真没装这种节点；
+       *   ② 装了，但它已并入另一个节点（legacy），不该再当新节点的起点。
+       * 只报一句"本机没有"的话，② 会被说成 ①：用户明明装过 ocr，
+       * 却被告知"没有" —— 他会去查安装，而真正的原因是那条已废弃。
+       *
+       * 判据放宽到 canPresetOn 之后这条原因必须跟上：判据宽了、
+       * 文案没跟着改，报出来的就是假原因（不报错，只是把人支到错的方向）。
+       */
+      const r = importCustomPresets(text, {
+        isKnownType: (t) => canPresetOn(t),
+        skipReason: (t) => (hasDef(t)
+          ? `「${t}」已并入另一个节点，不能再作为新节点的起点`
+          : `本机没有「${t}」这种节点`),
+      });
       refresh();
       const note = r.skipped.length ? `\n跳过 ${r.skipped.length} 条：${r.skipped.join('、')}` : '';
       await alert({
