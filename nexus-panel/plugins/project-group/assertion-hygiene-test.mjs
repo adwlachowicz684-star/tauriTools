@@ -71,9 +71,14 @@ function walk(root, exts) {
  * 判据范围不跟着跨，就等于把这些断言一律判死。
  */
 const SRC = [
-  ...walk(path.join(PLUG, '..'), ['.ts', '.tsx', '.css', '.js']),
+  ...walk(ROOT, ['.ts', '.tsx', '.css', '.js', '.mjs']),
   ...walk(RS, ['.rs']),
-];
+  /*
+   * 排除本文件：第 6 节的探针字样是一条**字符串字面量**（在代码里，不在注释里），
+   * 把自己算进语料后 strippedAll 里也有它 → 探针那条自检反而变成假绿
+   * （实测：加上 .mjs 后第 6 节"注释类"立刻红）。
+   */
+].filter((p) => !p.endsWith('assertion-hygiene-test.mjs'));
 let fullAll = ''; let strippedAll = '';
 for (const p of SRC) {
   try {
@@ -85,55 +90,148 @@ for (const p of SRC) {
 /** 名字里出现这些词 = 已经诚实声明"这条钉的是注释/文档" */
 const HONEST = /注释|文档头|说明|注明|写着|提醒|标明|标注|文档/;
 
-const tests = fs.readdirSync(PLUG).filter((f) => f.endsWith('-test.mjs') && f !== 'assertion-hygiene-test.mjs');
+/*
+ * ⚠ 扫描范围必须**全仓**，不能只扫本插件。
+ *
+ * 第 5 节（cwd）已经栽过一次：只扫 plugins/project-group，于是根层的
+ * dead-module-test.mjs 一直查不出来。第 1~4 节漏网面完全一样 ——
+ * 而它们守的是"断言静默失效"（锚点是注释 / 只验注释 / 顺序恒真 / 占位恒真），
+ * 恰恰是别的目录里那批没人回头看的测试最容易留的坑。
+ *
+ * 代价：命中面从 11 个涨到全仓 201 个，可能一次扫出多处存量。
+ * 存量该逐条修（改名或补存在性判定），而不是把范围收回去 ——
+ * 收回去等于把漏网面原样保留。
+ */
+const tests = walk(ROOT, ['-test.mjs'])
+  .filter((p) => !p.endsWith('assertion-hygiene-test.mjs'));
+const rel = (p) => path.relative(ROOT, p);
+
+/*
+ * 判定：这个字面量锚点是不是"不该用"的注释锚点。
+ *
+ * 放行两类：
+ *   1. 裸标记 `'/**'`、`'//'` —— **结构性**用法（找一个注释块的起点），
+ *      不依赖措辞：它们被 migrate 用来切文档注释区（bakDoc / c0）。
+ *   2. **虚线分节条** —— `/* --------- 名字 ---` / `// ---- 名字 ----`。
+ *      这类是文件的**既成结构**（mindmap 的 index.js / editor/index.html
+ *      全靠它分节），措辞跟着节名走、形状固定，跟"随手写的说明"不是一回事。
+ *
+ * 其余带文字的注释锚点一律判坏：`// 关键：km.exportData()` 这种一改写
+ * 就返回 -1，slice(a, -1) 变空、slice(a, -1) 的兄弟写法更是直接静默变宽。
+ */
+const badAnchor = (lit) => {
+  const mm = lit.match(/^\s*(\/\/\/|\/\/|\/\*)/);
+  if (!mm) return false;                       // 不是注释开头的锚点
+  const rest = lit.slice(mm[0].length).replace(/^[/*]+/, '').replace(/^\s+/, '');
+  if (!/\S/.test(rest)) return false;          // 裸标记
+  if (/^-{3,}/.test(rest)) return false;       // 虚线分节条
+  return true;
+};
+
+/*
+ * 存在性判定的两种合法形态（第 3 节用）：
+ *
+ *   1. `x >= 0` / `x > 0` / `x !== -1` —— 要求它存在；
+ *   2. `x === -1 || …` —— **明确承认它可能不存在**，并走另一分支。
+ *
+ * 第 2 种本轮实测：md-render 那条
+ * `slug 排在 sanitize 之后（当前无 sanitize 时成立）`
+ * 写的就是 `iSan === -1 || iSlug > iSan`，名字里已经把"没有 sanitize
+ * 时这条成立"写明了 —— 判据不认它，就会逼人把一条**诚实**的断言改成
+ * 不诚实的（硬加 `iSan >= 0` 反而让它必须先造一个 sanitize）。
+ */
+const existChecked = (stmt, side) => new RegExp(
+  `${side.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:>=?\\s*0|!==?\\s*-?\\s*1|={2,3}\\s*-?\\s*1)`
+).test(stmt);
+
+/*
+ * 顺序比较里"缺了反而恒真"的那一端 —— 推导见第 3 节注释。
+ *
+ * **判据只有这一处**：护栏本体和两条元断言共用同一函数。
+ * 写成两处（循环里按操作符取、元断言里各写一遍）必然漂移 ——
+ * 上一版的教训就是"两端都判"和"只判一端"两套说法混着用。
+ */
+const vacuousSideOf = (cmpExpr) => {
+  const m = cmpExpr.match(/(<=?|>=?)/);
+  if (!m) return '';
+  const [lhs, rhs] = cmpExpr.split(m[0]);
+  return m[0][0] === '<' ? lhs.trim() : rhs.trim();
+};
 
 console.log('=== 1. 锚点不能是注释 ===');
 {
   const bad = [];
   for (const f of tests) {
-    const s = fs.readFileSync(path.join(PLUG, f), 'utf8');
+    const s = fs.readFileSync(f, 'utf8');
     for (const m of s.matchAll(/(?:indexOf|lastIndexOf|search)\(\s*'([^']*)'/g)) {
-      const lit = m[1];
-      /*
-       * 只钉"注释里带文字"的锚点（`/// 迁移前把…`）—— 那才依赖措辞，
-       * 一改写就漂。
-       * 裸标记 `'/**'`、`'//'` 是**结构性**用法（找一个注释块的起点），
-       * 不依赖措辞，允许：它们被 migrate 用来切文档注释区（bakDoc / c0）。
-       */
-      const mm = lit.match(/^\s*(\/\/\/|\/\/|\/\*)/);
-      if (!mm) continue;                       // 不是注释开头的锚点，放行
-      const rest = lit.slice(mm[0].length).replace(/^[/*]+/, '');
-      if (/\S/.test(rest)) bad.push(`${f}: ${lit.slice(0, 40)}`);
+      if (badAnchor(m[1])) bad.push(`${rel(f)}: ${m[1].slice(0, 40)}`);
     }
   }
   t('没有用注释当 indexOf/slice 锚点', bad.length === 0, bad.slice(0, 5).join(' | '));
+  /*
+   * 放行分节条是**有代价的让步**（节名照样可能被改，只是概率低得多），
+   * 所以必须钉住"让步的边界"：不能因为它就把整条规则一起放掉。
+   * 少了这三条，把 badAnchor 改成恒 false 也是绿的。
+   */
+  t('判据仍认得散文注释锚点', badAnchor('// 关键：km.exportData()'));
+  t('判据仍认得不带虚线的分节名', badAnchor('/* 底部状态条'));
+  t('虚线分节条确实被放行', !badAnchor('/* ------------------------- 附件打开')
+    && !badAnchor('// ---- 显示定位跟随 ----'));
 }
+
+/*
+ * 验的是**运行时产物**的断言要放行。
+ *
+ * 本轮实测：inspector-test 那条「信息条显示尺寸」的 subject 是
+ * `badge.textContent`（真渲染出来的 DOM 文本），不是源码。名字没撒谎 ——
+ * 撒谎的是这条判据的前提（"正则都拿去扫源码"）。
+ * 不放行就会逼人把一条**真断言**改成「注释：…」，那才是把覆盖面改没了。
+ */
+const RUNTIME_SUBJECT = /\.(textContent|innerHTML|outerHTML|innerText)\b|document\.|JSON\.stringify|\.join\(/;
+
+/** 取正则字面量之后那一小段（够判 subject 即可） */
+const tailAfter = (s, m) => s.slice(m.index + m[0].length, m.index + m[0].length + 160);
+
+/** 抽成函数：好让下面的反向自检拿探针直接验它，而不是只信"扫出来是干净的" */
+const commentOnlyHit = (name, pat, tail) => {
+  if (HONEST.test(name)) return false;            // 已诚实声明
+  if (/^\s*!/.test(tail)) return false;           // 取反断言另论
+  if (RUNTIME_SUBJECT.test(tail)) return false;   // 验的是运行时产物
+  /*
+   * 直接**编译这个正则**去匹配两份副本，而不是先判"是不是纯文本"。
+   * 早先那一版只处理不含正则元字符的模式 ——
+   * `绝不动 \+h` 这种带转义的就被整条跳过，注入回归**没抓到**。
+   */
+  let re;
+  try { re = new RegExp(pat); } catch { return false; }
+  return re.test(fullAll) && !re.test(strippedAll);
+};
 
 console.log('\n=== 2. 只匹配到注释的断言必须诚实改名 ===');
 {
   const bad = [];
   for (const f of tests) {
-    const s = fs.readFileSync(path.join(PLUG, f), 'utf8');
+    const s = fs.readFileSync(f, 'utf8');
     /* 取 `t('名字', /模式/` 这种最常见形式；多行参数不覆盖（那条由第 1 组兜） */
     for (const m of s.matchAll(/t\(\s*'([^']*)'\s*,\s*\/(?!\/)((?:\\.|[^\/\n])+)\//g)) {
-      const name = m[1];
-      let pat = m[2];
-      if (HONEST.test(name)) continue;   // 已诚实声明
-      if (/^\s*!/.test(m[0].slice(m[0].indexOf(',') + 1))) continue; // 取反断言另论
-      /*
-       * 直接**编译这个正则**去匹配两份副本，而不是先判"是不是纯文本"。
-       * 早先那一版只处理不含正则元字符的模式 ——
-       * `绝不动 \+h` 这种带转义的就被整条跳过，注入回归**没抓到**。
-       */
-      let re;
-      try { re = new RegExp(pat); } catch { continue; }
-      if (re.test(fullAll) && !re.test(strippedAll)) bad.push(`${f}: ${name}`);
+      if (commentOnlyHit(m[1], m[2], tailAfter(s, m))) bad.push(`${rel(f)}: ${m[1]}`);
     }
   }
   t('没有"名字验行为、实际只验注释"的断言', bad.length === 0, bad.slice(0, 5).join(' | '));
+  /*
+   * 放行"运行时 subject"是个**有代价的让步**：写宽一点就会把真问题一起放过。
+   * 所以两头都钉住 —— 少了这几条，把 RUNTIME_SUBJECT 改成恒真也是绿的。
+   */
+  const RT_PAT = '\\d+ × \\d+';
+  t('放行前那条确实会被判"只活在注释里"（放行不是空转）',
+    new RegExp(RT_PAT).test(fullAll) && !new RegExp(RT_PAT).test(strippedAll));
+  t('运行时 subject 被放行（护栏不逼人把真断言改名）',
+    commentOnlyHit('信息条显示尺寸', RT_PAT, '.test(badge.textContent), badge.textContent.trim());') === false);
+  t('源码 subject 仍被抓（放行没把真问题一起放过）',
+    commentOnlyHit('取消不 reject', '取消\\*\\*不 reject\\*\\*', '.test(mod));') === true);
 }
 
-console.log('\n=== 3. 顺序断言必须两端都判存在 ===');
+console.log('\n=== 3. 顺序断言的"空跑那一端"必须判存在 ===');
 /*
  * 剥离注释**扫不出这一类**，所以必须单独钉：
  *
@@ -144,13 +242,23 @@ console.log('\n=== 3. 顺序断言必须两端都判存在 ===');
  * 改名（功能完全不变），migrate-test 67 项照常全绿 —— 那条"位置在 plan 之后"
  * 早就空跑了。
  *
- * 判据：参与 `<`/`>` 比较的每一端，都要有 `>= 0` / `> 0` / `!== -1` 兜底。
+ * ⚠️ 判据**不是"两端都判"**，而是只判"缺了反而恒真"的那一端：
+ *
+ *   `X <  Y` / `X <= Y`：X 取 -1 时 `-1 < Y(Y≥0)` 恒真  → 判 X
+ *                        Y 取 -1 时 `X < -1` 恒**假**   → 照样报红，不判
+ *   `X >  Y` / `X >= Y`：Y 取 -1 时 `X(X≥0) > -1` 恒真  → 判 Y
+ *                        X 取 -1 时 `-1 > Y` 恒**假**   → 照样报红，不判
+ *
+ * 上一版要求两端都判，实测**误报**：`iGuard >= 0 && iSend > iGuard` 里
+ * iSend 缺了会让断言直接报红（不是假绿），却照样被点名；逼人硬加
+ * `iSend >= 0` 只是给一条本来正确的断言添冗余。
+ *
  * 形式不限：可以直接写在表达式里，也可以先赋给变量再判（后者更常见）。
  */
 {
   const bad = [];
   for (const f of tests) {
-    const src = fs.readFileSync(path.join(PLUG, f), 'utf8');
+    const src = fs.readFileSync(f, 'utf8');
     /* 先收集 `const V = <含 indexOf 的表达式>` —— 变量名 → true */
     const idxVars = new Set();
     for (const m of src.matchAll(/const\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*\.indexOf\s*\(/g)) {
@@ -179,7 +287,17 @@ console.log('\n=== 3. 顺序断言必须两端都判存在 ===');
         else if (src[j] === ')' && src[j - 1] !== '\\') { depth -= 1; if (depth === 0) break; }
       }
       const stmt = src.slice(m.index, j + 1);
-      if (!/\.indexOf\s*\(/.test(stmt)) continue;
+      /*
+       * ⚠️ 不能先过滤"语句里有没有 .indexOf("。
+       *
+       * 本轮破坏验证实测：把 `setApp.indexOf('a') < setApp.indexOf('b')`
+       * 提成 `const ia = ...; const ib = ...; t(..., ia < ib)` 之后，
+       * 语句里就没有 .indexOf 了 —— **护栏直接失明**，加不加 `>= 0` 都报绿。
+       * 而"提成常量再比较"恰恰是最常见的写法（也是本轮修存量时用的写法）。
+       *
+       * 真正的判据在**两端是不是 indexOf 的结果**（下面 idxVars / 调用形态），
+       * 跟它写不写在这一条语句里无关。
+       */
       /* 只关心含顺序比较的 */
       /*
        * 操作数是「标识符」或「x.indexOf(...) 完整调用」两种形态 ——
@@ -193,19 +311,36 @@ console.log('\n=== 3. 顺序断言必须两端都判存在 ===');
       const nameM = stmt.match(/^t\(\s*['\`]([^'\`]*)/);
       const name = nameM ? nameM[1] : '?';
       for (const c of cmp) {
-        for (const side of [c[1], c[3]]) {
-          const isIdxCall = /\.indexOf\s*\(/.test(side);
-          const isIdxVar = idxVars.has(side);
-          if (!isIdxCall && !isIdxVar) continue;   // 不是 indexOf 结果，不管
-          const guarded = new RegExp(
-            `${side.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:>=?\\s*0|!==?\\s*-?\\s*1)`
-          ).test(stmt);
-          if (!guarded) bad.push(`${f}: ${name} → ${side.slice(0, 34)}`);
-        }
+        /*
+         * 只有"缺了反而恒真"的那一端要判存在 —— 另一端缺了是恒假，
+         * 会当场报红，不存在静默放过的风险。见本节上方注释。
+         */
+        const side = vacuousSideOf(c[0]);
+        const isIdxCall = /\.indexOf\s*\(/.test(side);
+        const isIdxVar = idxVars.has(side);
+        if (!isIdxCall && !isIdxVar) continue;   // 不是 indexOf 结果，不管
+        if (!existChecked(stmt, side)) bad.push(`${rel(f)}: ${name} → ${side.slice(0, 34)}`);
       }
     }
   }
-  t('顺序比较的两端都判了存在', bad.length === 0, bad.slice(0, 5).join(' | '));
+  t('顺序断言的空跑端判了存在', bad.length === 0, bad.slice(0, 5).join(' | '));
+  /*
+   * 认 `=== -1 ||` 是个**有代价的让步**（写宽了会把真漏判一起放过），
+   * 所以钉住两头。少了这两条，把 existChecked 改成恒 true 也是绿的。
+   */
+  t('"=== -1 ||" 这种显式承认缺失的写法不算漏判',
+    existChecked('iSan === -1 || iSlug > iSan', 'iSan'));
+  t('真漏判照样被抓（让步没把真问题放过）',
+    !existChecked('iSlug > iSan', 'iSan') && !existChecked('iErr > iWith', 'iErr'));
+  /*
+   * ⚠️ 收窄成"只判空跑端"同样是有代价的让步 —— 上面那条真漏判用例
+   * 只覆盖了 `<` 的左端，**没覆盖 `>` 的右端**。少了下面这两条，
+   * 把取端写反（`<` 取右端 / `>` 取左端）照样全绿。
+   */
+  t('`<` 判的是左端（右端取 -1 是恒假，不必判）',
+    vacuousSideOf('iA < iB') === 'iA' && vacuousSideOf('iA <= iB') === 'iA');
+  t('`>` 判的是右端（左端取 -1 是恒假，不必判）',
+    vacuousSideOf('iA > iB') === 'iB' && vacuousSideOf('iA >= iB') === 'iB');
 }
 
 console.log('\n=== 4. 不许有占位断言 ===');
@@ -225,7 +360,7 @@ console.log('\n=== 4. 不许有占位断言 ===');
      * 必须先剥注释：本段自己的说明里就写着 `t(...) true` 这个写法，
      * 不剥的话**护栏会把自己注释里的字样当成违规**报出来（实测误报 2 条）。
      */
-    const src = stripComments(fs.readFileSync(path.join(PLUG, f), 'utf8'));
+    const src = stripComments(fs.readFileSync(f, 'utf8'));
     for (const m of src.matchAll(/\bt\(/g)) {
       let depth = 0; let j = m.index;
       for (let k = m.index; k < src.length; k += 1) {
@@ -242,7 +377,7 @@ console.log('\n=== 4. 不许有占位断言 ===');
       }
       if (/^(true|1|!0|!!1)$/.test(cond) || /\|\|\s*(true|1)\s*$/.test(cond)) {
         const nm = stmt.match(/^t\(\s*(['\`])(.*?)\1/);
-        bad.push(`${f}: ${nm ? nm[2] : '?'}`);
+        bad.push(`${rel(f)}: ${nm ? nm[2] : '?'}`);
       }
     }
   }
@@ -293,13 +428,17 @@ console.log('\n=== 6. 反向自检：护栏本身能抓到 ===');
     return new RegExp(probe).test(fs2) && !new RegExp(probe).test(ss2);
   })());
   /*
-   * 顺序类自检：造一条"两端都没判存在"的顺序断言，护栏必须标红。
-   * 少了这条自检，上一条检查可能本身也是空跑的。
+   * 顺序类自检：造一条"没判存在"的顺序断言，护栏必须标红。
+   *
+   * ⚠️ 上一版这里自己另写了一条正则去判"有没有 >= 0"，**没用护栏真正的
+   * 判据函数** —— 于是它验的是"这条手写正则认不认得样例"，跟护栏本体
+   * 认不认得是两回事（把 existChecked 改成恒 true，它照样绿）。
+   * 现在改成直接调 vacuousSideOf / existChecked 本体。
    */
   t('顺序类：判定函数确实认得出来', (() => {
     const fake = `t('假的次序断言', s.indexOf('AAA') < s.indexOf('BBB'));`;
-    const guarded = /AAA/.test(fake) && /(?:AAA|BBB)[\s\S]{0,40}>=?\s*0/.test(fake);
-    return !guarded;   // 没判存在 → 应当被标为 bad
+    const side = vacuousSideOf(`s.indexOf('AAA') < s.indexOf('BBB')`);
+    return side === `s.indexOf('AAA')` && !existChecked(fake, side);
   })());
   /* 占位类自检：字面 true 必须被认出来 */
   t('占位类：判定函数确实认得出来', (() => {
