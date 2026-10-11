@@ -25,6 +25,8 @@ import {
   PRESET_THEMES, THEME_VARS, DERIVED_VARS, ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT,
   DEFAULT_THEME_ID, swatchFor, styleParams, STYLE_PARAMS, BG_PRESETS, findBgPreset,
 } from './themes.js';
+/* 颜色解析：与设置页（plugins/settings 双模）共用同一份判据，见文件内说明 */
+import { parseCssColor } from './theme-color.js';
 
 export { ACCENT_SWATCHES, ACCENT_SWATCHES_LIGHT, swatchFor, PRESET_THEMES, THEME_VARS };
 /* 风格参数表转出去：设置页要按当前风格渲染对应的滑块 */
@@ -910,13 +912,18 @@ const rgbToHex = (c) => '#' + [c.r, c.g, c.b]
  * 与 scaleAlpha 的保守策略一致 —— 认不出的格式不动它。
  */
 function clampAlphaMin(str, floor) {
-  const m = /^rgba?\(([^)]+)\)$/.exec(String(str || '').trim());
-  if (!m) return str;
-  const parts = m[1].split(',').map((s) => s.trim());
-  if (parts.length < 4) return str;
-  const a = parseFloat(parts[3]);
-  if (!isFinite(a) || a >= floor) return str;
-  return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${floor})`;
+  const s = String(str || '').trim();
+  /* 仍然**只认 rgb()/rgba()** —— hex 是刻意的例外：把不透明的 hex 强行
+     套 alpha 会让底板透上来与文字叠在一起（见上方注释），所以不动它。 */
+  if (!/^rgba?\(/i.test(s)) return str;
+  /* 但解析本身走 parseCssColor，不再在这里另写一份：
+     旧版只按逗号切，于是 `rgb(0 0 0 / 50%)` 这种空格分隔的现代写法
+     一律被当成"不是 rgba"原样返回 —— 地板静默失效，弹框可以透到看不清。
+     alpha 的百分比同理（旧版 parseFloat('50%') = 50，永远 >= floor）。 */
+  const c = parseCssColor(s);
+  if (!c) return str;
+  if (c.a >= floor) return str;
+  return `rgba(${c.r}, ${c.g}, ${c.b}, ${floor})`;
 }
 
 /*
@@ -937,41 +944,15 @@ function clampAlphaMin(str, floor) {
  * hex 视作 alpha=1（不透明）参与缩放，语义正确：hex 就是不透明色。
  */
 function scaleAlpha(str, k) {
-  const s = String(str || '').trim();
-  if (!s || s === 'transparent' || s === 'none') return str;
-
-  let r;
-  let g;
-  let b;
-  let a;
-
-  const m = /^rgba?\(([^)]+)\)$/.exec(s);
-  if (m) {
-    const parts = m[1].split(/[,/\s]+/).filter(Boolean).map((x) => x.trim());
-    if (parts.length < 3) return str;
-    /* 通道可能是百分比（rgb(50% 20% 10%)），统一换算到 0-255 */
-    const to255 = (x) => (x.endsWith('%')
-      ? Math.round((parseFloat(x) / 100) * 255)
-      : Math.round(parseFloat(x)));
-    [r, g, b] = [to255(parts[0]), to255(parts[1]), to255(parts[2])];
-    /* rgb()（三参数）没有 alpha，视作 1 参与缩放 ——
-       否则"rgb(36,41,57)"这种写法同样调不动 */
-    a = parts.length > 3 ? parseFloat(parts[3]) : 1;
-    if (![r, g, b].every(Number.isFinite) || !isFinite(a)) return str;
-  } else {
-    const hm = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(s);
-    if (!hm) return str;                      // 渐变、命名色等：改不了就原样返回
-    let h = hm[1];
-    if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-    const n = parseInt(h.slice(0, 6), 16);
-    r = (n >> 16) & 255;
-    g = (n >> 8) & 255;
-    b = n & 255;
-    a = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
-  }
-
-  const na = Math.max(0, Math.min(1, a * k));
-  return `rgba(${r}, ${g}, ${b}, ${Number(na.toFixed(3))})`;
+  /* 解析走 js/theme-color.js 的 parseCssColor —— **全项目唯一**一份判据。
+     早先这里另有一份几乎相同的解析，于是同一个 bug 得修两遍（alpha 百分比
+     在两处都被读成 1）。判据只有一份，才不会修了这边漏那边。 */
+  const c = parseCssColor(str);
+  /* 认不出（transparent / 渐变 / 命名色）原样返回 ——
+     与 scaleDeviation 的保守策略一致：改不了就别动它 */
+  if (!c) return str;
+  const na = Math.max(0, Math.min(1, c.a * k));
+  return `rgba(${c.r}, ${c.g}, ${c.b}, ${Number(na.toFixed(3))})`;
 }
 
 /**
