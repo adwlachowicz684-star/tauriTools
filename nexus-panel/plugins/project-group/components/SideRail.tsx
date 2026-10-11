@@ -1,5 +1,7 @@
 import type { ChainAction } from '../types';
-import { effectiveCombo, formatCombo, type HotkeyId } from '../utils/hotkeys';
+import {
+  chainShortcutWinners, effectiveCombo, formatCombo, type HotkeyId,
+} from '../utils/hotkeys';
 
 /**
  * 左侧操作栏：图标在上、文字在下，宽度固定（不随文字长度变化）。
@@ -71,6 +73,18 @@ export function SideRail({
   mode?: RailMode;
   onModeChange?: () => void;
 }) {
+  /*
+   * 连锁动作的键位**只显示真的注册成功的那个**。
+   *
+   * 两个动作设成同一个键、或与内置键位撞车时，注册侧只留一个
+   * （见 `useChainActions` 的说明）。若这里照旧把两个都显示出来，
+   * 界面上就出现一个"写着 Ctrl+Shift+1、按下去毫无反应"的按钮 ——
+   * 用户没有任何线索知道那是键位撞车，只会以为快捷键坏了。
+   *
+   * 显示一个不生效的键位，比什么都不显示更糟：后者他还会去点一下。
+   */
+  const chainKeyWinners = chainShortcutWinners(chainActions, hotkeys).winners;
+
   /** 动作 id → 生效键位；没绑（空串）就不显示 */
   const keyOf = (a: RailAction): string => {
     const raw = a.hotkeyId ? effectiveCombo(a.hotkeyId as HotkeyId, hotkeys) : a.hotkey;
@@ -133,7 +147,7 @@ export function SideRail({
               >
                 <span className="fpx-rail-icon">{a.icon || '▶'}</span>
                 <span className="fpx-rail-label">{a.name}</span>
-                {a.shortcut && (
+                {a.shortcut && chainKeyWinners.has(a.id) && (
                   <span className="fpx-rail-key">{a.shortcut.replace('mod', MOD)}</span>
                 )}
               </button>

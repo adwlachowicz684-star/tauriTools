@@ -145,6 +145,116 @@ export function findConflicts(
     .map(([combo, ids]) => ({ combo, ids }));
 }
 
+/**
+ * 连锁动作快捷键的冲突检测。
+ *
+ * `findConflicts` 只管内置注册表那一份，而连锁动作把 `action.shortcut`
+ * 交给**外壳**注册（`ctx.registerShortcut`），两条路各管各的、谁也看不见对方。
+ * 于是"谁占了哪个键"这个问题在全项目里没有一处完整答案 —— 这正是要补的。
+ *
+ * 为什么必须查（而不只是"显示时顺便提一句"）：
+ *   · 两个动作设成同一个键 → 外壳那张 accel→event 表只留一个，
+ *     **另一个动作的快捷键静默失效**，而侧边栏与右键菜单上**两个都显示键位**；
+ *   · 与内置键位撞车（比如把动作设成 F2）→ 按下后两条路都收到，
+ *     谁先抢到不确定，表现为"按 F2 有时改名、有时拉起 AI 进程"。
+ *
+ * 两种情况下界面都显示着一个**不生效或不稳定生效**的键位，
+ * 而设置里的冲突提示（`findConflicts`）对此一言不发 ——
+ * 用户看到"无冲突"，实际是没人查。
+ *
+ * 归一化判据复用 `normalizeCombo`：'Ctrl+Shift+A' 与 'shift+ctrl+a'
+ * 是同一个键，各写一份判据的话这里就会漏（漏了就是又一处静默失效）。
+ */
+export interface ChainShortcutConflict {
+  /** 归一化后的 combo，可直接显示 */
+  combo: string;
+  /** 抢同一个键的连锁动作 id（两个及以上才算冲突） */
+  ids: string[];
+  /** 与内置键位撞上的内置动作 id（可能为空） */
+  hotkeyIds: HotkeyId[];
+}
+
+/** 参与冲突检测的连锁动作只要有这两项，不必是完整的 `ChainAction` */
+export interface ChainShortcutItem {
+  id: string;
+  shortcut?: string | null;
+}
+
+/**
+ * 参数类型写成**别名**，不能内联写 `readonly ChainShortcutItem[]`。
+ *
+ * 内联写法连类型剥离器都过不去（`readonly` + 内联对象类型都处理不了），
+ * 于是这个模块没法被测试直接加载 —— 而"测不了"正是冲突检测这类
+ * 判据最容易悄悄漂移的原因。同款处理见 `dragSort.ts` 的 `DropEntriesArg`。
+ */
+export type ChainShortcutList = readonly ChainShortcutItem[];
+
+export function chainShortcutConflicts(
+  actions: ChainShortcutList,
+  overrides: Record<string, string> | null | undefined,
+): ChainShortcutConflict[] {
+  const byCombo = new Map<string, { ids: string[]; hotkeyIds: HotkeyId[] }>();
+
+  const slot = (combo: string) => {
+    const list = byCombo.get(combo) ?? { ids: [], hotkeyIds: [] };
+    byCombo.set(combo, list);
+    return list;
+  };
+
+  for (const [id, combo] of Object.entries(effectiveMap(overrides))) {
+    const c = normalizeCombo(combo);
+    if (!c) continue; // 空 = 未绑定，不参与冲突
+    slot(c).hotkeyIds.push(id as HotkeyId);
+  }
+
+  for (const a of actions) {
+    const c = normalizeCombo(a.shortcut ?? '');
+    if (!c) continue;
+    slot(c).ids.push(a.id);
+  }
+
+  const out: ChainShortcutConflict[] = [];
+  for (const [combo, v] of byCombo) {
+    if (v.ids.length + v.hotkeyIds.length > 1) out.push({ combo, ids: v.ids, hotkeyIds: v.hotkeyIds });
+  }
+  return out;
+}
+
+/**
+ * 抢同一个键时**谁生效**：清单里靠前的那个。
+ *
+ * 注册侧与显示侧必须按同一个结论取舍，否则又变成"注册了 A、
+ * 界面却暗示 B 也能用"——那正是这里要治的形状。
+ */
+export function chainShortcutWinners(
+  actions: ChainShortcutList,
+  overrides: Record<string, string> | null | undefined,
+): { winners: Set<string>; conflicted: Set<string> } {
+  const seen = new Set<string>();
+  const winners = new Set<string>();
+  const conflicted = new Set<string>();
+  for (const c of chainShortcutConflicts(actions, overrides)) {
+    for (const id of c.ids) conflicted.add(id);
+    /* 与内置键位撞上的**全部**算冲突方：外壳那层与插件那层谁先抢到不确定，
+       不能声称连锁动作"稳赢"。 */
+  }
+  const hotkeyCombos = new Set<string>();
+  for (const [id, combo] of Object.entries(effectiveMap(overrides))) {
+    const c = normalizeCombo(combo);
+    if (c) hotkeyCombos.add(c);
+  }
+  for (const a of actions) {
+    const c = normalizeCombo(a.shortcut ?? '');
+    if (!c) continue;
+    if (seen.has(c)) continue; // 同一 combo 的后者：不注册
+    seen.add(c);
+    /* 与内置键位撞车时不算赢家 —— 谁生效不确定，不能显示成一个可靠的键位 */
+    if (hotkeyCombos.has(c)) continue;
+    winners.add(a.id);
+  }
+  return { winners, conflicted };
+}
+
 /** 归一化：忽略大小写与分隔符差异，便于比较。 */
 export function normalizeCombo(combo: string): string {
   return combo.trim().toLowerCase()

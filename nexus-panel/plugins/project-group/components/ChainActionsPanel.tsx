@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Api } from '../api';
 import { errText } from '../api';
 import { canRemove, defaultIconOf, defaultNameOf } from '../utils/chainBuiltins';
 import { isComposing } from '../utils/ime';
 /* 修饰键名单用 utils/hotkeys 那一份（那里注明"全项目只此一份"） */
-import { MODIFIER_KEYS } from '../utils/hotkeys';
+import {
+  MODIFIER_KEYS, HOTKEY_BY_ID, chainShortcutConflicts, normalizeCombo,
+} from '../utils/hotkeys';
 import type { ChainAction, ChainClient } from '../types';
 import { PlaceholderBar } from './PlaceholderBar';
 /* #147 模板框高度自适应：与 #146 图标网格共用同一个测量 hook */
@@ -38,7 +40,7 @@ const AC_SWAP_DEAD_ZONE = 14;
  * 自定义动作可以改模板后保留、也可删除。
  */
 export function ChainActionsPanel({
-  api, onClose, onLog, onChanged, devMode = false,
+  api, onClose, onLog, onChanged, devMode = false, hotkeys = null,
 }: {
   api: Api;
   onClose: () => void;
@@ -47,6 +49,13 @@ export function ChainActionsPanel({
   onChanged?: () => void;
   /** 开发者模式（#46）：开启后才允许删除内置动作 */
   devMode?: boolean;
+  /**
+   * 内置键位的覆盖表（`config.hotkeys`）。
+   *
+   * 判断"这个键有没有和内置键位撞车"必须看它：用户把「改名」改成 Ctrl+R
+   * 之后默认的 F2 已经让出来了，不看覆盖表会把**合法**的键位判成冲突。
+   */
+  hotkeys?: Record<string, string> | null;
 }) {
   const [list, setList] = useState<ChainAction[]>([]);
   const [clients, setClients] = useState<ChainClient[]>([]);
@@ -91,6 +100,35 @@ export function ChainActionsPanel({
   }, [api, onLog]);
 
   const cur = list.find((a) => a.id === active) ?? null;
+
+  /*
+   * 当前动作这个键的占用情况。
+   *
+   * 必须显示出来：**撞车的那个键是注册不上的**（见 useChainActions），
+   * 而输入框里明明写着它、侧边栏也不再显示 —— 用户会以为保存没生效，
+   * 反复重设同一个键。告诉他跟谁撞了，他才知道该改哪一个。
+   *
+   * 也覆盖"手打"的情形：这个框可以直接输入，不只是按出来的，
+   * 所以判据看的是 `cur.shortcut` 当前值，不是录入那一刻。
+   */
+  const shortcutConflict = useMemo(() => {
+    if (!cur?.shortcut?.trim()) return null;
+    const norm = normalizeCombo(cur.shortcut);
+    return chainShortcutConflicts(list, hotkeys)
+      .find((c) => c.combo === norm) ?? null;
+  }, [cur, list, hotkeys]);
+
+  /** 撞车的另一方叫什么（内置键位显示它的中文名，动作显示动作名） */
+  const conflictWith = shortcutConflict
+    ? [
+        ...shortcutConflict.hotkeyIds
+          .filter((id) => id !== undefined)
+          .map((id) => `内置「${HOTKEY_BY_ID[id]?.label ?? id}」`),
+        ...shortcutConflict.ids
+          .filter((id) => id !== cur?.id)
+          .map((id) => `动作「${list.find((a) => a.id === id)?.name ?? id}」`),
+      ].join('、')
+    : '';
 
   const patch = (id: string, p: Partial<ChainAction>) => {
     setList((l) => l.map((a) => (a.id === id ? { ...a, ...p } : a)));
@@ -491,6 +529,14 @@ export function ChainActionsPanel({
                   在此框内直接按下组合键即可录入。属于「应用级」快捷键：
                   窗口在前台时生效，不是操作系统全局热键。
                 </div>
+                {shortcutConflict && (
+                  <div
+                    className="fpx-ca-shortcut-conflict"
+                    style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)' }}
+                  >
+                    ⚠ 与{conflictWith}占用同一个键，这个键**不会注册** —— 换一个键才会生效。
+                  </div>
+                )}
               </div>
 
               <div className="fpx-field" style={{ marginTop: 'var(--sp-5, 10px)' }}>

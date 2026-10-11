@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { PluginContext } from '../../../js/plugin-sdk.js';
 import { errText } from '../api';
 import { needConfirm } from '../utils/confirmOnce';
+import { chainShortcutWinners } from '../utils/hotkeys';
 import type { FpxStore } from './useFpx';
 import type { CardKind, ChainAction } from '../types';
 
@@ -26,6 +27,14 @@ export interface UseChainActionsArgs {
   chainActions: ChainAction[];
   /** boot 是否就绪——未就绪时整个注册副作用都不跑 */
   bootReady: boolean;
+  /**
+   * 内置键位的覆盖表（`config.hotkeys`）。
+   *
+   * 判断连锁动作的键有没有和内置键位撞车**必须**看它：用户把「改名」改成
+   * Ctrl+R 之后，默认的 F2 就已经让出来了 —— 不看覆盖表会把一个**合法**的
+   * 键位判成冲突，等于凭空砍掉用户刚设好的快捷键。
+   */
+  hotkeyOverrides?: Record<string, string> | null;
   /** 待确认发送（#43）：预览成功后挂起，由 App 渲染确认框 */
   /*
    * `client` 由预览从后端带回（动作专属 → 全局默认 → opencode）。
@@ -41,7 +50,7 @@ export interface UseChainActionsArgs {
 const SEND_DEBOUNCE_MS = 400;
 
 export function useChainActions({
-  ctx, s, chainActions, bootReady, setPendingSend,
+  ctx, s, chainActions, bootReady, hotkeyOverrides = null, setPendingSend,
 }: UseChainActionsArgs) {
   /** #207 上一次真正发出去的时间戳，键为「动作 id + 目标路径」 */
   const lastSentAt = useRef<Map<string, number>>(new Map());
@@ -70,16 +79,46 @@ export function useChainActions({
     void requestSendAction(a.id, sel.kind, sel.path);
   };
 
+  /*
+   * 覆盖表按**值**进依赖，不按对象身份。
+   *
+   * `config.hotkeys` 每次快照都是新对象（boot 是新对象，它的字段也是），
+   * 直接进依赖的话，任何一次写操作都会让整批快捷键与侧边栏拆了重装 ——
+   * 侧边栏闪烁、焦点丢失，且用户完全不知道自己触发了什么。
+   * 序列化成字符串后比较的是内容，内容没变就不重跑。
+   */
+  const overrideKey = JSON.stringify(hotkeyOverrides ?? {});
+
   useEffect(() => {
     if (!bootReady) return;
     const unsubs: Array<() => void> = [];
     const registered: string[] = [];
     const sidebarIds: string[] = [];
 
+    /*
+     * 同一个键只注册**一个**（清单里靠前的那个）。
+     *
+     * 外壳那张 accel→event 表是一键一值：两个动作设成同一个键时，
+     * 后注册的覆盖先注册的，**先那个动作的快捷键就此失效**，
+     * 而侧边栏与右键菜单上**两个都照样显示键位**。
+     * 用户按下去没反应，界面上却明明白白写着这个键 ——
+     * 他只会以为"快捷键这个功能坏了"。
+     *
+     * 这里不"都注册、让外壳挑一个"：那样谁生效取决于注册顺序，
+     * 而顺序在别处（清单来自后端，用户可能刚拖过顺序），
+     * 于是同一个配置在不同时候表现不同。
+     *
+     * 与内置键位撞车的也一并跳过：外壳层与插件层谁先抢到不确定，
+     * 表现是"按 F2 有时改名、有时拉起一个 AI 进程"——那比失效更糟。
+     * 两种跳过都要**说出来**（见下面的日志），不能静默。
+     */
+    const { winners } = chainShortcutWinners(chainActions, hotkeyOverrides);
     for (const a of chainActions) {
       if (a.shortcut && a.shortcut.trim()) {
-        ctx.registerShortcut(a.shortcut.trim(), shortcutEvent(a.id), a.name);
-        registered.push(a.shortcut.trim());
+        if (winners.has(a.id)) {
+          ctx.registerShortcut(a.shortcut.trim(), shortcutEvent(a.id), a.name);
+          registered.push(a.shortcut.trim());
+        }
       }
       if (a.showSidebar) {
         ctx.addSidebarItem({
@@ -87,6 +126,23 @@ export function useChainActions({
         });
         sidebarIds.push(a.id);
       }
+    }
+
+    /*
+     * 被跳过的键位必须**说出来**，而且要一次性说完。
+     *
+     * 不说的话，被砍掉的那个动作在界面上仍显示着键位、按下去毫无反应 ——
+     * 用户没有任何线索能把它归到"键位撞车"，只会以为快捷键坏了。
+     *
+     * 用日志而不是 toast：注册副作用在每次清单变化后都会重跑，
+     * 弹 toast 会在用户改一个无关字段时反复跳出来，反而变成噪音。
+     */
+    const skipped = chainActions.filter((a) => a.shortcut && a.shortcut.trim() && !winners.has(a.id));
+    if (skipped.length > 0) {
+      const detail = skipped
+        .map((a) => `「${a.name}」${a.shortcut!.trim()}`)
+        .join('、');
+      s.pushLog(`以下连锁动作的快捷键未注册（键位冲突或重复）：${detail}。请在「连锁动作」里改一个键。`, true);
     }
 
     // 两类事件都指向同一个处理：对当前选中的卡片执行该动作
@@ -104,7 +160,7 @@ export function useChainActions({
     // 这里同样不能放 boot：它每次快照都是新对象，会让侧边栏与快捷键
     // 在所有写操作后被反复拆装（见上面 refreshChainActions 的注释）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bootReady, chainActions, ctx]);
+  }, [bootReady, chainActions, ctx, overrideKey]);
 
   /**
    * 直接按动作发送（右键菜单用），失败记日志 + toast
