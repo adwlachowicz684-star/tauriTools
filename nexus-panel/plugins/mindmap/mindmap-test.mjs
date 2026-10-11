@@ -16968,6 +16968,105 @@ group('BUG 120 · 格式嗅探必须锚在文件开头，否则 Markdown 被误�
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 121：根节点的折叠状态在 FreeMind 往返中静默丢失，且能力表谎称带得走
+
+   toFreemind 早先写的是 `if (depth > 0 && isCollapsed(n))`，注释理由是
+   「根节点不需要 FOLDED（根永远展开）」。这条理由**只对 UI 成立**：内核
+   `CollapseCommand.queryState` 里有一句 `!b.isRoot()`，所以按钮/快捷键确实
+   点不出「折叠根」。但**对数据不成立**：
+
+     · 内核 `isExpanded()` = `data.expandState !== 'collapse' && (isRoot() ||
+       parent.isExpanded())` —— 根**会**读自己的 expandState；
+     · 实测（真实 Chromium）：根折叠时整图包围盒 540×40 → **80×40**，子节点
+       文字宽度全是 0。整张图收成一个节点，是**看得见的结构**；
+     · 而根折叠**只能从导入来** —— 正是 toFreemind 这条路的输入。Freeplane /
+       FreeMind 允许折叠根，.xmind 的 `branch:"folded"` 也会带进来。
+
+   后果链：导入别人的 .mm（根带 FOLDED）→ 本工具如实收下 → 再导出就没了。
+   而 `EXCHANGE_KEEP.freemind.collapsed = true` 声称这个格式带得走折叠，
+   于是 `exchangeLoss` 算出来 collapsed:0 / nodes:0，**一个字都不提示**。
+   同一个状态走 .xmind 保得住、走 .mm 悄悄丢掉。
+   ------------------------------------------------------------------ */
+group('BUG 121 · 根节点折叠必须写进 FreeMind 的 FOLDED');
+
+{
+  const f6 = await import('file://' + path.join(HERE, 'formats.js'));
+
+  const kmRootFolded = JSON.stringify({
+    root: {
+      data: { id: 'r', text: '根', expandState: 'collapse' },
+      children: [
+        { data: { id: 'a', text: 'A' }, children: [{ data: { id: 'a1', text: 'A1' } }] },
+        { data: { id: 'b', text: 'B' } },
+      ],
+    },
+  });
+  const shape = (content) => {
+    const o = [];
+    (function w(n, d) { o.push(`${' '.repeat(d)}${n.data.text}${n.data.expandState === 'collapse' ? '[折]' : ''}`);
+      (n.children || []).forEach((c) => w(c, d + 1)); })(JSON.parse(content).root);
+    return o.join(' / ');
+  };
+
+  // ① 根折叠：产物里的**根节点**必须带 FOLDED
+  {
+    const mm = f6.toFreemind(kmRootFolded);
+    const first = mm.split('\n').find((l) => l.includes('<node'));
+    ok(/FOLDED="true"/.test(first),
+      '★ 根折叠时根节点的 <node> 上必须有 FOLDED="true"', first);
+  }
+
+  // ② 往返：根仍是折叠，子树结构不变
+  {
+    const back = f6.fromFreemind(f6.toFreemind(kmRootFolded));
+    eq(shape(back), '根[折] / A / A1 / B', '★ 根折叠往返保住（早先丢成「根」）');
+  }
+
+  // ③ 非根折叠照旧（不能被这次改动带坏）
+  {
+    const km = JSON.stringify({
+      root: { data: { id: 'r', text: '根' }, children: [
+        { data: { id: 'a', text: 'A', expandState: 'collapse' }, children: [{ data: { id: 'a1', text: 'A1' } }] },
+        { data: { id: 'b', text: 'B' } }] },
+    });
+    eq(shape(f6.fromFreemind(f6.toFreemind(km))), '根 / A[折] / A1 / B', '非根折叠往返不受影响');
+  }
+
+  // ④ 与 .xmind 同口径：同一个根折叠状态，两个格式必须同进同出
+  {
+    const x6 = await import('file://' + path.join(HERE, 'xmind.js'));
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null, content: kmRootFolded }];
+    const blob = await x6.writeXMind(sheets, 'sh1', null);
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await x6.zipRead(buf);
+    // 只留 content.json = 剥掉本工具的无损快照，模拟被别的软件存过一遍
+    const zenBuf = await x6.zipWrite([{ name: 'content.json', data: entries.get('content.json') }]);
+    const r = await x6.readXMind(new Uint8Array(zenBuf));
+    eq(shape(r.sheets[0].content), '根[折] / A / A1 / B',
+      '★ .xmind 那条路本来就把根折叠保住了 —— .mm 不能是另一种结果');
+  }
+
+  // ⑤ 能力表既然声称 freemind 带得走折叠，exchangeLoss 报 0 才是诚实的
+  //    （改回 depth > 0 的话这里会变成"没提示、但状态没了"）
+  {
+    const loss = f6.exchangeLoss(kmRootFolded, 'freemind');
+    eq(loss.collapsed, 0, 'freemind 声明带得走折叠 → 不计入丢失');
+    eq(loss.nodes, 0, '★ 声称带得走就不该报"有丢失"（前提是它真的带得走）');
+  }
+
+  // ⑥ 源码契约：不能再回到「根不写 FOLDED」
+  {
+    const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
+    const code = stripCommentsFlatJs(src);
+    ok(!/depth\s*>\s*0\s*&&\s*isCollapsed/.test(code), '★ 不得再有 depth > 0 && isCollapsed 的守卫');
+    // 光"函数里有 isCollapsed"不算 —— 定义本身就命中，必须锚在 FOLDED 那一行
+    const line = code.split('\n').find((l) => l.includes('FOLDED="true"'));
+    ok(!!line && /isCollapsed\(n\)/.test(line), '★ FOLDED 那一行真的在判 isCollapsed(n)', String(line));
+    ok(!!line && !/depth\s*>\s*0/.test(line), '★ FOLDED 那一行不得带 depth > 0', String(line));
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */

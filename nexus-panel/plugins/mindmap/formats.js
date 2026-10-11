@@ -279,8 +279,28 @@ export function toFreemind(content) {
     if (fg) attrs.push(`COLOR="${escXml(fg)}"`);
     const bg = normColor(n?.data?.background);
     if (bg) attrs.push(`BACKGROUND_COLOR="${escXml(bg)}"`);
-    // 根节点不需要 FOLDED（根永远展开）
-    if (depth > 0 && isCollapsed(n)) attrs.push('FOLDED="true"');
+    /*
+     * **根节点也要写 FOLDED**（BUG 121）。
+     *
+     * 早先这里写的是 `depth > 0 && isCollapsed(n)`，注释理由是
+     * 「根节点不需要 FOLDED（根永远展开）」—— 这条理由**只对 UI 成立**：
+     * 内核 `CollapseCommand.queryState` 里有一句 `!b.isRoot()`，所以按钮和
+     * 快捷键确实点不出「折叠根」。但**对数据不成立**：
+     *
+     *   · 内核 `isExpanded()` 是 `data.expandState !== 'collapse' && (isRoot() ||
+     *     parent.isExpanded())` —— 根**会**读自己的 expandState；
+     *   · 实测（真实 Chromium）：根折叠时整图包围盒 540×40 → **80×40**，
+     *     子节点文字宽度全是 0。整张图收成一个节点，是**看得见的结构**；
+     *   · 而根折叠**只能从导入来** —— 正是本函数这条路的输入。Freeplane /
+     *     FreeMind 允许折叠根，`.xmind` 的 `branch:"folded"` 也会带进来
+     *     （xmind.js 的 buildTopic 不分层级，根也照写）。
+     *
+     * 后果是：导入别人的 .mm（根带 FOLDED）→ 本工具如实收下 → 再导出，
+     * FOLDED 就没了。而 `EXCHANGE_KEEP.freemind.collapsed = true` 又声称
+     * 这个格式带得走折叠，于是 `exchangeLoss` 算出来 collapsed:0 / nodes:0，
+     * **一个字都不提示**。同一个状态走 .xmind 保得住、走 .mm 悄悄丢掉。
+     */
+    if (isCollapsed(n)) attrs.push('FOLDED="true"');
     const kids = n?.children || [];
     if (!kids.length && !noteHtml) {
       lines.push('  '.repeat(depth + 1) + `<node ${attrs.join(' ')}/>`);
