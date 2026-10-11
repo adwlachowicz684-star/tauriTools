@@ -764,6 +764,20 @@ pub(crate) fn core_save_config(dir: &std::path::Path, config: &FpxConfig) -> Res
     })
 }
 
+/**
+ * 一个链接名都没启用时的报错（全项目唯一一处，前端与 MCP 都显示它）。
+ *
+ * 为什么必须有这条：此时下面的循环一次都不跑，`created` 为空、账本也不写，
+ * 而快照照常返回 —— **没有任何失败信号**。前端因此照旧 toast「分配完成」，
+ * 日志写「（0 个链接）」。
+ *
+ * 用户拖完卡片看到"完成"，实际一个 junction 都没建，也不报错。他会以为
+ * 分配生效了，接着去用 AI 客户端（客户端要的是项目目录下的 .claude 之类），
+ * 全部落空，而界面上从头到尾都说"成功"。
+ */
+pub(crate) const NO_LINK_NAMES_ERR: &str =
+    "没有启用任何链接名，请在「Agent 链接名」里启用至少一个后再分配";
+
 pub(crate) fn core_create_link(
     dir: &std::path::Path,
     project: &str,
@@ -781,6 +795,10 @@ pub(crate) fn core_create_link(
         Some(n) if !n.is_empty() => n,
         _ => junction::enabled_names(&cfg),
     };
+    // 空名单必须报错：不拦的话这次"分配"什么都不做却返回成功（见常量处的说明）。
+    if use_names.is_empty() {
+        return Err(NO_LINK_NAMES_ERR.to_string());
+    }
 
     // 项目目录受 ACL 保护时，建链动作须临时摘锁（对应 C# 版 FolderLockService.WithUnlockForPath）
     let mut created: Vec<String> = Vec::new();

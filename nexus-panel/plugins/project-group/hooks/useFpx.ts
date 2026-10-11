@@ -691,8 +691,25 @@ export function useFpx() {
        */
       const k = normalizeKey(project, ci);
       const row: LinkRow | undefined = snap.links.find((l) => normalizeKey(l.project, ci) === k);
-      pushLog(`已分配：${project} → ${group}（${row?.names.length ?? 0} 个链接）`);
-      ctx.toast('分配完成', 'ok');
+      const n = row?.names.length ?? 0;
+      pushLog(`已分配：${project} → ${group}（${n} 个链接）`);
+      /*
+       * 第二道闸（后端那道是根本，这里是兜底）。
+       *
+       * 账本里查不到这一行 == 一个 junction 都没建成（后端只在真的建成了才写账本）。
+       * 此时仍 toast「分配完成」就是谎报：用户拖完卡片看到"完成"，
+       * 实际项目目录里什么都没有，而界面上从头到尾没有任何失败信号。
+       *
+       * 这里**不猜原因**——后端放行空名单的口径将来可能变，前端只如实说
+       * "0 个生效"，原因由后端那条报错来讲。
+       */
+      if (n > 0) {
+        ctx.toast('分配完成', 'ok');
+      } else {
+        const m = '未建立任何链接（0 个生效）：请检查是否已启用链接名';
+        pushLog(m, true);
+        ctx.toast(m, 'err');
+      }
     }
   }, [api, applySnapshot, ci, ctx, pushLog, run]);
 
