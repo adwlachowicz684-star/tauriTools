@@ -50,7 +50,7 @@ console.log('\n=== 3. 位置：清洗之后、落盘之前 ===');
   const iDedup = mod.indexOf('list.retain(|a| seen.insert');
   const iSave = mod.indexOf('cfg.chain_actions = Some(list.clone());');
   t('在 id 去重之后', iDedup > 0 && iNorm > iDedup, `dedup=${iDedup} norm=${iNorm}`);
-  t('在落盘之前', iSave > 0 && iNorm < iSave, `norm=${iNorm} save=${iSave}`);
+  t('在落盘之前', iNorm >= 0 && iSave > 0 && iNorm < iSave, `norm=${iNorm} save=${iSave}`);
 }
 
 console.log('\n=== 4. 前端语义一致（留空 = 用内置默认）===');

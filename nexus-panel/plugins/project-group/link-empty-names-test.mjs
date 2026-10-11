@@ -86,7 +86,7 @@ console.log('\n=== 2. 前端：0 个生效时不得说「分配完成」 ===');
      if 与 else **两块分别配平**：只配平第一块的话 else 那半被丢在段外，
      0 个时的行为根本没被验到（而那正是本文件要守的那一支）。 */
   const ifAt = hook.indexOf('if (n > 0) {', at);
-  t('找到分支（不是空跑）', ifAt >= 0 && ifAt > at);
+  t('找到分支（不是空跑）', at >= 0 && ifAt >= 0 && ifAt > at);
   let block = '';
   if (ifAt >= 0) {
     const rIf = braceRange(hook, ifAt);

@@ -146,7 +146,7 @@ console.log('\n=== 6. 加载路径接上了 ===');
   const iNote = bootSeg.indexOf('store::load_config_noting');
   const iIssue = bootSeg.indexOf('store::config_issues');
   t('顺序锚点都存在', iNote !== -1 && iIssue !== -1, `${iNote},${iIssue}`);
-  t('损坏提示排在体检结果之前', iNote < iIssue);
+  t('损坏提示排在体检结果之前', iNote >= 0 && iNote < iIssue);
   t('Bootstrap 有 config_notices 字段', /pub config_notices: Vec<String>/.test(model));
 }
 

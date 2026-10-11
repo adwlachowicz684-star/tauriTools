@@ -100,8 +100,8 @@ console.log('\n=== 7. 结构：JSX 嵌套层级 ===');
   const i = rail.indexOf('<div className={`fpx-rail-slot');
   const j = rail.indexOf('<div className="fpx-rail">', i);
   const k = rail.indexOf('</div>\n    </div>', j);
-  t('slot 在 rail 之外', i < j && j > 0);
-  t('两层都闭合', k > j);
+  t('slot 在 rail 之外', i >= 0 && i < j && j > 0);
+  t('两层都闭合', j >= 0 && k > j);
 }
 
 done();
