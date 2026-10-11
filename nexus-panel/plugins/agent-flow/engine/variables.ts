@@ -1,5 +1,6 @@
 import { cloneData } from './duplicate';
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
+import { assertNoReplaceWipe } from './impExp';
 
 /**
  * 变量。
@@ -543,6 +544,20 @@ export function importVariables(
       result.added += 1;
     }
   }
+
+  /*
+   * 与自定义预设、模块共用同一条防线（engine/impExp.ts）：
+   * replace 是"先清空再往里塞"，而"塞不进去"不会撤销清空 ——
+   * 文件全是坏条目时，"导入失败"和"清空"会同时发生。
+   */
+  assertNoReplaceWipe({
+    mode: opts?.mode,
+    list,
+    added: result.added,
+    updated: result.updated,
+    count: () => loadVariables(kv).length,
+    noun: '变量',
+  });
 
   saveVariables(current, kv);
   return result;

@@ -2,6 +2,7 @@ import type { NodeData } from '../types';
 import { stripRuntime, cloneData } from './duplicate';
 import { hadInlineSecret, stripSecrets } from './sanitize';
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
+import { assertNoReplaceWipe } from './impExp';
 
 /**
  * 用户自定义节点（本质是「预设」）。
@@ -313,28 +314,17 @@ export function importCustomPresets(
   }
 
   /*
-   * 「替换」模式下的一个破坏性洞，实测出来的：
-   *
-   *   导入一个**全是坏条目**的文件，选了替换 → 原有预设**全部消失**。
-   *   提示框只报「跳过 N 条」，只字未提"你原有的一起没了"。
-   *
-   * 因为 replace 的语义是"先把 current 清空，再往里塞"，而"塞不进去"
-   * 并不会把清空的动作撤销 —— 于是"导入失败"和"清空"同时发生了。
-   *
-   * 怎么区分"用户真想清空"和"文件坏了"：
-   *   · 列表本身是空的（0 条）→ 那是明确意图，照办；
-   *   · 列表里有东西、但一条都没通过校验 → 文件坏了，不是用户想要空。
-   *
-   * 后者直接抛错中止（不落库），并把"原有 N 条已保留"写进错误信息 ——
-   * 破坏性操作被拦下来这件事，必须用最醒目的方式让人看见。
+   * 与模块、变量共用同一条防线（engine/impExp.ts）——
+   * 三处是同一份结构，各写一遍就是各漏一遍。
    */
-  if (opts.mode === 'replace' && list.length > 0 && result.added + result.updated === 0) {
-    const kept = loadCustomPresets(kv).length;
-    throw new Error(
-      `文件里 ${list.length} 条一条都没通过校验，没有导入。` +
-        (kept > 0 ? `你原有的 ${kept} 条已保留，未清空。` : ''),
-    );
-  }
+  assertNoReplaceWipe({
+    mode: opts.mode,
+    list,
+    added: result.added,
+    updated: result.updated,
+    count: () => loadCustomPresets(kv).length,
+    noun: '预设',
+  });
 
   saveCustomPresets(current, kv);
   return result;

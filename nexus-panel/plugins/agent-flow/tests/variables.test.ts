@@ -383,6 +383,39 @@ test('replace 模式清掉本机原有的', () => {
   assert.equal(loadVariables(to)[0].name, '导入的');
 });
 
+/*
+ * 【破坏性】replace 模式：文件全是坏条目时，不能顺带清空本机原有的。
+ *
+ * 与自定义预设、模块是同一份结构（engine/impExp.ts 里共用一条防线）。
+ */
+test('replace 模式：文件里一条都没通过校验时，原有的变量必须保住', () => {
+  const to = memKV();
+  addVariable({ group: 'g', name: '我原有的', values: { a: 1 } }, to);
+  const bad = JSON.stringify({
+    version: 1,
+    variables: [
+      { id: 'v', group: '', name: '组是空的', values: { a: 1 } },
+      { id: 'w', group: 'g', name: 'values 不是对象', values: null },
+    ],
+  });
+  assert.throws(
+    () => importVariables(bad, { mode: 'replace' }, to),
+    /已保留/,
+    '要把"原有的没动"说出口，不能只报跳过',
+  );
+  assert.equal(loadVariables(to).length, 1, '原有的一个都不能少');
+  assert.equal(loadVariables(to)[0].name, '我原有的');
+});
+
+/* 上面那条的反面：列表本身是空的，那是明确要清空，不能拦 */
+test('replace 模式：列表本身为空时照常清空（明确意图，不是文件坏了）', () => {
+  const to = memKV();
+  addVariable({ group: 'g', name: '我原有的', values: { a: 1 } }, to);
+  const r = importVariables(JSON.stringify({ version: 1, variables: [] }), { mode: 'replace' }, to);
+  assert.equal(r.added + r.updated, 0);
+  assert.equal(loadVariables(to).length, 0);
+});
+
 test('导入非 JSON / 没有变量列表都要给出可读错误', () => {
   assert.throws(() => importVariables('不是JSON', undefined, memKV()), /JSON/);
   assert.throws(() => importVariables('{"foo":1}', undefined, memKV()), /变量列表/);

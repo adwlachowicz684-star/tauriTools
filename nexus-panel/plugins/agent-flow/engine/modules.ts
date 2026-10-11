@@ -1,6 +1,7 @@
 import { cloneData } from './duplicate';
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 import { stripViewKeys } from './sanitize';
+import { assertNoReplaceWipe } from './impExp';
 
 /**
  * 模块 —— 把多个节点打包成一个可复用的块。
@@ -407,6 +408,20 @@ export function importModules(
       result.added += 1;
     }
   }
+
+  /*
+   * 与自定义预设、变量共用同一条防线（engine/impExp.ts）：
+   * replace 是"先清空再往里塞"，而"塞不进去"不会撤销清空 ——
+   * 文件全是坏条目时，"导入失败"和"清空"会同时发生。
+   */
+  assertNoReplaceWipe({
+    mode: opts?.mode,
+    list,
+    added: result.added,
+    updated: result.updated,
+    count: () => loadModules(kv).length,
+    noun: '模块',
+  });
 
   saveModules(current, kv);
   return result;
