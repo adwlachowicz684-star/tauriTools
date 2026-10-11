@@ -271,6 +271,63 @@ console.log('\n=== 5. CSS 结构完整性 ===');
       : (s.split('{').length === s.split('}').length),
       `${s.split('{').length - 1} / ${s.split('}').length - 1}`);
   }
+
+  /*
+   * CSS 注释**不嵌套**：块注释里再写一层块注释，外层会在内层那个"结束标记"
+   * 处提前闭合。后果是双向的，两头都静默：
+   *
+   *   ① 本该生效的规则被吞掉 —— 界面上少一条样式，不报错；
+   *      守着它的源码断言因为**文本还在（在注释里）**照样报绿。
+   *   ② "看着被注释掉"的后半段反倒一直是生效的 ——
+   *      谁把它当死代码删掉，就静默丢掉正在用的样式。
+   *
+   * 本轮实测全仓唯一一处正是这样：plugins/project-group/style.css 里
+   * `.fpx-ca-item.dragging { opacity: .45 }`（被拖项压暗）从未生效，
+   * 而它下面"被注释"的 .fpx-ca-ops button 反倒在生效。
+   */
+  const nestedComments = (s) => {
+    const out = [];
+    let i = 0;
+    for (;;) {
+      const a = s.indexOf('/*', i);
+      if (a < 0) return out;
+      const b = s.indexOf('*/', a + 2);
+      if (b < 0) { out.push('未闭合的块注释'); return out; }
+      if (s.slice(a + 2, b).indexOf('/*') >= 0) out.push(s.slice(0, a).split('\n').length);
+      i = b + 2;
+    }
+  };
+
+  const SKIP_DIR = new Set(['node_modules', '.git', 'target', 'dist', 'build', '.tauri', '__pycache__']);
+  const cssAll = [];
+  const walkCss = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.isDirectory()) { if (!SKIP_DIR.has(e.name)) walkCss(join(d, e.name)); continue; }
+      if (e.name.endsWith('.css')) cssAll.push(join(d, e.name));
+    }
+  };
+  walkCss(HERE);
+
+  const nested = [];
+  for (const abs of cssAll) {
+    const rel = abs.slice(HERE.length + 1).replace(/\\/g, '/');
+    for (const ln of nestedComments(readFileSync(abs, 'utf8'))) nested.push(`${rel}:${ln}`);
+  }
+  t('CSS 注释不得嵌套（外层提前闭合：规则被吞掉、后半段却偷偷生效）',
+    nested.length === 0, nested.join(' | ') || `已扫 ${cssAll.length} 个样式表`);
+
+  /*
+   * 少了这两条，把 nestedComments 改成恒返回空数组，上面那条照样绿 ——
+   * 判据被清空 = 防线被悄悄撤掉，跟"断言条件里没有逃生舱"是同一类。
+   * 自检必须调**本体函数**，不能另写一条正则去判（那验的是手写正则，
+   * 跟本体认不认得是两回事）。
+   */
+  t('判据真认得出嵌套（判据被清空 = 这条守卫悄悄失守）',
+    nestedComments('a{color:red}/*x/*y*/b{color:blue}').length === 1);
+  t('正常相邻注释不被误判（判据写宽会把整个样式表判成有问题）',
+    nestedComments('a{color:red}/* x */b{color:blue}/* y */').length === 0);
+  t('扫描范围有效（只扫固定清单 = 新样式表悄悄漏网）', cssAll.length >= CSS_FILES.length,
+    `实测 ${cssAll.length} 个 .css，固定清单 ${CSS_FILES.length} 个`);
 }
 
 
