@@ -32,7 +32,22 @@ OUT="${AF_OUT:-/tmp/afts}"
 TSCONFIG="${AF_TSCONFIG:-/tmp/tsconfig.aftest.json}"
 
 # 源码守卫类测试要靠 AF_SRC 找到仓库里的源文件（它们检查的是源码本身）
-export AF_SRC="$(pwd -W 2>/dev/null || pwd)"
+#
+# ⚠️ 必须用**脚本自身位置**（$HERE），不能用 pwd。
+# 用 pwd 的话，`npm run test:af`（= `bash plugins/agent-flow/scripts/run-tests.sh`，
+# 在仓库根执行）会把 AF_SRC 指成仓库根 —— 于是 `components/ArgCell.tsx`
+# 之类全部读不到，readSrc 返回空串，278 条源码守卫**集体假失败**
+# （实测：从 plugins/agent-flow 里跑 2379/0，从根跑 2375 中 278 红）。
+#
+# 而假失败的样子是"被测代码有问题" —— 会把人引向完全错误的方向。
+export AF_SRC="${AF_SRC:-$HERE}"
+
+# 指错了就当场说，别让守卫静默读空串
+if [ ! -f "$AF_SRC/App.tsx" ]; then
+  echo "✗ AF_SRC 指向的不是插件根目录：$AF_SRC（缺 App.tsx）"
+  echo "  源码守卫会读到空串、集体假失败。请用 AF_SRC=<插件根> 覆盖。"
+  exit 1
+fi
 
 # ------------------------------------------------------------------
 # 生成测试专用的 tsconfig。
