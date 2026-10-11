@@ -835,10 +835,78 @@ function applyCollapsed(root, flags) {
    ------------------------------------------------------------ */
 
 /**
+ * 取 XML/HTML 文本的**根元素名**（小写），不是根元素则返回 ''。
+ *
+ * 用来按「这个文件的根元素是什么」判断格式，而不是按「某个字符串出现在哪」。
+ * 跳过 `<?…?>` 声明、`<!…>`（DOCTYPE）、`<!--…-->` 注释与空白。
+ */
+function rootElementName(head) {
+  let i = 0;
+  const n = head.length;
+  while (i < n) {
+    while (i < n && /\s/.test(head[i])) i++;
+    if (i >= n || head[i] !== '<') return '';
+    if (head.startsWith('<?', i)) {
+      const e = head.indexOf('?>', i);
+      if (e < 0) return '';
+      i = e + 2;
+      continue;
+    }
+    if (head.startsWith('<!--', i)) {
+      const e = head.indexOf('-->', i);
+      if (e < 0) return '';
+      i = e + 3;
+      continue;
+    }
+    if (head.startsWith('<!', i)) {
+      const e = head.indexOf('>', i);
+      if (e < 0) return '';
+      i = e + 1;
+      continue;
+    }
+    const m = /^<\s*([A-Za-z][\w:.-]*)/.exec(head.slice(i));
+    return m ? m[1].toLowerCase() : '';
+  }
+  return '';
+}
+
+/**
+ * 第一行非空行 —— 用于把标记匹配锚在文件开头，
+ * 而不是「文件里任何地方出现过就算」。
+ *
+ * ⓘ 早先这里还额外跳过 PlantUML 注释行（`'…` / `/'…'/`）。那一条是**观测不到**
+ *   的：删掉它，带注释前缀的真 .puml 仍会被后面那条「行首 `*`/`**`」判成
+ *   plantuml（mindmap 的节点行本来就是 `*` 开头）。留着一段无法验证、删掉也
+ *   看不出差别的分支，只会让人以为它在把关（本项目第 N 次栽在这类"假把关"上），
+ *   所以去掉 —— 判断依据写在变异验证记录里。
+ */
+function firstMeaningfulLine(head) {
+  for (const raw of String(head).split('\n')) {
+    const l = raw.trim();
+    if (l) return l;
+  }
+  return '';
+}
+
+/**
  * 嗅探文本/文件名属于哪种格式（纯函数，可测）。
  *
  * **先按内容、后按扩展名**：用户常把 `.opml` 存成 `.xml`、
  * 把 `.mmd` 存成 `.txt`，只认扩展名会大面积误判。
+ *
+ * **标记必须锚在文件开头**（BUG 120）。早先写的是「前 4096 字符里出现过就算」：
+ *
+ *   /<opml\b/i     —— 一篇讲 OPML 的 Markdown 里写了「<opml version="2.0"> 是根标签」
+ *   /<map\b/i      —— 讲 HTML `<map>` 标签的 Markdown 同理
+ *   /mindmap\s*$/im —— 正文里任何一行恰好是 "mindmap" 就算
+ *   /@startmindmap/i —— 代码块里举了个 PlantUML 例子就算
+ *
+ * 于是这四种**正经 Markdown** 被判成别的格式。后果分两种，都不好：
+ *   · 判成 opml / freemind → 解析器返回 null → 弹「解析失败」，文件**根本导不进来**
+ *   · 判成 mermaid / plantuml → 解析**成功**但内容是错的：
+ *       实测 '# 项目\n## 设计\nmindmap\n## 开发' → 四个标题变成**并列的兄弟节点**，
+ *       层级全乱；'@startmindmap' 那条更只剩一个节点，标题整段消失。
+ *     这类是**静默**的 —— 导入是整体替换且不可撤销，用户事后才发现。
  *
  * @returns {'xmind'|'freemind'|'opml'|'mermaid'|'plantuml'|'markdown'|'json'|null}
  */
@@ -851,10 +919,13 @@ export function detectFormat(text, name = '') {
   if (head.startsWith('{') || head.startsWith('[')) {
     try { JSON.parse(src); return 'json'; } catch { /* 不是 JSON，继续 */ }
   }
-  if (/<opml\b/i.test(head)) return 'opml';
-  if (/<map\b/i.test(head)) return 'freemind';
-  if (/^\s*mindmap\s*$/im.test(head.split('\n')[0] || '') || /^\s*mindmap\s*$/im.test(head)) return 'mermaid';
-  if (/@startmindmap/i.test(head)) return 'plantuml';
+  // 按**根元素**判断：只认「这个文件本身就是 opml / map 文档」
+  const rootName = rootElementName(head);
+  if (rootName === 'opml') return 'opml';
+  if (rootName === 'map') return 'freemind';
+  // Mermaid mindmap 的「mindmap」是**第一行**
+  if (/^mindmap\s*$/i.test(head.split('\n')[0] || '')) return 'mermaid';
+  if (/^@startmindmap\b/i.test(firstMeaningfulLine(head))) return 'plantuml';
   /*
    * **ATX 标题必须先于「裸 * 列表」判断** —— 顺序反了会丢内容。
    *

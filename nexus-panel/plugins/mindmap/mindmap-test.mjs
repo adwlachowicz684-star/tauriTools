@@ -16879,6 +16879,95 @@ group('BUG 119 · 交换格式丢掉的图片 / 附件 / 外框必须计入提�
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 120：格式嗅探的标记没锚在文件开头 —— 正经 Markdown 被判成别的格式
+
+   detectFormat 早先写的是「前 4096 字符里出现过就算」：
+     /<opml\b/i       讲 OPML 的 md 里写了「<opml version="2.0"> 是根标签」
+     /<map\b/i        讲 HTML `<map>` 标签的 md 同理
+     /mindmap\s*$/im  正文里任何一行恰好是 "mindmap" 就算
+     /@startmindmap/i 代码块里举了个 PlantUML 例子就算
+
+   后果分两种：
+     · opml / freemind → 解析器返回 null → 弹「解析失败」，文件根本导不进来
+     · mermaid / plantuml → **解析成功但内容是错的**，静默：
+         '# 项目\n## 设计\nmindmap\n## 开发' 四个标题变成并列兄弟，层级全乱
+         '@startmindmap' 那条只剩一个节点，标题整段消失
+   导入是整体替换且不可撤销 —— 静默的那种最坏。
+
+   改：按**根元素**判 XML（跳过 <?…?> / <!…> / <!--…-->），
+       「mindmap」只看第一行，@startmindmap 只看第一条有意义的行。
+   ------------------------------------------------------------------ */
+group('BUG 120 · 格式嗅探必须锚在文件开头，否则 Markdown 被误判');
+
+{
+  const fs3 = await import('node:fs');
+  const path3 = await import('node:path');
+  const f3 = await import('file://' + path3.join(HERE, 'formats.js'));
+
+  const km = JSON.stringify({ root: { data: { id: 'r', text: 'x' }, children: [] } });
+
+  // ① 四种正经 Markdown 不再被误判（这是本次的核心）
+  {
+    const CASES = [
+      ['正文里有一行 mindmap', '# 项目\n\n## 设计\n\nmindmap\n\n## 开发\n'],
+      ['代码围栏里 mindmap', '# 项目\n\n```text\nmindmap\n```\n\n## 设计\n'],
+      ['正文里出现 <opml', '# 项目\n\n<opml version="2.0"> 是 OPML 的根标签\n\n## 设计\n'],
+      ['正文里出现 <map', '# 项目\n\nHTML 的 <map> 标签用于图像映射\n\n## 设计\n'],
+      ['代码块里 @startmindmap', '# 项目\n\n@startmindmap\n* a\n@endmindmap\n\n## 设计\n'],
+    ];
+    for (const [name, text] of CASES) {
+      eq(f3.detectFormat(text, 'x.md'), 'markdown', `★ ${name} → 仍判为 markdown`);
+    }
+  }
+
+  // ② 误判的后果要真的消失（不是只改了标记顺序）
+  {
+    const md = '# 项目\n\n## 设计\n\nmindmap\n\n## 开发\n';
+    const kind = f3.detectFormat(md, 'x.md');
+    const c = kind === 'mermaid' ? f3.fromMermaid(md) : null;
+    // 判成 mermaid 时，四个标题会变成并列兄弟（静默错层）；现在不该走到这里
+    ok(c === null || JSON.parse(c).root.children?.length !== 4,
+      '★ 不再把整份 Markdown 摊成并列兄弟节点');
+  }
+
+  // ③ 真文件必须照旧识别（不能为了修误判把真格式弄坏）
+  {
+    eq(f3.detectFormat(f3.toOpml(km), 'a.xml'), 'opml', '★ 真 OPML（带 <?xml 声明）→ opml');
+    eq(f3.detectFormat(f3.toFreemind(km), 'a.txt'), 'freemind', '★ 真 FreeMind → freemind');
+    eq(f3.detectFormat(f3.toMermaid(km), 'y.txt'), 'mermaid', '★ 真 Mermaid → mermaid');
+    eq(f3.detectFormat(f3.toPlantUml(km), 'z.txt'), 'plantuml', '★ 真 PlantUML → plantuml');
+    // 带 XML 声明 / DOCTYPE / 注释的各种前缀都要认
+    eq(f3.detectFormat('<?xml version="1.0"?>\n<!DOCTYPE opml>\n<opml version="2.0"><body/></opml>', 'a'), 'opml',
+      'OPML 带 DOCTYPE 前缀 → 仍认（按根元素）');
+    eq(f3.detectFormat('<!-- 导出 -->\n<map version="1.0.1"><node TEXT="x"/></map>', 'a'), 'freemind',
+      'FreeMind 带注释前缀 → 仍认');
+    // 注释里含 `>`：必须按 `-->` 收尾，不能按第一个 `>`（否则根元素判不出来）
+    eq(f3.detectFormat('<!-- 由 a > b 导出 -->\n<map version="1.0.1"><node TEXT="x"/></map>', 'a'), 'freemind',
+      '★ 注释里含 > 时仍认（按 --> 收尾，不是按第一个 >）');
+    eq(f3.detectFormat("' 这是 PlantUML 注释\n@startmindmap\n* a\n@endmindmap", 'a'), 'plantuml',
+      'PlantUML 带注释行前缀 → 仍认（走行首 * 的兜底）');
+  }
+
+  // ④ 源码契约：不能再回到「出现在哪都算」
+  {
+    const src = fs3.readFileSync(path3.join(HERE, 'formats.js'), 'utf8');
+    const code = stripCommentsFlatJs(src);
+    // ⓘ `\\b` 才能匹配源码里的字面 `\b`（写成 `\b` 是正则的单词边界，匹配不到）
+    ok(!/\/<\s*opml\\b\/i\.test\(head\)/.test(code), '★ 不再用「<opml 出现在哪都算」');
+    ok(!/\/<\s*map\\b\/i\.test\(head\)/.test(code), '★ 不再用「<map 出现在哪都算」');
+    ok(!/\/@startmindmap\/i\.test\(head\)/.test(code), '★ 不再用「@startmindmap 出现在哪都算」');
+    ok(/rootElementName\(head\)/.test(code), '改用根元素判断');
+    ok(/firstMeaningfulLine\(head\)/.test(code), '改用「第一条有意义的行」判断');
+    // 光"定义了"不算：两处都必须真的被调用（函数定义本身也会被上面两条命中）
+    const iDetect = code.indexOf('export function detectFormat');
+    const body = code.slice(iDetect, iDetect + 2500);
+    ok(/rootElementName\(head\)/.test(body), '★ detectFormat 里真的调了 rootElementName');
+    ok(/firstMeaningfulLine\(head\)/.test(body), '★ detectFormat 里真的调了 firstMeaningfulLine');
+    ok(!/\|\|\s*\/\^\\s\*mindmap\\s\*\$\/im/.test(body), '★ mermaid 不得再有「任意一行」的兜底');
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */
