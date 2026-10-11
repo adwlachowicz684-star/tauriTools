@@ -45,7 +45,16 @@ const t = (name, cond, extra = '') => {
 };
 
 console.log('\n=== 1. 注册表：服务有独立 kind ===');
-t('registry 的注释里写明 kind 字段', /\*\s*kind\s+'app'（默认/.test(regSrc) || /kind\s+'app'/.test(regSrc));
+t('注释：头部写明 kind 两档（app 默认 / service）',
+  /\*\s*kind\s+'app'（默认/.test(regSrc));
+/*
+ * 原名「registry 声明了 kind 字段」本身就不成立：registry.js 里
+ * 从没写过 kind:'app' —— 它是**缺省值**，靠"不等于 service/toolbar"
+ * 来兜（js/host.js 侧边栏那行）。所以那条断言的两个分支都只命中
+ * 头部注释，代码里把缺省逻辑删掉它也照样绿。
+ */
+t('kind 缺省按 app 处理（不写 kind 的条目仍进侧边栏）',
+  /p\.kind !== 'service' && p\.kind !== 'toolbar'/.test(hostSrc));
 t('有 demo-service 服务插件', /id: 'demo-service'/.test(regSrc));
 t('demo-service 标记 kind:service', /kind: 'service'/.test(regSrc));
 

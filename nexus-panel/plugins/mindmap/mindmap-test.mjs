@@ -1296,9 +1296,7 @@ group('面板分布：左文件库 / 中画布 / 右属性侧栏');
     '页签顺序：主题 → 标签 → 样式 → 文件 → 导入导出');
   ok(/buildSide\(app, \{ onPage: syncSideTabs \}\)/.test(src2), '侧栏切页回灌给顶栏页签（同步高亮）');
 
-  /* 终点取这个规则块自己的 `}`，不取后面的注释 —— 注释改写会让切片静默错位 */
-  const iTop = css.indexOf('.mm-top-tabs {');
-  const topCss = css.slice(iTop, css.indexOf('}', iTop));
+  const topCss = css.slice(css.indexOf('.mm-top-tabs {'), css.indexOf('.mm-statusbar {'));
   ok(/margin-left:\s*auto/.test(topCss), '页签组用 margin-left:auto 推到顶栏最右');
 
   // 10.7 行为：侧栏自行切页（点节点附件→跳「文件」页）时顶栏也跟着变
@@ -1560,7 +1558,7 @@ group('画布附件图标配色');
 
 {
   const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
-  const icons = html.slice(html.indexOf('function iconColor'), html.indexOf('// 不能把 FileRenderer 挂进'));
+  const icons = html.slice(html.indexOf('function iconColor'), html.indexOf('try {', html.indexOf('this.fold.stroke(color, 1.2);')));
 
   // 13.1 取色必须有回落：主题里查不到 color 时 core 的 getStyle 返回 null
   ok(/function\s+iconColor/.test(icons), '抽出了 iconColor()');
@@ -1657,9 +1655,15 @@ group('附件：file 与 video 互不干扰');
    * 复刻的话命令改了测试还是绿的，等于没测。
    */
   const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
+  /*
+   * 结束锚点：FileIcon 类闭合之后、noderender 钩子那个 `try {` 之前。
+   * 直接锚 `km.on('noderender'...` 会把 1091 行的 `try {` 切进来却没有 catch，
+   * `new Function(cmdSrc)` 直接 SyntaxError —— 而报错指向的是 "Missing catch"，
+   * 离"切片边界多切了一行"很远。
+   */
   const cmdSrc = html.slice(
     html.indexOf("var FileCommand = kity.createClass('fileCommand'"),
-    html.indexOf('// 不能把 FileRenderer 挂进'));
+    html.indexOf('try {', html.indexOf('this.fold.stroke(color, 1.2);')));
 
   const kity = {
     createClass(name, def) {
@@ -1860,7 +1864,7 @@ group('布局模板缩略图');
 {
   // 15.5 缺图时要退化成可见占位符，而不是空白
   const src = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
-  const seg = src.slice(src.indexOf("section('布局模板'"), src.indexOf('// 注：这里原先有个'));
+  const seg = src.slice(src.indexOf("section('布局模板'"), src.indexOf("h('span.mm-layout-name', {}, l.label)))"));
   ok(/LAYOUT_THUMBS\[l\.value\]\s*\?/.test(seg), '渲染前判断缩略图是否存在');
   ok(/mm-layout-nothumb/.test(seg), '缺图时给占位符（不留空白）');
 }
@@ -2411,7 +2415,7 @@ group('行内编辑贴合节点');
 {
   const ed = fs.readFileSync(path.join(HERE, 'editor/index.html'), 'utf8');
   const i0 = ed.indexOf('importText:');
-  const seg = ed.slice(i0, ed.indexOf('// 关键：km.exportData()', i0));
+  const seg = ed.slice(i0, ed.indexOf('exportJson: function () {', i0));
   const scode = stripCommentsFlatJs(seg);
   ok(/async function/.test(scode), 'importText 是 async（importData 是异步的，不 await 会跑在旧树上）');
   ok(/await km\.importData\(/.test(scode), '必须 await km.importData(...)');
@@ -2534,7 +2538,7 @@ group('设置面板');
 {
   // 18.6 顶栏：设置按钮在重载左边
   const src = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
-  const seg = src.slice(src.indexOf("B('设置'"), src.indexOf('// 属性侧栏页签'));
+  const seg = src.slice(src.indexOf("B('设置'"), src.indexOf('toolbar.appendChild(buildSideTabs());'));
   const iSet = seg.indexOf("B('设置'");
   const iReload = seg.indexOf("B('重载'");
   ok(iSet >= 0 && iReload >= 0, '顶栏同时有「设置」与「重载」');
@@ -3379,7 +3383,7 @@ group('B1 统一撤销栈');
   // 新编辑 / 切文件 / 切换画布，三处都要解锁
   const saveFn = src.slice(src.indexOf('async function doSaveInner'), src.indexOf('异步失败不包一层'));
   ok(/pendingRedo = null;/.test(saveFn), '新编辑后解锁（重做链已失效）');
-  const resetFn = src.slice(src.indexOf('function resetHistory'), src.indexOf('/** 只做「载入并切换」'));
+  const resetFn = src.slice(src.indexOf('function resetHistory'), src.indexOf('async function switchToFile(id) {'));
   ok(/pendingRedo = null;/.test(resetFn), '切文件后解锁');
   ok(/切换\/重载画布会重置编辑器历史基线/.test(src), '切换画布处也解锁（有注释说明）');
 }
@@ -4074,7 +4078,7 @@ group('P2 导入导出');
     // function 声明被提升，`pages.theme = pageTheme` 出现在**定义之前**
     // （第 579 行 vs 第 1501 行），slice 会拿到空串，三条断言永远为假（假阴性）。
     const th = pn.slice(pn.indexOf('function pageTheme('),
-      pn.indexOf('// 默认停在「主题」页'));
+      pn.indexOf("open('theme');"));
     ok(/importThemeFile\(\)/.test(th), 'A39 主题页有「导入主题」');
     ok(/exportThemeFile\(\)/.test(th), 'A39 主题页有「导出主题」');
     // 不能两处都有 —— 那就是把刚集中的入口又拆开
@@ -4263,7 +4267,7 @@ group('P3 打印与 PDF');
   // ---- A35/A41 打印设置框 ----
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/export function openPrintSettings/.test(pn), 'A35 新增 openPrintSettings');
-  const fn = pn.slice(pn.indexOf('export function openPrintSettings'), pn.indexOf('/** 自定义主题编辑器'));
+  const fn = pn.slice(pn.indexOf('export function openPrintSettings'), pn.indexOf('export function openThemeEditor(app, theme, seedTheme) {'));
   ok(/let landscape = true/.test(fn), 'A35 默认横向（脑图更宽，横向少浪费纸张）');
   ok(/纸张方向/.test(fn), 'A41 提供方向选择');
   ok(/页边距/.test(fn), 'A41 提供页边距选择');
@@ -4652,7 +4656,7 @@ group('A70 开发者工具 / A71 诊断捕获');
   const rs = fs.readFileSync(path.join(HERE, '../../src-tauri/src/main.rs'), 'utf8');
   ok(/fn mm_open_devtools/.test(rs), 'A70 Rust 新增 mm_open_devtools');
   ok(/mm_open_devtools,/.test(rs), 'A70 命令已注册');
-  const f = rs.slice(rs.indexOf('fn mm_open_devtools'), rs.indexOf('/// 当前是否具备'));
+  const f = rs.slice(rs.indexOf('fn mm_open_devtools'), rs.indexOf('fn mm_pdf_vector_support() -> bool {'));
   ok(/#\[cfg\(debug_assertions\)\]/.test(f), 'A70 debug 构建才真的打开');
   ok(/#\[cfg\(not\(debug_assertions\)\)\]/.test(f), 'A70 release 明确报错（给最终用户开控制台没意义）');
   ok(/window\.open_devtools\(\)/.test(f), 'A70 调用 Tauri 的 open_devtools');
@@ -4727,7 +4731,7 @@ group('A70 开发者工具 / A71 诊断捕获');
   const pn3 = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/export function openDiagnostics/.test(pn3), 'A71 新增诊断窗口');
   ok(/诊断记录…/.test(pn3), 'A71 设置里有入口');
-  const od = pn3.slice(pn3.indexOf('export function openDiagnostics'), pn3.indexOf('/** 自定义主题编辑器 */'));
+  const od = pn3.slice(pn3.indexOf('export function openDiagnostics'), pn3.indexOf('export function openThemeEditor(app, theme, seedTheme) {'));
   ok(/textarea/.test(od), 'A71 用 textarea（可整段复制去报问题，pre 换行会乱）');
   ok(/readonly/.test(od), 'A71 只读');
   ok(/navigator\.clipboard\.writeText/.test(od), 'A71 一键复制');
@@ -8947,7 +8951,7 @@ group('附件在节点间拖拽：分发逻辑（跑真实源码）');
     const mkGhost = html.slice(html.indexOf('function attGhostEl('), html.indexOf('function attHiEl('));
     ok(/pointerEvents\s*=\s*'none'/.test(mkGhost),
       '跟随浮层 pointer-events:none（否则 elementFromPoint 命中它自己）');
-    const mkHi = html.slice(html.indexOf('function attHiEl('), html.indexOf('/** 把高亮框套在目标节点上'));
+    const mkHi = html.slice(html.indexOf('function attHiEl('), html.indexOf('function attHighlight(node) {'));
     ok(/pointerEvents\s*=\s*'none'/.test(mkHi), '高亮框同样不能吃事件');
   }
 
@@ -9168,7 +9172,7 @@ group('附件图标不能是黑块：fill 必须用 none 而不是 transparent')
    * 稳定存在的注释（"不能把 FileRenderer 挂进"）。
    * 锚点一旦失效，slice 会切到别处（甚至空串），断言就变成假阴性。
    */
-  const fiEnd = html.indexOf('// 不能把 FileRenderer 挂进');
+  const fiEnd = html.indexOf('try {', html.indexOf('this.fold.stroke(color, 1.2);'));
   const fi = html.slice(fiAt, fiEnd);
   ok(fiAt > 0 && fiEnd > fiAt, '能定位到 FileIcon 源码');
 
@@ -9366,7 +9370,7 @@ group('图片：image 命令必须同步（跑真实源码）');
 
   // 取命令区源码（FileCommand → FileRenderer 注释前），含我们覆盖的 image 命令
   const start = html.indexOf("var FileCommand = kity.createClass('fileCommand'");
-  const end = html.indexOf('// 不能把 FileRenderer 挂进');
+  const end = html.indexOf('try {', html.indexOf('this.fold.stroke(color, 1.2);'));
   const cmdSrc = html.slice(start, end);
 
   const kity = {
@@ -9460,7 +9464,7 @@ group('图标：构造时就有默认色（不靠 paint 才不黑）');
 {
   const html = fs.readFileSync(path.join(HERE, 'editor', 'index.html'), 'utf8');
   const fiAt = html.indexOf('var FileIcon = kity.createClass');
-  const fiEnd = html.indexOf('// 不能把 FileRenderer 挂进');
+  const fiEnd = html.indexOf('try {', html.indexOf('this.fold.stroke(color, 1.2);'));
   const fi = html.slice(fiAt, fiEnd);
 
   // FileIcon：轮廓自带填充 + 描边（paint 漏了也不会是黑块）
@@ -9846,7 +9850,7 @@ group('图片预览：左右切换 + ← → 快捷键');
   {
     const pnl = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
     const oi = pnl.indexOf('export function openPreview');
-    const src = pnl.slice(oi, pnl.indexOf('/** 历史快照列表 */', oi));
+    const src = pnl.slice(oi, pnl.indexOf('export async function openBackups(app) {', oi));
     ok(/addEventListener\('wheel', onWheel, \{ passive: false/.test(src),
       'wheel 用 passive:false 注册（否则 preventDefault 被忽略，背后跟着滚）');
     ok(/removeEventListener\('wheel', onWheel/.test(src), '关闭时解绑 wheel');
@@ -14749,7 +14753,7 @@ group('BUG 58 · 图标库与图片附件共用 data.image，后写的把先写�
 
   // 3) 写图标：槽里若已是图片，必须先让进横幅 —— 这是「不丢数据」的关键
   const bIcon = body.indexOf('if (isIcon) {');
-  const bPhoto = body.indexOf('// 写图片');
+  const bPhoto = body.indexOf('if (slot.url) {');
   const iconBranch = bIcon > 0 ? body.slice(bIcon, bPhoto > bIcon ? bPhoto : bIcon + 900) : '';
   ok(iconBranch.length > 0, 'setImage：能取到「写图标」分支');
   ok(/slot\.url\s*&&\s*!slot\.isIcon[\s\S]{0,120}_appendImage\(slot\.url\)/.test(iconBranch),

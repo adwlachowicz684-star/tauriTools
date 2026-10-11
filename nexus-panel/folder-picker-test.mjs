@@ -186,10 +186,10 @@ t('listFavs / addFav / removeFav 齐备',
  * 调用方今天按字符串写，明天谁加个 extraAction 就静默错到底。
  */
 t('返回值固定 { path, action }', /res\(\{ path:[^}]*action:/.test(mod));
+t('注释：头部写明取消不 reject（否则每个调用方都得写 try/catch）',
+  /取消\*\*不 reject\*\*/.test(mod));
 t('取消不 reject（否则每个调用方都得写 try/catch）',
   /res\(\{ path: null, action: null \}\)/.test(mod));
-t('文档写明取消不 reject（调用方据此不写 try/catch）',
-  /取消\*\*不 reject\*\*/.test(mod));
 t('点遮罩有退路（否则 Promise 永远悬着）', /watchHidden/.test(mod));
 t('Esc 有退路', /Escape'\) cancel\(\)/.test(mod));
 t('未挂上时抛错而不是静默返回 null', /服务尚未挂载/.test(mod));
@@ -225,7 +225,7 @@ t('收掉旧会话时先解除它的监听（否则旧 Esc 监听会取消新会
 t('用法示例按 { path, action } 取值', /const r = await ctx\.services\.call/.test(mod)
   && /const path = r\?\.path;/.test(mod));
 t('用法示例不再写"返回路径字符串"', !/const path = await ctx\.services\.call/.test(mod));
-t('文档示例写明取消 → path 为 null（不是整体返回 null）',
+t('用法示例（文档）：取消写成 path 为 null，不是整体返回 null',
   /path = r\?\.path;[\s\S]{0,120}取消 \/ 关闭 → null/.test(mod));
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);

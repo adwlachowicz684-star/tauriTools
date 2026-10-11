@@ -152,10 +152,16 @@ t('rehype-highlight 用了运行时版且**回到原槽位**',
   all.rehype[SWAP_SLOTS['rehype-highlight'].index] === rtHl);
 
 /* 顺序：slug 必须仍在 highlight 之前（见 render-config 的顺序说明） */
+/*
+ * 两端都先判 >= 0：把 rtSlug 挪出数组 → indexOf 得 -1 → `-1 < 正数`
+ * 恒真，这条"顺序没被挪动"就空跑了（实测过同类：改个名、功能不变、
+ * 断言照绿）。
+ */
+const iRtSlug = all.rehype.indexOf(rtSlug);
+const iRtHl = all.rehype.indexOf(rtHl);
 t('rehype 顺序没被挪动（slug 仍在 highlight 之前）',
   SWAP_SLOTS['rehype-slug'].index < SWAP_SLOTS['rehype-highlight'].index &&
-  all.rehype.indexOf(rtSlug) >= 0 &&
-  all.rehype.indexOf(rtSlug) < all.rehype.indexOf(rtHl));
+  iRtSlug >= 0 && iRtHl >= 0 && iRtSlug < iRtHl);
 t('换完数组长度不变（不是追加）',
   all.rehype.length === REHYPE_PLUGINS.length &&
   all.remark.length === REMARK_PLUGINS.length);

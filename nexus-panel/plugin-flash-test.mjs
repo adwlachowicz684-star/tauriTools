@@ -69,17 +69,24 @@ const iReveal = mainMount.indexOf('revealFrame(');
  * 这条调用当锚点：主题变量是挂载过程的一部分，显形排在它之后，
  * 就仍然是"变量生效后再摘遮罩"。比拍一个名字更稳。
  */
-const iInject = mainMount.indexOf('await mount');t('主视图：revealFrame 在主题变量注入之后', iInject >= 0 && iReveal > iInject,
+const iInject = mainMount.indexOf('await mount');t('主视图：revealFrame 在主题变量注入之后',
+  iInject >= 0 && iReveal >= 0 && iReveal > iInject,
   `reAdapt@${iRe} → reveal@${iReveal}`);
 /*
- * 原有一条「适配关掉时也显形（else 分支之后）」是**僵尸断言**：
- * 它锚的 `adapt-disabled` 随滤镜反转机制整套删除而不复存在，
- * indexOf 恒为 -1 → `-1 < iReveal` 恒真，从没验到任何东西。
- * 它守的语义（适配之后再摘遮罩）已由上方「显形排在挂载之后」覆盖，不再单列。
+ * ⚠️ 原有一条「主视图：适配关掉时也显形（else 分支之后）」已删除。
+ *
+ * 它钉的是 `adapt-disabled` —— 适配（滤镜反转）整套机制删掉后，源码里
+ * 再没有这个字符串（只剩旧构建产物 dist/assets/host-*.js 里有）。
+ * 于是 `mainMount.indexOf('adapt-disabled')` 恒为 -1，
+ * `-1 < iReveal` 恒真 —— **断言一直绿，却什么都没验**。
+ *
+ * 是补上"两端先判存在"才暴露出来的：这类顺序断言缺了存在性判定，
+ * 退化成恒真是**静默**的（改个名、删个功能，它照样绿）。
+ * 上面那条「revealFrame 在主题变量注入之后」仍在守显形时机本身，没丢覆盖。
  */
 
 const settingsMount = host.slice(host.indexOf('async function mountSettings('));
-/* 同理：reAdapt 已不存在，锚它同样是恒真的空跑 —— 改用真实的挂载调用 */
+/* 与主视图同理：reAdapt 已不存在，锚它同样是 `-1 < x` 的恒真空跑 */
 const iSetMount = settingsMount.indexOf('await mountIframeView(');
 t('设置面板视图也会显形',
   iSetMount >= 0 && iSetMount < settingsMount.indexOf('revealFrame('));

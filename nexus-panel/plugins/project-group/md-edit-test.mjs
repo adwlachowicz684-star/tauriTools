@@ -207,7 +207,7 @@ console.log('\n=== 8. 服务契约不一致（记录，不在本轮修改）==='
       /resolve\(null\)/.test(svc));
     t('不再有 reject(已取消) 这种与契约相反的实现',
       !/reject\(new Error\('已取消'\)\)/.test(svc));
-    t('契约文档写明：取消 resolve(null)、真出错才 reject',
+    t('契约（类型说明 .d.ts 文档）：取消 resolve(null)、真出错才 reject',
       /resolve\(null\) —— \*\*用户取消\*\*/.test(dtsTxt)
       && /reject\(错误\)/.test(dtsTxt));
     /*
