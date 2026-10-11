@@ -667,3 +667,111 @@ test('导入处必须传 skipReason —— 单有 canPresetOn 会报假原因', 
   assert.match(seg, /skipReason/, '导入没传 skipReason —— 只能给出中性文案，说不清是"没有"还是"已废弃"');
   assert.match(seg, /hasDef/, '原因要用 hasDef 把两种不成立的情况分开：没有 / 有但已并入别的节点');
 });
+
+/* ================================================================ */
+/* 导入：整体的两条 —— 一条是破坏性的，一条是现在无害将来必错的      */
+/* ================================================================ */
+
+/*
+ * 【破坏性】替换模式下导入一个全是坏条目的文件，原有预设会一起消失。
+ *
+ * replace 的语义是"先清空再往里塞"，而"塞不进去"不会撤销清空 ——
+ * 于是"导入失败"和"清空"同时发生。提示框只报「跳过 N 条」，
+ * 只字未提原有的一起没了。用户什么都没做成，东西却没了。
+ *
+ * 区分两种"结果是空"：
+ *   · 列表本身 0 条     → 明确意图，照办（下面那条测试盯住）
+ *   · 有东西但全没通过  → 文件坏了，必须中止且不动数据
+ */
+test('替换模式：文件里一条都没通过校验时，原有的必须保住（不能顺带清空）', () => {
+  const kv = memKV();
+  addCustomPreset({ name: '我原有的', baseType: 'condition', data: { label: 'a' } }, kv);
+  assert.equal(loadCustomPresets(kv).length, 1);
+
+  const bad = JSON.stringify({
+    version: 1,
+    presets: [
+      { id: 'x', name: '', baseType: 'condition', createdAt: 0, data: {} },
+      { id: 'y', name: '坏数据', baseType: 'condition', createdAt: 0, data: null },
+    ],
+  });
+  assert.throws(
+    () => importCustomPresets(bad, { isKnownType: () => true, mode: 'replace' }, kv),
+    /已保留/,
+    '要把"原有的没动"说出口，不能只报跳过',
+  );
+  assert.equal(loadCustomPresets(kv).length, 1, '原有的一条都不能少');
+  assert.equal(loadCustomPresets(kv)[0].name, '我原有的');
+});
+
+/* 上面那条的反面：列表本身是空的，那是用户明确要清空，不能拦 */
+test('替换模式：列表本身为空时照常清空（那是明确意图，不是文件坏了）', () => {
+  const kv = memKV();
+  addCustomPreset({ name: '我原有的', baseType: 'condition', data: { label: 'a' } }, kv);
+  const r = importCustomPresets(
+    JSON.stringify({ version: 1, presets: [] }),
+    { isKnownType: () => true, mode: 'replace' },
+    kv,
+  );
+  assert.equal(r.added + r.updated, 0);
+  assert.equal(loadCustomPresets(kv).length, 0, '空列表 + 替换 = 清空，符合预期');
+});
+
+/* 合并模式不受影响：它本来就不清空 */
+test('合并模式：坏条目不影响原有的（本来就不清空）', () => {
+  const kv = memKV();
+  addCustomPreset({ name: '我原有的', baseType: 'condition', data: { label: 'a' } }, kv);
+  const bad = JSON.stringify({
+    version: 1,
+    presets: [{ id: 'x', name: '', baseType: 'condition', createdAt: 0, data: {} }],
+  });
+  const r = importCustomPresets(bad, { isKnownType: () => true }, kv);
+  assert.equal(r.added, 0);
+  assert.equal(loadCustomPresets(kv).length, 1);
+});
+
+/*
+ * 【现在无害、将来必错】createdAt 类型上写着 number，导入却原样落库。
+ *
+ * 实测 createdAt:'昨天' → 落库后 typeof 是 string。
+ * 现在没有消费点所以看不出坏处；一旦有人按它排序
+ * （a.createdAt - b.createdAt 得 NaN），排序会**静默乱序**。
+ *
+ * 不因为时间戳坏就拒收整条 —— 配置本身是好的，那太严了。
+ */
+test('导入：createdAt 不是数字时用"现在"，不把字符串带进 number 字段', () => {
+  const kv = memKV();
+  /*
+   * 每条用不同 id —— 同 id 会互相覆盖，第二次起就是 updated 而不是 added，
+   * 断言 added===1 会在第二轮自己报错（报的还是错的理由）。
+   */
+  const bads: Array<string | null | undefined> = ['昨天', null, undefined];
+  bads.forEach((bad, i) => {
+    const json = JSON.stringify({
+      version: 1,
+      presets: [{
+        id: `p${i}`, name: `时间戳坏了${i}`, baseType: 'condition',
+        createdAt: bad, data: { label: 'x' },
+      }],
+    });
+    const r = importCustomPresets(json, { isKnownType: () => true }, kv);
+    assert.equal(r.added, 1, `createdAt=${JSON.stringify(bad)} 不该因此拒收`);
+  });
+  const st = loadCustomPresets(kv);
+  assert.equal(st.length, bads.length, '三条都该入库');
+  for (const p of st) {
+    assert.equal(typeof p.createdAt, 'number', '落库的必须是数字');
+    assert.ok(Number.isFinite(p.createdAt), '不能是 NaN');
+  }
+});
+
+/* 正常的数字时间戳要原样保留，不能被"归一"洗掉 */
+test('导入：createdAt 是正常数字时原样保留', () => {
+  const kv = memKV();
+  const json = JSON.stringify({
+    version: 1,
+    presets: [{ id: 'p1', name: '有时间戳', baseType: 'condition', createdAt: 12345, data: { label: 'x' } }],
+  });
+  importCustomPresets(json, { isKnownType: () => true }, kv);
+  assert.equal(loadCustomPresets(kv)[0].createdAt, 12345);
+});

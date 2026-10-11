@@ -286,7 +286,22 @@ export function importCustomPresets(
      * 用与导出同一个 sanitizeForPreset，不另写一份（另写一份的结果又是
      * "导出剥了、导入没剥"这种只在一边生效的修法）。
      */
-    const clean: CustomPreset = { ...item, data: sanitizeForPreset(item.data) };
+    /*
+     * createdAt 归一：文件里可能是字符串、也可能是没有。
+     *
+     * 类型上写着 number，而导入的文件不受我们控制 —— 实测导入
+     * createdAt:'昨天' 会**原样落库**，typeof 是 string。
+     * 现在没有消费点所以看不出坏处，但一旦有人按它排序
+     * （`a.createdAt - b.createdAt` 得 NaN），排序会**静默乱序**。
+     *
+     * 口径与 canvasStore / credentials 一致：不是数字就用"现在"。
+     * 不因为时间戳坏就拒收整条 —— 那太严了，配置本身是好的。
+     */
+    const clean: CustomPreset = {
+      ...item,
+      data: sanitizeForPreset(item.data),
+      createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now(),
+    };
     const at = current.findIndex((p) => p.id === item.id);
     if (at >= 0) {
       current[at] = clean;
@@ -295,6 +310,30 @@ export function importCustomPresets(
       current.push(clean);
       result.added += 1;
     }
+  }
+
+  /*
+   * 「替换」模式下的一个破坏性洞，实测出来的：
+   *
+   *   导入一个**全是坏条目**的文件，选了替换 → 原有预设**全部消失**。
+   *   提示框只报「跳过 N 条」，只字未提"你原有的一起没了"。
+   *
+   * 因为 replace 的语义是"先把 current 清空，再往里塞"，而"塞不进去"
+   * 并不会把清空的动作撤销 —— 于是"导入失败"和"清空"同时发生了。
+   *
+   * 怎么区分"用户真想清空"和"文件坏了"：
+   *   · 列表本身是空的（0 条）→ 那是明确意图，照办；
+   *   · 列表里有东西、但一条都没通过校验 → 文件坏了，不是用户想要空。
+   *
+   * 后者直接抛错中止（不落库），并把"原有 N 条已保留"写进错误信息 ——
+   * 破坏性操作被拦下来这件事，必须用最醒目的方式让人看见。
+   */
+  if (opts.mode === 'replace' && list.length > 0 && result.added + result.updated === 0) {
+    const kept = loadCustomPresets(kv).length;
+    throw new Error(
+      `文件里 ${list.length} 条一条都没通过校验，没有导入。` +
+        (kept > 0 ? `你原有的 ${kept} 条已保留，未清空。` : ''),
+    );
   }
 
   saveCustomPresets(current, kv);
