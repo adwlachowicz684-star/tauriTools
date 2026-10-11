@@ -284,6 +284,46 @@ test('模块页以接口为主：写清了入口/出口怎么推导', () => {
   assert.ok(m.includes('没有下游'), '没说出口 = 没有下游的内部节点');
 });
 
+/* ============================================================
+ * 预设页「导入时会校验」这一段是**手写文案**，不是从源文件派生的
+ * —— 所以代码改了、它不会跟着变，改完了照样全绿。
+ *
+ * 已踩过一次：判据从 hasDef 放宽成 canPresetOn（存在**且**非 legacy）之后，
+ * 这段仍写着"基础节点在本机不存在就跳过，并带回原因（本机没有「xxx」）"——
+ * 于是文档在教人一个已经不成立的判据和一条会说假话的原因。
+ * 派生产物被当成"以源文件为准"，这种错比普通注释更难被怀疑。
+ * ============================================================ */
+test('预设页的导入校验：判据写的是 canPresetOn，不是"存在即可"', () => {
+  const p = fs.readFileSync(path.join(reuseDir, 'custom-preset.md'), 'utf-8');
+  const at = p.indexOf('导入时会校验');
+  assert.ok(at > 0, '预设页没有「导入时会校验」这段');
+  const seg = p.slice(at, at + 900);
+  assert.match(seg, /canPresetOn/, '没写判据是 canPresetOn —— 只写"存在就跳过"是旧判据（hasDef），legacy 会被漏掉');
+  assert.match(seg, /legacy/, '没提 legacy —— 判据的第二条（不是老类型）缺了，读者会以为装了就能用');
+});
+
+test('预设页的导入校验：不再把跳过原因说成"本机没有"', () => {
+  const p = fs.readFileSync(path.join(reuseDir, 'custom-preset.md'), 'utf-8');
+  const at = p.indexOf('导入时会校验');
+  assert.ok(at > 0, '预设页没有「导入时会校验」这段');
+  const seg = p.slice(at, at + 900);
+  assert.doesNotMatch(
+    seg,
+    /带回原因（"本机没有/,
+    '仍在写"带回原因（本机没有「xxx」这种节点）" —— 判据放宽后不成立有两种原因，'
+      + '统一说"没有"会把"有但已废弃"报成"没有"，这段文案在教人说假话',
+  );
+  assert.match(seg, /skipReason/, '没提 skipReason —— 原因由调用方给，读者不知道该传什么');
+});
+
+test('预设页的导入校验：写清了导入专用校验不走 isPreset', () => {
+  const p = fs.readFileSync(path.join(reuseDir, 'custom-preset.md'), 'utf-8');
+  const at = p.indexOf('导入时会校验');
+  assert.ok(at > 0, '预设页没有「导入时会校验」这段');
+  const seg = p.slice(at, at + 900);
+  assert.match(seg, /isPreset/, '没提 isPreset —— 加严它会让**已存的**条目静默消失，这个坑必须写出来');
+});
+
 test('预设页说清了存的时候剥掉什么（尤其是运行时与密钥）', () => {
   const p = fs.readFileSync(path.join(reuseDir, 'custom-preset.md'), 'utf-8');
   assert.ok(p.includes('last*'), '没提 last* 前缀的运行时字段');
