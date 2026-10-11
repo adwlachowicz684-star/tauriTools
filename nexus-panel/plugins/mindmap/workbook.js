@@ -79,6 +79,11 @@ export function normalizeSheets(sheets) {
         : (s.content && typeof s.content === 'object' ? s.content : emptyContent()),
       theme: s.theme || DEFAULT_THEME,
       layout: s.layout || DEFAULT_LAYOUT,
+      // BUG 122：关系线是画布级字段，规范化重建对象时必须跟着走 ——
+      // 少了这一步，导入带关系线的文件后只要存一次盘，关系线就没了
+      ...(Array.isArray(s.xrelationships) && s.xrelationships.length
+        ? { xrelationships: s.xrelationships }
+        : {}),
     };
   });
   return out.length ? out : [newSheet()];
@@ -114,6 +119,11 @@ export function cloneSheet(src, sheets = []) {
     theme: src.theme,
     layout: src.layout,
     content: deepCopyContent(src.content),
+    // BUG 122：副本也要带着关系线。deepCopyContent 是深拷贝，节点 id 原样
+    // 保留，所以关系线引用的端点在副本里仍然在（同 id 在本画布内存在）。
+    ...(Array.isArray(src.xrelationships) && src.xrelationships.length
+      ? { xrelationships: src.xrelationships.map((r) => ({ ...r })) }
+      : {}),
   };
 }
 

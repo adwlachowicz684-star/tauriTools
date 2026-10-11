@@ -17067,6 +17067,99 @@ group('BUG 121 · 根节点折叠必须写进 FreeMind 的 FOLDED');
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 122：XMind 的关系线（sheet 级 relationships）导入时被整个丢掉
+
+   关系线是**内容**：两个节点之间「有关联、以及关联叫什么」是用户写进去
+   的。读侧一眼不看、写侧也不写，于是导入别人的 .xmind 再导出，文件里的
+   关系线**一条不剩**，且不报错 —— 等于静默破坏别人的文件。
+   与 BUG 110（标记图标）同一类：本工具不渲染，但必须原样保住并写回。
+   ------------------------------------------------------------------ */
+group('BUG 122 · XMind 关系线必须保留并写回');
+
+{
+  const x7 = await import('file://' + path.join(HERE, 'xmind.js'));
+  const w7 = await import('file://' + path.join(HERE, 'workbook.js'));
+
+  const REL = [{ id: 'r1', end1Id: 't2', end2Id: 't3', title: '相关' }];
+  const mkSheet = (relationships) => ([{
+    id: 'sh1', class: 'sheet', title: '画布',
+    rootTopic: {
+      id: 't1', class: 'topic', title: '根',
+      children: { attached: [{ id: 't2', class: 'topic', title: 'A' }, { id: 't3', class: 'topic', title: 'B' }] },
+    },
+    ...(relationships ? { relationships } : {}),
+  }]);
+  const zenPack = async (obj) => new Uint8Array(await x7.zipWrite(
+    [{ name: 'content.json', data: new TextEncoder().encode(JSON.stringify(obj)) }]));
+  const outRels = async (sheets) => {
+    const blob = await x7.writeXMind(sheets, sheets[0].id, null);
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const ents = await x7.zipRead(buf);
+    const j = JSON.parse(new TextDecoder().decode(ents.get('content.json')));
+    return ((Array.isArray(j) ? j : j.sheets)[0]).relationships ?? null;
+  };
+
+  // ① 导入后必须留在画布上（早先 sheet 上根本没有这个字段）
+  {
+    const r = await x7.readXMind(await zenPack(mkSheet(REL)));
+    eq(r.sheets[0].xrelationships?.length, 1, '★ 关系线导入后必须留在画布上（早先整个没了）');
+    eq(JSON.stringify(r.sheets[0].xrelationships?.[0]), JSON.stringify(REL[0]),
+      '字段原样：id / 两端 / 标题');
+  }
+
+  // ② 再导出必须写回文件 —— 这是「不破坏别人的文件」的落点
+  {
+    const r = await x7.readXMind(await zenPack(mkSheet(REL)));
+    eq(JSON.stringify(await outRels(r.sheets)), JSON.stringify(REL),
+      '★ 导出 .xmind 时关系线必须写回（早先是 null）');
+  }
+
+  // ③ 死链必须滤掉：一端不在本画布里，写出去是挂在空处的线，比不写更糟
+  {
+    const r = await x7.readXMind(await zenPack(
+      mkSheet([{ id: 'rX', end1Id: 't2', end2Id: '不存在', title: '死链' }])));
+    eq(r.sheets[0].xrelationships?.length, 1, '读侧先收下（端点是否存在要等导出时对照画布）');
+    eq(await outRels(r.sheets), null, '★ 死链不得写进文件');
+  }
+
+  // ④ 自环读进来也没意义（画不出关系）
+  {
+    const r = await x7.readXMind(await zenPack(
+      mkSheet([{ id: 'rS', end1Id: 't2', end2Id: 't2' }])));
+    eq(r.sheets[0].xrelationships?.length ?? 0, 0, '自环不收');
+  }
+
+  // ⑤ 没有关系线就不写这个键 —— 不污染别人的文件
+  {
+    const r = await x7.readXMind(await zenPack(mkSheet(null)));
+    ok(!('xrelationships' in r.sheets[0]), '没有关系线时不写这个键');
+    eq(await outRels(r.sheets), null, '导出时也不必带 relationships 字段');
+  }
+
+  // ⑥ 画布级字段必须穿过规范化与复制 —— 少了这两处，存一次盘就没了
+  {
+    const sh = { id: 'sh1', title: 'T', content: '{}', theme: 'x', layout: 'y', xrelationships: REL };
+    eq(w7.normalizeSheets([sh])[0].xrelationships?.length, 1,
+      '★ 规范化重建对象时关系线必须跟着走');
+    eq(w7.cloneSheet(sh, []).xrelationships?.length, 1, '★ 复制画布也要带走关系线');
+  }
+
+  // ⑦ 源码契约：光定义不算，必须有调用点；提示必须真的接进导入回执
+  {
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    ok((code.split('buildRelationships(').length - 1) >= 2,
+      '★ buildRelationships 必须有调用点（只写定义等于没修）');
+    const isrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    // 提示跨两行写的，按行 find 只能取到第一行 —— 必须取 warns 那一段。
+    // 锚在 `const warns =` 上也顺带避开函数定义里的同名串。
+    const wi = isrc.indexOf('const warns =');
+    const wblock = wi < 0 ? '' : isrc.slice(wi, wi + 300);
+    ok(/unsupportedRelationshipsTip\(sheets\)/.test(wblock),
+      '★ 关系线提示必须接进导入提示（否则用户只会看到"关系线没了"）', wblock.slice(0, 120));
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */

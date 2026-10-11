@@ -94,6 +94,9 @@ export const MAX_DEPTH = 200;
 /** 单次解析收集的节点总数上限，防「宽而不深」的炸弹 */
 export const MAX_NODES = 200000;
 
+/** 单张画布保留的关系线条数上限（BUG 122） */
+export const MAX_RELATIONSHIPS = 2000;
+
 async function inflateRaw(bytes, budget = null) {
   const ds = new DecompressionStream('deflate-raw');
   const stream = new Blob([bytes]).stream().pipeThrough(ds);
@@ -741,6 +744,8 @@ function buildContentJson(sheets, packs) {
       class: 'sheet',
       title: s.title,
       rootTopic: withStructure(buildTopic(km.root, packs), s.layout),
+      // BUG 122：关系线原样写回（死链先滤掉，见 buildRelationships）
+      ...(rels => (rels ? { relationships: rels } : {}))(buildRelationships(s.xrelationships, km)),
     });
   }
   if (arr.length === 0) {
@@ -752,6 +757,35 @@ function buildContentJson(sheets, packs) {
     });
   }
   return pretty(arr);
+}
+
+/**
+ * 保留下来的关系线 → XMind 的 `sheet.relationships`。
+ *
+ * **死链必须滤掉**：只要有一端不在本画布里（节点被删了、超深被截断、
+ * 源文件里这条关系本来就没写 id），写出去就是一条指向不存在的 id 的关系
+ * 线 —— 别的软件打开会画出一条挂在空处的线，**比不写更糟**。
+ * 与 boundary 那句 `if (!a || !b) return;`（引用不到的 id 写了也是死链）同口径。
+ */
+function buildRelationships(list, km) {
+  if (!Array.isArray(list) || !list.length) return null;
+  const ids = new Set();
+  walkKmNodes(km, (n) => {
+    const i = safeId(n?.data?.id);
+    if (i) ids.add(i);
+  });
+  const out = [];
+  for (const r of list) {
+    if (!r || typeof r !== 'object') continue;
+    const a = str(r.end1Id);
+    const b = str(r.end2Id);
+    if (!a || !b || !ids.has(a) || !ids.has(b)) continue;
+    const one = { id: str(r.id) || shortId('rel'), end1Id: a, end2Id: b };
+    const t = str(r.title);
+    if (t != null) one.title = t;
+    out.push(one);
+  }
+  return out.length ? out : null;
 }
 
 function buildTopic(kmNode, packs) {
@@ -1105,6 +1139,8 @@ function parseZen(json) {
       // BUG 109：布局也得读回来 —— 早先写死 'default'，于是本工具导出的
       // 「组织结构图」过一遍别的软件，导回就一律变成「思维导图」
       layout: StructureToLayout[str(sn.rootTopic?.structureClass) || ''] || 'default',
+      // BUG 122：关系线是**内容**，不读就等于删掉别人的文件。为空时不写这个键
+      ...(rel => (rel.length ? { xrelationships: rel } : {}))(readRelationships(sn.relationships)),
     });
   }
   return { sheets };
@@ -1238,6 +1274,42 @@ function applyBoundaries(pairs, boundaries) {
       d.boundaryLabel = label;
     }
   }
+}
+
+/**
+ * sheet 级的 XMind 关系线：`relationships: [{ id, end1Id, end2Id, title? }]`。
+ *
+ * **关系线是内容，不是装饰** —— 两个节点之间「有关联、以及关联叫什么」
+ * 是用户写进去的。早先读侧一眼不看、写侧也不写，于是：
+ *
+ *   导入别人的 .xmind（带关系线）→ 本工具改一点 → 导出
+ *   → 文件里的关系线**整个没了**，且不报错。
+ *
+ * 与 BUG 110（标记）同一类：本工具不渲染，但必须原样保住并写回，
+ * 否则等于静默破坏别人的文件。
+ *
+ * 只收白名单字段：`id` / `end1Id` / `end2Id` / `title`。
+ * `controlPoints`（折线坐标）不收 —— 本工具不渲染关系线，坐标写回去
+ * 也是一堆没人用的数字，反而把脏数据带进别人的文件。
+ *
+ * 丢掉的条件：缺任一端（死链）、自环（画不出关系）、非对象条目。
+ */
+function readRelationships(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const r of list) {
+    if (!r || typeof r !== 'object') continue;
+    if (out.length >= MAX_RELATIONSHIPS) break;   // 炸弹文件：几万条关系线
+    const a = str(r.end1Id);
+    const b = str(r.end2Id);
+    if (!a || !b || a === b) continue;
+    const id = str(r.id);
+    const one = { id: id && id.trim() ? id.trim() : shortId('rel'), end1Id: a, end2Id: b };
+    const t = str(r.title);
+    if (t != null) one.title = t;
+    out.push(one);
+  }
+  return out;
 }
 
 function applyStyle(data, style) {

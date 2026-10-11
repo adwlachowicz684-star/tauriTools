@@ -2805,7 +2805,10 @@ async function gcOrphanAssets(quiet = false) {
     // BUG 110：导入进来的标记图标本工具不显示（内核没有 marker 概念），
     // 但已原样保留在 data.xmarkers 里、导出时会写回 —— 必须现在就说，
     // 否则用户看到"标记没了"会以为文件被改坏。
-    const warns = [await warnForeignAssets(sheets), unsupportedMarkersTip(sheets)].filter(Boolean);
+    // BUG 122：关系线本工具不显示，但已原样保留、导出 .xmind 时会写回 ——
+    // 不说的话用户看到"关系线没了"会以为文件被改坏。
+    const warns = [await warnForeignAssets(sheets), unsupportedMarkersTip(sheets),
+      unsupportedRelationshipsTip(sheets)].filter(Boolean);
     status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`
       + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容')
       + (warns.length ? ' ⚠ ' + warns.join('；') : ''), warns.length > 0);
@@ -2867,6 +2870,28 @@ async function gcOrphanAssets(quiet = false) {
     }
     if (!nodes) return '';
     return `${nodes} 个节点上的 ${total} 个标记图标本工具不显示`
+      + '（已原样保留，导出 .xmind 时会写回）';
+  }
+
+  /**
+   * BUG 122：统计保留下来的关系线（画布级 `xrelationships`）。
+   *
+   * 关系线是**内容**：两个节点之间「有关联、叫什么」。本工具不渲染它，
+   * 但已原样保住、导出 .xmind 时会写回 —— 必须说出来，否则用户看到
+   * "关系线没了"会以为文件被改坏。措辞与 unsupportedMarkersTip 对齐。
+   *
+   * @param {Array} sheets 画布数组
+   * @returns {string} 提示串；没有则 ''
+   */
+  function unsupportedRelationshipsTip(sheets) {
+    let total = 0;
+    let sheetsWith = 0;
+    for (const sh of sheets || []) {
+      const rel = Array.isArray(sh?.xrelationships) ? sh.xrelationships.length : 0;
+      if (rel) { total += rel; sheetsWith++; }
+    }
+    if (!total) return '';
+    return `${sheetsWith} 张画布上的 ${total} 条关系线本工具不显示`
       + '（已原样保留，导出 .xmind 时会写回）';
   }
 
