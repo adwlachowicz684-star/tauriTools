@@ -70,7 +70,13 @@ t('找得到 load 的定义', loadIdx >= 0, '锚点变了就要改这里，否�
 
 const catchAnchor = '} catch (e: any) {';
 const catchIdx = dlg.indexOf(catchAnchor, loadIdx);
-t('找得到 load 的 catch', catchIdx > loadIdx, 'catch 段必须存在');
+/*
+ * `loadIdx` 是这条断言的**空跑端**：它取 -1 时 `catchIdx > -1` 恒真
+ * （indexOf 的起点参数传 -1 等于从头找），断言照样绿、次序根本没验。
+ * 所以这里**自己**判一次存在，不靠上面那条 `找得到 load 的定义` 兜 ——
+ * 上面那条哪天被删了，这里就退化成恒真。
+ */
+t('找得到 load 的 catch', loadIdx >= 0 && catchIdx > loadIdx, 'catch 段必须存在');
 
 const catchBody = catchIdx > 0 ? sliceBalanced(dlg, dlg.indexOf('{', catchIdx)) : '';
 t('catch 段切出来了（非空）', catchBody.length > 0, '切片失败会让后面全部空跑');
