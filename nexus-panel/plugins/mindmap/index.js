@@ -2405,14 +2405,17 @@ async function gcOrphanAssets(quiet = false) {
       notes.push(`有 ${deep} 个节点深于 ${wb.MARKDOWN_MAX_LEVEL} 级，`
         + `Markdown 最多 ${wb.MARKDOWN_MAX_LEVEL} 个 #，这些节点在导出的文件里被拍平到同一层`);
     }
-    const loss = fmt.exchangeLoss(sheet()?.content || '', 'markdown');
-    if (loss.nodes > 0) {
+    // BUG 123：关系线是画布级字段，必须把画布本身传进去才数得到
+    const loss = fmt.exchangeLoss(sheet()?.content || '', 'markdown', sheet());
+    if (loss.nodes > 0 || loss.relationships > 0) {
       const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
         progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
-        image: '图片与图标', attachment: '附件', boundary: '外框' };
+        image: '图片与图标', attachment: '附件', boundary: '外框',
+        markers: '标记图标' };
       const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
         .map((k) => `${NAME[k]} ${loss[k]} 处`);
-      notes.push(`Markdown 装不下 ${seg.join('、')}（共涉及 ${loss.nodes} 个节点），`
+      if (loss.relationships > 0) seg.push(`关系线 ${loss.relationships} 条`);
+      notes.push(`Markdown 装不下 ${seg.join('、')}（共涉及 ${lossScope(loss)}），`
         + '这些内容在导出的文件里不会保留');
     }
     if (notes.length) {
@@ -2463,19 +2466,21 @@ async function gcOrphanAssets(quiet = false) {
     // BUG 111：装不下的字段必须**当场说清**。用户拿 .opml 当备份是最常见的
     // 用法，而备注/进度/标签/样式导出去就没了 —— 等导回来才发现已经晚了
     // （导入是整体替换且不可撤销）。放在保存之后，先让人看到文件存好了。
-    const loss = fmt.exchangeLoss(s.content, kind);
+    const loss = fmt.exchangeLoss(s.content, kind, s);
     const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
       progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
-      image: '图片与图标', attachment: '附件', boundary: '外框' };
+      image: '图片与图标', attachment: '附件', boundary: '外框',
+      markers: '标记图标' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);
+    if (loss.relationships > 0) seg.push(`关系线 ${loss.relationships} 条`);
     const notes = [];
     if (workbook.sheets?.length > 1) {
       notes.push(`仅当前画布；${meta.label} 是单画布格式，其余 `
         + `${workbook.sheets.length - 1} 张请用 .xmind 或 .json 导出`);
     }
-    if (loss.nodes > 0) {
-      notes.push(`${meta.label} 装不下 ${seg.join('、')}（共涉及 ${loss.nodes} 个节点），`
+    if (loss.nodes > 0 || loss.relationships > 0) {
+      notes.push(`${meta.label} 装不下 ${seg.join('、')}（共涉及 ${lossScope(loss)}），`
         + '这些内容在导出的文件里不会保留 —— 需要完整备份请改用 .json 或 .xmind 导出');
     }
     if (notes.length) status(notes.join('；'), true);
@@ -2674,6 +2679,19 @@ async function gcOrphanAssets(quiet = false) {
     if (r === 'cancel') return;
     if (r === 'error') { ctx.toast(`${what} 保存失败`, 'err'); return; }
     ctx.toast(r === 'fallback' ? `${what} 已导出（由浏览器选择保存位置）` : `${what} 已保存`, 'ok');
+  }
+
+  /**
+   * 导出提示里的「共涉及 …」怎么措辞。
+   *
+   * 节点级丢失说「N 个节点」，关系线是**画布级**的（BUG 122），说「N 条关系线」。
+   * 只有关系线时不能硬套「N 个节点」—— 那时 nodes 是 0，话说出来是错的。
+   */
+  function lossScope(loss) {
+    const seg = [];
+    if (loss.nodes > 0) seg.push(`${loss.nodes} 个节点`);
+    if (loss.relationships > 0) seg.push(`${loss.relationships} 条关系线`);
+    return seg.join('、');
   }
 
   /**

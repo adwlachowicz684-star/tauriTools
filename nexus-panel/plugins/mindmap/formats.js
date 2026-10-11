@@ -1050,18 +1050,28 @@ function oneOrList(raw) {
  *   于是挂了照片的节点导成 .opml / .md，图全没了却一句提示都没有
  *   （实测 5 个带图/附件/外框的节点，exchangeLoss 报 nodes=0）。
  *
+ * ⓘ 标记图标（`xmarkers`）与**关系线**（画布级 `xrelationships`）同样是一概
+ *   装不下的（BUG 123）。这两类是 BUG 110 / BUG 122 才有的数据，加进来时没
+ *   同步计入 —— 于是导入别人的 .xmind（带红旗标记、带关系线）再导出成 .opml，
+ *   图标和关系线全没了却一句提示都没有，实测 exchangeLoss 报 nodes=0。
+ *   关系线是**画布级**字段，不在节点里，所以走第三个参数，且不计进 nodes
+ *   （"涉及 N 个节点"对它不成立）。
+ *
  * @param {string|object} content 画布内容（kityminder JSON 文本或对象）
  * @param {string} kind freemind / opml / mermaid / plantuml / markdown
+ * @param {object} [sheet] 画布本身（用于数关系线）
  * @returns {{note:number, hyperlink:number, priority:number, progress:number,
  *            labels:number, collapsed:number, style:number, image:number,
- *            attachment:number, boundary:number, nodes:number}}
- *          各类**受影响节点数**（nodes = 去重后的合计节点数）
+ *            attachment:number, boundary:number, markers:number,
+ *            relationships:number, nodes:number}}
+ *          各类**受影响节点数**（nodes = 去重后的合计节点数；
+ *          relationships 是关系线条数，不是节点数）
  */
-export function exchangeLoss(content, kind) {
+export function exchangeLoss(content, kind, sheet) {
   const keep = EXCHANGE_KEEP[kind] || {};
   const out = { note: 0, hyperlink: 0, priority: 0, progress: 0,
     labels: 0, collapsed: 0, style: 0, image: 0, attachment: 0,
-    boundary: 0, nodes: 0 };
+    boundary: 0, markers: 0, relationships: 0, nodes: 0 };
   const km = parseKm(content);
   if (!km) return out;
   const touched = new Set();
@@ -1098,7 +1108,21 @@ export function exchangeLoss(content, kind) {
       && (oneOrList(d.file).length || oneOrList(d.video).length)) bump(n, 'attachment');
     // 外框（boundaryGroup）：交换格式没有对应概念
     if (!keep.boundary && String(d.boundaryGroup ?? '').trim()) bump(n, 'boundary');
+    /*
+     * BUG 123：不认识的 XMind 标记图标（BUG 110 收在 `xmarkers` 里）同样
+     * 没有任何一种交换格式写得出去 —— 五种格式里连 "marker" 字样都没有。
+     * 它是 BUG 110 才有的数据，加进来时漏了这一步。
+     */
+    if (!keep.markers && Array.isArray(d.xmarkers) && d.xmarkers.length) bump(n, 'markers');
   });
+  /*
+   * BUG 123：关系线（BUG 122 收在画布级 `xrelationships`）同样装不下。
+   * 它是**画布级**字段，不在节点里 —— 所以单独数，且**不计进 nodes**：
+   * 一句"共涉及 N 个节点"对"画布上有几条线"不成立。
+   */
+  out.relationships = !keep.relationships && Array.isArray(sheet?.xrelationships)
+    ? sheet.xrelationships.filter((r) => r && (r.end1Id || r.end2Id)).length
+    : 0;
   out.nodes = touched.size;
   return out;
 }

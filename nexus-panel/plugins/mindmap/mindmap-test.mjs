@@ -7425,7 +7425,8 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
   // ⑥ 导出侧必须真的把损失说出来（只改统计函数不接提示 = 没修）
   {
     const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
-    ok(/exchangeLoss\(s\.content, kind\)/.test(idx), '★ exportExchange 调用了 exchangeLoss');
+    // BUG 123：签名加了第三个参数（画布本身），锚点跟着改
+    ok(/exchangeLoss\(s\.content, kind, s\)/.test(idx), '★ exportExchange 调用了 exchangeLoss');
     // 只数一次不行：函数定义里也有 `exchangeLoss(`，会被命中
     const sites = (idx.match(/exchangeLoss\(/g) || []).length;
     ok(sites >= 1, 'exchangeLoss 有调用点', String(sites));
@@ -16871,8 +16872,9 @@ group('BUG 119 · 交换格式丢掉的图片 / 附件 / 外框必须计入提�
     // 两个 NAME 表都得有三项；只改一处的话，另一条导出路径仍然不说
     const has = (s) => /image: '图片与图标'/.test(s) && /attachment: '附件'/.test(s)
       && /boundary: '外框'/.test(s);
-    const iMd = code.indexOf("exchangeLoss(sheet()?.content || '', 'markdown')");
-    const iEx = code.indexOf('exchangeLoss(s.content, kind)');
+    // BUG 123：签名加了第三个参数（画布本身，用于数关系线），锚点跟着改
+    const iMd = code.indexOf("exchangeLoss(sheet()?.content || '', 'markdown', sheet())");
+    const iEx = code.indexOf('exchangeLoss(s.content, kind, s)');
     ok(iMd > 0 && iEx > 0, '两条导出路径都在调 exchangeLoss');
     ok(has(code.slice(iMd, iMd + 900)), '★ Markdown 提示带上新三类');
     ok(has(code.slice(iEx, iEx + 900)), '★ 交换格式提示带上新三类');
@@ -17157,6 +17159,139 @@ group('BUG 122 · XMind 关系线必须保留并写回');
     const wblock = wi < 0 ? '' : isrc.slice(wi, wi + 300);
     ok(/unsupportedRelationshipsTip\(sheets\)/.test(wblock),
       '★ 关系线提示必须接进导入提示（否则用户只会看到"关系线没了"）', wblock.slice(0, 120));
+  }
+}
+
+/* ------------------------------------------------------------------
+   BUG 123：标记图标与关系线在交换格式里同样装不下，却一直没被统计
+
+   前几轮把 exchangeLoss 一路补出了「备注 / 超链接 / 优先级 / 进度 / 标签 /
+   折叠 / 样式」（BUG 112 / 114）、「图片 / 附件 / 外框」（BUG 119），
+   漏了后两类才有的数据：
+
+     · `xmarkers` —— BUG 110 才收的不认识标记（红旗 / 星星 / 人物…）
+     · `xrelationships` —— BUG 122 才收的画布级关系线
+
+   实测五种格式的产物里连 "marker" / 关系线标题的字样都没有，而 exchangeLoss
+   报 nodes=0 → **提示整段不出现**，界面干干净净一句「已保存」。
+
+   而导入别人的 .xmind（带红旗、带关系线）再导出成 .opml / .md 恰好同时命中
+   这两类 —— .md / .opml 是最常被当成备份的格式，导入又是整体替换且不可撤销。
+
+   关系线是**画布级**字段（不在节点里），所以走第三个参数，且不计进 nodes：
+   「共涉及 N 个节点」对「画布上有几条线」不成立。
+   ------------------------------------------------------------------ */
+
+group('BUG 123 · 交换格式丢掉的标记图标与关系线必须计入提示');
+
+{
+  const fs2 = await import('node:fs');
+  const path2 = await import('node:path');
+  const fmt2 = await import('file://' + path2.join(HERE, 'formats.js'));
+
+  const KINDS = ['markdown', 'freemind', 'opml', 'mermaid', 'plantuml'];
+  const REL = [{ id: 'r1', end1Id: 'a', end2Id: 'b', title: '甲乙相关' }];
+  const mk = (extra) => JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+    { data: { id: 'a', text: 'A', ...extra } },
+    { data: { id: 'b', text: 'B' } },
+  ] } });
+  const sheetOf = (extra) => ({ id: 's1', content: mk(extra), xrelationships: REL });
+
+  // ① 事实：五种格式导出的产物里没有标记、也没有关系线
+  {
+    const root = { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'a', text: 'A', xmarkers: ['flag-red', 'star'] } },
+      { data: { id: 'b', text: 'B' } },
+    ] };
+    for (const [name, fn] of [['freemind', fmt2.toFreemind], ['opml', fmt2.toOpml],
+      ['mermaid', fmt2.toMermaid], ['plantuml', fmt2.toPlantUml]]) {
+      const t = fn(JSON.parse(JSON.stringify(root)));
+      ok(!/flag-red/.test(t), `${name} 产物里没有标记图标`);
+      ok(!/甲乙相关/.test(t), `${name} 产物里没有关系线`);
+    }
+    const mdSrc = fs2.readFileSync(path2.join(HERE, 'workbook.js'), 'utf8');
+    ok(mdSrc.length > 0, 'workbook.js 可读（Markdown 侧单独验）');
+  }
+
+  // ② 两类都必须被统计（原来全是 0）
+  {
+    for (const kind of KINDS) {
+      const s = sheetOf({ xmarkers: ['flag-red', 'star'] });
+      const l = fmt2.exchangeLoss(s.content, kind, s);
+      eq(l.markers, 1, `★ ${kind}：带标记图标的节点计入丢失`);
+      eq(l.relationships, 1, `★ ${kind}：关系线计入丢失`);
+      ok(l.nodes > 0, `★ ${kind}：有标记就有 nodes（否则提示整段不出现）`);
+    }
+  }
+
+  // ③ 关系线是画布级的：不传画布就数不到，传了才数得到
+  {
+    const s = sheetOf({});
+    eq(fmt2.exchangeLoss(s.content, 'opml').relationships, 0,
+      '不传画布时数不到关系线（它是画布级字段）');
+    eq(fmt2.exchangeLoss(s.content, 'opml', s).relationships, 1,
+      '★ 传了画布才数得到关系线');
+    eq(fmt2.exchangeLoss(s.content, 'opml', {}).relationships, 0,
+      '没有关系线的画布报 0');
+    eq(fmt2.exchangeLoss(s.content, 'opml', { xrelationships: [] }).relationships, 0,
+      '空数组不算有关系线');
+    // 死链（两端都没有 id）不该被数成一条
+    eq(fmt2.exchangeLoss(s.content, 'opml',
+      { xrelationships: [{ id: 'r9' }] }).relationships, 0, '死链不算一条关系线');
+  }
+
+  // ④ 只有关系线、没有任何节点级丢失时，也必须提示
+  {
+    const s = { id: 's1', content: mk({}), xrelationships: REL };
+    const l = fmt2.exchangeLoss(s.content, 'opml', s);
+    eq(l.nodes, 0, '这个用例里没有节点级丢失（nodes 为 0）');
+    eq(l.relationships, 1, '但关系线丢了');
+    // 所以两处提示的门必须把 relationships 也算进去，只看 nodes 就会漏
+    const code = stripCommentsFlatJs(fs2.readFileSync(path2.join(HERE, 'index.js'), 'utf8'));
+    ok(/loss\.nodes > 0 \|\| loss\.relationships > 0/.test(code),
+      '★ 提示的门必须同时看 nodes 与 relationships');
+    ok((code.split('loss.nodes > 0 || loss.relationships > 0').length - 1) >= 2,
+      '★ 两条导出路径的门都得改（只改一处等于没修）');
+  }
+
+  // ⑤ 两处提示都得带上这两类，且关系线按「条」不是按「处」
+  {
+    const code = stripCommentsFlatJs(fs2.readFileSync(path2.join(HERE, 'index.js'), 'utf8'));
+    /*
+     * 两张表必须**逐张**查。早先写成「从调用点往后 900 字符里有没有 markers」，
+     * 而两处调用点只隔几十行、窗口互相盖住 —— 删掉其中一张表，另一张的内容
+     * 照样让两条断言都绿（实测：只删交换格式那张，两条断言全过）。
+     * 改成按 `const NAME = {` 逐张定位、各查自己的窗口。
+     */
+    const nameAt = [];
+    for (let k = code.indexOf('const NAME = {'); k >= 0; k = code.indexOf('const NAME = {', k + 1)) {
+      nameAt.push(k);
+    }
+    ok(nameAt.length >= 2, `两处提示表都在（实际 ${nameAt.length} 处）`);
+    nameAt.forEach((at, i) => {
+      ok(/markers: '标记图标'/.test(code.slice(at, at + 400)),
+        `★ 第 ${i + 1} 张提示表带上标记图标`, code.slice(at, at + 120));
+    });
+    const iMd = code.indexOf("exchangeLoss(sheet()?.content || '', 'markdown', sheet())");
+    const iEx = code.indexOf('exchangeLoss(s.content, kind, s)');
+    ok(iMd > 0 && iEx > 0, '两条导出路径都在调 exchangeLoss（且把画布传进去了）');
+    const relSeg = (code.split('关系线 ${loss.relationships} 条').length - 1);
+    ok(relSeg >= 2, '★ 关系线按「条」写进两段提示里', `实际 ${relSeg} 处`);
+    // 「共涉及」的措辞：只有关系线时不能硬套「N 个节点」
+    ok(/function lossScope/.test(code) && /条关系线/.test(code),
+      '★ 「共涉及」按节点 / 关系线分别措辞');
+  }
+
+  // ⑥ 不该报的别乱报
+  {
+    const s = { id: 's1', content: JSON.stringify({ root: { data: { id: 'r', text: '根' } } }) };
+    for (const kind of KINDS) {
+      const l = fmt2.exchangeLoss(s.content, kind, s);
+      eq(l.markers, 0, `${kind}：干净画布不报标记丢失`);
+      eq(l.relationships, 0, `${kind}：干净画布不报关系线丢失`);
+      eq(l.nodes, 0, `${kind}：干净画布不报损失`);
+    }
+    eq(fmt2.exchangeLoss(mk({ xmarkers: [] }), 'opml').markers, 0, '空标记数组不算');
   }
 }
 
