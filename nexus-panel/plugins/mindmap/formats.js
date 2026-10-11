@@ -936,6 +936,17 @@ export const EXCHANGE_KEEP = {
   plantuml: {},
 };
 
+/** `data.file` / `data.images` 这类字段：可能是数组串，也可能是单值 */
+function oneOrList(raw) {
+  if (raw == null || raw === '') return [];
+  let v = raw;
+  if (typeof v === 'string' && v.trim().startsWith('[')) {
+    try { v = JSON.parse(v); } catch { /* 不是数组串，按单值处理 */ }
+  }
+  const arr = Array.isArray(v) ? v : [v];
+  return arr.map((x) => String(x ?? '').trim()).filter(Boolean);
+}
+
 /**
  * 数一数导成交换格式会**丢**多少东西。
  *
@@ -944,16 +955,22 @@ export const EXCHANGE_KEEP = {
  * 备份、日后导回来才发现备注和进度全没了 —— 而**导入是整体替换且不可
  * 撤销**，那时已经晚了。导出那句提示是唯一的机会（同 deepNodeCount）。
  *
+ * ⓘ 图片 / 附件 / 外框同样是一概装不下的（BUG 119）—— 早先这三类**没数**，
+ *   于是挂了照片的节点导成 .opml / .md，图全没了却一句提示都没有
+ *   （实测 5 个带图/附件/外框的节点，exchangeLoss 报 nodes=0）。
+ *
  * @param {string|object} content 画布内容（kityminder JSON 文本或对象）
- * @param {string} kind freemind / opml / mermaid / plantuml
+ * @param {string} kind freemind / opml / mermaid / plantuml / markdown
  * @returns {{note:number, hyperlink:number, priority:number, progress:number,
- *            labels:number, collapsed:number, style:number, nodes:number}}
+ *            labels:number, collapsed:number, style:number, image:number,
+ *            attachment:number, boundary:number, nodes:number}}
  *          各类**受影响节点数**（nodes = 去重后的合计节点数）
  */
 export function exchangeLoss(content, kind) {
   const keep = EXCHANGE_KEEP[kind] || {};
   const out = { note: 0, hyperlink: 0, priority: 0, progress: 0,
-    labels: 0, collapsed: 0, style: 0, nodes: 0 };
+    labels: 0, collapsed: 0, style: 0, image: 0, attachment: 0,
+    boundary: 0, nodes: 0 };
   const km = parseKm(content);
   if (!km) return out;
   const touched = new Set();
@@ -977,6 +994,19 @@ export function exchangeLoss(content, kind) {
     const keepStyles = keep.styleKeys || [];
     if (NODE_STYLE_KEYS.some((k) => d[k] != null && String(d[k]) !== ''
       && !keepStyles.includes(k))) bump(n, 'style');
+    /*
+     * BUG 119：图片（槽位 + 横幅）与图标都装不下 —— 这五种格式里**没有一种**
+     *   写 image，实测产物里连 "image" 字样都没有。
+     *   图标也算：它同样会丢，且节点上突然少了个图标，用户看不出来为什么。
+     */
+    const imgs = oneOrList(d.image);
+    for (const one of oneOrList(d.images)) imgs.push(one);
+    if (!keep.image && imgs.length) bump(n, 'image');
+    // 附件（文件 / 视频）：同样没有任何一种交换格式写得出去
+    if (!keep.attachment
+      && (oneOrList(d.file).length || oneOrList(d.video).length)) bump(n, 'attachment');
+    // 外框（boundaryGroup）：交换格式没有对应概念
+    if (!keep.boundary && String(d.boundaryGroup ?? '').trim()) bump(n, 'boundary');
   });
   out.nodes = touched.size;
   return out;

@@ -16779,6 +16779,106 @@ group('BUG 118 · XMind 的 xap: 资源引用必须解包（图片显示、附�
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 119：图片 / 附件 / 外框在交换格式里同样装不下，却一直没被统计
+             —— 导出 .opml / .md 时静默丢光，界面只说「已保存」
+
+   exchangeLoss 数的是「备注 / 超链接 / 优先级 / 进度 / 标签 / 折叠 / 样式」
+   七类（BUG 112 / 114 / 116 一路补出来的），**漏了三类**：
+
+     · 图片（data.image 槽位 + data.images 横幅，含图标）
+     · 附件（data.file / data.video）
+     · 外框（data.boundaryGroup）
+
+   实测：一棵 5 个节点、带图 / 带附件 / 带外框的画布，五种交换格式
+   导出的产物里**连 "image" 字样都没有**，而 exchangeLoss 报 nodes=0
+   —— 于是提示整段不出现，用户完全不知道东西没了。
+
+   这和 BUG 116 是同一类：拿 .opml / .md 当备份是最常见的用法，
+   而导入是整体替换且不可撤销，导出那句提示是唯一的机会。
+   ------------------------------------------------------------------ */
+group('BUG 119 · 交换格式丢掉的图片 / 附件 / 外框必须计入提示');
+
+{
+  const fs2 = await import('node:fs');
+  const path2 = await import('node:path');
+  const fmt2 = await import('file://' + path2.join(HERE, 'formats.js'));
+
+  const INLINE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg';
+  const mk = (extra) => JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+    { data: { id: 'a', text: 'A', ...extra } },
+  ] } });
+
+  const KINDS = ['markdown', 'freemind', 'opml', 'mermaid', 'plantuml'];
+
+  // ① 事实：五种格式导出的产物里没有 image / 附件名 / 外框
+  {
+    const root = { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'a', text: 'A', image: INLINE, imageTitle: 't.png' } },
+      { data: { id: 'b', text: 'B', file: JSON.stringify([{ n: '报告.pdf', a: 'a1', s: 3 }]) } },
+      { data: { id: 'c', text: 'C', boundaryGroup: 'g1', boundaryLabel: '组' } },
+      { data: { id: 'd', text: 'D', boundaryGroup: 'g1', boundaryLabel: '组' } },
+    ] };
+    for (const [name, fn] of [['freemind', fmt2.toFreemind], ['opml', fmt2.toOpml],
+      ['mermaid', fmt2.toMermaid], ['plantuml', fmt2.toPlantUml]]) {
+      const t = fn(JSON.parse(JSON.stringify(root)));
+      ok(!/\bimage\b/i.test(t), `${name} 产物里没有 image 字段`);
+      ok(!/报告\.pdf/.test(t), `${name} 产物里没有附件`);
+      ok(!/组/.test(t.replace(/根|A|B|C|D/g, '')), `${name} 产物里没有外框标题`);
+    }
+  }
+
+  // ② 三类都必须被统计（原来全是 0）
+  {
+    for (const kind of KINDS) {
+      const withImg = fmt2.exchangeLoss(mk({ image: INLINE }), kind);
+      eq(withImg.image, 1, `★ ${kind}：挂图片的节点计入丢失`);
+      ok(withImg.nodes > 0, `★ ${kind}：有图片就有 nodes（否则提示整段不出现）`);
+
+      const withBanner = fmt2.exchangeLoss(mk({ images: JSON.stringify([INLINE, INLINE]) }), kind);
+      eq(withBanner.image, 1, `${kind}：横幅多图同样计入（按节点计）`);
+
+      const withFile = fmt2.exchangeLoss(mk({ file: JSON.stringify([{ n: 'x.pdf', a: 'a', s: 1 }]) }), kind);
+      eq(withFile.attachment, 1, `★ ${kind}：文件附件计入丢失`);
+
+      const withVid = fmt2.exchangeLoss(mk({ video: JSON.stringify([{ n: 'x.mp4', a: 'a', s: 1 }]) }), kind);
+      eq(withVid.attachment, 1, `${kind}：视频附件计入丢失`);
+
+      const withBd = fmt2.exchangeLoss(mk({ boundaryGroup: 'g1', boundaryLabel: '组' }), kind);
+      eq(withBd.boundary, 1, `★ ${kind}：外框计入丢失`);
+    }
+  }
+
+  // ③ 不该报的别乱报
+  {
+    const clean = JSON.stringify({ root: { data: { id: 'r', text: '根' } } });
+    for (const kind of KINDS) {
+      const l = fmt2.exchangeLoss(clean, kind);
+      eq(l.nodes, 0, `${kind}：干净画布不报损失`);
+      eq(l.image, 0, `${kind}：没有图片时不报`);
+    }
+    // 空串 / 空数组不能算成有图
+    eq(fmt2.exchangeLoss(mk({ image: '' }), 'opml').image, 0, '空 image 不计入');
+    eq(fmt2.exchangeLoss(mk({ images: '[]' }), 'opml').image, 0, '空横幅不计入');
+    eq(fmt2.exchangeLoss(mk({ file: '[]' }), 'opml').attachment, 0, '空附件列表不计入');
+    eq(fmt2.exchangeLoss(mk({ boundaryGroup: '' }), 'opml').boundary, 0, '空外框组不计入');
+  }
+
+  // ④ 两处提示都得带上这三类（只改统计函数不接提示 = 没修）
+  {
+    const idx = fs2.readFileSync(path2.join(HERE, 'index.js'), 'utf8');
+    const code = stripCommentsFlatJs(idx);
+    // 两个 NAME 表都得有三项；只改一处的话，另一条导出路径仍然不说
+    const has = (s) => /image: '图片与图标'/.test(s) && /attachment: '附件'/.test(s)
+      && /boundary: '外框'/.test(s);
+    const iMd = code.indexOf("exchangeLoss(sheet()?.content || '', 'markdown')");
+    const iEx = code.indexOf('exchangeLoss(s.content, kind)');
+    ok(iMd > 0 && iEx > 0, '两条导出路径都在调 exchangeLoss');
+    ok(has(code.slice(iMd, iMd + 900)), '★ Markdown 提示带上新三类');
+    ok(has(code.slice(iEx, iEx + 900)), '★ 交换格式提示带上新三类');
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */

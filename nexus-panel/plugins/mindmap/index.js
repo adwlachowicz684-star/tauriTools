@@ -2408,7 +2408,8 @@ async function gcOrphanAssets(quiet = false) {
     const loss = fmt.exchangeLoss(sheet()?.content || '', 'markdown');
     if (loss.nodes > 0) {
       const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
-        progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式' };
+        progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
+        image: '图片与图标', attachment: '附件', boundary: '外框' };
       const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
         .map((k) => `${NAME[k]} ${loss[k]} 处`);
       notes.push(`Markdown 装不下 ${seg.join('、')}（共涉及 ${loss.nodes} 个节点），`
@@ -2464,7 +2465,8 @@ async function gcOrphanAssets(quiet = false) {
     // （导入是整体替换且不可撤销）。放在保存之后，先让人看到文件存好了。
     const loss = fmt.exchangeLoss(s.content, kind);
     const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
-      progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式' };
+      progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
+      image: '图片与图标', attachment: '附件', boundary: '外框' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);
     const notes = [];
