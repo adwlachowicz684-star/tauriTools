@@ -214,10 +214,23 @@ export type ImportResult = {
  *                    这时不能硬塞 —— 塞进去侧栏会出现一个点了没反应的条目。
  *                    由调用方传入判断（注册表在 UI 层，这里不能反向依赖它，
  *                    否则 registry → customPresets → registry 成环）。
+ *
+ * @param skipReason  可选：为什么这个基础类型不能用。
+ *                    判据可能有**不止一种**不成立的原因（本机没装 /
+ *                    装了但已并入另一个节点），而本函数拿不到原因 ——
+ *                    不传就只能用下面那条中性文案，绝不能说成"本机没有"：
+ *                    那会把"有、但是老类型"说成"压根没有"，
+ *                    用户会去查安装，而真正的原因是那条类型已废弃。
+ *                    ⚠️ 改判据时记得同步改这里 —— 判据宽了、文案没跟着改，
+ *                    报出来的原因就是假的（不报错，只是把人支到错的方向）。
  */
 export function importCustomPresets(
   json: string,
-  opts: { isKnownType: (t: string) => boolean; mode?: 'merge' | 'replace' },
+  opts: {
+    isKnownType: (t: string) => boolean;
+    mode?: 'merge' | 'replace';
+    skipReason?: (t: string) => string;
+  },
   kv: KV = defaultKV(),
 ): ImportResult {
   let parsed: unknown;
@@ -243,7 +256,16 @@ export function importCustomPresets(
       continue;
     }
     if (!opts.isKnownType(item.baseType)) {
-      result.skipped.push(`${shownName(item)}（本机没有「${item.baseType}」这种节点）`);
+      /*
+       * 判据不成立的原因不止一种，而这里拿不到 —— 只能要么用调用方给的
+       * （skipReason），要么用一条**两者都成立**的中性文案。
+       * 以前硬写成"本机没有「X」这种节点"，在判据放宽成 canPresetOn
+       * （存在**且**非 legacy）之后就变成假话：老类型明明装了，
+       * 报的却是"没有"。
+       */
+      result.skipped.push(opts.skipReason
+        ? `${shownName(item)}（${opts.skipReason(item.baseType)}）`
+        : `${shownName(item)}（本机不能把「${item.baseType}」作为基础类型）`);
       continue;
     }
     // 同 id 视为同一条，覆盖；否则新增。这样重复导入不会堆出一堆副本。

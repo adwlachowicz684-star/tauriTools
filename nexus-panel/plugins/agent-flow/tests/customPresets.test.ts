@@ -608,3 +608,62 @@ test('导入：正常预设不受新校验影响', () => {
   assert.deepEqual(r.skipped, []);
   assert.equal(loadCustomPresets(kv)[0].name, '我的条件');
 });
+
+/* ---- 跳过原因：判据宽了，原因必须跟着宽 ---- */
+
+/*
+ * canPresetOn 不成立有**两种**原因：
+ *   ① 本机真没装这种节点（!hasDef）
+ *   ② 装了，但它已并入另一个节点（legacy），不该再当新节点的起点
+ *
+ * 判据从 hasDef 放宽成 canPresetOn 之后，② 也会被跳过。
+ * 若原因仍写成一句"本机没有「X」"，② 就被说成 ①：
+ * 用户明明装过 ocr，却被告知"没有" —— 他会去查安装、查版本，
+ * 而真正的原因只是那条类型已废弃。不报错，只把人支到错的方向。
+ */
+test('跳过原因：给了 skipReason 就用它，能区分「没有」与「有但已废弃」', () => {
+  const from = memKV();
+  addCustomPreset({ name: '旧识别', baseType: 'ocr', data: {} }, from);
+
+  const to = memKV();
+  const r = importCustomPresets(exportCustomPresets(from), {
+    isKnownType: (t) => t === 'generic-http',
+    skipReason: (t) => (t === 'ocr'
+      ? '「ocr」已并入另一个节点，不能再作为新节点的起点'
+      : `本机没有「${t}」这种节点`),
+  }, to);
+
+  assert.equal(r.skipped.length, 1);
+  assert.match(r.skipped[0], /已并入另一个节点/);
+  assert.doesNotMatch(r.skipped[0], /本机没有/, '装过的类型不能报成"没有"');
+});
+
+test('跳过原因：没给 skipReason 时用中性文案，绝不武断说「本机没有」', () => {
+  const from = memKV();
+  addCustomPreset({ name: '外星接口', baseType: 'alien-node', data: {} }, from);
+
+  const to = memKV();
+  const r = importCustomPresets(exportCustomPresets(from), {
+    isKnownType: (t) => t === 'generic-http',
+  }, to);
+
+  assert.equal(r.skipped.length, 1);
+  assert.match(r.skipped[0], /alien-node/, '仍要写明是哪种基础类型');
+  assert.doesNotMatch(
+    r.skipped[0],
+    /本机没有/,
+    '判据放宽成 canPresetOn 后，"没有"只是两种原因之一；'
+      + '统一说"没有"会把"有但已废弃"也报成"没有"',
+  );
+});
+
+test('导入处必须传 skipReason —— 单有 canPresetOn 会报假原因', () => {
+  const SRC = process.env.AF_SRC;
+  assert.ok(SRC, 'AF_SRC 未设置：run-tests.sh 应导出仓库根路径');
+  const src = readFileSync(join(SRC, 'components/Sidebar.tsx'), 'utf8');
+  const at = src.indexOf('importCustomPresets(');
+  assert.ok(at > 0, 'Sidebar 里没找到导入调用');
+  const seg = src.slice(at, at + 900);
+  assert.match(seg, /skipReason/, '导入没传 skipReason —— 只能给出中性文案，说不清是"没有"还是"已废弃"');
+  assert.match(seg, /hasDef/, '原因要用 hasDef 把两种不成立的情况分开：没有 / 有但已并入别的节点');
+});
