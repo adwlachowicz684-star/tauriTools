@@ -37,8 +37,10 @@
 
 import { readFileSync } from 'node:fs';
 import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const HERE = dirname(fileURLToPath(import.meta.url));
 /** 递归收集文件（不依赖 glob，node:fs 的 globSync 要更高版本才有） */
 function walk(dir, out = []) {
   let entries;
@@ -62,7 +64,7 @@ function t(name, cond, detail = '') {
 }
 
 /* 收集所有前端源文件 */
-const files = [...walk('plugins'), ...walk('src')]
+const files = [...walk(join(HERE, 'plugins')), ...walk(join(HERE, 'src'))]
   .filter((f) => /\.(tsx|jsx|js|ts)$/.test(f))
   .filter((f) => !f.includes('-test.') && !f.endsWith('.d.ts'));
 

@@ -19,13 +19,17 @@
  */
 import { readFileSync } from 'node:fs';
 
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
   cond ? pass++ : fail++;
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' → ' + extra : ''}`);
 };
 
-const css = readFileSync('./css/neumorphism.css', 'utf8');
+const css = readFileSync(join(HERE, './css/neumorphism.css'), 'utf8');
 
 /** 取某选择器规则块（去掉注释行后） */
 function rule(sel) {
@@ -133,7 +137,7 @@ console.log('\n=== 4. iframe 插件页：主面板的 html,body 规则必须被�
  * 横向也一样：.p-grid 是 minmax(220px, 1fr)，容器再窄网格项也不肯
  * 小于 220px，于是卡片被撑得比 body 宽、右边缺一截。
  */
-const sdk = readFileSync('./js/plugin-sdk.js', 'utf8');
+const sdk = readFileSync(join(HERE, './js/plugin-sdk.js'), 'utf8');
 const iframeBody = rule('body.nexus-iframe-plugin');
 t('body.nexus-iframe-plugin 有配套规则（此前为零）', !!iframeBody);
 t('JS 确实打了这个标记（否则规则是死代码）',

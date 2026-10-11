@@ -23,6 +23,10 @@
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
   cond ? pass++ : fail++;
@@ -102,7 +106,7 @@ t('重复 mount 不会二次挂载（幂等）',
 
 /* ============ 2. 源码层：外壳的发送时机 ============ */
 console.log('\n=== 2. 外壳发送时机（源码层） ===');
-const host = readFileSync('./js/host.js', 'utf8');
+const host = readFileSync(join(HERE, './js/host.js'), 'utf8');
 
 // 取 mountIframeView 函数体
 const fnStart = host.indexOf('async function mountIframeView');

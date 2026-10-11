@@ -15,6 +15,10 @@ import {
 } from './js/drag-reorder.js';
 import { readFileSync } from 'node:fs';
 
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0;
 const fails = [];
 function t(name, cond, detail = '') {
@@ -163,8 +167,8 @@ console.log('\n=== 8. 分层：纯逻辑零依赖，React 层单独 ===');
    *
    * 所以拆开：drag-reorder.js（零依赖） / drag-reorder-react.js（接线）。
    */
-  const core = readFileSync('js/drag-reorder.js', 'utf8');
-  const rjs = readFileSync('js/drag-reorder-react.js', 'utf8');
+  const core = readFileSync(join(HERE, 'js/drag-reorder.js'), 'utf8');
+  const rjs = readFileSync(join(HERE, 'js/drag-reorder-react.js'), 'utf8');
   t('纯逻辑层不依赖 React', !/from\s+['"]react['"]/.test(core));
   t('React 层 import 纯逻辑', /import\s+[^}]*\}/s.test(rjs) && rjs.includes('./drag-reorder.js'));
 }
@@ -176,7 +180,7 @@ console.log('\n=== 9. 手感一致：与项目组集群共用同一套数值 ===
    * 若这边死区 8px、那边 4px，用户能说出的只是「两个列表拖起来不一样」，
    * 根本定位不到是常量分叉了。所以由测试钉住，而不是靠自觉。
    */
-  const src = readFileSync('plugins/project-group/utils/dragSort.ts', 'utf8');
+  const src = readFileSync(join(HERE, 'plugins/project-group/utils/dragSort.ts'), 'utf8');
   const num = (re) => { const m = src.match(re); return m ? Number(m[1]) : NaN; };
 
   const theirThreshold = num(/DRAG_THRESHOLD\s*=\s*(\d+)/);
@@ -217,7 +221,7 @@ console.log('\n=== 9. 手感一致：与项目组集群共用同一套数值 ===
  * （纯逻辑层每关都过，错的是接线，测不到）。
  */
 {
-  const src = readFileSync('plugins/settings/App.tsx', 'utf8');
+  const src = readFileSync(join(HERE, 'plugins/settings/App.tsx'), 'utf8');
 
   /* 把 `=>` 换成占位符再切标签。
      不换的话 `onDrop={(e) => e.preventDefault()}` 里的 `>` 会被当成

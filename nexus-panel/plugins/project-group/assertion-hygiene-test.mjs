@@ -114,6 +114,41 @@ const tests = walk(ROOT, TEST_EXTS)
 const rel = (p) => path.relative(ROOT, p);
 
 /*
+ * 第 5 节**第二层漏网面**：只认 `process.cwd()` 这一个字样。
+ *
+ * 依赖 cwd 的写法远不止写 cwd 那四个字 —— 把相对路径**裸传**给 fs / walk
+ * （`readFileSync('js/host.js')`、`walk('plugins')`）同样是"从哪个目录敲
+ * node 决定结论"，只是没出现那个字样。实测（第一百四十九轮）：
+ *   · dead-class-test.mjs 里 `readFileSync('test-scan-utils.mjs')`
+ *     从 nexus-panel 以外跑直接 ENOENT，**83 条断言一条没跑**；
+ *   · disclosure-test.mjs 的 `walk('plugins')` 更阴：它的 walk 把
+ *     readdirSync 包了 try/catch，换 cwd 后**静默返回空数组**，
+ *     于是"没有违规项"这类断言全部恒真 —— 崩与假绿，两头都不报错。
+ * 而第 5 节当时照样报"干净"。
+ */
+const FS_REL_CALL = /\b(?:readFileSync|readdirSync|existsSync|statSync|lstatSync|writeFileSync|appendFileSync|opendirSync|readdir)\s*\(\s*(['"`])([^'"`\n]+)\1/;
+const WALK_REL_CALL = /\bwalk\s*\(\s*(['"`])([^'"`\n]+)\1/;
+/* walk 是各文件自己写的助手：只有它**内部**按 HERE 拼，裸字面量才安全 */
+const walkResolvesHere = (src) => {
+  const defs = [...src.matchAll(
+    /(?:\(\s*function\s+walk\b|function\s+walk\b|const\s+walk\s*=|let\s+walk\s*=|var\s+walk\s*=)[\s\S]{0,240}?\{/g)];
+  if (defs.length === 0) return false; /* 看不到定义 → 保守判坏，宁可看得见 */
+  return defs.every((m) => /HERE|__dirname|fileURLToPath|import\.meta\.url|ROOT/
+    .test(src.slice(m.index, m.index + 900)));
+};
+const relRootHits = (src) => {
+  const out = [];
+  const m1 = FS_REL_CALL.exec(src);
+  if (m1 && !m1[2].startsWith('/')) out.push(`fs(${m1[0].match(/\w+/)[0]}):${m1[2]}`);
+  for (const m of src.matchAll(new RegExp(WALK_REL_CALL.source, 'g'))) {
+    if (m[2].startsWith('/')) continue;
+    if (walkResolvesHere(src)) continue;
+    out.push(`walk:${m[2]}`);
+  }
+  return out;
+};
+
+/*
  * 判定：这个字面量锚点是不是"不该用"的注释锚点。
  *
  * 放行两类：
@@ -473,6 +508,26 @@ console.log('\n=== 5. 测试不得依赖 process.cwd() 定位源码 ===');
   /* 反面证据：本文件自己的说明里也写了这个字样，不剥注释会误报 */
   t('判定函数确实认得出来', /process\.cwd\(\)/.test('const R = process.cwd();')
     && !/process\.cwd\(\)/.test(stripComments('// const R = process.cwd();')));
+
+  /* 第二层：裸相对路径 —— 不写 cwd 四个字，结论一样由 cwd 决定 */
+  const bad2 = [];
+  for (const p of all) {
+    let s = '';
+    try { s = fs.readFileSync(p, 'utf8'); } catch { continue; }
+    s = stripComments(s);
+    for (const h of relRootHits(s)) bad2.push(`${path.relative(ROOT, p)}:${h}`);
+  }
+  t('没有测试把相对路径裸传给 fs / walk', bad2.length === 0,
+    bad2.slice(0, 6).join(' | ') || '干净');
+  /* 反面证据：判据清空后上面那条照样绿，只有这三条会喊 */
+  t('裸相对路径判据确能命中（反面证据）',
+    relRootHits("readFileSync('js/host.js')").length === 1
+    && relRootHits("readFileSync(join(HERE, 'js/host.js'))").length === 0
+    && relRootHits("walk('plugins')").length === 1,
+    '裸传命中 / 按 HERE 拼不命中 / 裸 walk 命中');
+  t('walk 内部按 HERE 拼的不算漏判（addcard-cross-tab 那种）',
+    relRootHits("const walk = (d) => { fs.readdirSync(path.join(HERE, d)); };\nwalk('.')")
+      .length === 0);
 }
 
 console.log('\n=== 6. 断言不能拿带 g / y 标志的正则做 .test() ===');
