@@ -6795,6 +6795,125 @@ group('BUG 108 · XMind 8（content.xml）的节点样式必须读出来');
    ⓘ 深于 6 级那条提示（BUG 102）要保留，两句合并成一条说，
      否则后一句会把前一句盖掉（status 是覆盖式的）。
    ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------
+   BUG 117：XMind 字号带 px 单位 → 内核算出 NaN，文字位置错乱
+
+   内核算文字基线用的是 `line-height * font-size`（kityminder.core 里
+   `l = h*i*g.length-(h-1)*i`）。传进去的是 `"20px"` 的话 `1.5 * "20px"`
+   = **NaN**。实测（真实 Chromium，节点 data 里放 `'font-size': '20px'`）：
+
+     font-size = 20（数字）  → <text y="-10">，包围盒 y=-10，字号 20px ✓
+     font-size = "20px"     → <text y="NaN">，包围盒 y=0，控制台两条
+                              「attribute y: Expected length "NaN"」/
+                              「transform: Expected ')', "translate( 0 NaN )"」
+
+   而 XMind 规范写的是 **pt**，各类实现 / 生成工具却**常写 px** —— 于是
+   「导入别人的 .xmind」就足以触发：
+
+     fo:font-size = "20pt" → 导入后 "20"   ✓
+     fo:font-size = "20px" → 导入后 "20px" ✗（原样保留 → NaN）
+     fo:font-size = "1.2em"→ 导入后 "1.2em" ✗
+
+   同一个洞在写侧还有一个更脏的后果：存量的 `"20px"` 经 `toPt` 会拼成
+   **`"20pxpt"`** —— 一个根本不存在的单位，写回文件里污染数据。
+
+   ⓘ 剥不出数字（`'large'` 之类）时**不设**这个键，回落主题默认字号 ——
+     比塞一个 NaN 进去好得多。
+   ------------------------------------------------------------------ */
+group('BUG 117 · XMind 字号必须剥掉单位（否则内核算出 NaN）');
+
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+
+  const readFontSize = async (propVal) => {
+    const X = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const cj = [{ rootTopic: { id: 'r', class: 'topic', title: '根', children: { attached: [
+      { id: 'a', class: 'topic', title: 'A',
+        style: { id: 's1', properties: { 'fo:font-size': propVal } } },
+    ] } } }];
+    const blob = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const got = await X.readXMind(blob);
+    return JSON.parse(got.sheets[0].content).root.children[0].data['font-size'];
+  };
+
+  // ① 导入别人的文件：任何单位都要剥掉，只剩数字
+  {
+    eq(await readFontSize('20pt'), '20', '★ 20pt → "20"（剥掉 pt）');
+    eq(await readFontSize('20px'), '20', '★ 20px → "20"（剥掉 px，原来是原样保留 → NaN）');
+    eq(await readFontSize('16.5pt'), '16.5', '小数 pt 保住');
+    eq(await readFontSize('20'), '20', '本来就无单位的原样');
+    eq(await readFontSize('1.2em'), '1.2', '★ em 也要剥（原样保留同样 NaN）');
+    ok(!await readFontSize('large'), '★ 剥不出数字 → 不设（回落主题默认，不能塞 NaN）');
+    ok(!await readFontSize('0pt'), '0 / 负数不设');
+  }
+
+  // ② 写侧：存量 "20px" 不能再拼成 "20pxpt"
+  {
+    const X = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const content = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'a', text: 'A', 'font-size': '20px' }, children: [] },
+    ] } });
+    const blob = await X.writeXMind([{ id: 'sh1', title: '甲', content }], 'sh1');
+    const e = await X.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    const cj = JSON.parse(new TextDecoder().decode(e.get('content.json')));
+    const props = cj[0].rootTopic.children.attached[0].style?.properties || {};
+    eq(props['fo:font-size'], '20pt', '★ 写出去是 "20pt"（原来是 "20pxpt"）');
+
+    // 拿不到数字时（存量脏数据）**不能写一个 null 进去**
+    const X2 = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const c2 = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'b', text: 'B', 'font-size': 'large' }, children: [] },
+    ] } });
+    const b2 = await X2.writeXMind([{ id: 'sh1', title: '甲', content: c2 }], 'sh1');
+    const e2 = await X2.zipRead(new Uint8Array(await new Blob([b2]).arrayBuffer()));
+    const cj2 = JSON.parse(new TextDecoder().decode(e2.get('content.json')));
+    const p2 = cj2[0].rootTopic.children.attached[0].style?.properties || {};
+    ok(!('fo:font-size' in p2), '★ 剥不出数字 → 不写这个属性（不能写 null 进去）');
+  }
+
+  // ③ 存量脏数据走一轮往返就洗干净了
+  {
+    const X = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const content = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'a', text: 'A', 'font-size': '20px' }, children: [] },
+    ] } });
+    const blob = await X.writeXMind([{ id: 'sh1', title: '甲', content }], 'sh1');
+    const e = await X.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    const zen = [...e].filter(([k]) => k === 'content.json')
+      .map(([k, v]) => ({ name: k, data: v }));
+    const got = await X.readXMind(await X.zipWrite(zen));
+    eq(JSON.parse(got.sheets[0].content).root.children[0].data['font-size'], '20',
+      '★ "20px" 往返一趟变成 "20"（不再会 NaN）');
+  }
+
+  // ④ 我们自己写的 pt 往返不受影响
+  {
+    const X = await import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+    const content = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+      { data: { id: 'a', text: 'A', 'font-size': 20 }, children: [] },
+    ] } });
+    const blob = await X.writeXMind([{ id: 'sh1', title: '甲', content }], 'sh1');
+    const got = await X.readXMind(blob);
+    // 带本工具无损快照时是原样取回（数字 20），只有过一遍别的软件才会走
+    // content.json 那一趟 —— 两种都得是 20，不能变成 "20px" / "20pxpt"。
+    eq(Number(JSON.parse(got.sheets[0].content).root.children[0].data['font-size']), 20,
+      '面板设的数字 20 往返仍是 20');
+  }
+
+  // ⑤ 源码里不能再出现「读侧直接用 fromPt(v)」
+  {
+    const src = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
+    const code = stripCommentsFlatJs(src);
+    ok(!/fromPt\(/.test(code), '★ 读侧不再用只在结尾剥 pt 的 fromPt（px / em 漏网）');
+    ok(/fontSizeNum\(/.test(code), '改用统一的取数字函数');
+    // 光"定义了"不算：读侧必须真的用它（函数定义本身也匹配，要数调用点）
+    const calls = code.split(/fontSizeNum\s*\(/).length - 1;
+    ok(calls >= 2, '★ 读侧与写侧各调用一次 fontSizeNum（实测 ' + (calls - 1) + ' 处调用）');
+  }
+}
+
 group('BUG 116 · Markdown 导出也要说清装不下什么');
 
 {

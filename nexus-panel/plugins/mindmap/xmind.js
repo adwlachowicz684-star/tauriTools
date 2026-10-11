@@ -456,9 +456,44 @@ function progressToMarker(progress) {
 }
 
 const toPx = (v) => (/px$/i.test(v.trim()) ? v.trim() : v.trim() + 'px');
-const toPt = (v) => (/pt$/i.test(v.trim()) ? v.trim() : v.trim() + 'pt');
 const fromPx = (v) => (/px$/i.test(v.trim()) ? v.trim().slice(0, -2).trim() : v.trim());
-const fromPt = (v) => (/pt$/i.test(v.trim()) ? v.trim().slice(0, -2).trim() : v.trim());
+
+/**
+ * 字号里的**数字部分**。
+ *
+ * 只剥单位、不做 pt↔px 换算：本工具写出去的一律是 pt（见 toPt），读回来
+ * 剥掉 pt 就与原值一致；别处写 pt 时同样自洽。
+ *
+ * ⓘ **不能原样保留带单位的值**。内核算文字基线时用的是 `line-height *
+ *   font-size`（kityminder.core 里 `l = h*i*g.length-(h-1)*i`）—— 传进去
+ *   是 `"20px"` 的话 `1.5 * "20px"` = **NaN**，实测该节点：
+ *     `<text y="NaN">`、外层 `transform="translate( 0 NaN )"` → 控制台两条
+ *     「Expected length "NaN"」，文字位置整个错乱（包围盒 y=0）。
+ *   而 XMind 规范写的是 pt，各类实现/生成工具却常写 px —— 于是「导入别人的
+ *   .xmind」就足以触发（BUG 117）。"1.2em"、"large" 同理。
+ *
+ * ⓘ 拿不到数字（`'large'` 之类）时返回 null：让调用方**不设**这个键，
+ *   回落主题默认字号 —— 比塞一个 NaN 进去好得多。
+ */
+const fontSizeNum = (v) => {
+  const m = /^([+-]?\d+(?:\.\d+)?)/.exec(String(v ?? '').trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n > 0 ? String(n) : null;
+};
+
+/**
+ * 写侧：一律归一成 `<数字>pt`。
+ *
+ * 存量的 `data['font-size']` 可能是 `"20px"`（早期从别的软件导入时单位没剥
+ * 掉，或样式刷复制来的）。原来的 `toPt` 只在**结尾是 pt** 时才不追加 ——
+ * `"20px"` 会被拼成 **`"20pxpt"`**，一个根本不存在的单位，写回文件里污染
+ * 数据（BUG 117）。
+ */
+const toPt = (v) => {
+  const n = fontSizeNum(v);
+  return n ? n + 'pt' : null;
+};
 
 /** kityminder 尺寸串（"120*80" / "120,80"）→ {w,h} */
 function parseSize(s) {
@@ -940,7 +975,13 @@ function buildStyle(data) {
   for (const [kmKey, xmKey] of StyleMap) {
     const v = str(data?.[kmKey]);
     if (v == null || !String(v).trim()) continue;
-    props[xmKey] = StylePxKeys.has(kmKey) ? toPx(v) : kmKey === 'font-size' ? toPt(v) : v;
+    /*
+     * 字号走 toPt，且**拿不到数字就不写**：toPt('large') 返回 null，
+     * 写进 properties 就是 `fo:font-size: null`，别的软件打开会当成没有字号
+     * —— 那正是想要的（总比写个非法值强）。
+     */
+    if (kmKey === 'font-size') { const pt = toPt(v); if (pt) props[xmKey] = pt; continue; }
+    props[xmKey] = StylePxKeys.has(kmKey) ? toPx(v) : v;
   }
   /*
    * 粗体 / 斜体的 data 键是 font-weight / font-style（与 XMind 同名），
@@ -1149,7 +1190,12 @@ function applyStyle(data, style) {
   for (const [kmKey, xmKey] of StyleMap) {
     const v = str(props[xmKey]);
     if (v == null || !String(v).trim()) continue;
-    data[kmKey] = StylePxKeys.has(kmKey) ? fromPx(v) : kmKey === 'font-size' ? fromPt(v) : v;
+    /*
+     * 同上：字号必须剥掉单位后再落到 data 上（否则内核算出 NaN，见
+     * fontSizeNum 的注释）。剥不出来（`'large'`）就**不设**，回落主题默认。
+     */
+    if (kmKey === 'font-size') { const fs = fontSizeNum(v); if (fs) data[kmKey] = fs; continue; }
+    data[kmKey] = StylePxKeys.has(kmKey) ? fromPx(v) : v;
   }
   const weight = str(props['fo:font-weight']);
   if (String(weight).toLowerCase() === 'bold' || (num(props['fo:font-weight']) ?? 0) >= 600) {
