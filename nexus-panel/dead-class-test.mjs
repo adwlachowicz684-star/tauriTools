@@ -828,10 +828,21 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
    * 但**绝不能再多**。新增一份就报红，并指明改用共用模块。 */
   // 匹配源码文本 /\/\*[\s\S]*?\*\//
   const INLINE = /\/\\\/\\\*\[\\s\\S\]\*\?\\\*\\\//g;
+  /* .test() 必须另用一份**不带 g** 的副本，且从 INLINE 派生、不另抄一份
+     （两处判据各自漂移 = 迟早只改一处）。
+     带 g 的实例做 test 会**推进 lastIndex**：第一次命中后停在 1141，
+     第二次就从 1141 续扫 —— 而"不误伤无关文本"的样本只有 35 字符，
+     永远扫不到，于是 `!INLINE.test(...)` 恒真。
+     实测：把样本换成确实含该模式的 'x/\\/\\*[\\s\\S]*?\\*\\/'，
+     这条断言**照样通过**（用新实例则正确报红）。 */
+  const INLINE_ONCE = new RegExp(INLINE.source, INLINE.flags.replace(/[gy]/g, ''));
   // 自检：该正则必须能命中权威实现，否则说明判据写错、断言空跑
   const selfTxt = readFileSync('test-scan-utils.mjs', 'utf8');
-  t('内联判据自检有效', INLINE.test(selfTxt), '判据必须在权威实现上命中');
-  t('判据不误伤无关文本', !INLINE.test('const x = 1; // nothing here'), '普通文本不命中');
+  t('内联判据自检有效', INLINE_ONCE.test(selfTxt), '判据必须在权威实现上命中');
+  t('判据不误伤无关文本', !INLINE_ONCE.test('const x = 1; // nothing here'), '普通文本不命中');
+  /* 反面证据：确认上面那两个判据真的有鉴别力（不是空转） */
+  t('判据确能命中该模式（反面证据）',
+    INLINE_ONCE.test('x/\\/\\*[\\s\\S]*?\\*\\/'), '换成含模式的样本应当命中');
 
   const SKIP = new Set(['node_modules', '.git', 'target', 'dist', 'build', '.tauri', '__pycache__']);
   let total = 0;
