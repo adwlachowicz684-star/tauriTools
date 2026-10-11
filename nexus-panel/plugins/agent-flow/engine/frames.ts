@@ -21,7 +21,15 @@
  * 把成员 id 直接写在框上，两个需求都自然成立。
  */
 
-/** 节点形状 —— 只取用得着的字段，好让纯 node 测试能直接喂对象 */
+/**
+ * 节点形状 —— 只取用得着的字段，好让纯 node 测试能直接喂对象。
+ *
+ * ⚠️ style 的 width / height 必须同时接受 string：画布节点的 style 是
+ * CSSProperties（\`width: '100%'\` 合法），只写 number 的话 FlowNode
+ * **不满足**本类型的约束，\`fitFrames(nodes)\` 的 T 会被推成 FrameAnyNode
+ * 而不是 FlowNode —— 于是返回值再传回 ReactFlow 时又报"unknown 不能给
+ * RetryNodeData"，一处窄类型串出一串错（实测 5 条）。
+ */
 export type FrameAnyNode = {
   id: string;
   type?: string;
@@ -29,7 +37,7 @@ export type FrameAnyNode = {
   measured?: { width?: number; height?: number };
   width?: number;
   height?: number;
-  style?: { width?: number; height?: number };
+  style?: { width?: number | string; height?: number | string };
   data?: unknown;
   selected?: boolean;
   zIndex?: number;
@@ -92,11 +100,12 @@ const FALLBACK_H = 76;
  * 复用它的话 stack 调用处只能 `as never` 硬转 ——
  * 那种转换会让"传错对象"在编译期查不出来，运行时静默拿到兜底尺寸。
  */
+/** 同上：读宽度时已经用 \`typeof s === 'number'\` 挡过，放宽不会漏进算术。 */
 export type SizeLike = {
   measured?: { width?: number; height?: number } | null;
   width?: number;
   height?: number;
-  style?: { width?: number; height?: number };
+  style?: { width?: number | string; height?: number | string };
 };
 
 export function widthOf(n: SizeLike): number {
