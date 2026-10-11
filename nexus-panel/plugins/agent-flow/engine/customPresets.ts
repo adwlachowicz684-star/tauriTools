@@ -79,6 +79,44 @@ export function sanitizeForPreset(data: unknown): Record<string, unknown> {
 /** 可注入的存储，便于测试与不支持 localStorage 的环境 */
 /* KV / defaultKV / loadList 统一走 ./kv */
 
+/**
+ * 导入专用的那道校验。
+ *
+ * isPreset 只管"结构上像不像一条预设"，而导入的文件**不受我们控制** ——
+ * 可能是手改的，也可能是别的工具导出的：结构合法，但用起来是坏的。
+ *
+ * ================= 为什么不动 isPreset =================
+ * isPreset 同时被 loadCustomPresets 当过滤器用。在那里加严的话，
+ * **已存的**条目会静默消失 —— 用户什么都没做，回头发现预设没了。
+ * 而导入时跳过会明确报在「跳过 N 条」里，看得见。
+ * "做完了却看不见"是最糟的一种失效，这里刻意避开它。
+ *
+ * 两条都是"能入库、但用起来是坏的"，且全程不报错：
+ *
+ *   · 名字是空的：侧栏出现一条**空白条目**。能拖、能用，
+ *     但看不出它是哪个 —— 想删都认不出来。
+ *
+ *   · data 是数组：`typeof [] === 'object'`，isPreset 放行；
+ *     落库时被 stripSecrets 摊成 {0:.., 1:..}，配置变成一堆数字下标。
+ *
+ * 返回 null 表示没问题，否则返回给人看的原因。
+ */
+function importIssue(p: CustomPreset): string | null {
+  if (typeof p.name !== 'string' || !p.name.trim()) {
+    return '名字是空的（侧栏会出现一条认不出是哪个的空白条目）';
+  }
+  if (Array.isArray(p.data)) {
+    return '配置是数组（会被摊成一堆数字下标）';
+  }
+  return null;
+}
+
+/** 跳过提示用的名字：没有就用「(无名)」，不让提示里出现一片空白 */
+function shownName(x: unknown): string {
+  const n = (x as { name?: unknown })?.name;
+  return typeof n === 'string' && n.trim() ? n.trim() : '(无名)';
+}
+
 /** 读出来的东西不可信：可能是旧版本、手改过、或别的插件写坏的 */
 function isPreset(x: unknown): x is CustomPreset {
   const o = x as CustomPreset;
@@ -196,11 +234,16 @@ export function importCustomPresets(
 
   for (const item of list) {
     if (!isPreset(item)) {
-      result.skipped.push(String((item as { name?: string })?.name ?? '(无名)'));
+      result.skipped.push(shownName(item));
+      continue;
+    }
+    const issue = importIssue(item);
+    if (issue) {
+      result.skipped.push(`${shownName(item)}（${issue}）`);
       continue;
     }
     if (!opts.isKnownType(item.baseType)) {
-      result.skipped.push(`${item.name}（本机没有「${item.baseType}」这种节点）`);
+      result.skipped.push(`${shownName(item)}（本机没有「${item.baseType}」这种节点）`);
       continue;
     }
     // 同 id 视为同一条，覆盖；否则新增。这样重复导入不会堆出一堆副本。

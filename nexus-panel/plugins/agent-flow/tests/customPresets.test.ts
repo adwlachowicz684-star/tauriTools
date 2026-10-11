@@ -553,3 +553,58 @@ test('存为自定义：老类型必须拦住（存完了在侧栏找不到）',
       '自定义预设：存完了却找不到，不报错，用户只会以为保存失败。',
   );
 });
+
+/* ================================================================ */
+/* 导入：结构上合法、但用起来是坏的，必须拦住                        */
+/* ================================================================ */
+
+/*
+ * 导入的文件**不受我们控制** —— 可能是手改的，也可能是别的工具导出的。
+ * 这类东西能通过 isPreset（结构上像一条预设），但用起来是坏的，
+ * 而且**全程不报错**：导入提示照样报「新增 1 条」，坏的东西静静入库。
+ *
+ * 为什么不在 isPreset 里加严：它同时被 loadCustomPresets 当过滤器，
+ * 加严会让**已存的**条目静默消失 —— 用户什么都没做，预设就没了。
+ * 导入时跳过会明确报在「跳过 N 条」里，看得见。
+ */
+test('导入：名字是空的必须跳过（否则侧栏出现一条认不出是哪个的空白条目）', () => {
+  const kv = memKV();
+  const mk = (name: unknown) => JSON.stringify({
+    version: 1,
+    presets: [{ id: 'p1', name, baseType: 'condition', createdAt: 0, data: { label: 'x' } }],
+  });
+  for (const empty of ['', '   ', undefined]) {
+    const r = importCustomPresets(mk(empty), { isKnownType: () => true }, kv);
+    assert.equal(r.added, 0, `name=${JSON.stringify(empty)} 不该入库`);
+    assert.equal(r.skipped.length, 1, '跳过提示里要看得见');
+    assert.match(r.skipped[0], /\(无名\)|空白/, '跳过提示不该是一片空白');
+  }
+  assert.equal(loadCustomPresets(kv).length, 0, '一条都不该落库');
+});
+
+test('导入：配置是数组的必须跳过（typeof [] === object，会被摊成数字下标）', () => {
+  const kv = memKV();
+  const json = JSON.stringify({
+    version: 1,
+    presets: [{ id: 'p1', name: '数组配置', baseType: 'condition', createdAt: 0, data: ['a', 'b'] }],
+  });
+  const r = importCustomPresets(json, { isKnownType: () => true }, kv);
+  assert.equal(r.added, 0, '数组不该当配置入库');
+  assert.equal(loadCustomPresets(kv).length, 0);
+});
+
+/* 好的数据不能被新的校验误伤 —— 加严最容易出的错就是连正常的一起拦掉 */
+test('导入：正常预设不受新校验影响', () => {
+  const kv = memKV();
+  const json = JSON.stringify({
+    version: 1,
+    presets: [{
+      id: 'p1', name: '我的条件', baseType: 'condition', createdAt: 0,
+      data: { label: '我的条件' },
+    }],
+  });
+  const r = importCustomPresets(json, { isKnownType: () => true }, kv);
+  assert.equal(r.added, 1);
+  assert.deepEqual(r.skipped, []);
+  assert.equal(loadCustomPresets(kv)[0].name, '我的条件');
+});
