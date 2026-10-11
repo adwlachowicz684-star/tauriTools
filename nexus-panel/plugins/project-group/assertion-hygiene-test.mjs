@@ -158,6 +158,47 @@ const vacuousSideOf = (cmpExpr) => {
   return m[0][0] === '<' ? lhs.trim() : rhs.trim();
 };
 
+/*
+ * 第 6 节判据：**断言不能拿带 g / y 标志的正则实例做 .test()**。
+ *
+ * 带 g/y 的实例做 test 会**推进 lastIndex**：第一次命中后停在匹配末尾，
+ * 第二次再从那里续扫。于是第二条断言看的根本不是自己的样本，而是
+ * "上一次命中位置之后的那段" —— 样本比 lastIndex 短时恒不命中，
+ * `!rx.test(样本)` 就恒真；反过来也可能恒假。两种都不报错。
+ *
+ * 实测（dead-class-test.mjs）：INLINE 第一次命中后 lastIndex = 1141，
+ * 而"不误伤无关文本"的样本只有 35 字符 → 把样本换成确实含该模式的
+ * `x/\/\*[\s\S]*?\*\/`（18 字符），断言**照样通过**；换用不带 g 的
+ * 副本则正确报红。也就是说那条"不误伤"从未真正鉴别过任何东西。
+ *
+ * 只认**字面量声明**的正则（`const X = /…/g`）。`new RegExp(src,'g')`
+ * 的写法扫不到，属已知边界（要判就得解析实参）——不假装覆盖了它。
+ */
+const GY_DECL = new RegExp(
+  '(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*'
+  + '/(?![*/])(?:\\\\.|\\[(?:\\\\.|[^\\]])*\\]|[^/\\\\\\n])+/([a-z]*)', 'g');
+
+/** 返回形如 `NAME` 的命中名（已排除同名的多作用域声明，见下） */
+const gyTestVars = (src) => {
+  const decls = [...src.matchAll(GY_DECL)];
+  const out = [];
+  for (const d of decls) {
+    const [, name, flags] = d;
+    if (!/[gy]/.test(flags)) continue;
+    /*
+     * 同名在本文件里被声明成正则**不止一次** → 多半是 `re` 这类短名在
+     * 不同作用域各声明一份（mindmap 里 3 处），靠名字无法判定谁对应谁，
+     * 强行报会误伤。宁可漏，不可误报（误报会逼人给正确代码加冗余改动）。
+     */
+    const sameName = decls.filter((x) => x[1] === name).length;
+    if (sameName > 1) continue;
+    if (new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\s*\\.\\s*test\\s*\\(`).test(src)) {
+      if (!out.includes(name)) out.push(name);
+    }
+  }
+  return out;
+};
+
 console.log('=== 1. 锚点不能是注释 ===');
 {
   const bad = [];
@@ -417,7 +458,34 @@ console.log('\n=== 5. 测试不得依赖 process.cwd() 定位源码 ===');
     && !/process\.cwd\(\)/.test(stripComments('// const R = process.cwd();')));
 }
 
-console.log('\n=== 6. 反向自检：护栏本身能抓到 ===');
+console.log('\n=== 6. 断言不能拿带 g / y 标志的正则做 .test() ===');
+/*
+ * lastIndex 会让第二条断言**不再看自己的样本**（推导见 gyTestVars 注释）：
+ * 于是"这条判据不误伤 X"这类反面断言恒真，而报错一个字都不会有 ——
+ * 它跟第 3 节"缺端恒真"是同一类，只是成因在正则状态而不是 -1 比较。
+ *
+ * 为什么连**只用过一次**的也要报：单次此刻安全，但它是个雷 ——
+ * 谁在它前面再加一次 test（或在循环里用），结果就翻面，而改动的人
+ * 根本不会想到要看上一行的 lastIndex。
+ */
+{
+  const all = walk(ROOT, ['-test.mjs'])
+    .filter((p) => !p.endsWith('assertion-hygiene-test.mjs'));
+  const bad = [];
+  for (const p of all) {
+    let src = '';
+    try { src = fs.readFileSync(p, 'utf8'); } catch { continue; }
+    /* 剥注释：说明里写 `/re/g.test(` 的示例不该被当成真用法 */
+    src = stripComments(src);
+    for (const nm of gyTestVars(src)) bad.push(`${path.relative(ROOT, p)}:${nm}`);
+  }
+  t('断言不复用带 lastIndex 的正则做 .test()', bad.length === 0,
+    bad.join(', ') || '干净');
+  /* 空转自检：范围被改窄 / 目录读不到 → bad 恒空 → 绿得毫无意义 */
+  t('扫描范围非空（判据不能空转）', all.length >= 20, `实测 ${all.length} 个`);
+}
+
+console.log('\n=== 7. 反向自检：护栏本身能抓到 ===');
 {
   /* 造一个"只活在注释里"的模式，护栏必须把它标出来 */
   const probe = '这条说明只存在于注释里的探针XYZ';
@@ -445,6 +513,16 @@ console.log('\n=== 6. 反向自检：护栏本身能抓到 ===');
     const fake = 'true';
     const msg = '`t(...';
     return /^(true|1|!0|!!1)$/.test(fake) && msg.length > 0;
+  })());
+  /*
+   * lastIndex 类自检：造一段"g 正则 + 两次 test"，判定函数必须点名。
+   * 同第 3 节那条教训 —— 必须调**本体函数**，不能另写一条正则去判
+   * "这段文本里有没有 .test("（那样验的是手写正则，跟本体认不认得无关）。
+   */
+  t('lastIndex 类：判定函数确实认得出来', (() => {
+    const fake = "const RX = /ab/g;\nt('命中', RX.test(s));\nt('不误伤', !RX.test(x));";
+    const noFlag = "const RX = /ab/;\nt('命中', RX.test(s));";
+    return gyTestVars(fake).includes('RX') && !gyTestVars(noFlag).includes('RX');
   })());
 }
 
