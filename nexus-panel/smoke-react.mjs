@@ -35,7 +35,14 @@ const require = createRequire(import.meta.url);
    报 "Invalid hook call"。同目录才能保证拿到同一份。 */
 // 必须用 fileURLToPath：new URL(...).pathname 在 Windows 上是 "/E:/..."
 // （多一个前导斜杠），esbuild 会拿它去拼出 "…\nexus-panel\E:" 这种非法路径。
-const OUT = fileURLToPath(new URL('./.smoke-react.cjs', import.meta.url));
+/* 产物名带 pid：并发跑（体检分片同时开十几个、或两人同时跑）时若都写同一个
+   文件名，后启动的会把先启动的写一半的文件覆盖掉 —— 表现是"偶尔少几条断言"，
+   而失败原因离"文件名撞了"很远。落 .tool_output/ 是它已在 .gitignore 里。
+   退出时删掉，避免每次跑完多一个几十 KB 的残留。 */
+const OUT_DIR = fileURLToPath(new URL('./.tool_output/', import.meta.url));
+fs.mkdirSync(OUT_DIR, { recursive: true });
+const OUT = path.join(OUT_DIR, `smoke-react.${process.pid}.cjs`);
+process.on('exit', () => { try { fs.unlinkSync(OUT); } catch { /* 已删就无所谓 */ } });
 
 await esbuild.build({
   entryPoints: [path.join(HERE, 'src/App.tsx')],
@@ -93,7 +100,28 @@ const root = createRoot(document.getElementById('root'));
 root.render(React.createElement(App));
 
 const tick = (ms = 300) => new Promise((r) => setTimeout(r, ms));
-await tick(600);
+/* 等"条件成立"，而不是"睡固定时长"。
+   ⚠️ 旧版全程固定 tick：机器一忙（体检 12 个分片并发）挂载就会超时，
+   表现为 4 条断言偶发失败、单独重跑又全绿 —— 假失败会让人去查界面逻辑，
+   而真因只是"这次慢了两百毫秒"。轮询到成立才继续，慢机器与 CI 都稳。 */
+const waitFor = async (fn, { timeout = 8000, interval = 20 } = {}) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    let v = false;
+    try { v = fn(); } catch { v = false; }
+    if (v) return true;
+    await tick(interval);
+  }
+  return false;
+};
+/* 首次渲染：等"侧边栏真的渲染出来"，而不是睡固定时长。
+   实测：8 个 CPU 占满时固定 600ms 不够，侧边栏还是 0 项 → 6 条断言一起假失败。 */
+await waitFor(() => document.querySelectorAll('#plugin-list .nav-item').length > 0);
+/* 再等默认插件（概览，.tsx 入口）把加载尝试的结果报出来。
+   ⚠️ 这里等的是"出现了报错"，下面断言的是"报错里能筛出 TSX 那一类"：
+   两者不是同一件事 —— 筛正则若写错、一条都筛不出来，这里会空等 8 秒
+   然后照样判红，不会变成恒真的假绿。 */
+await waitFor(() => errors.length > 0, { timeout: 8000 });
 
 const q = (s) => document.querySelector(s);
 const qa = (s) => [...document.querySelectorAll(s)];
@@ -120,24 +148,26 @@ ok('内容区有插件标题', !!q('#plugin-bar h1')?.textContent, q('#plugin-ba
 const target = qa('#plugin-list .nav-item').find((b) => b.textContent.includes('示例·同页'));
 ok('找到同页示例插件', !!target);
 target?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-await tick(500);
 
 const stage = q('#stage-scroll');
-ok('同页插件挂载', /计数器/.test(stage.textContent));
+const mounted = await waitFor(() => /计数器/.test(stage.textContent));
+ok('同页插件挂载', mounted, mounted ? '' : JSON.stringify(stage.textContent).slice(0, 160));
 const btn = qa('#stage-scroll button').find((b) => b.textContent.includes('＋'));
 btn?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-await tick(200);
+await waitFor(() => stage.querySelector('.num')?.textContent === '1');
 const num = stage.querySelector('.num')?.textContent;
 const persisted = localStorage.getItem('nexus:demo-module:count');
 ok('计数器点击后自增', num === '1', num);
 ok('计数写入持久化', persisted === '1', persisted);
-ok('侧边栏角标出现', qa('.nav-badge').map((e) => e.textContent).filter(Boolean).length > 0,
-  qa('.nav-badge').map((e) => e.textContent).filter(Boolean).join(','));
+/* 角标是"概览"插件收到 demo:counter 广播后再渲染的，比计数本身晚一拍：
+   计数变 1 之后角标还没出来是正常的，直接判就是偶发假失败。 */
+const badged = await waitFor(() => qa('.nav-badge').map((e) => e.textContent).filter(Boolean).length > 0);
+ok('侧边栏角标出现', badged, qa('.nav-badge').map((e) => e.textContent).filter(Boolean).join(','));
 
 // 切到 iframe 插件，验证 iframe 被创建（jsdom 不会加载页面，只验证宿主行为）
 const iframePlugin = qa('#plugin-list .nav-item').find((b) => b.textContent.includes('示例·React'));
 iframePlugin?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-await tick(400);
+await waitFor(() => !!document.querySelector('#stage-scroll iframe'));
 ok('iframe 插件已插入', !!q('#stage-scroll iframe'), q('#stage-scroll iframe')?.getAttribute('src'));
 
 ok('主题已应用到 documentElement',
