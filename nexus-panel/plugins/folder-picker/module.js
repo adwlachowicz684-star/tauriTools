@@ -340,7 +340,7 @@ function createPanel(ctx) {
       const chip = el('button.fp-chip', {
         type: 'button',
         title: f.path,
-        onClick: () => { commitFav(f); },
+        onClick: () => { void commitFav(f); },
       }, `★ ${favLabel(f)}`);
       const del = el('button.fp-chip-x', {
         type: 'button',
@@ -496,10 +496,22 @@ function createPanel(ctx) {
     return String(session?.args?.marks?.label ?? '已授权');
   }
 
-  function commitFav(f) {
-    // 常用项一步到位：点它就是选它（"常用"的意义就是不用再浏览）
-    path = normPath(f.path);
-    commitPick();
+  /*
+   * 常用项一步到位：点它就是选它（"常用"的意义就是不用再浏览）。
+   *
+   * ⚠️ 但"一步到位"不等于"不验证"。收藏是很久以前存的，那个目录可能
+   * 早就被删掉 / 改名 / 移出授权根。直接 `path = f.path` 再 commitPick，
+   * 交出去的是一个**打不开**的目录：folder-picker 本身不报错，
+   * 失败要等到调用方真去那个目录下建东西时才冒出来 ——
+   * 而那时没人会想到是这一次点击造成的（错在 A、炸在 B）。
+   *
+   * 所以先 go 一遍：列得出来才继续。go 成功时 path 会被写成 p，
+   * 失败则停在原处，这里就不提交，把原因留在 err 里给他看。
+   */
+  async function commitFav(f) {
+    const p = normPath(f.path);
+    await go(p);
+    if (path === p) commitPick();
   }
 
   /* ---------- 对外 ---------- */
@@ -517,7 +529,24 @@ function createPanel(ctx) {
 
     await loadFavs();
 
-    path = start;
+    /*
+     * ⚠️ 起点必须由 go() 来定，不能先赋值。
+     *
+     * 先写 `path = start` 再 `await go(start)` 的话，一旦 start 列不出来
+     * （目录被删 / 改名 / 没权限 / 不在授权根里——收藏是很久以前存的，
+     * 这类情况很常见），go 走 catch 只留下 err，而 path 已经是那个
+     * **列不出来**的目录了：底部显示「当前：D:/gone」，「选择此文件夹」
+     * 仍可点（disabled 判的是 !path），交出去的就是一个不存在的目录。
+     *
+     * 更要命的是 entries 还留着**上一次会话**的内容 ——
+     * 界面底部说 D:/gone、列表却是上回浏览的 C:/A 的子目录，
+     * 用户双击列表里第一项会跳进一个他根本没打算去的目录。
+     *
+     * 所以先把 path / entries 清空，交给 go 成功时才写入；失败则停在空态
+     * （按钮自动变灰），输入框仍留着 start 供改一个字符重试。
+     */
+    path = '';
+    entries = [];
     inputEl.value = start;
     if (start) await go(start); else render();
   }
@@ -530,7 +559,13 @@ function createPanel(ctx) {
    */
   async function createChild(name) {
     const nm = String(name ?? '').trim();
-    if (!nm || !path) return;
+    /*
+     * 空输入**不能静默 return**：用户点了「新建并进入」却毫无反应、也不报错，
+     * 只会当成按钮坏了。先选目录再填名是这个控件的正常用法，
+     * 两种情况都要把"为什么没建"说出来。
+     */
+    if (!nm) { setErr('请先填一个文件夹名'); return; }
+    if (!path) { setErr('请先从上方选一个目录，再在这里新建'); return; }
     loading = true;
     render();
     try {

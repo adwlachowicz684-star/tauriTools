@@ -17,7 +17,7 @@
  *   ② 刻意保留 input（清空等于把用户刚敲的路径也抹了，他改一下就能重试）
  *   ③ 「选择此文件夹」的禁用判据是 !path —— 这是清空能真正挡住误选的
  *      唯一依据，光清空而按钮仍可点等于没修
- *   ④ 对照：agent-flow/DirPicker 只清 entries 不清 cwd（已知偏差，待修）
+ *   ④ 对照：agent-flow/DirPicker 与本插件同判据（cwd/picked 分离，本轮同步）
  *
  * 运行：node dir-dialog-fail-test.mjs
  */
@@ -25,6 +25,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -171,26 +172,43 @@ t('quickRoots 失败时不调用 load（path 保持空 → 按钮禁用）',
   !/catch[\s\S]{0,200}load\(/.test(rootSeg.slice(rootSeg.indexOf('.catch('))));
 
 /* ================================================================ */
-/* 六、已知偏差：agent-flow/DirPicker 只清 entries 不清 cwd          */
+/* 六、对照：agent-flow/DirPicker（本轮已同步修复）                   */
 /* ================================================================ */
-console.log('\n【六】对照：agent-flow/DirPicker（已知偏差，待修）');
+console.log('\n【六】对照：agent-flow/DirPicker');
 
-const pLoadIdx = picker.indexOf('const load = useCallback(async (p: string) => {');
+/*
+ * 这一节原本钉的是「已知偏差·待修」：DirPicker 的 cwd 同时充当输入框的值
+ * 与要交出去的路径，失败时只清 entries、cwd 原样保留 → 按钮仍可点，交出去
+ * 的是一个**列不出来**的目录。
+ *
+ * 现已把 cwd 拆成两个状态（cwd = 输入值 / picked = 已打开、要交出去的），
+ * 判据与本插件的 DirDialog 一致。跑真身的断言在
+ * plugins/agent-flow/dirpicker-picked-test.mjs，这里只做对照，确保两边
+ * 不会再次各走各的。
+ *
+ * 剥注释是必须的：catch 段上方那段说明里写着 setCwd / setPicked 的字样，
+ * 不剥会把"注释里提到"当成"代码里做了"。
+ */
+const pickerC = stripCommentsJs(picker);
+const pLoadIdx = pickerC.indexOf('const load = useCallback(async (p: string) => {');
 t('找得到 DirPicker 的 load', pLoadIdx >= 0);
-const pCatchIdx = picker.indexOf('} catch (e) {', pLoadIdx);
-const pCatchBody = pCatchIdx > 0 ? sliceBalanced(picker, picker.indexOf('{', pCatchIdx)) : '';
+/*
+ * 空跑端自查：pLoadIdx 取 -1 时 `pCatchIdx > 0` 仍可能为真（等于从头找），
+ * 断言看着在跑、次序根本没验。所以这里自己先判一次存在。
+ */
+const pCatchIdx = pLoadIdx >= 0 ? pickerC.indexOf('} catch (e) {', pLoadIdx) : -1;
+t('找得到 DirPicker 的 catch（在 load 之后）', pLoadIdx >= 0 && pCatchIdx > pLoadIdx);
+const pCatchBody = pCatchIdx > 0 ? sliceBalanced(pickerC, pickerC.indexOf('{', pCatchIdx)) : '';
 t('DirPicker catch 段切出来了', pCatchBody.length > 0);
 t('DirPicker 失败时清空 entries', /setEntries\(\[\]\)/.test(pCatchBody));
 t('DirPicker 失败时也说清原因（不是静默空列表）', /setErr\(/.test(pCatchBody));
-/*
- * 【已知偏差】DirPicker 的 cwd 同时充当"输入框的值"与"要交出去的路径"，
- * 失败时它被保留 —— 于是按钮仍可点，交出去的是一个**列不出来**的目录。
- * 修它需要把 cwd 拆成两个状态（输入值 / 已加载路径），改动面比本插件大，
- * 且属另一条插件线，本轮只钉住现状：一旦有人修好，这条会转为红色提醒同步。
- */
-t('[已知偏差·待修] DirPicker 失败时未清 cwd（交出去的列不出来）',
-  !/setCwd\(''\)/.test(pCatchBody),
-  '若已修：请把本条改为要求清空，并同步上面的说明');
+t('DirPicker 失败时清空 picked（与本插件清 path 同一判据）',
+  /setPicked\(''\)/.test(pCatchBody),
+  '两处判据必须一致：一侧清一侧不清，用户会在两个插件里得到不同结果');
+t('DirPicker 保留输入框的值（catch 段不出现 setCwd）',
+  !/setCwd\s*\(/.test(pCatchBody));
+t('DirPicker 的「选这里」禁用判 !picked（清空才真能挡住误选）',
+  /disabled=\{!picked\}/.test(pickerC));
 
 console.log(`\n通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

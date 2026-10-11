@@ -43,6 +43,8 @@
     "test:file-claims": "node file-claims-test.mjs",
     "test:flash": "node plugin-flash-test.mjs",
     "test:folder-picker": "node folder-picker-test.mjs",
+    "test:folder-picker-startpath": "node folder-picker-startpath-test.mjs",
+    "test:af-dirpicker-picked": "node plugins/agent-flow/dirpicker-picked-test.mjs",
     "test:dir-dialog-fail": "node dir-dialog-fail-test.mjs",
     "test:fs-roots-persist": "node fs-roots-persist-test.mjs",
     "test:handshake": "node handshake-test.mjs",
