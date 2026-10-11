@@ -101,8 +101,15 @@ const HONEST = /注释|文档头|说明|注明|写着|提醒|标明|标注|文�
  * 代价：命中面从 11 个涨到全仓 201 个，可能一次扫出多处存量。
  * 存量该逐条修（改名或补存在性判定），而不是把范围收回去 ——
  * 收回去等于把漏网面原样保留。
+ *
+ * ⚠ 第二层漏网面（本轮补）：后缀只认 `-test.mjs`，于是
+ *   plugins/agent-flow/tests/ 下 **104 个 .test.ts**（agent-flow 引擎
+ *   两千余条断言的唯一回归防线）**从未进入任何一节的视野**——
+ *   形状与"只扫本插件"完全一样：把一整批文件排除在扫描范围外，
+ *   报告照样绿。第 5/6 节各自另建 all 列表、同样只收 .mjs，一并补上。
  */
-const tests = walk(ROOT, ['-test.mjs'])
+const TEST_EXTS = ['-test.mjs', '.test.ts', '.test.tsx'];
+const tests = walk(ROOT, TEST_EXTS)
   .filter((p) => !p.endsWith('assertion-hygiene-test.mjs'));
 const rel = (p) => path.relative(ROOT, p);
 
@@ -440,7 +447,7 @@ console.log('\n=== 5. 测试不得依赖 process.cwd() 定位源码 ===');
  *   只扫自己目录 = 只守自己，漏网的恰恰是别的目录里那批。
  */
 {
-  const all = walk(ROOT, ['-test.mjs'])
+  const all = walk(ROOT, TEST_EXTS)
     .filter((p) => !p.endsWith('assertion-hygiene-test.mjs'));
   const bad = [];
   for (const p of all) {
@@ -453,6 +460,16 @@ console.log('\n=== 5. 测试不得依赖 process.cwd() 定位源码 ===');
   t('覆盖到本插件之外的测试（漏网的正是别人目录下那批）',
     all.some((p) => !p.startsWith(PLUG)),
     `本插件外 ${all.filter((p) => !p.startsWith(PLUG)).length} 个`);
+  /*
+   * 后缀那一层漏网：只收 `-test.mjs` 时，plugins/agent-flow/tests/ 下
+   * 104 个 .test.ts **任何一节都看不见**（本轮实测：把它们纳进来之后，
+   * 第 5 节立刻点名 sidebarClick.test.ts 用 process.cwd() 定位源码）。
+   * 没有这条自检，把 TEST_EXTS 改回只剩 .mjs，报告照样全绿 ——
+   * 漏网面被悄悄还原，而看报告的人一次都不会发现。
+   */
+  t('扫描范围覆盖 .test.ts（漏扫＝一整批 TS 测试不在任何一节视野内）',
+    all.some((p) => p.endsWith('.test.ts')),
+    `.test.ts ${all.filter((p) => p.endsWith('.test.ts')).length} 个`);
   /* 反面证据：本文件自己的说明里也写了这个字样，不剥注释会误报 */
   t('判定函数确实认得出来', /process\.cwd\(\)/.test('const R = process.cwd();')
     && !/process\.cwd\(\)/.test(stripComments('// const R = process.cwd();')));
@@ -469,7 +486,7 @@ console.log('\n=== 6. 断言不能拿带 g / y 标志的正则做 .test() ===');
  * 根本不会想到要看上一行的 lastIndex。
  */
 {
-  const all = walk(ROOT, ['-test.mjs'])
+  const all = walk(ROOT, TEST_EXTS)
     .filter((p) => !p.endsWith('assertion-hygiene-test.mjs'));
   const bad = [];
   for (const p of all) {

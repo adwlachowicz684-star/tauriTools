@@ -13,13 +13,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { AF_SRC } from './srcScan';
 
 /*
  * 测试是在 $OUT/tests 下跑的，相对路径到不了仓库。
  * 沿用既有约定：run-tests.sh 会 export AF_SRC（插件根目录）。
  * 详见 scripts/run-tests.sh 里那段关于 Windows 原生路径的说明。
+ *
+ * ⚠️ 没给 env 时**不能回落成 process.cwd()**：那样结论取决于"从哪个目录
+ *    敲 node" —— 从仓库根跑，`components/Sidebar.tsx` 读不到，raw 为空，
+ *    下面那几条 `!/…/.test('')` 就**恒真**（每条都过，却一条都没验）。
+ *    只有「（前置）」那条会红，而它在 CI 上看起来只是"某个用例挂了"，
+ *    指不到"定位错了"这个真因。
+ *
+ * 所以走 srcScan 里那份唯一的定位口径（AF_SRC）：env 没给时回落到
+ * `__dirname/..` —— 在 tests/ 里原地跑时正好是插件根；编译产物目录下
+ * 则由 run-tests.sh 保证 env 一定存在（指错它自己会当场报错退出）。
  */
-const SRC = join(process.env.AF_SRC ?? process.cwd(), 'components/Sidebar.tsx');
+const SRC = join(AF_SRC, 'components/Sidebar.tsx');
 let raw = '';
 try {
   raw = readFileSync(SRC, 'utf-8');
