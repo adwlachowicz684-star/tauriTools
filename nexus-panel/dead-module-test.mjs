@@ -18,16 +18,25 @@
  * 否则白名单会膨胀成"反正加一行就绿了"，那这文件也就白写了。
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join as pjoin, relative, basename } from 'node:path';
+import { join as pjoin, relative, basename, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const HERE = process.cwd();
+/* ⚠ 必须按**本文件所在目录**解析，不能用 process.cwd()。
+ * 用 cwd 时，从仓库根跑（node nexus-panel/dead-module-test.mjs）会去读
+ * 根目录下的 js/ → ENOENT → 整个文件崩在半路，**一条断言都没跑**；
+ * 而 npm script 的 cwd 是 nexus-panel，所以平时看不出来。
+ * 崩 ≠ 红：退出码非 0 容易被当成环境噪音，18 条护栏就此全部失效。 */
+const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0;
 const fails = [];
 const t = (name, cond, extra = '') => {
   if (cond) pass++;
   else fails.push(`${name}${extra ? ' → ' + extra : ''}`);
 };
-const read = (p) => readFileSync(p, 'utf8');
+/* 传入的是**仓库相对路径**（js/… / package.json），必须按 HERE 解析；
+ * 直接交给 readFileSync 就又变成相对 cwd —— 从仓库根跑照样 ENOENT。
+ * 用 resolve 而非 join：有的调用点传的是绝对路径，join 会拼成两段。 */
+const read = (p) => readFileSync(resolve(HERE, p), 'utf8');
 
 /* ---------- 白名单：不可达模块 + 理由 + 验证方式 ---------- */
 /* 每一项都要能回答："它凭什么还留着？" 且这个回答要能被下面的断言查到。 */
@@ -53,7 +62,7 @@ const isTestFile = (rel) => {
   return n.endsWith('-test.mjs') || n.endsWith('.test.ts') || n.endsWith('.test.js');
 };
 
-const jsModules = readdirSync('js').filter((f) => f.endsWith('.js')).sort();
+const jsModules = readdirSync(pjoin(HERE, 'js')).filter((f) => f.endsWith('.js')).sort();
 const prod = [];   // 生产（非测试）文件
 const tests = [];  // 测试文件
 
@@ -164,6 +173,14 @@ t('plugin-sdk.js 里没有 import 它', !refPat('theme-normalizer').test(sdk));
 console.log('=== 5. 已知死模块的测试已登记（红在明处，不藏着）===');
 const pkg = read('package.json');
 const scripts = JSON.parse(pkg).scripts;
+/* 未登记 = 这个测试等于没写。上一轮正是把它们从"孤儿"补登记进来的。 */
+t('adapt-test 已登记', !!scripts['test:adapt'], scripts['test:adapt'] || '未登记');
+t('adapt-sequential-test 已登记', !!scripts['test:adapt-sequential'], scripts['test:adapt-sequential'] || '未登记');
+
+console.log(`\n通过 ${pass} 项，失败 ${fails.length} 项`);
+if (fails.length) for (const f of fails) console.log('  ❌ ' + f);
+process.exit(fails.length ? 1 : 0);
+pts;
 /* 未登记 = 这个测试等于没写。上一轮正是把它们从"孤儿"补登记进来的。 */
 t('adapt-test 已登记', !!scripts['test:adapt'], scripts['test:adapt'] || '未登记');
 t('adapt-sequential-test 已登记', !!scripts['test:adapt-sequential'], scripts['test:adapt-sequential'] || '未登记');
