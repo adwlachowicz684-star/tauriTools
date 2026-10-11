@@ -116,7 +116,7 @@ console.log('\n=== 4. 损坏提示排在 notices 首位（前端只弹首条 toa
   const iNoting = BOOT.indexOf('store::load_config_noting');
   const iExtend = BOOT.indexOf('notices.extend(');
   t('顺序两端锚点都存在', iNoting !== -1 && iExtend !== -1, `${iNoting},${iExtend}`);
-  t('notices 由 noting 初始化、之后才 extend 体检结果', iNoting < iExtend);
+  t('notices 由 noting 初始化、之后才 extend 体检结果', iNoting >= 0 && iNoting < iExtend);
   /* 前端 useFpx 那条：notes[0] 弹 toast，其余只进日志。
      所以"损坏"必须比"有几个键不认识"更靠前，否则最要紧的那句根本不弹。 */
   t('前端确实用首条弹 toast（这条断言是上面那条的理由）',

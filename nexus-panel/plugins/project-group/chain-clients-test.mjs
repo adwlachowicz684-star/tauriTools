@@ -129,7 +129,7 @@ console.log('\n=== 6. URL 唤起失败时必须真的把指令放进剪贴板 ==
     const a = send.indexOf(`"${id}" =>`);
     const b = send.indexOf(next, a);
     const block = send.slice(a, b);
-    t(`${id} 分支切到了`, b > a && block.length > 0);
+    t(`${id} 分支切到了`, a >= 0 && b > a && block.length > 0);
     /*
      * 必须在**剥掉注释后**判：那段说明注释里也写了 paste_and_open 五个字，
      * 不剥的话把真实调用删掉、注释留着，这条照样通过（空跑）。

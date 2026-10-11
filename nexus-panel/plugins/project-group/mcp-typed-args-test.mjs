@@ -158,9 +158,9 @@ console.log('\n=== 6. 助手定义在取参之前（作用域）===');
   const iPatch = CODE.indexOf('as_object_mut');
   t('顺序比较的四个锚点都存在', iB !== -1 && iU !== -1 && iOut !== -1 && iPatch !== -1,
     `${iB},${iU},${iOut},${iPatch}`);
-  t('b/u 定义在 let out = match name 之前', iB < iOut && iU < iOut);
+  t('b/u 定义在 let out = match name 之前', iB !== -1 && iU !== -1 && iB < iOut && iU < iOut);
   t('b/u 定义在别名补参之后（不会读到补进去的值之前的状态）',
-    iB > iPatch && iU > iPatch);
+    iPatch !== -1 && iB > iPatch && iU > iPatch);
 }
 
 done();
