@@ -555,11 +555,67 @@ function fromFileUri(href) {
   }
 }
 
-/** 包内相对路径引用（resources/…），不是其它协议 */
-const isPackRef = (href) => {
-  const s = str(href);
-  return !!s && /^resources\//i.test(s) && !s.includes('://');
+/**
+ * XMind 里的资源引用有两种写法，指向**同一个**包内文件：
+ *
+ *   · `xap:attachments/xxx.png` —— `xap:` 是 XML 命名空间前缀，**不是**真实路径，
+ *     剥掉它才是 zip 里的地址（XMind 8 写 attachments/，XMind 2020+ 常用
+ *     resources/）。这是各版本都在用的标准写法。
+ *   · `resources/xxx.png` / `attachments/xxx.png` —— 不带前缀。
+ *
+ * ⓘ 早先这里只认裸 `resources/`，`xap:` 前缀一概不认（BUG 118）。后果分两半：
+ *     · 图片 `topic.image.src = "xap:attachments/p.png"` 原样落到 data.image，
+ *       内核 <image> 拿它当 URL 加载 → 控制台两条
+ *       「net::ERR_UNKNOWN_URL_SCHEME」，节点图**显示不出来**；
+ *     · 附件 `href = "xap:resources/r.pdf"` 更是被下面那条 `else` 当成了
+ *       **超链接**存起来 —— 附件本体丢失，还多一条打不开的乱码链接。
+ *   而包里的字节明明就在（entries 里有），只是取不到。
+ */
+const packPathOf = (ref) => {
+  const s = str(ref);
+  if (!s || s.includes('://')) return null;          // http / data 等协议
+  const p = s.replace(/^xap:/i, '').trim();
+  if (!p || p.startsWith('/')) return null;
+  /*
+   * 只认这两个资源目录。放宽成"任何相对路径都算"会把裸文件名（`xap:child.png`
+   * 之类）也吞进来，改变既有判定；而 XMind 各版本的资源只放这两个目录。
+   */
+  return /^(resources|attachments)\//i.test(p) ? p : null;
 };
+
+/** 包内相对路径引用 → zip 里的真实条目名；不是包内引用返回 null */
+const isPackRef = (href) => packPathOf(href) !== null;
+
+/** 图片扩展名 → MIME。认不出的回落 png（内联串总要带个类型，内核才画） */
+const ImgMime = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', ico: 'image/x-icon',
+};
+
+/**
+ * 包内图片字节 → dataURI。
+ *
+ * 图片**不能**走 saveAsset：那返回的是资产引用串（JSON 对象），内核
+ * ImageRenderer 直接塞进 <image href>，那样的串加载不出来；而 data.image
+ * 在本工具里一律是 dataURI（io.imageToInline 的产物），内联才是一致的。
+ *
+ * 分块拼串：几十 KB 以上的图片一次性 `apply` 会爆栈。
+ */
+function bytesToDataUri(bytes, name) {
+  if (!bytes || !bytes.length) return null;
+  const ext = (/(\.[a-zA-Z0-9]+)$/.exec(String(name || ''))?.[1] || '').slice(1).toLowerCase();
+  const mime = ImgMime[ext] || 'image/png';
+  let bin = '';
+  const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  }
+  try {
+    return 'data:' + mime + ';base64,' + btoa(bin);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 把节点的附件字段解析成**列表**。
@@ -1383,7 +1439,23 @@ function buildKmFromXmlTopic(t, depth = 0, styles = null) {
   if (st) applyStyle(data, { properties: st });
 
   const href = t.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || t.getAttribute('href');
-  if (href && href.trim()) data.hyperlink = href;
+  if (href && href.trim()) {
+    /*
+     * 与 zen 档同口径（BUG 118）：包内引用是**附件**不是链接。
+     * XMind 8 把附件写在 xlink:href 上，值形如 `xap:attachments/报告.pdf`；
+     * 一律当超链接的话，附件本体丢失、还多一条打不开的链接。
+     */
+    const localFile = fromFileUri(href);
+    if (localFile) {
+      if (isVideoName(localFile)) data.video = localFile;
+      else data.file = localFile;
+    } else if (isPackRef(href)) {
+      if (isVideoName(href)) data.video = href;
+      else data.file = href;
+    } else {
+      data.hyperlink = href;
+    }
+  }
 
   for (const mr of ownDescendants(t, 'marker-ref').concat(ownDescendants(t, 'marker'))) {
     const mid = mr.getAttribute('marker-id') || mr.getAttribute('markerId');
@@ -1706,43 +1778,58 @@ export async function readXMind(input, saveAsset = null) {
   // 多附件：每个节点的每个字段一组「等齐了再写回」的占位
   const pending = [];
   let attachments = 0;
+  // 内联的图片数（不占 saveAsset，单独计）
+  let inlined = 0;
 
-  if (saveAsset) {
-    for (const s of wb.sheets) {
-      const km = parseKm(s.content);
-      if (!km) continue;
-      touched.push({ sheet: s, km });
-      walkKmNodes(km, (node) => {
-        const d = node.data;
-        if (!d) return;
-        for (const key of ['file', 'video']) {
-          // 多附件：数组里每一项单独还原；任一项失败不影响其它
-          const list = refListOf(d[key]);
-          if (!list.length) continue;
-          const out = new Array(list.length);
-          // 写回必须等所有 saveAsset 都返回后再做（见下方 pending）
-          pending.push({ d: d, key: key, out: out });
-          list.forEach((one, idx) => {
-            const v = str(one);
-            out[idx] = one;                       // 先原样占位，失败就保持原引用
-            if (!v || !isPackRef(v)) return;
-            const data = entries.get(v);
-            if (!data) return;
-            const name = stripPackSeq(sanitizeFileName(v.split('/').pop() || 'attach'));
-            tasks.push(
-              Promise.resolve(saveAsset(name, data, { video: key === 'video' }))
-                .then((ref) => {
-                  if (ref) { out[idx] = ref; attachments++; }
-                })
-                .catch(() => { /* 单个附件失败不影响整体导入 */ }),
-            );
-          });
-          // 注意：**不能在这里写回**。out[idx] 此刻还是占位值（包内路径），
-          // saveAsset 尚未 resolve —— 写进去就把路径固化了，
-          // 结果是「导出再导入后附件引用仍是 resources/…，全部打不开」。
-        }
-      });
-    }
+  for (const s of wb.sheets) {
+    const km = parseKm(s.content);
+    if (!km) continue;
+    touched.push({ sheet: s, km });
+    walkKmNodes(km, (node) => {
+      const d = node.data;
+      if (!d) return;
+      /*
+       * 图片：包内引用 → 内联 dataURI（**同步**，不依赖 saveAsset）。
+       *
+       * 必须先于附件那一段做，且不能挪到 `if (saveAsset)` 里 —— 图片能不能
+       * 显示跟外部存储没关系，字节本来就在包里；挪进去的话「不传 saveAsset」
+       * 的场景（预览 / 只读解析）图片就又不显示了。
+       */
+      const imgRef = str(d.image);
+      const imgPath = imgRef ? packPathOf(imgRef) : null;
+      if (imgPath) {
+        const uri = bytesToDataUri(entries.get(imgPath), imgPath);
+        if (uri) { d.image = uri; inlined++; }
+      }
+      if (!saveAsset) return;
+      for (const key of ['file', 'video']) {
+        // 多附件：数组里每一项单独还原；任一项失败不影响其它
+        const list = refListOf(d[key]);
+        if (!list.length) continue;
+        const out = new Array(list.length);
+        // 写回必须等所有 saveAsset 都返回后再做（见下方 pending）
+        pending.push({ d: d, key: key, out: out });
+        list.forEach((one, idx) => {
+          const v = str(one);
+          out[idx] = one;                       // 先原样占位，失败就保持原引用
+          if (!v || !isPackRef(v)) return;
+          // 剥掉可能的 `xap:` 前缀才是 zip 里的条目名（BUG 118）
+          const data = entries.get(packPathOf(v));
+          if (!data) return;
+          const name = stripPackSeq(sanitizeFileName(v.split('/').pop() || 'attach'));
+          tasks.push(
+            Promise.resolve(saveAsset(name, data, { video: key === 'video' }))
+              .then((ref) => {
+                if (ref) { out[idx] = ref; attachments++; }
+              })
+              .catch(() => { /* 单个附件失败不影响整体导入 */ }),
+          );
+        });
+        // 注意：**不能在这里写回**。out[idx] 此刻还是占位值（包内路径），
+        // saveAsset 尚未 resolve —— 写进去就把路径固化了，
+        // 结果是「导出再导入后附件引用仍是 resources/…，全部打不开」。
+      }
+    });
   }
   await Promise.all(tasks);
   // **所有引用都回来了才写回** —— 顺序不能反，反了就是路径固化（附件全打不开）
@@ -1757,6 +1844,8 @@ export async function readXMind(input, saveAsset = null) {
     activeId: wb.activeId || wb.sheets[0]?.id || '',
     source,
     attachments,
+    // 从包里内联出来的图片数（供 UI 提示；不算在 attachments 里）
+    inlined,
   };
 }
 

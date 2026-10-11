@@ -16624,6 +16624,161 @@ group('快捷键说明 × 实际绑定：文档写的每一条都得真的接上
   ok(!bound.has('/'), '「/」不在 addShortcut 表里（否则与内核各切一次、正负相抵）');
 }
 
+/* ------------------------------------------------------------------
+   BUG 118：XMind 的 `xap:` 资源引用没解包 —— 图片显示不出来、附件变成乱码链接
+
+   XMind 把图片 / 附件打包在 zip 的 attachments/（XMind 8）或 resources/
+   （XMind 2020+）目录下，节点里只存引用，且**一律带 `xap:` 前缀**：
+
+     topic.image.src = "xap:attachments/abc123.png"
+     topic.href      = "xap:resources/报告.pdf"
+
+   ⓘ `xap:` 是 XML 命名空间前缀，**不是**路径 —— 剥掉它才是 zip 里的真实
+     地址（多个解析库都专门点出这一条）。而 isPackRef 早先只认裸
+     `resources/`，于是两半后果：
+
+     · 图片：`xap:…` 原样落到 data.image，内核 <image> 拿它当 URL 加载 →
+       实测控制台两条「net::ERR_UNKNOWN_URL_SCHEME」，节点图**显示不出来**；
+       （裸 `resources/…` 同样不显示：image 压根不在解包循环里）
+     · 附件：更糟 —— 读侧那条 `else` 把它当成**超链接**存起来，附件本体
+       丢失，还多一条打不开的链接。
+
+   而字节明明就在包里（entries 里取得到），只是没去取。
+
+   ⓘ 图片**不能**走 saveAsset：那返回的是资产引用串（JSON 对象），内核
+     直接塞进 <image href> 加载不出来；data.image 一律是 dataURI。
+   ------------------------------------------------------------------ */
+group('BUG 118 · XMind 的 xap: 资源引用必须解包（图片显示、附件不丢）');
+
+{
+  const B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+  const PNG = new Uint8Array(Buffer.from(B64, 'base64'));
+  const INLINE = 'data:image/png;base64,' + B64;
+  const E = new TextEncoder();
+  const fresh = () => import('file://' + path.join(HERE, 'xmind.js?' + Date.now()));
+
+  const zenImg = async (src, withAsset = true) => {
+    const X = await fresh();
+    const cj = [{ rootTopic: { id: 'r', class: 'topic', title: '根', children: { attached: [
+      { id: 'a', class: 'topic', title: 'A', image: { src, width: 320, height: 240 } },
+    ] } } }];
+    const blob = await X.zipWrite([
+      { name: 'content.json', data: E.encode(JSON.stringify(cj)) },
+      { name: 'attachments/pic.png', data: PNG },
+      { name: 'resources/pic2.png', data: PNG },
+      // 整图缩略图：真实 .xmind 里都有，且**不在**资源目录下
+      { name: 'Thumbnails/thumbnail.png', data: PNG },
+    ]);
+    const got = withAsset
+      ? await X.readXMind(blob, async (n) => 'ASSET:' + n)
+      : await X.readXMind(blob);
+    return JSON.parse(got.sheets[0].content).root.children[0].data;
+  };
+
+  // ① 图片：四种写法都要内联（否则 <image> 加载不出来）
+  {
+    eq((await zenImg('xap:attachments/pic.png')).image, INLINE,
+      '★ xap:attachments/… → 内联（原来是原样保留 → 图显示不出来）');
+    eq((await zenImg('xap:resources/pic2.png')).image, INLINE, '★ xap:resources/… → 内联');
+    eq((await zenImg('resources/pic2.png')).image, INLINE,
+      '★ 裸 resources/… → 内联（image 原先根本不在解包列表里）');
+    eq((await zenImg('attachments/pic.png')).image, INLINE, '裸 attachments/… → 内联');
+  }
+
+  // ② 不该动的绝不能被误改
+  {
+    eq((await zenImg('data:image/png;base64,AAAA')).image, 'data:image/png;base64,AAAA',
+      '已经是 dataURI 的原样保留');
+    eq((await zenImg('https://x.example/a.png')).image, 'https://x.example/a.png', '外部 URL 不动');
+    eq((await zenImg('xap:attachments/none.png')).image, 'xap:attachments/none.png',
+      '包里没有这个字节 → 保持原样（不能变空 / undefined）');
+    /*
+     * 只认两个资源目录，不能放宽成"任何相对路径都算"：
+     * 包根 / Thumbnails/ 下也有图片（整图缩略图就是 Thumbnails/thumbnail.png），
+     * 放宽会把它们误内联到节点上。
+     *
+     * ⓘ 这里必须用**包里真实存在**的条目来测：拿一个包里没有的文件名去测，
+     *   `entries.get()` 取不到字节、自然保持原样，放宽了判定也照样通过
+     *   —— 断言看着在把关，其实没覆盖到（M6 第一次就是这么漏掉的）。
+     */
+    eq((await zenImg('Thumbnails/thumbnail.png')).image, 'Thumbnails/thumbnail.png',
+      '★ 包内真实存在但不在资源目录下 → 保持原样（判定不能放宽）');
+    eq((await zenImg('logo.png')).image, 'logo.png',
+      '包内但不在资源目录下 → 保持原样（判定不能放宽）');
+  }
+
+  // ③ 图片内联**不能**依赖 saveAsset（预览 / 只读解析也该看得见图）
+  {
+    eq((await zenImg('xap:attachments/pic.png', false)).image, INLINE,
+      '★ 不传 saveAsset 时图片照样内联');
+  }
+
+  // ④ 附件：包内引用必须解包，不能被当成超链接
+  {
+    const zenHref = async (href) => {
+      const X = await fresh();
+      const cj = [{ rootTopic: { id: 'r', class: 'topic', title: '根', children: { attached: [
+        { id: 'a', class: 'topic', title: 'A', href },
+      ] } } }];
+      const blob = await X.zipWrite([
+        { name: 'content.json', data: E.encode(JSON.stringify(cj)) },
+        { name: 'attachments/报告.pdf', data: E.encode('PDF') },
+        { name: 'resources/kma_0_报告.pdf', data: E.encode('PDF') },
+      ]);
+      const got = await X.readXMind(blob, async (n) => 'ASSET:' + n);
+      return JSON.parse(got.sheets[0].content).root.children[0].data;
+    };
+    // data.file 是**数组串**（写一定是数组，见 refListOf），故用包含判断
+    const r1 = await zenHref('xap:attachments/报告.pdf');
+    ok(String(r1.file).includes('ASSET:报告.pdf'), '★ xap: 附件 → 解包（原来是变成一条乱码超链接）');
+    ok(!r1.hyperlink, '★ 且不得再写成超链接（附件不能变链接）');
+    const r2 = await zenHref('resources/kma_0_报告.pdf');
+    ok(String(r2.file).includes('ASSET:'), '裸 resources/ 附件仍解包（不回归）');
+    const r3 = await zenHref('https://x.example/a');
+    eq(r3.hyperlink, 'https://x.example/a', '真超链接仍当超链接（不能被误当附件）');
+    ok(!r3.file, '真超链接不落到 file');
+  }
+
+  // ⑤ XMind 8（content.xml 老档）同口径：图片内联、附件解包
+  {
+    const legacyOf = async (inner, attrs = '') => {
+      const X = await fresh();
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" xmlns:xlink="http://www.w3.org/1999/xlink" version="2.0">
+ <sheet id="s1"><topic id="t1"><title>根</title>
+  <children><topics type="attached"><topic id="t2"${attrs}><title>A</title>${inner}</topic></topics></children>
+ </topic></sheet></xmap-content>`;
+      const blob = await X.zipWrite([
+        { name: 'content.xml', data: E.encode(xml) },
+        { name: 'attachments/pic.png', data: PNG },
+        { name: 'attachments/报告.pdf', data: E.encode('PDF') },
+      ]);
+      const got = await X.readXMind(blob, async (n) => 'ASSET:' + n);
+      return JSON.parse(got.sheets[0].content).root.children[0].data;
+    };
+    const a = await legacyOf('<img src="xap:attachments/pic.png" width="320" height="240"/>');
+    eq(a.image, INLINE, '★ legacy 档的 xap: 图片同样内联（原样保留 → 图显示不出来）');
+    const b = await legacyOf('', ' xlink:href="xap:attachments/报告.pdf"');
+    ok(String(b.file).includes('ASSET:报告.pdf'), '★ legacy 档的 xap: 附件 → 解包（原先一律当超链接）');
+    ok(!b.hyperlink, '★ legacy 附件也不得落成超链接');
+  }
+
+  // ⑥ 源码契约：两处「取字节的地方」都必须先剥 xap: 前缀
+  {
+    const src = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    ok(/const imgPath = imgRef \? packPathOf\(imgRef\)/.test(src),
+      '解包环节必须处理 image（原来只循环 file / video）');
+    ok(/entries\.get\(packPathOf\(v\)\)/.test(src),
+      '★ 附件取字节前必须剥前缀（不能回到 entries.get(v)）');
+    ok(/^\s*const packPathOf = /m.test(src), 'packPathOf 必须存在（xap: 前缀剥离）');
+    ok(/s\.replace\(\/\^xap:\/i, ''\)/.test(src), '必须真的剥掉 xap: 前缀');
+    const iImg = src.indexOf('const imgPath');
+    const iGuard = src.indexOf('if (!saveAsset) return;');
+    ok(iImg > 0 && iGuard > 0 && iImg < iGuard,
+      '★ 图片内联必须排在 saveAsset 守卫之前（挪进 if 里则预览时图又不显示）');
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */
