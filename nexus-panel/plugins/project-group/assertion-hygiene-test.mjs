@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUG = HERE;
+const ROOT = path.resolve(HERE, '..', '..');            // nexus-panel
 const RS = path.join(HERE, '..', '..', 'src-tauri', 'src');
 
 let pass = 0; let fail = 0;
@@ -256,14 +257,26 @@ console.log('\n=== 5. 测试不得依赖 process.cwd() 定位源码 ===');
  * 这类失效最阴险：回归脚本看到"非 0 退出"容易当成环境噪音略过，
  * 于是那几十条护栏在不知不觉中全部失效，而日志里依旧一片绿。
  * 定位必须按文件自身位置（`fileURLToPath(import.meta.url)`）。
+ *
+ * ⚠ 扫描范围必须**全仓**，不能只扫本插件：本条原先只扫 plugins/project-group，
+ *   于是 nexus-panel 根层的 dead-module-test.mjs 用 process.cwd() 一直查不出来 ——
+ *   实测从仓库根跑它直接 ENOENT 崩在半路，18 条护栏一条没跑（崩 ≠ 红）。
+ *   只扫自己目录 = 只守自己，漏网的恰恰是别的目录里那批。
  */
 {
+  const all = walk(ROOT, ['-test.mjs'])
+    .filter((p) => !p.endsWith('assertion-hygiene-test.mjs'));
   const bad = [];
-  for (const f of tests) {
-    const src = stripComments(fs.readFileSync(path.join(PLUG, f), 'utf8'));
-    if (/process\.cwd\(\)/.test(src)) bad.push(f);
+  for (const p of all) {
+    const src = stripComments(fs.readFileSync(p, 'utf8'));
+    if (/process\.cwd\(\)/.test(src)) bad.push(path.relative(ROOT, p));
   }
   t('没有测试用 cwd 拼源码路径', bad.length === 0, bad.join(', ') || '干净');
+  /* 空转自检：范围被改窄 / 目录读不到 → bad 恒为空 → 绿得毫无意义 */
+  t('扫描范围非空（判据不能空转）', all.length >= 20, `实测 ${all.length} 个`);
+  t('覆盖到本插件之外的测试（漏网的正是别人目录下那批）',
+    all.some((p) => !p.startsWith(PLUG)),
+    `本插件外 ${all.filter((p) => !p.startsWith(PLUG)).length} 个`);
   /* 反面证据：本文件自己的说明里也写了这个字样，不剥注释会误报 */
   t('判定函数确实认得出来', /process\.cwd\(\)/.test('const R = process.cwd();')
     && !/process\.cwd\(\)/.test(stripComments('// const R = process.cwd();')));
