@@ -8,6 +8,10 @@
  */
 import { JSDOM } from 'jsdom';
 
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 /* 必须给 url，否则 jsdom 是 opaque origin，localStorage 直接抛 SecurityError */
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 globalThis.window = dom.window;
@@ -93,8 +97,8 @@ localStorage.removeItem('nexus:fsclaim:broken3');
 console.log('\n=== 7. 宿主接线：两种模式都要有 fs.* 分支 ===');
 {
   const { readFileSync } = await import('node:fs');
-  const host = readFileSync('./js/host.js', 'utf8');
-  const sdk = readFileSync('./js/plugin-sdk.js', 'utf8');
+  const host = readFileSync(join(HERE, './js/host.js'), 'utf8');
+  const sdk = readFileSync(join(HERE, './js/plugin-sdk.js'), 'utf8');
   t('宿主（iframe 侧）处理 fs.claim', /case 'fs\.claim':/.test(host));
   t('宿主处理 fs.claims', /case 'fs\.claims':/.test(host));
   t('宿主处理 fs.release', /case 'fs\.release':/.test(host));
@@ -115,7 +119,7 @@ console.log('\n=== 7. 宿主接线：两种模式都要有 fs.* 分支 ===');
 console.log('\n=== 8. 卸载只报告，不自动删（N42）===');
 {
   const { readFileSync } = await import('node:fs');
-  const host = readFileSync('./js/host.js', 'utf8');
+  const host = readFileSync(join(HERE, './js/host.js'), 'utf8');
   t('卸载时读取账本并报告', /readClaims\(inst\.manifest\?\.id\)/.test(host));
   t('报告用 info 级（不是 error）', /console\.info\(\[file-claims\]|console\.info\(`\[file-claims\]/.test(host));
   /*

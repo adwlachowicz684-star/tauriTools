@@ -23,6 +23,10 @@ import {
   urlTransform,
 } from './plugins/md/render-config.js';
 
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0;
 const fails = [];
 
@@ -130,7 +134,7 @@ t('非图片的 data: 不放行',
 // ── ② 配置结构 ────────────────────────────────────────────
 console.log('=== 2. 配置结构 ===');
 
-const cfgSrc = readFileSync('plugins/md/render-config.js', 'utf8');
+const cfgSrc = readFileSync(join(HERE, 'plugins/md/render-config.js'), 'utf8');
 
 t('remark-gfm 带 singleTilde:false',
   /singleTilde:\s*false/.test(cfgSrc));
@@ -171,7 +175,7 @@ t('urlTransform 其余走 defaultUrlTransform',
 // ── ③ registry 登记 ───────────────────────────────────────
 console.log('=== 3. registry 登记 ===');
 
-const reg = readFileSync('plugins/registry.js', 'utf8');
+const reg = readFileSync(join(HERE, 'plugins/registry.js'), 'utf8');
 const mdEntry = reg.match(/id:\s*'md',[\s\S]{0,600}?\n  \},/);
 
 t('registry 里有 md 条目', !!mdEntry);
@@ -203,7 +207,7 @@ if (mdEntry) {
 // ── ④ CSS：主题跟随 + 可选中 ──────────────────────────────
 console.log('=== 4. CSS ===');
 
-const css = readFileSync('css/neumorphism.css', 'utf8');
+const css = readFileSync(join(HERE, 'css/neumorphism.css'), 'utf8');
 /*
  * 只取 md 插件那一段来查，否则会命中文件里别处的 user-select。
  * 之前踩过：裸子串匹配会被 tb-card-top 之类命中，造成假绿。

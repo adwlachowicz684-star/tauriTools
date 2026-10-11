@@ -18,13 +18,17 @@ import { readFileSync } from 'node:fs';
 import { deriveCanvasTheme, criticalOverrides, contrastRatio,
          clampLuma, awayFrom, luma, canvasSurface } from './plugins/mindmap/themes.js';
 
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0; const fails = [];
 const t = (name, cond, extra = '') => {
   cond ? pass++ : fails.push(`${name}${extra ? ' → ' + extra : ''}`);
 };
 
 /** 从编辑器页里抠出内联实现，用于比对是否与 themes.js 同源 */
-const html = readFileSync('plugins/mindmap/editor/index.html', 'utf8');
+const html = readFileSync(join(HERE, 'plugins/mindmap/editor/index.html'), 'utf8');
 function extractInline(startMark, endMark) {
   const i = html.indexOf(startMark);
   if (i < 0) return null;

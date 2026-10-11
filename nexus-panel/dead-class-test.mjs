@@ -894,7 +894,7 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
      这条断言**照样通过**（用新实例则正确报红）。 */
   const INLINE_ONCE = new RegExp(INLINE.source, INLINE.flags.replace(/[gy]/g, ''));
   // 自检：该正则必须能命中权威实现，否则说明判据写错、断言空跑
-  const selfTxt = readFileSync('test-scan-utils.mjs', 'utf8');
+  const selfTxt = readFileSync(join(HERE, 'test-scan-utils.mjs'), 'utf8');
   t('内联判据自检有效', INLINE_ONCE.test(selfTxt), '判据必须在权威实现上命中');
   t('判据不误伤无关文本', !INLINE_ONCE.test('const x = 1; // nothing here'), '普通文本不命中');
   /* 反面证据：确认上面那两个判据真的有鉴别力（不是空转） */

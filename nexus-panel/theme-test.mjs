@@ -5,6 +5,10 @@
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'http://localhost/' });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
@@ -131,7 +135,7 @@ const root = document.documentElement;
     lightAccent.length > 0 && flipped === lightAccent.length,
     `${flipped}/${lightAccent.length} 套`);
   /* 勾是硬编码 SVG，读不到 CSS 变量 —— 必须有黑勾那套，否则白勾压亮色底 */
-  const ctl = readFileSync('css/controls.css', 'utf8');
+  const ctl = readFileSync(join(HERE, 'css/controls.css'), 'utf8');
   t('勾选标记备了黑勾（data-badge-fg=dark 时切换）',
     /data-badge-fg='dark'/.test(ctl));
 }
