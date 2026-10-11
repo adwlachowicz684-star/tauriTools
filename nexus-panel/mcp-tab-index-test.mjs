@@ -71,8 +71,7 @@ t('用 saturating_sub 算上界（空 tabs 时不会下溢）',
   /n\.saturating_sub\(1\)/.test(seg) && /i >= tabs\.len\(\)/.test(seg));
 const iErr = seg.indexOf('i >= tabs.len()');
 const iWith = seg.indexOf('with_config');
-t('越界判断在 with_config 闭包内',
-  iErr >= 0 && iWith >= 0 && iErr > iWith, `err=${iErr} with=${iWith}`);
+t('越界判断在 with_config 闭包内', iWith >= 0 && iErr > iWith, `err=${iErr} with=${iWith}`);
 
 console.log('\n=== 4. 写入 ===');
 t('取页签名用选中的那个页签', /tabs\[i\]\.name\.clone\(\)/.test(seg));

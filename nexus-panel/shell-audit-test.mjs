@@ -199,10 +199,9 @@ t('.set-body 有 min-height:0（否则 flex 子项撑破容器、滚动失效）
 
 const setMain = src('plugins/settings/main.tsx');
 t('main.tsx 引入了 settings.css', /import\s+'\.\/settings\.css'/.test(setMain));
-const iNeo = setMain.indexOf('neumorphism.css');
-const iSetCss = setMain.indexOf('./settings.css');
 t('settings.css 在 neumorphism.css 之后引入',
-  iNeo >= 0 && iSetCss >= 0 && iNeo < iSetCss);
+  setMain.indexOf('neumorphism.css') >= 0 &&
+  setMain.indexOf('neumorphism.css') < setMain.indexOf('./settings.css'));
 
 const setApp = src('plugins/settings/App.tsx');
 /*
@@ -216,9 +215,9 @@ const setApp = src('plugins/settings/App.tsx');
 const setAppCode = strip(setApp).replace(/\/\/.*/g, '');
 t('App.tsx 用 .set-body 包裹内容（分页条留在滚动区外）',
   /className=\{?[`"]set-body/.test(setAppCode));
-const iTabs = setApp.indexOf('set-tabs');
-const iBody = setApp.indexOf('set-body');
-t('.set-body 的包裹位于分页条之后', iTabs >= 0 && iBody >= 0 && iTabs < iBody);
+t('.set-body 的包裹位于分页条之后',
+  setApp.indexOf('set-tabs') >= 0 &&
+  setApp.indexOf('set-tabs') < setApp.indexOf('set-body'));
 
 /* ============ P2-8 · 能力探测只缓存成功 ============ */
 console.log('\n=== P2-8 探测缓存 ===');
