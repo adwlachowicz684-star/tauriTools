@@ -452,6 +452,60 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
   }
 }
 
+console.log('\n=== 9. 块注释里不得再开一个块注释 ===');
+/*
+ * 删注释时只删掉"后半截"（从注释体的某一行删到规则末尾）会在原处留下
+ * 一个**孤儿开头**。它的危险在于：
+ *   - 浏览器照样解析 —— 从那个开头一直吃到下一个结束符，
+ *     于是夹在中间的规则**整条失效**（界面上看不出报错，只是样式没了）
+ *   - 按个数统计开头与结束符是配平的，**查不出来**
+ *   - 剥注释类扫描器把被吞的规则一起剥掉，"样式在不在"的断言也跟着假绿
+ *
+ * 实测就是这个形状：删一条重复规则时留下孤儿开头，把 `.fpx-ca-item.dragging`
+ * 整条吞掉 —— 拖连锁动作时"被拖项压暗"消失，界面上出现两个"当前项"
+ * （原位置与拖影）。唯一报红的是 action-sort 的源码守卫。
+ *
+ * ⚠️ 判据不能是"注释里不得出现规则"：仓库里有一批**刻意停用**的幽灵规则
+ * （`/*` 单独一行、规则整段、结束符单独一行），那是正常的停用手段。
+ * 真正**永远**是错的只有一种：注释内部又出现一个开头 ——
+ * CSS 没有嵌套块注释，内层那个开头会被忽略，而它的结束符**提前闭合了外层**，
+ * 于是作者的意图必然被打断。
+ */
+{
+  /** 逐字符扫，返回嵌套开头所在行 */
+  function nestedOpeners(src) {
+    const out = [];
+    let inC = false, line = 1, startLine = 0;
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (c === '\n') { line++; continue; }
+      if (c === '/' && src[i + 1] === '*') {
+        if (inC) out.push(`L${line}（外层始于 L${startLine}）`);
+        else { inC = true; startLine = line; }
+        i++; continue;
+      }
+      if (inC && c === '*' && src[i + 1] === '/') { inC = false; i++; continue; }
+    }
+    return out;
+  }
+
+  const cssFiles = [
+    ...['controls.css', 'neumorphism.css', 'dialog.css', 'tokens.css']
+      .map((n) => [`css/${n}`, join(HERE, 'css', n)]).filter(([, p]) => existsSync(p)),
+    ...pluginCss,
+  ];
+  t('扫描范围有效（共享 + 插件 CSS）', cssFiles.length >= 5, `${cssFiles.length} 个`);
+  for (const [rel, abs] of cssFiles) {
+    const bad = nestedOpeners(readFileSync(abs, 'utf8'));
+    t(`${rel} 无嵌套块注释`, bad.length === 0, bad.slice(0, 2).join(' | '));
+  }
+  t('判据本身有效（探针：嵌套必须报出来）',
+    nestedOpeners('/* 外层\n/* 内层\n*/\n').length === 1);
+  /* 反方向：刻意停用的幽灵规则（整段注释）不能被误报 */
+  t('判据不误报刻意停用的规则段',
+    nestedOpeners('/*\n.ghost { color: red; }\n*/\n').length === 0);
+}
+
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
