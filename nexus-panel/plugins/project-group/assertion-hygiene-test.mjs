@@ -402,7 +402,26 @@ console.log('\n=== 3. 顺序断言的"空跑那一端"必须判存在 ===');
         const isIdxCall = /\.indexOf\s*\(/.test(side);
         const isIdxVar = idxVars.has(side);
         if (!isIdxCall && !isIdxVar) continue;   // 不是 indexOf 结果，不管
-        if (!existChecked(stmt, side)) bad.push(`${rel(f)}: ${name} → ${side.slice(0, 34)}`);
+        /*
+         * 判存在的那一行**可以不在本条语句里**。
+         *
+         * 实测误报（dir-dialog-fail-test.mjs）：
+         *   t('找得到 load 的定义', loadIdx >= 0, ...);
+         *   t('找得到 load 的 catch',  catchIdx > loadIdx, ...);
+         * 存在性已经在上一条断言里判过了 —— 这比把两个条件挤进同一条
+         * 更清楚，却因为守卫只在单条语句里找 `loadIdx >= 0` 而被点名。
+         *
+         * 所以查找范围放宽到**同一个文件**：只要该变量在文件里任何一处
+         * 判过存在，锚点缺失时那条断言就会当场报红 ——
+         * 静默空跑的风险并不存在。真漏判（全文都没判过）照样被抓，
+         * 下面配了元断言钉住这一点。
+         *
+         * ⚠️ 只放宽**查找范围**，判据形态一点没动：`>= 0` / `!== -1` /
+         *    `=== -1` 那几种认可的写法不变，不会变成"看着像判过就算"。
+         */
+        if (!(existChecked(stmt, side) || existChecked(src, side))) {
+          bad.push(`${rel(f)}: ${name} → ${side.slice(0, 34)}`);
+        }
       }
     }
   }
@@ -424,6 +443,16 @@ console.log('\n=== 3. 顺序断言的"空跑那一端"必须判存在 ===');
     vacuousSideOf('iA < iB') === 'iA' && vacuousSideOf('iA <= iB') === 'iA');
   t('`>` 判的是右端（左端取 -1 是恒假，不必判）',
     vacuousSideOf('iA > iB') === 'iB' && vacuousSideOf('iA >= iB') === 'iB');
+  /*
+   * 放宽到"文件级"是有代价的让步：判据变宽了，必须钉住两头，
+   * 否则把 existChecked 换成恒 true（或把范围放到不相干的文本上）
+   * 照样全绿 —— 守卫自己变成占位断言。
+   */
+  t('存在性判在**另一条**语句里也算判过（不能误报）',
+    existChecked("t('找得到 load 的定义', loadIdx >= 0, '');", 'loadIdx'));
+  t('全文都没判过存在 → 仍算漏判（放宽没把真问题放过）',
+    !existChecked("const iA = s.indexOf('a'); t('', iA < iB);", 'iA')
+    && !existChecked("t('', idx > other);", 'other'));
 }
 
 console.log('\n=== 4. 不许有占位断言 ===');
