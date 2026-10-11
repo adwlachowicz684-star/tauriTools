@@ -22,7 +22,7 @@
  *  B. 必须能分片。178 个脚本一次跑完远超单次命令的时长上限，
  *     跑到一半被掐断 = 前面的结果全部丢失（明细只在最后才写盘）。
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,8 @@ const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 const only = (process.argv.find(a => a.startsWith('--only=')) || '').split('=')[1] || '';
 // 分片：--slice=1/6 表示把排序后的列表均分 6 份、跑第 1 份（1-based）。
 const sliceArg = (process.argv.find(a => a.startsWith('--slice=')) || '').split('=')[1] || '';
+// 续跑：--resume 读已有明细，跳过已记录的脚本，接着上次的断点跑。
+const resume = process.argv.includes('--resume');
 const SELF = 'sweep-tests.mjs';
 
 let entries = Object.entries(pkg.scripts)
@@ -49,6 +51,42 @@ if (sliceArg) {
   const per = Math.ceil(entries.length / n);
   entries = entries.slice((i - 1) * per, i * per);
   sliceTag = `[${i}/${n}]`;
+}
+
+/* ---------------- 明细文件（增量落盘 + 续跑） ---------------- */
+/*
+ * ⚠️ 原先只在**最后**写一次明细（见文件头说明 B），那句说明写的是
+ * "跑到一半被掐断时前面的结果不能丢"，可代码是循环结束后才落盘 ——
+ *    说明与实现不符，掐断时结果**全部丢失**。
+ *    实测：分片跑到 560s 被 timeout 杀掉，文件从头到尾一个字节都没有，
+ *    十几分钟的执行结果归零，而报错只指向超时，看不出是这里的问题。
+ *
+ * 所以改成**每跑完一个就 append 一行**：掐断时已跑的都在盘上。
+ * 再配 --resume 跳过已记录的，接着断点跑 —— 不必从头再来。
+ *
+ * 明细目录必须落在项目内（ROOT 下）：写死绝对路径的机器换台就
+ * 要么没权限（在 / 下 mkdir 直接 EACCES）、要么写到一个谁都找不到的地方。
+ */
+const OUT_DIR = join(ROOT, '.tool_output');
+const OUT_FILE = join(OUT_DIR, `sweep${sliceTag.replace(/\W/g, '') || '_all'}.txt`);
+
+/** 一行明细：status / pass / fail / 脚本名 / 命令（制表符分隔，便于 awk） */
+const rowLine = (r) => `${r.status}\t${r.pass}\t${r.fail}\t${r.name}\t${r.cmd}`;
+
+/** 已记录的脚本名集合（用于 --resume 跳过） */
+function doneNames(file) {
+  if (!existsSync(file)) return new Set();
+  return new Set(readFileSync(file, 'utf8').split('\n').filter(Boolean)
+    .map((l) => l.split('\t')[3]).filter(Boolean));
+}
+
+/**
+ * --resume 时筛掉已跑过的。
+ * 单独抽成函数是为了能自检：判据写错（比如把空集当全部完成）
+ * 会让"续跑"变成"什么都不跑"，退出码还是 0 —— 静默空跑。
+ */
+function remaining(list, done) {
+  return list.filter(([name]) => !done.has(name));
 }
 
 // 汇总行的几种写法（项目里不统一，全列出来；少一种就会把正常测试误判成"没汇总"）
@@ -176,14 +214,84 @@ console.log(`${hungNoFalse ? '✅' : '❌'} 真崩溃仍判为「崩在半路」
 if (!hungOk) selfFails.push('挂起未被正确归类（会被当成崩溃，排查方向被引跑）');
 if (!hungNoFalse) selfFails.push('挂起判据误伤了真崩溃');
 
+// 增量落盘与续跑（说明 B 的实际实现）也要自检：
+//   它们只在"被掐断"时才显出价值，平时全绿看不出好坏 ——
+//   判据写错（比如 remaining 把所有项都滤掉）会让续跑变成静默空跑，退出码仍是 0。
+{
+  const os = await import('node:os');
+  const tmp = join(os.tmpdir(), `sweep-selftest-${process.pid}.txt`);
+  writeFileSync(tmp, '');
+  appendFileSync(tmp, rowLine({ status: 0, pass: 3, fail: 0, name: 'a', cmd: 'c' }) + '\n');
+  const afterOne = readFileSync(tmp, 'utf8').trim().split('\n').length;
+  appendFileSync(tmp, rowLine({ status: null, pass: null, fail: null, name: 'b', cmd: 'c' }) + '\n');
+  const afterTwo = readFileSync(tmp, 'utf8').trim().split('\n').length;
+  selfTotal++;
+  console.log(`${afterOne === 1 && afterTwo === 2 ? '✅' : '❌'} 明细逐条落盘（掐断时已跑的不丢）`);
+  if (!(afterOne === 1 && afterTwo === 2)) selfFails.push(`增量落盘失效（1 条后 ${afterOne} 行，2 条后 ${afterTwo} 行）`);
+
+  const dn = doneNames(tmp);
+  selfTotal++;
+  console.log(`${dn.has('a') && dn.has('b') ? '✅' : '❌'} 续跑能认出已跑过的脚本名`);
+  if (!(dn.has('a') && dn.has('b'))) selfFails.push('doneNames 取不到已记录的脚本名');
+
+  const all = [['a', 'x'], ['b', 'x'], ['c', 'x']];
+  selfTotal++;
+  const rem = remaining(all, dn);
+  console.log(`${rem.length === 1 && rem[0][0] === 'c' ? '✅' : '❌'} remaining 只留下没跑过的（否则续跑变空跑）`);
+  if (!(rem.length === 1 && rem[0][0] === 'c')) selfFails.push(`remaining 判据错（留下 ${rem.length} 个）`);
+  selfTotal++;
+  const remEmpty = remaining(all, new Set());
+  console.log(`${remEmpty.length === 3 ? '✅' : '❌'} 空明细时 remaining 不误删（首次跑要跑全部）`);
+  if (remEmpty.length !== 3) selfFails.push('空明细时 remaining 误删了待跑项');
+}
+
+/*
+ * 续跑：--resume 时把上次的结果先读回 rows，这样最后的统计是
+ * "上次 + 本次"的完整账，而不是只统计本次跑的那几个。
+ * 少了这一步，续跑出来的体检单会漏掉已跑过的可疑项 —— 数字看着更小，
+ * 反而像"变好了"。
+ */
 const rows = [];
-for (const [name, cmd] of entries) {
+if (resume && existsSync(OUT_FILE)) {
+  for (const l of readFileSync(OUT_FILE, 'utf8').split('\n').filter(Boolean)) {
+    const [status, pass, fail, name, cmd] = l.split('\t');
+    rows.push({
+      name, cmd,
+      status: status === 'null' ? null : Number(status),
+      pass: pass === 'null' ? null : Number(pass),
+      fail: fail === 'null' ? null : Number(fail),
+      out: '', hung: status === 'null' || Number(status) === 124,
+      noOutput: true, resumed: true,
+    });
+  }
+}
+
+const done = resume ? doneNames(OUT_FILE) : new Set();
+const todo = remaining(entries, done);
+if (resume) {
+  console.log(`\n续跑：已有 ${done.size} 条明细，本轮再跑 ${todo.length} 个`);
+}
+
+mkdirSync(OUT_DIR, { recursive: true });
+if (!resume) writeFileSync(OUT_FILE, '');   // 非续跑：清空重来
+
+let idx = 0;
+for (const [name, cmd] of todo) {
+  idx++;
   const r = spawnSync('bash', ['-lc', cmd], { cwd: ROOT, encoding: 'utf8', timeout: 180000 });
   const out = (r.stdout || '') + (r.stderr || '');
   const { pass, fail } = parseSummary(out);
   const crashed = r.status !== 0 && pass === null;
-  rows.push({ name, cmd, status: r.status, pass, fail, crashed, out,
-    hung: isHung(r), noOutput: out.trim() === '' });
+  const row = { name, cmd, status: r.status, pass, fail, crashed, out,
+    hung: isHung(r), noOutput: out.trim() === '' };
+  rows.push(row);
+  /*
+   * 每跑完一个就落盘 —— 这是"掐断不丢结果"的实际实现。
+   * 原先只在末尾写一次，被杀时盘上一个字节都没有。
+   */
+  appendFileSync(OUT_FILE, rowLine(row) + '\n');
+  /* 进度也逐条打印：只打最后一行的话，掐断时连"跑到哪了"都不知道。 */
+  console.log(`  ${isBad(row) ? '⚠️' : '·'} ${name} — ${row.pass ?? '?'} 通过 / ${row.fail ?? '?'} 失败（${idx}/${todo.length}）`);
 }
 
 const bad = rows.filter(isBad);
@@ -202,18 +310,13 @@ for (const r of bad) {
 
 for (const s of selfFails) console.log(`  ❌ 自检：${s}`);
 
-// 明细落到分片各自的文件：一次跑不完，跑到一半被掐断时前面的结果不能丢。
-// ⚠️ 输出目录必须**落在项目内**（ROOT 下），不能写死绝对路径。
-//    这里原先写的是 /data/workspace/.tool_output —— 那是某台开发机上的
-//    路径，换台机器要么没权限建（在 / 下 mkdir 直接 EACCES），要么把结果
-//    写到一个谁都找不到的地方，表现为"跑了但看不到明细"。
-const fs = await import('node:fs');
-const outDir = join(ROOT, '.tool_output');
-const outFile = join(outDir, `sweep${sliceTag.replace(/\W/g, '') || '_all'}.txt`);
-fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(outFile,
-  rows.map(r => `${r.status}\t${r.pass}\t${r.fail}\t${r.name}\t${r.cmd}`).join('\n'));
-console.log(`\n明细已写入 ${outFile}`);
+// 明细已经在循环里**逐条**落盘（掐断不丢），这里只做一次对齐收尾：
+// 续跑时会把上次读回的行与本次新写的行合并，统一重写一遍，保证文件
+// 与本次统计的 rows 完全一致（否则重复行会越积越多）。
+// ⚠️ 输出目录必须**落在项目内**（ROOT 下），不能写死绝对路径 —— 这里原先
+//    写的是 /data/workspace/.tool_output，那是某台开发机上的路径。
+writeFileSync(OUT_FILE, rows.map(rowLine).join('\n') + '\n');
+console.log(`\n明细已写入 ${OUT_FILE}`);
 // 标准汇总行：本文件自己也在 package.json 的 test:* 里（已排除自跑），
 // 但别人拿通用规则体检它时，没有这行就会被判成"0 条断言"。
 const totalFail = bad.length + selfFails.length;
