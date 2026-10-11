@@ -69,13 +69,15 @@ t('空名仍有兜底', io.safeFileName('').length > 0, io.safeFileName(''));
   const src = read('index.js');
   const a = src.indexOf('async function openAttachment');
   const b = src.indexOf('/* ------------------------- 撤销 / 重做');
-  t('抽取锚点都命中（否则本节整体空跑）', a >= 0 && b > a, `a=${a} b=${b}`);
+  t('抽取锚点都命中（否则本节整体空跑）',
+    a >= 0 && b >= 0 && b > a, `a=${a} b=${b}`);
 
   const fn = src.slice(a, b);
   /* 只取「安全化 → 落盘 → 提示」这一小段真实代码 */
   const i = fn.indexOf('const savedName');
   const j = fn.indexOf('（可双击用默认程序打开）');
-  t('片段定位命中（改了变量名这里会先红）', i >= 0 && j > i, `i=${i} j=${j}`);
+  t('片段定位命中（改了变量名这里会先红）',
+    i >= 0 && j >= 0 && j > i, `i=${i} j=${j}`);
 
   const body = strip(fn.slice(i, fn.indexOf('\n', j))).trim();
   t('片段剥注释后仍有内容', body.length > 0, body.slice(0, 60));

@@ -169,7 +169,9 @@ t('audit 在所有既有清理之后（独立一步，失败不影响它们）',
   const lines = host.split('\n');
   const iClean = lines.findIndex((l) => l.includes('inst.cleanupFns?.forEach'));
   const iAudit = lines.findIndex((l) => l.includes('auditUnmount(inst.manifest'));
-  const iTryEnd = lines.findIndex((l, i) => i > iClean && l.trim() === '}');
+  /* 形参别叫 i：外层有 `const i = host.indexOf(...)`，同名会让读的人
+     （和护栏）把它当成 indexOf 的结果，其实它是行号。 */
+  const iTryEnd = lines.findIndex((l, li) => li > iClean && l.trim() === '}');
   return iClean >= 0 && iAudit > iClean && iAudit !== iTryEnd;
 })());
 t('audit 不在任何 try 块内（它的失败不该被当成卸载失败）', (() => {

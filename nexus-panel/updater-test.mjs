@@ -122,7 +122,7 @@ t('双端点：GitHub 在前、Gitee 在后（依次尝试）',
     const fn = rust.slice(rust.indexOf('fn endpoints_for'), rust.indexOf('fn pubkey_ready'));
     const gh = fn.indexOf('GH_RELEASE');
     const gt = fn.indexOf('GITEE_RELEASE');
-    return gh >= 0 && gt > gh;
+    return gh >= 0 && gt >= 0 && gt > gh;
   })());
 
 /* ============================================================

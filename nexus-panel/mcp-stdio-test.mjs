@@ -37,14 +37,14 @@ console.log('\n=== 1. 入口位置（最关键的一条）===');
 const iStdioBranch = mainSrc.indexOf('"--stdio"');
 const iBuilder = mainSrc.indexOf('tauri::Builder::default()');
 t('main.rs 里有 --stdio 分支', iStdioBranch > 0);
-t('--stdio 在 Builder **之前**处理', iStdioBranch > 0 && iBuilder > iStdioBranch,
+t('--stdio 在 Builder **之前**处理', iStdioBranch >= 0 && iBuilder >= 0 && iBuilder > iStdioBranch,
   `stdio=${iStdioBranch} builder=${iBuilder}`);
 t('--stdio 分支里直接 exit，不会继续往下走 Tauri',
   /serve_stdio\(dir\)[\s\S]{0,300}std::process::exit\(0\);/.test(mainSrc));
 /* cli::try_handle 也在 Builder 之前，--stdio 要在它之后（两者互不冲突） */
 const iCli = mainSrc.indexOf('fpx::cli::try_handle');
 t('--stdio 在 cli::try_handle 之后（命令行模式优先，互不冲突）',
-  iCli > 0 && iStdioBranch > iCli, `cli=${iCli} stdio=${iStdioBranch}`);
+  iCli >= 0 && iStdioBranch >= 0 && iStdioBranch > iCli, `cli=${iCli} stdio=${iStdioBranch}`);
 
 console.log('\n=== 2. stdout 洁净（协议通道不能被污染）===');
 /* println! 会走 stdout。eprintln! 走 stderr，是允许的。
