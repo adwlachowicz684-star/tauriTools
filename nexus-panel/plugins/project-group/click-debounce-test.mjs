@@ -32,7 +32,11 @@ console.log('\n=== 1. #251 单击折叠要延后，好让双击取消它 ===');
    * 而守的本意是"双击能取消掉待执行的折叠"，与用几个槽位无关。
    *
    * 反过来说，共用一个槽位的写法这里**就应该红**：那正是"点 A 再点 B，
-   * A 永远不折叠"这个 BUG 的形状（见 stack-collapse-timer-test.mjs）。
+   * A 永远不折叠"这个 BUG 的形状（定时器能不能回收见下面 §2）。
+   *
+   * 注：这里原先引的是 stack-collapse-timer-test.mjs，但那个文件并不存在
+   * （package.json 里对应的 test:pg-stack-collapse-timer 指向它，一跑就
+   * MODULE_NOT_FOUND）。本文件已经覆盖了同一段单击折叠 / 双击重命名的逻辑。
    */
   t('双击先清定时器',
     /onDoubleClick=\{\(\) => \{[\s\S]{0,300}?clickTimers\.current\.get\(i\)[\s\S]{0,200}?clearTimeout\(prev\)/.test(seg));
