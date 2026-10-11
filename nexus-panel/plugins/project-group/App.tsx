@@ -497,7 +497,7 @@ export default function App() {
    * 接线（注册 + 事件订阅 + 三个发送入口）收在 `hooks/useChainActions`。
    * 它与卡片、布局、日志都无关，只是"把动作清单接到外壳上"这一件事。 */
   const { runActionOnSelection, sendAction, requestSendAction } = useChainActions({
-    ctx, s, chainActions, bootReady, setPendingSend,
+    ctx, s, chainActions, bootReady, hotkeyOverrides, setPendingSend,
   });
 
   /*

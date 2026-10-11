@@ -188,3 +188,81 @@ export function uniqueTabName(names: string[], base: string): string {
   }
   return `${b}(${Date.now()})`;
 }
+
+/**
+ * 页签名的合法性校验（与后端 `sys::validate_name_as` 同一套规则）。
+ * ------------------------------------------------------------------
+ * **为什么前端也要有一份**：改名走 `updateConfig` 只改 config，
+ * 后端那条校验（`sys::resolve_new_target`）要到**在该分类下新建项目**时才跑。
+ * 于是带 `/` 的名字在改名这一刻照收 —— 界面立刻显示新名字，看着完全成功；
+ * 等他往里加项目，才在另一个地方冒出「名称不能包含 ...」。
+ * 这种"错在 A、炸在 B"最难查：那时没人会想起是这次改名造成的。
+ *
+ * 两份规则迟早漂移，所以 `tab-name-validate-test.mjs` 会从 `sys.rs`
+ * **解析出**非法字符集与保留设备名清单，与下面这两个常量逐一比对 ——
+ * 改任一侧不同步另一侧就会报红。这与 `clientDetect.ts` 里
+ * `BUILTIN_CLIENT_IDS` 的做法是同一套（后端会静默忽略重名项，只能提前拦）。
+ */
+
+/** 与 `sys.rs` `matches!(c, '\\' | '/' | ...)` 同源。改动要同步两侧。 */
+export const TAB_NAME_ILLEGAL_CHARS: readonly string[] = [
+  '\\', '/', ':', '*', '?', '"', '<', '>', '|',
+];
+
+/** 与 `sys.rs::is_reserved_name` 的 `RESERVED` 同源（顺序即原顺序）。 */
+export const TAB_NAME_RESERVED: readonly string[] = [
+  'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
+  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
+];
+
+/** 长度上限按**字符数**算（中文一个字 3 字节，按字节判会误伤）。 */
+export const TAB_NAME_MAX_CHARS = 120;
+
+/**
+ * @returns 非法时返回**可直接显示给用户的**原因；合法返回 null。
+ *
+ * 判据顺序与 `sys::validate_name_as` 一致（空 → 控制符 → 非法字符 →
+ * 点号 → 末尾句点 → 长度 → 保留名），这样同一输入两侧给出的结论相同，
+ * 不会出现"前端放行、后端拒绝"这种来回踢皮球。
+ */
+export function validateTabName(raw: string): string | null {
+  const name = (raw ?? '').trim();
+  /* 报错里带上字段名与具体的名字：只说"名称不能包含 /"的话，
+     用户改的是自己刚敲的字，改十次还是同一句，而真正的问题他没看见。
+     与后端 `validate_name_as(raw, what)` 用 `what` 是同一个道理。 */
+  const what = `页签名「${name}」`;
+  if (!name) return '页签名不能为空';
+
+  /* 控制符：Rust 的 `is_control()` 是 U+0000–U+001F 与 U+007F–U+009F。 */
+  for (const ch of name) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c <= 0x1f || (c >= 0x7f && c <= 0x9f)) return `${what}不能包含控制字符`;
+  }
+
+  for (const ch of name) {
+    if (TAB_NAME_ILLEGAL_CHARS.includes(ch)) {
+      return `${what}不能包含 \\ / : * ? " < > | 等字符`;
+    }
+  }
+
+  /* Windows 会静默去掉目录名末尾的句点：配置里存 `foo.`，磁盘上是 `foo`，
+     之后所有按名字去查的操作都查不到 —— 必须在入口挡掉。 */
+  if (name === '.' || name === '..' || name.replace(/^\.+|\.+$/g, '') === '') {
+    return `${what}不能是 . 或 ..`;
+  }
+  if (name.endsWith('.')) {
+    return `${what}不能以句点结尾（Windows 会静默去掉，导致配置里的名字与磁盘不一致）`;
+  }
+
+  if (Array.from(name).length > TAB_NAME_MAX_CHARS) {
+    return `${what}过长（上限 ${TAB_NAME_MAX_CHARS} 字符）`;
+  }
+
+  /* 保留设备名按**主名**判：`CON.txt` 同样建不出来。 */
+  const stem = name.split('.')[0].trim().toUpperCase();
+  if (stem && TAB_NAME_RESERVED.includes(stem)) {
+    return `${what}是 Windows 保留设备名（CON / NUL / COM1 等），无法创建`;
+  }
+  return null;
+}

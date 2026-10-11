@@ -26,7 +26,16 @@ console.log('\n=== 1. #251 单击折叠要延后，好让双击取消它 ===');
   const btn = groups.slice(groups.indexOf('className="fpx-stack-name"'));
   const seg = btn.slice(0, btn.indexOf('</button>'));
   t('单击走 setTimeout', /window\.setTimeout\(\(\) => \{/.test(seg));
-  t('双击先清定时器', /onDoubleClick=\{\(\) => \{[\s\S]{0,200}?clearTimeout\(clickTimer\.current\)/.test(seg));
+  /*
+   * 钉**意图**而不是钉变量名：这条原先写的是 `clearTimeout(clickTimer.current)`
+   * （所有分类共用一个 ref 的旧实现）。按分类下标分开存之后必然误报 ——
+   * 而守的本意是"双击能取消掉待执行的折叠"，与用几个槽位无关。
+   *
+   * 反过来说，共用一个槽位的写法这里**就应该红**：那正是"点 A 再点 B，
+   * A 永远不折叠"这个 BUG 的形状（见 stack-collapse-timer-test.mjs）。
+   */
+  t('双击先清定时器',
+    /onDoubleClick=\{\(\) => \{[\s\S]{0,300}?clickTimers\.current\.get\(i\)[\s\S]{0,200}?clearTimeout\(prev\)/.test(seg));
   t('双击再进改名', /setDraft\(t\.name\);\s*\n\s*setEditing\(i\);/.test(seg));
   t('提示写明两种操作', /单击折叠 \/ 双击重命名/.test(seg));
   /* 延后时长要有说明，别留裸数字 */
@@ -36,9 +45,12 @@ console.log('\n=== 1. #251 单击折叠要延后，好让双击取消它 ===');
 console.log('\n=== 2. 定时器必须能回收（最容易漏）===');
 {
   /* 定时器晚于组件卸载触发会 setState，表现为"切走再回来某分类自己折叠了" */
-  t('用 ref 存定时器 id', /clickTimer = useRef<number \| null>\(null\)/.test(groups));
-  t('卸载时清理', /useEffect\(\(\) => \(\) => \{[\s\S]{0,200}?clearTimeout\(clickTimer\.current\)/.test(groups));
-  t('执行后置回 null', /clickTimer\.current = null;/.test(groups));
+  /* `useRef<Map<number, number>>` 末尾是两个 `>`：`[^>]*>` 会停在第一个，
+     后面接 `(` 就永远对不上（这条断言曾因此恒假、看着在跑其实没验）。 */
+  t('用 ref 存定时器 id', /clickTimers = useRef<[\s\S]*?>\(/.test(groups));
+  t('卸载时清理', /useEffect\(\(\) => \(\) => \{[\s\S]{0,200}?clearTimeout\(id\)/.test(groups));
+  /* 执行后要**从表里删掉**这一格：置回 null 那套是单个 ref 时代的写法 */
+  t('执行后删掉这一格', /clickTimers\.current\.delete\(/.test(groups));
 }
 
 console.log('\n=== 3. #207 连锁发送防抖 ===');

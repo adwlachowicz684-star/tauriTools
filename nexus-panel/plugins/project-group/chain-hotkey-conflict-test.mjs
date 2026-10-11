@@ -227,4 +227,32 @@ t('注册侧不自带归一化（判据全在 utils/hotkeys 里）',
   !/function normalizeCombo/.test(hookSrc) && !/function normalizeCombo/.test(panelSrc)
   && !/function normalizeCombo/.test(railSrc), '');
 
+/* ------------------------------------------------------------------ */
+console.log('\n=== 12. 提示块要真的看得出来是警告 ===');
+
+/*
+ * 这一段守的是"提示写了、但看起来不是提示"。
+ *
+ * `.fpx-ca-shortcut-conflict` 曾经**只有 JSX 用了、CSS 里没有定义** ——
+ * 于是它落到裸 div 的默认样式，与上方那行 `p-muted` 灰字完全一样。
+ * 那段文案说的是「这个键不会注册」，看着却像普通说明，用户照旧保存，
+ * 然后快捷键按下去毫无反应。
+ *
+ * 只断言"源码里有这个类名"证明不了它长得像警告 —— 那正是当时的事实。
+ * 所以这里钉的是**样式定义本身**，且要求带警示色。
+ */
+const cssSrc = fs.readFileSync(path.join(HERE, 'style.css'), 'utf8');
+const ruleAt = cssSrc.indexOf('.fpx-ca-shortcut-conflict');
+const rule = ruleAt >= 0 ? cssSrc.slice(ruleAt, cssSrc.indexOf('}', ruleAt) + 1) : '';
+t('提示块取到了（否则后面两条空跑）', rule.length > 40, `${rule.length} 字节`);
+t('提示用的类名在 style.css 里有定义（只写 className 没写样式 = 与灰字无异）',
+  /^\.fpx-ca-shortcut-conflict\s*\{/.test(rule), rule.split('\n')[0] ?? '(没定义)');
+t('定义里带警示色（否则看着像补充说明，不当回事）',
+  /--warn/.test(rule), (rule.match(/[^\n]{0,30}--warn[^\n]{0,20}/) ?? ['(没有)'])[0]);
+
+/* 界面文案里写 `**强调**` 是文档习惯，浏览器会**原样显示两个星号**。 */
+t('界面文案里不留 Markdown 记号（** 会被原样显示）',
+  !/\*\*/.test(panelSrc), (panelSrc.match(/[^\n]{0,24}\*\*[^\n]{0,24}/) ?? ['(没有)'])[0]);
+t('提示文案本身取到了（否则上一条是空跑）', /不会注册/.test(panelSrc), '');
+
 done();

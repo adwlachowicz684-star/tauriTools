@@ -42,8 +42,19 @@ console.log('\n=== 1. 空白区立即切换（零延迟）===');
 
 console.log('\n=== 2. 名字区仍延后（双击改名不能被吃掉）===');
 {
-  t('名字按钮延后 220ms', /clickTimer\.current = window\.setTimeout\(\(\) => \{[\s\S]{0,200}?\}, 220\);/.test(stack));
-  t('双击取消待执行折叠', /onDoubleClick=\{\(\) => \{[\s\S]{0,300}?clearTimeout\(clickTimer\.current\)/.test(stack));
+  /*
+   * 钉**意图**而不是钉变量名：这两条原先写的是 `clickTimer.current`
+   * （单个共用 ref 的旧实现），改成按分类下标分开存之后必然误报 ——
+   * 而守的本意是"折叠延后 220ms、双击能取消它"，与用几个槽位无关。
+   */
+  const ANCHOR = 'title="单击折叠 / 双击重命名"';
+  const nameSeg = stack.slice(stack.indexOf(ANCHOR));
+  t('名字按钮那一段取到了', nameSeg.length > 200, `${nameSeg.length} 字节`);
+  t('名字按钮延后 220ms', /window\.setTimeout\(\(\) => \{[\s\S]{0,300}?\}, 220\);/.test(nameSeg));
+  /* 只认"取消**这一个分类**的"，共用一个槽位的写法这里就该红 */
+  t('双击取消这一个分类待执行的折叠',
+    /onDoubleClick=\{\(\) => \{[\s\S]{0,300}?clickTimers\.current\.get\(i\)[\s\S]{0,200}?clearTimeout\(prev\)/.test(nameSeg));
+  t('按分类下标分开存（不共用一个槽位）', /clickTimers\.current\.set\(i, id\)/.test(nameSeg));
 }
 
 console.log('\n=== 3. 空白区要有实际宽度才点得到 ===');

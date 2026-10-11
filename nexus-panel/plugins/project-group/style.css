@@ -1215,6 +1215,26 @@
 }
 .fpx-emoji.on { border-color: var(--accent); }
 
+/*
+ * 快捷键冲突提示（连锁动作管理页的「快捷键」那一栏）。
+ *
+ * 这个类此前**只有 JSX 用了、CSS 里没有定义** —— 于是它落到裸 div 的默认样式，
+ * 与上方那行 `p-muted` 灰字**完全一样**。而这段提示的本意是醒目警告
+ * （「这个键不会注册，换一个才生效」），看着像普通说明的话，
+ * 用户会以为只是补充说明，照旧保存 —— 然后快捷键按下去毫无反应。
+ *
+ * 颜色走 --warn 而不是 --danger：键位冲突不是失败，改一个键就好了；
+ * 用 danger 会让人以为刚才那一下操作出了问题。
+ */
+.fpx-ca-shortcut-conflict {
+  padding: 6px 8px;
+  border-left: 3px solid var(--warn, var(--accent));
+  border-radius: var(--r-xs, 3px);
+  background: var(--surface-sunk);
+  color: var(--warn, var(--accent));
+  line-height: 1.6;
+}
+
 /* 卡片右键菜单里的连锁动作图标 */
 
 /* ---------- 自定义连锁客户端 ---------- */

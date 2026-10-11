@@ -3,7 +3,7 @@ import { useNexus } from '../../../src/nexus-react';
 import { errText, makeApi, normalizeKey } from '../api';
 import { LOG_MAX_LINES_DEFAULT, clampLogMax } from '../utils/log';
 import { clampIndex } from '../utils/dragSort';
-import { activeAfterMove, activeAfterRemove, isTabNameTaken, uniqueTabName } from '../utils/tabs';
+import { activeAfterMove, activeAfterRemove, isTabNameTaken, uniqueTabName, validateTabName } from '../utils/tabs';
 import { lockStrengthText } from '../utils/lockPresets';
 import type {
   Bootstrap, CardKind, ContentItem, FpxConfig, LinkRow, Snapshot, TabInfo,
@@ -613,6 +613,25 @@ export function useFpx() {
     const cur = tabs?.[index];
     const next = name.trim();
     if (!cur || !next || next === cur.name) return;
+    /*
+     * 非法字符必须**挡在改名这一刻**。
+     *
+     * 后端 `sys::resolve_new_target` 只在**于该分类下新建项目**时才校验名字，
+     * 而改名走的是 `updateConfig`（只写 config，不动磁盘）——
+     * 于是 `前端/后端` 这类名字在改名这一刻照收，界面立刻显示新名字，
+     * 看着完全成功。等他往里面加项目，才在**另一个地方**冒出
+     * 「名称不能包含 ...」，而那时没人会想起是这次改名造成的。
+     *
+     * 与上面"重名"是同一类：错在 A、炸在 B。判据走
+     * `utils/tabs.ts::validateTabName`，与后端 `sys::validate_name_as`
+     * 同一套规则（两侧不一致由 tab-name-validate-test.mjs 报红）。
+     */
+    const bad = validateTabName(next);
+    if (bad) {
+      pushLog(bad, true);
+      ctx.toast(bad, 'err');
+      return;
+    }
     if (isTabNameTaken((tabs ?? []).map((t) => t.name), next, index)) {
       const msg = `已存在同名分类「${next}」，请换个名字`;
       pushLog(msg, true);

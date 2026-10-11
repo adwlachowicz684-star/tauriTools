@@ -534,7 +534,10 @@ export function ChainActionsPanel({
                     className="fpx-ca-shortcut-conflict"
                     style={{ fontSize: 'var(--fs-11, 11px)', marginTop: 'var(--sp-2, 4px)' }}
                   >
-                    ⚠ 与{conflictWith}占用同一个键，这个键**不会注册** —— 换一个键才会生效。
+                    {/* 这里的 `**...**` 是文档里的强调写法，界面上会**原样显示**
+                        两个星号 —— 用户读到的是「这个键**不会注册**」，看着像乱码。
+                        界面文案里一律不写 Markdown 记号，需要强调靠样式（见 style.css）。 */}
+                    ⚠ 与{conflictWith}占用同一个键，这个键不会注册 —— 换一个键才会生效。
                   </div>
                 )}
               </div>

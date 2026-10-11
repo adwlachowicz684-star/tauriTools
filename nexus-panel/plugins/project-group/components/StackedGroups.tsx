@@ -66,13 +66,25 @@ export function StackedGroups({
   /** 分类框重排：拖起的分类索引、当前落点索引（-1 为无） */
   const [dragFrom, setDragFrom] = useState(-1);
   const [overIdx, setOverIdx] = useState(-1);
-  /** #251 待执行的"单击折叠"，见下方 clickTimer 的说明 */
-  const clickTimer = useRef<number | null>(null);
-  /* 卸载时必须清掉待执行的折叠：定时器晚于组件卸载触发会去 setState，
+  /**
+   * #251 待执行的"单击折叠"，见下方 clickTimers 的说明。
+   *
+   * **必须按分类下标分开存，不能所有分类共用一个 ref**：
+   * 共用一个的话，220ms 内先点 A 的标题、再点 B 的标题，B 那次会
+   * `clearTimeout` 掉 A 待执行的定时器 —— 于是 **A 永远不折叠**，
+   * 用户点了却毫无反应。界面上没有任何线索（A 的标题不会闪、
+   * 不会报错），只会当成"折叠这功能坏了"。
+   *
+   * 和"所有分类共用一个 editing 下标"是同一类错误：一份状态
+   * 描述多个并列对象，彼此互相取消。
+   */
+  const clickTimers = useRef<Map<number, number>>(new Map());
+  /* 卸载时必须清掉**全部**待执行的折叠：定时器晚于组件卸载触发会去 setState，
      表现为"切走之后回来，某个分类自己折叠了"，且 React 会告警。
      这类延迟执行的兜底最容易被漏 —— 漏了不报错，只是偶发地乱动一下。 */
   useEffect(() => () => {
-    if (clickTimer.current !== null) { clearTimeout(clickTimer.current); clickTimer.current = null; }
+    clickTimers.current.forEach((id) => clearTimeout(id));
+    clickTimers.current.clear();
   }, []);
 
   /**
@@ -283,18 +295,22 @@ export function StackedGroups({
                      会展开又折回去，看着像界面在乱动。
                      代价是单击折叠慢 220ms，比闪烁好接受得多。 */
                   onClick={() => {
-                    if (clickTimer.current !== null) clearTimeout(clickTimer.current);
+                    /* 只取消**这一个分类**自己待执行的折叠，不动别的分类 */
+                    const prev = clickTimers.current.get(i);
+                    if (prev !== undefined) clearTimeout(prev);
                     const idx = i;
-                    clickTimer.current = window.setTimeout(() => {
-                      clickTimer.current = null;
+                    const id = window.setTimeout(() => {
+                      clickTimers.current.delete(idx);
                       toggle(idx);
                     }, 220);
+                    clickTimers.current.set(i, id);
                   }}
                   onDoubleClick={() => {
-                    /* 双击：取消待执行的折叠，只进改名 */
-                    if (clickTimer.current !== null) {
-                      clearTimeout(clickTimer.current);
-                      clickTimer.current = null;
+                    /* 双击：取消**这一个分类**待执行的折叠，只进改名 */
+                    const prev = clickTimers.current.get(i);
+                    if (prev !== undefined) {
+                      clearTimeout(prev);
+                      clickTimers.current.delete(i);
                     }
                     setDraft(t.name);
                     setEditing(i);

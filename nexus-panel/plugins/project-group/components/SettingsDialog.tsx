@@ -415,6 +415,7 @@ export function SettingsBody({
         onLog={onLog}
         onChanged={onChainActionsChanged}
         devMode={config.devMode}
+        hotkeys={config.hotkeys}
       />
     );
   }
