@@ -133,3 +133,58 @@ export function skipDropToTab(
     (it) => normalizeKey(typeof it === 'string' ? it : it.path, ci) === key,
   );
 }
+
+/**
+ * 页签名是否被占用（新建的默认名 / 改名都要查）。
+ *
+ * **页签名不是纯显示文本**：后端 `sys::resolve_new_target` 把它 join 进
+ * 目标路径（`父目录/页签名/项目名`），也就是它会变成**真实的目录名**。
+ * 两个同名页签于是共用同一个物理目录 —— 在第二个里面新建项目必然撞上
+ * 「目标已存在」，而界面上两个分类**长得一模一样**，用户只会以为新建坏了。
+ *
+ * 即使不开层级，同名也让界面无从分辨：页签条、移动到分类的列表、
+ * 分组标题全是两条一样的名字，点哪个全凭位置。
+ *
+ * 判据一律 trim + 小写（与 #354 链接名同一约定）：Windows 上 `Design`
+ * 与 `design` 本就是同一个目录，按原文比会放过真正的撞车。
+ *
+ * @param names 已有的页签名
+ * @param name 待查的名字
+ * @param exceptIndex 改名时跳过自己（-1 表示不跳过，用于新建）
+ */
+export function isTabNameTaken(names: string[], name: string, exceptIndex = -1): boolean {
+  const key = name.trim().toLowerCase();
+  if (!key) return false;
+  return names.some((n, i) => i !== exceptIndex && n.trim().toLowerCase() === key);
+}
+
+/**
+ * 生成一个**不与现有页签重名**的名字（新建页签的默认名用）。
+ *
+ * 为什么必须查：默认名是 `页签${长度+1}`，删掉中间一个之后再新建，
+ * 算出来的名字必然与现存的重合 —— 例：[页签1, 页签2] 删掉页签1，
+ * 剩 [页签2]，再新建得 `页签${1+1}` = **页签2**，与现存的撞车。
+ * 这是"随手一点就撞上"的路径，不需要任何刻意的输入。
+ *
+ * **递增数字后缀而不是无脑加 `(2)`**：末尾是数字时优先 +1，
+ * 得到「页签3」而不是「页签2(2)」——后者看着像复制品，不像下一个。
+ */
+export function uniqueTabName(names: string[], base: string): string {
+  const b = base.trim() || '页签';
+  if (!isTabNameTaken(names, b)) return b;
+  const m = /^(.*?)(\d+)$/.exec(b);
+  if (m) {
+    const prefix = m[1];
+    let n = Number(m[2]);
+    for (let k = 0; k < 999; k++) {
+      n += 1;
+      const c = `${prefix}${n}`;
+      if (!isTabNameTaken(names, c)) return c;
+    }
+  }
+  for (let k = 2; k < 999; k++) {
+    const c = `${b}(${k})`;
+    if (!isTabNameTaken(names, c)) return c;
+  }
+  return `${b}(${Date.now()})`;
+}

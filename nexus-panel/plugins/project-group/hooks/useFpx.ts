@@ -3,7 +3,7 @@ import { useNexus } from '../../../src/nexus-react';
 import { errText, makeApi, normalizeKey } from '../api';
 import { LOG_MAX_LINES_DEFAULT, clampLogMax } from '../utils/log';
 import { clampIndex } from '../utils/dragSort';
-import { activeAfterMove, activeAfterRemove } from '../utils/tabs';
+import { activeAfterMove, activeAfterRemove, isTabNameTaken, uniqueTabName } from '../utils/tabs';
 import { lockStrengthText } from '../utils/lockPresets';
 import type {
   Bootstrap, CardKind, ContentItem, FpxConfig, LinkRow, Snapshot, TabInfo,
@@ -577,18 +577,53 @@ export function useFpx() {
      */
     const snap = await updateConfig((d) => {
       const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
-      tabs.push({ name: name.trim() || `页签${tabs.length + 1}`, items: [] });
+      /*
+       * 默认名要**避开重名**，不能只按长度算。
+       *
+       * 页签名会变成真实目录名（sys::resolve_new_target 把它 join 进路径），
+       * 两个同名页签共用同一个物理目录 —— 在第二个里新建项目必撞
+       * 「目标已存在」，而界面上两个分类长得一模一样，用户只会以为新建坏了。
+       *
+       * 而 `页签${长度+1}` 是最容易撞的写法：[页签1, 页签2] 删掉页签1 之后
+       * 再新建，算出来就是已存在的「页签2」。不需要任何刻意输入就会撞上。
+       */
+      tabs.push({
+        name: uniqueTabName(tabs.map((t) => t.name), name.trim() || `页签${tabs.length + 1}`),
+        items: [],
+      });
     });
     if (!snap) return;
     setActiveTab((s) => ({ ...s, [kind]: cardsOf(kind).length }));
   }, [cardsOf, updateConfig]);
 
   const renameTab = useCallback(async (kind: CardKind, index: number, name: string) => {
+    /**
+     * 重名必须**挡在改名这一刻**。
+     *
+     * 页签名是真实目录名（见 addTab 那处说明），两个同名页签会共用同一个
+     * 物理目录；就算不开层级，界面上也会出现两个一模一样的分类，无从分辨。
+     *
+     * 而此前这里是**无条件赋值**的：改名框一 blur 就写进 config，界面立刻
+     * 显示新名字 —— 看着是成功了。等他往里面加项目，才在**另一个地方**
+     * 冒出「目标已存在」，而那时没人会想起是这次改名造成的。
+     * 这种"错在 A、炸在 B"正是最难查的一类。
+     */
+    const cfg = configRef.current ?? boot?.config;
+    const tabs = kind === 'project' ? cfg?.projectTabs : cfg?.groupTabs;
+    const cur = tabs?.[index];
+    const next = name.trim();
+    if (!cur || !next || next === cur.name) return;
+    if (isTabNameTaken((tabs ?? []).map((t) => t.name), next, index)) {
+      const msg = `已存在同名分类「${next}」，请换个名字`;
+      pushLog(msg, true);
+      ctx.toast(msg, 'err');
+      return;
+    }
     await updateConfig((d) => {
-      const tabs = kind === 'project' ? d.projectTabs : d.groupTabs;
-      if (tabs[index]) tabs[index].name = name.trim() || tabs[index].name;
+      const ts = kind === 'project' ? d.projectTabs : d.groupTabs;
+      if (ts[index]) ts[index].name = next;
     });
-  }, [updateConfig]);
+  }, [boot, updateConfig, pushLog, ctx]);
 
   /**
    * 删除页签前的检查（原版两条保护）：
