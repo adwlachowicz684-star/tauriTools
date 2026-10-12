@@ -115,8 +115,11 @@ export function createBus(): Bus;
  */
 export type CloseAction = 'hide' | 'close';
 export function getCloseAction(): CloseAction;
-/** 传非 'close' 的值一律按 'hide' 处理；变化时会通知所有订阅者 */
+/** 传非 'close' 的值一律按 'hide' 处理；变化时会通知所有订阅者。
+ *  只回新值、不回"存没存成" —— 要向用户报「已保存」的界面用 saveCloseAction */
 export function setCloseAction(v: CloseAction): CloseAction;
+/** 落盘并如实回答"存没存成"；saved=false 时界面必须说出来并回滚显示 */
+export function saveCloseAction(v: CloseAction): { action: CloseAction; saved: boolean };
 /** 订阅变化，返回取消订阅的函数 */
 export function onCloseActionChange(fn: (v: CloseAction) => void): () => void;
 

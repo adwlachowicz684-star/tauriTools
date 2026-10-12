@@ -74,6 +74,38 @@ export function favIndexOf(favs, path) {
 }
 
 /**
+ * 能不能加这条收藏：返回阻塞原因，空串表示可以加。
+ *
+ * 【为什么判据要收在这里】
+ * 加收藏有三个入口（选择器里的「☆ 收藏此目录」、设置页无构建版的「＋ 加入」、
+ * 设置页 React 版的「收藏」），而后端 `fpx_save_fav_dirs` 是**整表替换**。
+ * 三处各写一份判据时，folder-picker 那一处漏了上限：
+ * 已经有 40 条时再收藏一条 → `normalizeFavs` 静默截到第 40 条 →
+ * 新那条**没落盘**，而界面立刻显示成「★ 已收藏」，重开一次就没了，全程不报错。
+ *
+ * 同理，"已经在常用里了"和"最多 N 个"这两句提示也必须同一个说法，
+ * 否则同一个操作在两个界面里一个报错一个静默，用户没法建立稳定的预期。
+ */
+export function favAddBlocker(favs, path) {
+  const list = Array.isArray(favs) ? favs : [];
+  const p = normPath(path);
+  if (!p) return '没有可收藏的目录';
+  if (favIndexOf(list, p) >= 0) return '这个目录已经在常用里了';
+  if (list.length >= FAV_MAX) return `常用文件夹最多 ${FAV_MAX} 个`;
+  return '';
+}
+
+/**
+ * 整表还没读出来时的说明。
+ *
+ * 【为什么必须拦】
+ * `fpx_save_fav_dirs` 是整表替换：读失败时本地表是空的，
+ * 此时加一条 → 写回去的只有这一条 → **其余收藏全部消失**，
+ * 而写入本身是成功的，不会有任何报错。
+ */
+export const FAV_NOT_LOADED = '常用文件夹还没读出来，改不了（关掉重开一次再试）';
+
+/**
  * 面包屑。
  *
  * 统一用 `/` 拼接：normPath 已经把 `\` 归一成 `/`，

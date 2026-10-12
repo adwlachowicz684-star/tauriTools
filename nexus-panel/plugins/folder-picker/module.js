@@ -51,9 +51,10 @@
  */
 import {
   FAV_MAX, normPath, normalizeFavs, favLabel, isFav, favIndexOf, crumbsOf,
+  favAddBlocker, FAV_NOT_LOADED,
 } from '../../js/fav-dirs.js';
 
-export { FAV_MAX, normPath, normalizeFavs, favLabel, isFav, crumbsOf };
+export { FAV_MAX, normPath, normalizeFavs, favLabel, isFav, crumbsOf, favAddBlocker };
 
 const VERSION = '1.0.0';
 
@@ -162,6 +163,14 @@ export default {
  */
 function createPanel(ctx) {
   const favs = [];
+  /*
+   * 收藏表有没有真的读出来。
+   *
+   * `fpx_save_fav_dirs` 是**整表替换**：读失败时 favs 是空的，
+   * 此时收藏一条 → 写回去的只有这一条 → 其余收藏全没了，
+   * 而写入本身成功，界面照旧显示「★ 已收藏」，一句报错都没有。
+   */
+  let favsLoaded = false;
   let quick = [];
   let session = null;   // { resolve, reject, args }
   let path = '';
@@ -218,12 +227,14 @@ function createPanel(ctx) {
       const r = await ctx.invoke('fpx_list_fav_dirs');
       favs.length = 0;
       for (const f of normalizeFavs(r)) favs.push(f);
+      favsLoaded = true;
     } catch (e) {
       /*
        * 读不到收藏**不能让整个选择器打不开**：
        * 快速起点还在，用户照样能一层层点进去。
        * 只把它显示成一行提示，而不是弹错误或空白。
        */
+      favsLoaded = false;
       setErr(`常用文件夹读取失败（${e?.message ?? e}），可从快速起点进入`);
     }
   }
@@ -272,8 +283,21 @@ function createPanel(ctx) {
 
   async function addFav(p, label) {
     const np = normPath(p);
-    if (!np) { setErr('当前没有可收藏的目录'); return favs.slice(); }
-    if (isFav(favs, np)) return favs.slice();
+    /*
+     * 整表替换：写之前必须有一份可信的整表，否则就是拿这一条替换掉全部。
+     *
+     * addFav / removeFav 是**对外服务**（设置页可以不开选择器直接调），
+     * 所以不能假定 prepare() 已经跑过 —— 没读过就先读一次；
+     * 读不出来（favsLoaded 仍为 false）才拒绝，且必须说出原因。
+     */
+    if (!favsLoaded) await loadFavs();
+    if (!favsLoaded) { setErr(FAV_NOT_LOADED); return favs.slice(); }
+    const why = favAddBlocker(favs, np);
+    /*
+     * "已经在常用里了"不用报红：那个按钮此时本来就是禁用态（★ 已收藏），
+     * 走到这里多半是并发，弹错误反而让人以为刚才那下操作失败了。
+     */
+    if (why) { if (favIndexOf(favs, np) < 0) setErr(why); return favs.slice(); }
     favs.push({ path: np, label: String(label ?? '').trim() });
     const ok = await saveFavs();
     if (!ok) favs.pop();   // 保存失败就回滚，别让界面显示一个存不下的条目
@@ -283,6 +307,8 @@ function createPanel(ctx) {
 
   async function removeFav(p) {
     const np = normPath(p);
+    if (!favsLoaded) await loadFavs();
+    if (!favsLoaded) { setErr(FAV_NOT_LOADED); return favs.slice(); }
     const i = favIndexOf(favs, np);
     if (i < 0) return favs.slice();
     const [gone] = favs.splice(i, 1);

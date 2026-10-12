@@ -26,7 +26,9 @@ import {
 import { splitColor, joinColor } from '../../js/theme-color.js';
 /* 常用文件夹：归一化 / 去重 / 上限与 React 版、folder-picker 共用同一份。
    各写一份迟早在某处漏掉"去尾部斜杠"，于是同一个目录被判成两条收藏。 */
-import { normPath, favLabel, favIndexOf, FAV_MAX } from '../../js/fav-dirs.js';
+import {
+  normPath, favLabel, favIndexOf, FAV_MAX, favAddBlocker, FAV_NOT_LOADED, normalizeFavs,
+} from '../../js/fav-dirs.js';
 import { prompt as askPrompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 import {
@@ -1054,7 +1056,15 @@ export default definePlugin({
         try {
           // 拿不到外壳接口时必须报错，不能静默跳过（点了有反应、其实没生效）
           if (!ctx.shell?.window) throw new Error('拿不到外壳窗口接口，这次选择没能保存');
-          await ctx.shell.window.setCloseAction(v);
+          /*
+           * 用落盘版：setCloseAction 只回新值，localStorage 写不进去时
+           * 它也"成功" —— 于是这里不会回滚，界面画成「退出程序」、
+           * ✕ 的提示也跟着改，而磁盘上还是「隐藏到托盘」，重启后悄悄变回去。
+           */
+          const r = await ctx.shell.window.saveCloseAction(v);
+          if (r?.saved === false) {
+            throw new Error('这次选择没能保存（浏览器存储不可用：隐私模式或隔离态），重启后会回到原来的设置');
+          }
         } catch (e) {
           cur = prev;
           paint();
@@ -1104,6 +1114,14 @@ export default definePlugin({
         style: { flex: '1', height: '30px', fontSize: '12px', padding: '0 10px', minWidth: '0' },
       });
       let favs = [];
+      /*
+       * 整表有没有真的读出来。
+       *
+       * 后端 fpx_save_fav_dirs 是**整表替换**：读失败时 favs 是空的，
+       * 此时「＋ 加入」一条 → 写回去的只有这一条 → 其余收藏全没了，
+       * 而写入本身成功，界面只显示空列表变一条，一句报错都没有。
+       */
+      let favsLoaded = false;
       let busy = false;
 
       const setErr = (m) => { errBox.textContent = m || ''; errBox.style.display = m ? '' : 'none'; };
@@ -1111,13 +1129,17 @@ export default definePlugin({
       const refresh = async () => {
         try {
           const list = await ctx.invoke('fpx_list_fav_dirs');
-          favs = (list || []).map((f) => ({
-            path: normPath(f && f.path),
-            label: String((f && f.label) || '').trim(),
-          })).filter((f) => !!f.path);
+          /*
+           * 必须走 normalizeFavs（去重 + 截断），不能自己 map 一遍：
+           * 少了去重，配置里两条只差尾部斜杠 / 大小写的收藏在这里显示成两条，
+           * 而在选择器里是一条 —— 用户删掉一条，另一条还在，且不会报错。
+           */
+          favs = normalizeFavs(list);
+          favsLoaded = true;
           setErr('');
         } catch (e) {
           favs = [];
+          favsLoaded = false;
           setErr(String((e && e.message) || e));
         }
       };
@@ -1141,9 +1163,11 @@ export default definePlugin({
 
       const add = async (raw) => {
         const p = normPath(raw);
-        if (!p || busy) return;
-        if (favIndexOf(favs, p) >= 0) { ctx.toast('这个目录已经在常用里了', 'err'); return; }
-        if (favs.length >= FAV_MAX) { ctx.toast(`常用文件夹最多 ${FAV_MAX} 个`, 'err'); return; }
+        if (busy) return;
+        // 整表没读出来时不能写：写了就是拿这一条替换掉全部
+        if (!favsLoaded) { ctx.toast(FAV_NOT_LOADED, 'err'); return; }
+        const why = favAddBlocker(favs, p);
+        if (why) { ctx.toast(why, 'err'); return; }
         if (await save(favs.concat([{ path: p, label: '' }]))) draftInput.value = '';
       };
 

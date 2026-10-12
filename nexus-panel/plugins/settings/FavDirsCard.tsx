@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
-import { favLabel, normPath, favIndexOf, FAV_MAX } from '../../js/fav-dirs.js';
+import {
+  favLabel, normPath, favIndexOf, FAV_MAX, favAddBlocker, FAV_NOT_LOADED, normalizeFavs,
+} from '../../js/fav-dirs.js';
 
 /**
  * 工具常用文件夹
@@ -39,12 +41,8 @@ export default function FavDirsCard() {
   const refresh = useCallback(async () => {
     try {
       const list = await ctx.invoke<any[]>('fpx_list_fav_dirs');
-      setFavs(
-        (list ?? []).map((f: any) => ({
-          path: normPath(f?.path),
-          label: String(f?.label ?? '').trim(),
-        })).filter((f: Fav) => !!f.path),
-      );
+      // 走 normalizeFavs（去重 + 截断）：否则同一份收藏在这里和选择器里条数不同
+      setFavs(normalizeFavs(list));
       setErr(null);
     } catch (e: any) {
       setFavs(null);
@@ -73,15 +71,19 @@ export default function FavDirsCard() {
   const add = useCallback(async (raw: string) => {
     const p = normPath(raw);
     if (!p) return;
+    /*
+     * favs === null 表示"整表还没读出来"（载入中，或读取失败）。
+     *
+     * 后端 fpx_save_fav_dirs 是**整表替换**：此时写一条就等于拿这一条
+     * 替换掉全部收藏，而写入本身是成功的 —— 其余收藏静默消失，一句报错都没有。
+     */
     const cur = favs ?? [];
-    if (favIndexOf(cur, p) >= 0) {
-      ctx.toast('这个目录已经在常用里了', 'err');
+    if (!favs) {
+      ctx.toast(FAV_NOT_LOADED, 'err');
       return;
     }
-    if (cur.length >= FAV_MAX) {
-      ctx.toast(`常用文件夹最多 ${FAV_MAX} 个`, 'err');
-      return;
-    }
+    const why = favAddBlocker(cur, p);
+    if (why) { ctx.toast(why, 'err'); return; }
     if (await save([...cur, { path: p, label: '' }])) setDraft('');
   }, [favs, save, ctx]);
 
@@ -239,7 +241,7 @@ export default function FavDirsCard() {
         <button
           className="p-btn"
           style={{ padding: '0 14px', fontSize: 'var(--fs-12, 12px)' }}
-          disabled={busy}
+          disabled={busy || favs === null}
           onClick={browse}
         >
           浏览…
@@ -247,7 +249,7 @@ export default function FavDirsCard() {
         <button
           className="p-btn primary"
           style={{ padding: '0 14px', fontSize: 'var(--fs-12, 12px)' }}
-          disabled={busy || !normPath(draft)}
+          disabled={busy || favs === null || !normPath(draft)}
           onClick={() => add(draft)}
         >
           收藏

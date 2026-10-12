@@ -110,17 +110,57 @@ export function getCloseAction() {
   return closeAction;
 }
 
-/** 设置 ✕ 的行为；返回实际生效的值 */
-export function setCloseAction(v) {
+/**
+ * 落盘 ✕ 的行为，并**如实回答"存没存成"**。
+ *
+ * 早先这里是 `catch { /* 无妨 *\/ }` 之后照常返回新值 ——
+ * 于是调用方（设置页两处的关闭行为卡片）**没有任何办法知道**这次改动
+ * 有没有写进去，只能无条件把新选项画成选中。
+ *
+ * 存不下的场景不是假设：设置页在 Vite 模式下是 iframe，隔离态
+ * （opaque origin）下 localStorage 不可用，本地读写都会落空 ——
+ * 见 plugin-sdk.js 里同一段的说明。此时真实表现是：
+ *   选「退出程序」→ 界面立刻画成选中、✕ 的提示也改成「退出」→
+ *   重启后**又变回「隐藏到托盘」**，而整个过程一句提示都没有。
+ * 用户只会以为这个设置不记事儿，不会想到是"根本没存下"。
+ *
+ * 这是「窗口行为」这种一设就忘的东西，谎报成功比不报更糟：
+ * 不报他还会再设一次，报了成功他就不会再确认，直到某次重启才发现。
+ *
+ * 存不下时**回滚内存值**：不能让界面停在一个没落盘的值上 ——
+ * 那一刻磁盘上仍是旧值，界面显示新值就是"界面说 A、磁盘上是 B"。
+ * 回滚后 ✕ 的行为与磁盘一致，重启后也不会变，自洽。
+ *
+ * @returns {{ action: CloseAction, saved: boolean }} saved=false 时调用方必须说出来
+ */
+export function saveCloseAction(v) {
   const next = v === 'close' ? 'close' : 'hide';
-  if (next === closeAction) return closeAction;
+  // 值没变就谈不上"存没存成"，也不该触发通知（避免无意义重绘）
+  if (next === closeAction) return { action: closeAction, saved: true };
+  const prev = closeAction;
   closeAction = next;
-  try { localStorage.setItem(CLOSE_ACTION_KEY, closeAction); } catch { /* 无妨 */ }
+  try {
+    localStorage.setItem(CLOSE_ACTION_KEY, closeAction);
+  } catch {
+    closeAction = prev; // 回滚：界面只显示真正落盘的那个
+    return { action: closeAction, saved: false };
+  }
   // 通知外壳刷新 ✕ 的提示文案，否则按钮还写着旧行为
   for (const fn of closeActionHooks) {
     try { fn(closeAction); } catch (e) { console.error('[closeAction hook]', e); }
   }
-  return closeAction;
+  return { action: closeAction, saved: true };
+}
+
+/**
+ * 设置 ✕ 的行为；返回实际生效的值。
+ *
+ * 只回值、不回"存没存成" —— 需要向用户报「已保存」的**界面**一律用
+ * saveCloseAction。保留它是因为 `shell.window.setCloseAction` 的对外契约
+ * 就是"回新值"（插件里有按这个值重画的），改返回类型会静默改掉契约。
+ */
+export function setCloseAction(v) {
+  return saveCloseAction(v).action;
 }
 
 export function onCloseActionChange(fn) {
@@ -131,6 +171,7 @@ export function onCloseActionChange(fn) {
 const windowApi = {
   getCloseAction,
   setCloseAction,
+  saveCloseAction,
 };
 
 /* ---------------------------- 事件总线 ---------------------------- */
@@ -1696,6 +1737,7 @@ export function createHost(opts = {}) {
        所以设置页改完立即生效，不用重启。 */
     getCloseAction,
     setCloseAction,
+    saveCloseAction,
     onCloseActionChange,
     openWithArgs,
     readTheme,

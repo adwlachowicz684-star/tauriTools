@@ -60,7 +60,15 @@ export default function WindowCard() {
        * 点了有反应（高亮跟着走）、其实没生效，是最难发现的一类。
        */
       if (!sh) throw new Error('拿不到外壳窗口接口（隔离态下读不到），这次选择没能保存');
-      await sh.setCloseAction(v);
+      /*
+       * 用落盘版：setCloseAction 只回新值，本地存储写不进去时它也"成功"，
+       * 于是下面根本不会回滚 —— 界面画成「退出程序」、✕ 的提示也跟着改，
+       * 而磁盘上还是「隐藏到托盘」，重启后悄悄变回去、一句提示都没有。
+       */
+      const r = await sh.saveCloseAction(v);
+      if (r?.saved === false) {
+        throw new Error('这次选择没能保存（浏览器存储不可用：隐私模式或隔离态），重启后会回到原来的设置');
+      }
     } catch (e: any) {
       setCur(prev); // 回滚：界面只显示真正生效的那个
       setErr(String(e?.message ?? e));

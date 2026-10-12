@@ -602,6 +602,9 @@ function buildCtx(base) {
           { ns: 'window', method: 'getCloseAction', args: [] }),
         setCloseAction: (v) => transport.request('shell.call',
           { ns: 'window', method: 'setCloseAction', args: [v] }),
+        /* 落盘版：带回 saved，写不进去时界面要说出来并回滚（见 host.js） */
+        saveCloseAction: (v) => transport.request('shell.call',
+          { ns: 'window', method: 'saveCloseAction', args: [v] }),
       },
     },
     /** 供外壳调用 */
