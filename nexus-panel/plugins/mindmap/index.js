@@ -1661,10 +1661,17 @@ async function gcOrphanAssets(quiet = false) {
       exportedAt: Date.now(),
       backups: all.map((b) => ({ ts: b.ts, sheets: b.sheets, activeId: b.activeId })),
     };
-    io.downloadBlob(
+    /*
+     * 必须接返回值：`downloadBlob` 连 `<a download>` 都没构造出来时返回
+     * 'error'，那时**一个字节都没出去**，而下面这句是在给文件名 ——
+     * 照写就是「已导出 N 份快照」，用户拿这份不存在的文件去另一台机器
+     * 导入快照，会发现什么都没有。与 exportXMind 那处 `savedOk` 同理。
+     */
+    const r = io.downloadBlob(
       io.stampName('脑图快照', 'json'),
       new Blob([JSON.stringify(payload)], { type: 'application/json' }),
     );
+    if (!io.downloadOk(r)) { status('快照导出失败：浏览器没能创建下载', true); return; }
     status(`已导出 ${all.length} 份快照`);
   }
 
@@ -2224,7 +2231,14 @@ async function gcOrphanAssets(quiet = false) {
     // 存在），而界面上没有任何失败迹象 —— 他只会当成"导出失败了"。
     // 提示的目的恰恰是让人找到那个文件，说个找不到的名字等于没说。
     const savedName = io.safeFileName(name);
-    io.downloadBlob(savedName, rec.blob);
+    /*
+     * 这句是**在给位置**：「已保存到下载目录：X」。所以比别的导出更怕假 ——
+     * 下载没发起时照说，用户去下载目录里按这个名字找，永远找不到，
+     * 而界面上没有任何失败迹象，他只会当成"导出失败了"（这句却说成功了）。
+     * 上面那段注释特意交代"提示里必须是安全化之后的名字"，也是同一个道理。
+     */
+    const r = io.downloadBlob(savedName, rec.blob);
+    if (!io.downloadOk(r)) { status(`保存失败：${savedName} 没能落到下载目录`, true); return; }
     status(`已保存到下载目录：${savedName}（可双击用默认程序打开）`);
   }
 

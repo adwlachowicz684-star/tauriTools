@@ -17478,6 +17478,94 @@ group('BUG 125 · 没存成时，导出后补的提示必须闭嘴');
 }
 
 /* ============================================================
+   BUG 126：downloadBlob 没发起下载时，不能说「已保存 / 已导出」
+
+   `downloadBlob` 只有两种返回：'fallback'（<a download> 已点下去，文件由
+   WebView 落盘）与 'error'（createObjectURL / 建 <a> 就抛了 ——
+   **一个字节都没出去**）。三处调用点原先不看返回值，照样说
+   「已保存到下载目录：X」「已导出 N 份快照」「已保存截图」—— 尤其第一句
+   是在**给位置**，说错等于把人支到一个根本不存在的文件上。
+
+   与 BUG 70 / 77 / 125 同一类，区别在于这条通道**不走 reportSave**：
+   125 那轮只堵了 saveBlob 那条，downloadBlob 这条一条都没堵。
+   ============================================================ */
+group('BUG 126 · 下载没发起时不能说「已保存 / 已导出」');
+{
+  // ① 判据本身
+  {
+    const io2 = await import('./io.js');
+    eq(io2.downloadOk('fallback'), true, "★ downloadOk('fallback')：真的发起了下载");
+    eq(io2.downloadOk('error'), false, "★ downloadOk('error')：没发起，不能说已保存");
+    eq(io2.downloadOk('ok'), false, "★ downloadOk('ok')：downloadBlob 不返回它");
+  }
+
+  // ② 'error' 是**可达**的分支，不是纸面代码
+  {
+    const io2 = await import('./io.js');
+    const keepUrl = dom.window.URL.createObjectURL;
+    const keepClick = dom.window.HTMLAnchorElement.prototype.click;
+    // <a download> 的 click 在 jsdom 里会报「导航未实现」，与本次要验的无关
+    dom.window.HTMLAnchorElement.prototype.click = function () {};
+    const mkBlob = () => new dom.window.Blob(['x'], { type: 'text/plain' });
+    eq(io2.downloadBlob('a.txt', mkBlob()), 'fallback', "能建 <a download> → 'fallback'");
+    dom.window.URL.createObjectURL = () => { throw new Error('quota'); };
+    eq(io2.downloadBlob('a.txt', mkBlob()), 'error', "★ createObjectURL 抛错 → 'error'（真会发生）");
+    dom.window.URL.createObjectURL = keepUrl;
+    dom.window.HTMLAnchorElement.prototype.click = keepClick;
+  }
+
+  // ③ 两处「谎报」：守卫必须排在真正把话说出去的那句 status 之前
+  {
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const CASES = [
+      { fn: 'async function exportBackups', after: 'status(`已导出 ' },
+      { fn: 'async function openAttachment', after: 'status(`已保存到下载目录' },
+    ];
+    for (const c of CASES) {
+      const b = fnBody(code, c.fn);
+      ok(b.length > 0, `取到 ${c.fn} 的函数体`);
+      const iCall = b.indexOf('io.downloadBlob(');
+      const iGuard = b.indexOf('if (!io.downloadOk(r))');
+      const iAfter = b.indexOf(c.after);
+      ok(iCall > 0, `${c.fn}：有 downloadBlob 调用`);
+      ok(/const r = io\.downloadBlob\(/.test(b), `★ ${c.fn}：接住了返回值`);
+      ok(iGuard > iCall, `★ ${c.fn}：downloadOk 守卫排在下载之后`);
+      ok(iAfter > 0 && iGuard < iAfter, `★ ${c.fn}：守卫排在成功文案之前（挡不住就是没修）`);
+    }
+  }
+
+  // ④ panels.js：withFrame 必须按 fn 的返回值改口，且「截图」要把结果交出去
+  {
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8'));
+    const wf = fnBody(code, 'function withFrame');
+    ok(wf.length > 0, '取到 withFrame 的函数体');
+    ok(/const r = fn\(d\)/.test(wf), '★ withFrame 接住 fn 的返回值');
+    ok(/r && !io\.downloadOk\(r\)/.test(wf), '★ 只有返回 error 时才改口（undefined 照旧报成功）');
+    ok(/if \(!okMsg\) return;/.test(wf), '★ 没有 okMsg 时不再多说一句');
+    // 锚在 okMsg 字面量之前：锚在函数头的话，返回值没交出去也能蒙混过关
+    const iMsg = code.indexOf("'已保存截图'");
+    ok(iMsg > 0, '找到「已保存截图」这句成功文案');
+    ok(/return io\.downloadBlob\(/.test(code.slice(Math.max(0, iMsg - 900), iMsg)),
+      '★ 截图把 downloadBlob 的返回值交给 withFrame');
+  }
+
+  // ⑤ 两处原本**静默**的下载：没有成功文案可盖，但点了没反应更糟
+  {
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8'));
+    const n = (code.match(/if \(!io\.downloadOk\(r\)\) app\.api\.status\(/g) || []).length;
+    eq(n, 2, '★ 附件 / 图片另存两处都有失败提示');
+  }
+
+  // ⑥ 总数：新增下载入口时这里会提醒你补
+  {
+    const a = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const b = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8'));
+    const n = (a.match(/io\.downloadOk\(/g) || []).length + (b.match(/io\.downloadOk\(/g) || []).length;
+    eq(n, 5, '★ 恰好五处判据（index.js 2 + panels.js 3）');
+  }
+}
+
+/* ============================================================
    结果
    ============================================================ */
 

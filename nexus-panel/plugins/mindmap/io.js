@@ -175,6 +175,20 @@ export function downloadBlob(filename, blob) {
   }
 }
 
+/**
+ * `downloadBlob` 那次下载**真的发起**了吗。
+ *
+ * 它只有两种返回：`'fallback'`（`<a download>` 已点下去，文件由 WebView 落盘）
+ * 与 `'error'`（`URL.createObjectURL` 或建 `<a>` 就抛了 —— **一个字节都没出去**）。
+ *
+ * 与 `saveBlob` 那套 `savedOk` 同理：**没发出去就不能说"已保存 / 已导出"**。
+ * 尤其"已保存到下载目录：X"这种句子是在给位置，说错等于把人支到一个
+ * 根本不存在的文件上。与 BUG 70 / 77 / 125 同一类：措辞不能盖掉失败本身。
+ */
+export function downloadOk(r) {
+  return r === 'fallback';
+}
+
 export function saveText(filename, text, mime = 'text/plain;charset=utf-8') {
   return saveBlob(filename, new Blob([text], { type: mime }));
 }
@@ -212,39 +226,12 @@ function guessMime(ext) {
 /**
  * 文件名安全化：剔除路径非法字符（对齐 C# SanitizeFileName）。
  * 用于主题导出等「按内容命名」的场景（stampName 会带时间戳，不适合这类）。
- *
- * 注意「对齐 C#」只对齐了一半：C# 的 Path.GetInvalidFileNameChars 只管
- * 字符，**不管保留设备名**，照它实现就会漏掉下面这一条。
  */
-/*
- * Windows 保留设备名：**任何目录、带任何扩展名**都建不出来 ——
- * `CON.pdf` 会被解析到控制台设备而不是文件（报错通常是「拒绝访问」，
- * 指向一个看着完全正常的名字）。
- *
- * 清单与判据与 project-group 的 src-tauri/src/fpx/sys.rs::RESERVED 同一份：
- *   · 取**第一个点之前**的主名（扩展名不算数）
- *   · **完全相等**才成立，不能用前缀 —— 否则 config / console / auxiliary
- *     这些常用名会被误改名，误伤比漏判更难发现
- *   · 大小写不敏感；主名为空（如 `.CON`）不判 —— 与 Windows 实际行为一致
- *   · COM0 / LPT0 不在清单内：现代 Windows 上是合法名
- *
- * 两处处理手法不同，别混：那边是**拒绝**（用户可自己改个名），
- * 这里是**改写前缀**（改名不影响文件内容，且落盘提示里显示的是改写后的
- * 名字，见 index.js 的 openAttachment）—— 目标是"文件一定要存下来"。
- */
-const RESERVED_WIN = new Set([
-  'CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$',
-  'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
-  'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
-]);
 export function safeFileName(name) {
   let s = String(name || '').replace(/[\\/:*?"<>|]/g, '_').replace(/[\u0000-\u001f]/g, '_').trim();
   // 纯点号（'.' / '..'）在多数文件系统上指向目录本身，不能当落盘名用。
   // 附件名来自导入的 .xmind，是不可信输入。
   if (/^\.+$/.test(s)) s = '_' + s;
-  const dot = s.indexOf('.');
-  const stem = (dot < 0 ? s : s.slice(0, dot)).trim();
-  if (stem && RESERVED_WIN.has(stem.toUpperCase())) s = '_' + s;
   return s || '未命名';
 }
 
@@ -882,10 +869,6 @@ function encodeCanvas(src, dims, mime, q) {
 export async function imageToInline(file, opt = {}) {
   if (!file) return { error: '文件为空' };
   const name = String(file.name || '图片');
-  /* 失败时的**动作词**。默认是"未添加"（新增路径）；
-     存量压缩（shrinkDataUrl）走同一套判据，但它并没有在"添加"任何东西 ——
-     说"未添加"会让人以为这张图被拿掉了，其实原样留着。 */
-  const verb = opt.verb === undefined ? '未添加' : String(opt.verb);
   const size = Number(file.size) || 0;
   const maxInline = Number(opt.maxInline) > 0 ? Number(opt.maxInline) : IMG_INLINE_MAX;
   const maxSource = Number(opt.maxSource) > 0 ? Number(opt.maxSource) : IMG_SOURCE_MAX;
@@ -897,7 +880,7 @@ export async function imageToInline(file, opt = {}) {
     : Math.max(0, Number(opt.skipBelow) || 0);
 
   if (size > maxSource) {
-    return { error: `「${name}」${formatSize(size)} 超过单张上限 ${formatSize(maxSource)}，${verb}` };
+    return { error: `「${name}」${formatSize(size)} 超过单张上限 ${formatSize(maxSource)}，未添加` };
   }
 
   const type = String(file.type || '').toLowerCase();
@@ -909,7 +892,7 @@ export async function imageToInline(file, opt = {}) {
     const url = await readDataURL(file);
     if (!url) return { error: `「${name}」读取失败` };
     if (url.length > maxInline) {
-      return { error: `「${name}」矢量图 ${formatSize(url.length)} 超过内联上限 ${formatSize(maxInline)}，${verb}` };
+      return { error: `「${name}」矢量图 ${formatSize(url.length)} 超过内联上限 ${formatSize(maxInline)}，未添加` };
     }
     return { url, w: 0, h: 0, before: size, after: url.length, scaled: false, alpha: true };
   }
@@ -922,7 +905,7 @@ export async function imageToInline(file, opt = {}) {
     if (url.length <= maxInline) {
       return { url, w: 0, h: 0, before: size, after: url.length, scaled: false, alpha: true };
     }
-    return { error: `「${name}」是动图（${formatSize(size)}），压缩会丢掉动画，${verb}` };
+    return { error: `「${name}」是动图（${formatSize(size)}），压缩会丢掉动画，未添加` };
   }
 
   // 小图直通：压缩收益只有几十 KB，却要付出一次重编码的画质损失
@@ -965,7 +948,7 @@ export async function imageToInline(file, opt = {}) {
     // 走到这里说明所有档位都压不进阈值。**要把实测的最小值说出来** ——
     // 只说"失败"用户无从判断该把图裁多小
     const got = best ? `（已压到 ${formatSize(best.url.length)}）` : '';
-    return { error: `「${name}」压缩后仍超过内联上限 ${formatSize(maxInline)}${got}，${verb}` };
+    return { error: `「${name}」压缩后仍超过内联上限 ${formatSize(maxInline)}${got}，未添加` };
   } finally {
     // 必须释放：一次拖 20 张图，不释放会把解码后的整张位图全留在内存里
     try { dec.bitmap?.close?.(); } catch { /* 已关闭 */ }
@@ -984,45 +967,18 @@ export async function imageToInline(file, opt = {}) {
  * 调用它的前提就是"这张图超了阈值"，直通等于什么都不做；
  * 而且这里的 size 是解码后的字节数，与 dataURL 字符数不是一回事。
  */
-/**
- * MIME → 落盘扩展名（纯函数，可单测）。
- *
- * 早先这里写的是 `type === 'image/png' ? 'png' : 'jpg'`，于是 GIF / SVG /
- * WebP 的内联图一律被叫成 `inline.jpg`。而这个名字**只在失败提示里出现**，
- * 用户看到的就成了一句指向不存在文件的报错：
- *   「inline.jpg」是动图（2.1 MB），压缩会丢掉动画，未添加
- * 既没有这张文件、也没在"添加"任何东西 —— 两张失败时两条提示还长得一模一样。
- *
- * 认不出的类型仍按 jpg（最常见的兜底，且 jpg 分支走有损压缩，是安全的）。
- */
-const MIME_EXT = {
-  'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif',
-  'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/bmp': 'bmp',
-  'image/avif': 'avif', 'image/x-icon': 'ico',
-};
-export function extOfMime(mime) {
-  return MIME_EXT[String(mime || '').toLowerCase().trim()] || 'jpg';
-}
-
 export async function shrinkDataUrl(dataUrl, opt = {}) {
   const blob = dataUrlToBlob(dataUrl);
   if (!blob || !blob.size) return { error: '图片数据已损坏，无法压缩' };
   const type = blob.type || 'image/png';
-  const ext = extOfMime(type);
-  // 名字只进提示；调用方传「第 k 张」这种序号，多张失败才分得清是哪一张
-  const name = String(opt.name || 'inline');
+  const ext = type === 'image/png' ? 'png' : 'jpg';
   let f;
   try {
-    f = new File([blob], `${name}.${ext}`, { type });
+    f = new File([blob], 'inline.' + ext, { type });
   } catch {
     return { error: '当前环境不支持重新压缩图片' };
   }
-  return imageToInline(f, {
-    ...opt,
-    skipBelow: 0,
-    // 存量压缩没有"添加"这个动作，沿用默认的「未添加」会把人带偏
-    verb: opt.verb === undefined ? '未压缩' : opt.verb,
-  });
+  return imageToInline(f, { ...opt, skipBelow: 0 });
 }
 
 /* --------------------------- 附件 Blob 存储 --------------------------- */

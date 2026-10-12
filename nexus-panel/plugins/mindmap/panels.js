@@ -1305,7 +1305,12 @@ export function buildSide(app, opts = {}) {
         return;
       }
       if (isImageName(ref.n) && asset.url) openPreview(app, asset);
-      else io.downloadBlob(io.safeFileName(asset.name || ref.n || '附件'), asset.blob);
+      else {
+        const r = io.downloadBlob(io.safeFileName(asset.name || ref.n || '附件'), asset.blob);
+        // 这里没有成功文案可盖（本来就不说话），但**静默什么都不发生**
+        // 同样要不得：点了没反应，用户只会一直点下去。
+        if (!io.downloadOk(r)) app.api.status('保存失败：没能触发下载', true);
+      }
     };
 
     const addImages = async () => {
@@ -1364,8 +1369,7 @@ export function buildSide(app, opts = {}) {
       let srcBytes = 0; let outBytes = 0;
       const failed = [];
       for (const i of idx) {
-        // 带上序号：失败提示里要指得清是哪一张（早先一律叫 inline.jpg）
-        const r = await io.shrinkDataUrl(list[i], { name: `第 ${i + 1} 张` });
+        const r = await io.shrinkDataUrl(list[i]);
         if (!r.url) { failed.push(r.error || `第 ${i + 1} 张`); continue; }
         srcBytes += String(list[i]).length;
         outBytes += r.url.length;
@@ -2436,11 +2440,20 @@ export function openVideo(app, asset, opt = {}) {
     }
   }
 
+  /**
+   * 抓当前画面后交给 fn。
+   *
+   * `fn` 可以返回 `downloadBlob` 的结果：**只有返回 'error' 时才改口**。
+   * 截图那一路靠它 —— 下载没发起时不能说「已保存截图」。
+   * 「设为封面」那一路返回的是别的（或 undefined），照旧报 okMsg。
+   */
   function withFrame(fn, okMsg) {
     const d = grab();
     if (!d) { app.api?.status?.('还没读到画面，等视频播起来再试', true); return; }
-    fn(d);
-    if (okMsg) app.api?.status?.(okMsg);
+    const r = fn(d);
+    if (!okMsg) return;
+    if (r && !io.downloadOk(r)) app.api?.status?.('保存失败：没能触发下载', true);
+    else app.api?.status?.(okMsg);
   }
 
   const shot = h('button.mm-btn', {
@@ -2448,7 +2461,10 @@ export function openVideo(app, asset, opt = {}) {
       const base = String(asset.name || '视频').replace(/\.[^.]+$/, '');
       // 扩展名必须跟**实际字节**一致：抓出来的是 JPEG，存成 .png 的话
       // 有些看图软件会直接拒绝打开（"文件已损坏"），而内容其实没问题。
-      io.downloadBlob(io.safeFileName(`${base}-截图.jpg`), io.dataUrlToBlob(d));
+      //
+      // 返回给 withFrame：下载没发起时它会把「已保存截图」换成失败提示 ——
+      // 不返回的话那句照样说，用户拿一张根本不存在的截图。
+      return io.downloadBlob(io.safeFileName(`${base}-截图.jpg`), io.dataUrlToBlob(d));
     }, '已保存截图'),
   }, '截图');
 
@@ -2520,7 +2536,9 @@ export function openPreview(app, asset, opts) {
     onclick: () => {
       const b = blobOf(items[idx]);
       if (!b) { app.api.status('另存为失败：拿不到图片数据', true); return; }
-      io.downloadBlob(io.safeFileName(items[idx].name || '图片'), b);
+      const r = io.downloadBlob(io.safeFileName(items[idx].name || '图片'), b);
+      // 同上：本来不说话，但下载没发起时必须出声，否则点了没反应。
+      if (!io.downloadOk(r)) app.api.status('保存失败：没能触发下载', true);
     },
   }, '另存为');
 
