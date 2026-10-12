@@ -18313,6 +18313,99 @@ group('BUG 135 · FreeMind 图标与外框导成 XMind 会丢，必须数出来�
    结果
    ============================================================ */
 
+
+/* ------------------------------------------------------------------
+   BUG 136：节点没有 data.id 时，导出 .xmind 的外框整条消失
+   ------------------------------------------------------------------
+   buildTopic 写的是 `id: safeId(data.id)` —— 节点没有 data.id 时**就是
+   null**。而外框（boundary）与关系线（relationship）都是**按 id 引用**的：
+
+     · buildBoundaries 里 `if (!a || !b) return;` —— 引用不到就整条不写；
+     · buildRelationships 里 `if (!ids.has(a) || !ids.has(b)) continue;`
+
+   从 .mm / .opml / .md / .mmd / .puml 导入建出来的节点**一律没有 id**
+   （rowsToKm 不给 id，BUG 128 那句的注释就是这么写的），所以：
+
+     导入 .md → 给两个节点加外框 → 导出 .xmind → 外框静默消失
+     而 xmindLossCount 报 0，界面只说「XMind 已导出」
+
+   ⓘ 关系线那条路暂时踩不到：它只来自 .xmind 导入（topic 自带 id）与 .mm
+     的 <arrowlink>（BUG 128 的 ensureId 会给端点补 id）。外框没有这层兜底，
+     所以先在外框上发作。
+
+   XMind 的 topic 本来就该有 id（外框 / 关系线 / 概要都靠它引用），所以修在
+   根子上：缺了就生成一个，而不是给每种引用各打一次补丁。
+   ------------------------------------------------------------------ */
+group('BUG 136 · 没有 data.id 的节点，topic.id 不能是 null（外框会整条消失）');
+
+{
+  const X136 = await import('./xmind.js');
+  const sheetOf = (root) => ({ id: 'sh1', title: 'T', theme: null, layout: null,
+    content: JSON.stringify({ root }) });
+
+  /*
+   * 只看 content.json：本工具自己的无损快照 kityminder.json 会原样保留 data，
+   * 那条路径里什么都能保住 —— 看不出导出侧到底写没写。
+   */
+  const cjOf = async (root) => {
+    const blob = await X136.writeXMind([sheetOf(root)], 'sh1');
+    const es = await X136.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    return JSON.parse(new TextDecoder().decode(es.get('content.json')));
+  };
+
+  /* 一、核心：没有 data.id 时 topic.id 必须有值 */
+  const cj1 = await cjOf({ data: { text: '根' }, children: [
+    { data: { text: 'A' } }, { data: { text: 'B' } }] });
+  const kids1 = cj1[0].rootTopic.children.attached;
+  eq(cj1[0].rootTopic.id == null, false, '★ 根没有 data.id 时 topic.id 也不能是 null');
+  eq(kids1[0].id == null, false, '★ 子节点没有 data.id 时 topic.id 也不能是 null');
+  ok(kids1[0].id !== kids1[1].id,
+    '★ 生成的 id 不能撞车（撞了外框区间会指到同一个节点）');
+
+  /* 二、有 id 时原样保留 —— 修这个不能把既有 id 换掉 */
+  const cj2 = await cjOf({ data: { id: 'nR', text: '根' },
+    children: [{ data: { id: 'nA', text: 'A' } }] });
+  eq(cj2[0].rootTopic.id, 'nR', '有 data.id 时原样保留（不能换掉）');
+  eq(cj2[0].rootTopic.children.attached[0].id, 'nA', '子节点同理');
+
+  /* 三、空白 id 等于没有（safeId 把 '   ' 判成 null） */
+  const cj3 = await cjOf({ data: { id: '   ', text: '根' }, children: [] });
+  eq(cj3[0].rootTopic.id == null, false, '空白 data.id 也要生成（等于没有）');
+
+  /* 四、★ 用户可见的效果：无 id 节点的同组外框 */
+  const root4 = { data: { text: '根' }, children: [
+    { data: { text: 'A', boundaryGroup: 'bg1' } },
+    { data: { text: 'B', boundaryGroup: 'bg1' } },
+    { data: { text: 'C' } }] };
+  const cj4 = await cjOf(root4);
+  const bd4 = cj4[0].rootTopic.boundaries;
+  ok(Array.isArray(bd4) && bd4.length === 1,
+    '★ 无 id 节点的同组外框必须写得出去（早先 topic.id 是 null，整条没了）');
+  // 引用必须指到真实存在的 topic，否则别的文件打开是一条挂在空处的框
+  const idSet4 = new Set([cj4[0].rootTopic.id,
+    ...cj4[0].rootTopic.children.attached.map((t) => t.id)]);
+  const refs4 = String(bd4?.[0]?.range ?? '').replace(/[()]/g, '').split(',').filter(Boolean);
+  ok(refs4.length > 0 && refs4.every((r) => idSet4.has(r)),
+    '外框 range 引用的 id 必须真实存在（不能是死链）');
+
+  /* 五、完整往返：剥掉无损快照，模拟被别的软件存过一遍 */
+  const blob4 = await X136.writeXMind([sheetOf(root4)], 'sh1');
+  const es4 = await X136.zipRead(new Uint8Array(await new Blob([blob4]).arrayBuffer()));
+  const only4 = [...es4].filter(([k]) => k === 'content.json')
+    .map(([name, data]) => ({ name, data }));
+  const r4 = await X136.readXMind(new Uint8Array(await X136.zipWrite(only4)));
+  const back4 = JSON.parse(r4.sheets[0].content).root;
+  eq(back4.children[0].data.boundaryGroup, 'bg1', '★ 往返后 A 仍在外框里');
+  eq(back4.children[1].data.boundaryGroup, 'bg1', '★ 往返后 B 仍在外框里');
+  eq(back4.children[2].data.boundaryGroup, undefined,
+    'C 不被框进来（BUG 87 那条：不能把无关节点划进外框）');
+
+  /* 六、源码契约 */
+  const xm136 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+  ok(/id:\s*safeId\(data\.id\)\s*\|\|\s*shortId\(/.test(xm136),
+    '★ topic.id 必须有生成兜底（写成 `safeId(data.id)` 就是 null）');
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {

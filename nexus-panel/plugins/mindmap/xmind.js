@@ -786,7 +786,11 @@ function buildRelationships(list, km) {
 function buildTopic(kmNode, packs) {
   const data = kmNode?.data || {};
   const topic = {
-    id: safeId(data.id),
+    // BUG 136：没有 data.id 的节点（从 .mm / .opml / .md 等交换格式导入
+    // 建出来的一律没有 id）导出后 topic.id 是 null —— 而外框与关系线都是
+    // **按 id 引用**的，引用不到就整条写不出去（外框静默消失、关系线被当
+    // 死链滤掉）。XMind 的 topic 本来就该有 id，缺了就生成一个。
+    id: safeId(data.id) || shortId('t'),
     class: 'topic',
     title: str(data.text) ?? '',
   };
