@@ -2472,7 +2472,8 @@ async function gcOrphanAssets(quiet = false) {
     capture();
 
     let text = '';
-    if (kind === 'freemind') text = fmt.toFreemind(s.content);
+    // BUG 128：关系线要传进去 —— .mm 用 `<arrowlink>` 表达，端点节点要带 ID
+    if (kind === 'freemind') text = fmt.toFreemind(s.content, s.xrelationships);
     else if (kind === 'opml') text = fmt.toOpml(s.content, s.title || '脑图');
     else if (kind === 'mermaid') text = fmt.toMermaid(s.content);
     else if (kind === 'plantuml') text = fmt.toPlantUml(s.content);
@@ -2500,8 +2501,13 @@ async function gcOrphanAssets(quiet = false) {
       markers: '标记图标' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);
-    if (loss.relationships > 0) seg.push(`关系线 ${loss.relationships} 条`);
-    // 关系线已经在 seg 里说过了，scope 只补"涉及多少节点"，不再重复一遍
+    /*
+     * BUG 128：.mm 带得走连线**本身**、带不走它的标题（FreeMind 的 arrowlink
+     * 没有标题属性），所以这里说的是"标题"而不是"关系线" —— 说成整条线
+     * 丢失是虚报，说成没丢是瞒报。
+     */
+    const relLabel = kind === 'freemind' ? '关系线标题' : '关系线';
+    if (loss.relationships > 0) seg.push(`${relLabel} ${loss.relationships} 条`);
     const scope = loss.nodes > 0 ? `（共涉及 ${loss.nodes} 个节点）` : '';
     const notes = [];
     if (workbook.sheets?.length > 1) {
@@ -2796,7 +2802,12 @@ async function gcOrphanAssets(quiet = false) {
     const kind = fmt.detectFormat(text, f.name);
 
     if (kind === 'freemind' || kind === 'opml' || kind === 'mermaid' || kind === 'plantuml') {
-      const content = kind === 'freemind' ? fmt.fromFreemind(text)
+      /*
+       * BUG 128：`<arrowlink>`（箭头连线）是**画布级**数据，塞不进 content
+       * 里 —— 所以 .mm 走 `parseFreemind`，它同时回内容与关系线。
+       */
+      const parsed = kind === 'freemind' ? fmt.parseFreemind(text) : null;
+      const content = parsed ? parsed.content
         : kind === 'opml' ? fmt.fromOpml(text)
           : kind === 'mermaid' ? fmt.fromMermaid(text)
             : fmt.fromPlantUml(text);
@@ -2806,7 +2817,9 @@ async function gcOrphanAssets(quiet = false) {
         return;
       }
       // 交换格式只带一张画布 —— 用文件名做标题，用户才认得出是哪张
-      sheets = [{ id: wb.newSheetId(), title: fmt.baseTitle(f.name), content, theme: null, layout: null }];
+      const one = { id: wb.newSheetId(), title: fmt.baseTitle(f.name), content, theme: null, layout: null };
+      if (parsed?.xrelationships?.length) one.xrelationships = parsed.xrelationships;
+      sheets = [one];
       form = kind;
     } else if (kind === 'markdown' || /\.(md|markdown|txt)$/i.test(f.name)) {
       // 一条大纲都没有就别往下走：`markdownToWorkbook()` 对任何输入都会给出
@@ -2965,8 +2978,9 @@ async function gcOrphanAssets(quiet = false) {
    * BUG 122：统计保留下来的关系线（画布级 `xrelationships`）。
    *
    * 关系线是**内容**：两个节点之间「有关联、叫什么」。本工具不渲染它，
-   * 但已原样保住、导出 .xmind 时会写回 —— 必须说出来，否则用户看到
-   * "关系线没了"会以为文件被改坏。措辞与 unsupportedMarkersTip 对齐。
+   * 但已原样保住、导出 .xmind / .mm 时会写回（BUG 128 之后 .mm 也带得走）——
+   * 必须说出来，否则用户看到"关系线没了"会以为文件被改坏。
+   * 措辞与 unsupportedMarkersTip 对齐。
    *
    * @param {Array} sheets 画布数组
    * @returns {string} 提示串；没有则 ''
@@ -2980,7 +2994,7 @@ async function gcOrphanAssets(quiet = false) {
     }
     if (!total) return '';
     return `${sheetsWith} 张画布上的 ${total} 条关系线本工具不显示`
-      + '（已原样保留，导出 .xmind 时会写回）';
+      + '（已原样保留，导出 .xmind / .mm 时会写回）';
   }
 
   /**

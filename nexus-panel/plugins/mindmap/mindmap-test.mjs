@@ -8174,7 +8174,7 @@ group('交换格式接入 UI');
   // 导入分支
   ok(/fmt\.detectFormat\(text, f\.name\)/.test(idx), '导入按**内容**嗅探');
   ok(/\.mmd,.puml,.txt/.test(idx), 'pickFile 放开了新扩展名');
-  ok(/fmt\.fromFreemind\(text\)/.test(idx), '导入接 FreeMind');
+  ok(/fmt\.parseFreemind\(text\)/.test(idx), '导入接 FreeMind（要连关系线一起取，见 BUG 128）');
   ok(/fmt\.fromOpml\(text\)/.test(idx), '导入接 OPML');
   ok(/fmt\.fromMermaid\(text\)/.test(idx), '导入接 Mermaid');
   ok(/fmt\.fromPlantUml\(text\)/.test(idx), '导入接 PlantUML');
@@ -17291,7 +17291,13 @@ group('BUG 123 · 交换格式丢掉的标记图标与关系线必须计入提�
     const iMd = code.indexOf('fmt.exchangeLossAll(workbook.sheets');
     const iEx = code.indexOf('exchangeLoss(s.content, kind, s)');
     ok(iMd > 0 && iEx > 0, '两条导出路径都在调统计（且把画布传进去了）');
-    const relSeg = (code.split('关系线 ${loss.relationships} 条').length - 1);
+    /*
+     * 两段提示各自把关系线 push 进 seg —— 早先这里按字面量
+     * '关系线 ${loss.relationships} 条' 数，而 BUG 128 之后 .mm 那条说的是
+     * 「标题」（`${relLabel}`），字面量只剩 1 处 —— **断言会失败**。
+     * 按形状数（seg.push 里带 loss.relationships）才不依赖措辞。
+     */
+    const relSeg = (code.match(/seg\.push\(`[^`]*\$\{loss\.relationships\}[^`]*`\)/g) || []).length;
     ok(relSeg >= 2, '★ 关系线按「条」写进两段提示里', `实际 ${relSeg} 处`);
     /*
      * 「共涉及」只在**有节点级丢失**时才带，且只说节点 ——
@@ -17697,6 +17703,101 @@ group('BUG 127 · FreeMind 的 <font> / <icon> / <cloud> 双向');
       '★ 提示接进了 warns（自己 status 会把「已导入」那句盖掉）');
     ok(/导出 \.mm 时会写回/.test(code), '★ 措辞里写回的是 .mm，不是 .xmind');
   }
+}
+
+
+/* ============================================================
+   BUG 128：导入别人的 .mm，箭头连线（<arrowlink>）静默丢光
+   ============================================================ */
+
+group('BUG 128 · FreeMind 的 <arrowlink> 双向');
+{
+  const f = await import('./formats.js');
+
+  /** 造一份带箭头的 .mm（甲 → 乙，另有一条死链与一条自环） */
+  const mm = '<map version="1.0.1">\n'
+    + '<node ID="A" TEXT="根">\n'
+    + ' <node ID="B" TEXT="甲">\n'
+    + '  <arrowlink DESTINATION="C"/>\n'
+    + ' </node>\n'
+    + ' <node ID="C" TEXT="乙"/>\n'
+    + ' <node ID="D" TEXT="丙">\n'
+    + '  <arrowlink DESTINATION="NOPE"/>\n'
+    + '  <arrowlink DESTINATION="D"/>\n'
+    + ' </node>\n'
+    + '</node>\n'
+    + '</map>';
+
+  const p = f.parseFreemind(mm);
+  ok(!!p && typeof p.content === 'string', 'parseFreemind 回内容与关系线两样');
+  eq(p?.xrelationships?.length ?? -1, 1, '★ 只收下 1 条（死链与自环不收）');
+  const rel = p.xrelationships[0] || {};
+  eq(rel.end1Id, 'B', '起点是带 <arrowlink> 的甲');
+  eq(rel.end2Id, 'C', '★ 终点按 ID 解析到乙（不是死链）');
+
+  const km = JSON.parse(p.content);
+  const byText = {};
+  f.walkKm(km.root, (n) => { byText[n.data.text] = n; });
+  eq(byText['甲']?.data?.id, 'B', '★ 端点节点拿到了文件里原有的 ID');
+  eq(byText['乙']?.data?.id, 'C', '终点节点同样拿到 ID');
+  eq(byText['丙']?.data?.id, undefined, '★ 非端点节点不凭空加 ID（写了纯属噪音）');
+
+  // 写回
+  const out1 = f.toFreemind(p.content, p.xrelationships);
+  ok(/<arrowlink DESTINATION="C"\/>/.test(out1), '★ 导出的 .mm 里写回了 arrowlink');
+  ok(/ID="B"/.test(out1) && /ID="C"/.test(out1), '★ 端点节点带上 ID（DESTINATION 引用得到）');
+  eq((out1.match(/\bID="/g) || []).length, 2, '只给端点写 ID，不是每个节点都写');
+
+  // 往返
+  const p2 = f.parseFreemind(out1);
+  eq(p2.xrelationships.length, 1, '★ 二轮关系线还在');
+  eq(`${p2?.xrelationships?.[0]?.end1Id}->${p2?.xrelationships?.[0]?.end2Id}`, 'B->C',
+    '二轮指向不变');
+  eq(p2.content, p.content, '★ 二轮内容与一轮完全一致');
+  eq(f.toFreemind(p2.content, p2.xrelationships), out1, '三轮产物稳定（不再漂移）');
+
+  // 不传关系线时不能凭空写
+  const bare = f.toFreemind(p.content);
+  ok(!/arrowlink/.test(bare), '★ 不传 rels 时不写 arrowlink');
+  ok(!/\bID="/.test(bare), '不传 rels 时不写 ID');
+
+  // 死链 / 自环 / 脏 ID
+  const mmDead = '<map version="1.0.1"><node ID="A" TEXT="根">'
+    + '<node ID="B" TEXT="甲"><arrowlink DESTINATION="GHOST"/></node>'
+    + '<node ID="C" TEXT="乙"><arrowlink DESTINATION="C"/></node>'
+    + '<node ID="D" TEXT="丙"><arrowlink DESTINATION="bad id&amp;&quot;"/></node>'
+    + '</node></map>';
+  eq(f.parseFreemind(mmDead).xrelationships.length, 0,
+    '★ 死链 / 自环 / 脏 ID 一律不收（写出来是坏引用）');
+
+  // 没有 ID 的节点指向不到：源 ID 缺失时也要能连（自动生成 id）
+  const mmNoId = '<map version="1.0.1"><node TEXT="根">'
+    + '<node TEXT="甲"><arrowlink DESTINATION="X"/></node>'
+    + '<node ID="X" TEXT="乙"/></node></map>';
+  const p3 = f.parseFreemind(mmNoId);
+  eq(p3.xrelationships.length, 1, '★ 起点没有 ID 时自动补一个，连线仍然成立');
+  ok(String(p3?.xrelationships?.[0]?.end1Id || '').length > 0, '自动生成的起点 id 非空');
+  eq(p3?.xrelationships?.[0]?.end2Id, 'X', '终点仍是文件里的 ID');
+
+  // exchangeLoss：.mm 带得走连线本身、带不走标题
+  const sheet = { xrelationships: p.xrelationships };
+  eq(f.exchangeLoss(p.content, 'freemind', sheet).relationships, 0,
+    '★ 无标题的连线 → .mm 不报丢失');
+  const titled = { xrelationships: p.xrelationships.map((r) => ({ ...r, title: '导致' })) };
+  eq(f.exchangeLoss(p.content, 'freemind', titled).relationships, 1,
+    '★ 有标题的连线 → .mm 只报"标题"丢（报整条线是虚报）');
+  eq(f.exchangeLoss(p.content, 'opml', sheet).relationships, 1,
+    '★ opml 仍然整条都带不走');
+  eq(f.exchangeLoss(p.content, 'markdown', sheet).relationships, 1,
+    'markdown 同样整条都带不走');
+
+  // 源码契约：两处调用点真的接上了
+  const idx = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+  ok(/fmt\.parseFreemind\(text\)/.test(idx), '★ 导入走 parseFreemind（要连关系线一起取）');
+  ok(/fmt\.toFreemind\(s\.content, s\.xrelationships\)/.test(idx),
+    '★ 导出把关系线传进去了（不传等于没修）');
+  ok(/关系线标题/.test(idx), '★ .mm 那条提示说的是"标题"而不是整条线');
+  ok(/导出 \.xmind \/ \.mm 时会写回/.test(idx), '★ 导入回执把两种格式都说到了');
 }
 
 /* ============================================================

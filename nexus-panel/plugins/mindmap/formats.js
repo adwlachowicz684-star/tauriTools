@@ -269,9 +269,38 @@ export function kmToRows(root) {
  * `FOLDED` 用 kityminder 的 expandState 表达 —— 折叠状态丢了虽然不致命，
  * 但源图里收起的分支导出去全展开，会让人以为结构变了。
  */
-export function toFreemind(content) {
+export function toFreemind(content, rels = null) {
   const km = parseKm(content);
   if (!km) return '';
+  /*
+   * BUG 128：箭头连线（`<arrowlink DESTINATION>`）。
+   *
+   * 关系线是**内容**，不是装饰 —— 两个节点之间「有关联」是用户写进去的。
+   * 早先导入别人的 .mm 时整条丢、导出时也不写：导入 → 改一点 → 导出，
+   * 文件里的连接一条不剩，且不报错。与 XMind 的关系线（BUG 122）同一类。
+   *
+   * `DESTINATION` 引用的是**节点 ID**，所以端点节点必须带上 `ID` 属性；
+   * 不在本画布里的端点先滤掉（死链画出来挂在空处，比不写更糟）。
+   */
+  const arrows = new Map();     // 起点节点 id → [终点节点 id]
+  const endpoint = new Set();   // 需要写 ID 的节点
+  if (Array.isArray(rels) && rels.length) {
+    const present = new Set();
+    walkKm(km.root, (n) => {
+      const i = String(n?.data?.id ?? '').trim();
+      if (i) present.add(i);
+    });
+    for (const r of rels) {
+      if (!r || typeof r !== 'object') continue;
+      const a = String(r.end1Id ?? '').trim();
+      const b = String(r.end2Id ?? '').trim();
+      if (!a || !b || a === b || !present.has(a) || !present.has(b)) continue;
+      if (!arrows.has(a)) arrows.set(a, []);
+      if (!arrows.get(a).includes(b)) arrows.get(a).push(b);
+      endpoint.add(a);
+      endpoint.add(b);
+    }
+  }
   const lines = [
     '<map version="1.0.1">',
     '<!-- 由 Nexus Panel 脑图导出 -->',
@@ -282,6 +311,9 @@ export function toFreemind(content) {
 
   function emit(n, depth) {
     const attrs = [`TEXT="${escXml(nodeText(n))}"`];
+    // BUG 128：只有端点节点需要 ID（其余写了纯属噪音）
+    const myId = String(n?.data?.id ?? '').trim();
+    if (myId && endpoint.has(myId)) attrs.push(`ID="${escXml(myId)}"`);
     // BUG 113：备注走 richcontent TYPE="NOTE"（FreeMind / Freeplane 的标准）。
     // 不写的话往返丢，别的软件打开我们导出的 .mm 也看不到备注。
     const noteHtml = noteToRichcontent(n?.data?.note, depth + 1);
@@ -332,6 +364,10 @@ export function toFreemind(content) {
     const cloud = String(n?.data?.fmCloud ?? '').trim();
     if (cloud) {
       inner.push(cloud && cloud !== '1' ? `<cloud COLOR="${escXml(cloud)}"/>` : '<cloud/>');
+    }
+    // BUG 128：箭头连线（官方属性表里没有"标题"这一项，所以只写指向）
+    for (const dest of (myId && arrows.get(myId)) || []) {
+      inner.push(`<arrowlink DESTINATION="${escXml(dest)}"/>`);
     }
     const pad = '  '.repeat(depth + 1);
     const kids = n?.children || [];
@@ -401,11 +437,21 @@ function freemindNodeText(el) {
 }
 
 /**
- * FreeMind XML → 画布内容。
- * 只认 <node> 的 TEXT 属性（缺则回落 richcontent）；其余（edge/font/hook/cloud）
+ * FreeMind XML → 画布内容 + 箭头连线。
+ *
+ * 只认 <node> 的 TEXT 属性（缺则回落 richcontent）。`<edge>` / `<hook>` 之类
  * 一概忽略 —— 它们承载的都是样式，本工具的主题体系不认。
+ *
+ * ⓘ 早先这里的注释写着「其余（edge/font/hook/cloud）一概忽略」，而 font 与
+ *   cloud 在 BUG 127 之后是要读的 —— **过期的注释比没注释更坏**：它会让
+ *   下一个读代码的人以为这里丢东西是"有意为之"。
+ *
+ * 关系线（`<arrowlink>`）是**画布级**数据，`stringifyKm` 装不下（它只有 root），
+ * 所以单独返回；`fromFreemind` 只回内容，保持既有签名不变。
+ *
+ * @returns {{content:string, xrelationships:Array}|null}
  */
-export function fromFreemind(text) {
+export function parseFreemind(text) {
   const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText, 'LINK', freemindNote,
     freemindStyle, freemindExtras);
   if (!rows) return null;
@@ -420,8 +466,22 @@ export function fromFreemind(text) {
   // BUG 114：颜色回填（COLOR / BACKGROUND_COLOR）
   applyStyles(root, rows.map((r) => r.style));
   // BUG 127：图标 / 外框回填（<icon BUILTIN> / <cloud>）
-  applyExtras(root, rows.map((r) => r.extra));
-  return stringifyKm(root);
+  const extras = rows.map((r) => r.extra);
+  applyExtras(root, extras);
+  /*
+   * BUG 128：箭头连线回填。必须在 applyExtras 之后 —— 它会给端点节点补
+   * `data.id`，而 applyExtras 只写 fmIcons / fmCloud，谁先谁后不影响那两项。
+   */
+  const xrelationships = freemindRelationships(root, extras);
+  return { content: stringifyKm(root), xrelationships };
+}
+
+/**
+ * FreeMind XML → 画布内容（不含关系线）。
+ * @see parseFreemind 需要关系线时用那个
+ */
+export function fromFreemind(text) {
+  return parseFreemind(text)?.content ?? null;
 }
 
 /* ------------------------------------------------------------
@@ -919,17 +979,24 @@ function freemindFont(el) {
 }
 
 /**
- * 取 <node> 上「内核没有对应概念」的两样东西：`<icon>` 与 `<cloud>`（BUG 127）。
+ * 取 <node> 上「内核没有对应概念」的几样东西：`<icon>` / `<cloud>`（BUG 127）
+ * 与 `<arrowlink>`（BUG 128），外加节点自己的 `ID` 属性。
  *
  * `<icon BUILTIN="flag"/>` 是 FreeMind 的标记图标（与 XMind 的 marker 同类，
  * BUG 110），`<cloud>` 是节点外框（与 XMind 的 boundary 同类）。早先两者都
  * 不读 —— 导入别人的 .mm 静默消失、再导出就没了，**一句提示都没有**。
+ *
+ * **`<arrowlink DESTINATION="…"/>` 是 FreeMind 的箭头连线**，与 XMind 的
+ * relationship 同类（BUG 122）：两个节点之间「有关联」是用户写进去的内容，
+ * 不是装饰。`DESTINATION` 指向目标节点的 `ID`（FreeMind 官方 File format
+ * 页写明 `destination (id of the target node)`），所以要连 `ID` 一起读。
  *
  * 保不住图标名里的脏字符（会写出别的软件打不开的 .mm），所以走白名单；
  * 封顶与 xmarkers 一致（20 个），防止畸形文件撑爆 data。
  */
 function freemindExtras(el) {
   const icons = [];
+  const arrows = [];
   let cloud = '';
   const kids = el ? (el.children || el.childNodes) : null;
   for (const c of Array.from(kids || [])) {
@@ -944,10 +1011,75 @@ function freemindExtras(el) {
       // `<cloud COLOR="#f00"/>` 带颜色、`<cloud/>` 不带 —— 都用真值占位，
       // 写回时按有没有颜色还原（'1' 是占位，本身不是合法色值）
       cloud = normColor(c.getAttribute?.('COLOR')) || '1';
+    } else if (tag === 'arrowlink' && arrows.length < 20) {
+      const d = String(c.getAttribute?.('DESTINATION') || '').trim();
+      if (d && /^[A-Za-z0-9._@:-]{1,64}$/.test(d)) arrows.push(d);
     }
   }
-  return (icons.length || cloud) ? { icons, cloud } : null;
+  const id = String(el?.getAttribute?.('ID') || '').trim();
+  const hasId = /^[A-Za-z0-9._@:-]{1,64}$/.test(id);
+  return (icons.length || cloud || arrows.length || hasId)
+    ? { icons, cloud, arrows, id: hasId ? id : '' }
+    : null;
 }
+
+/**
+ * 行序列里的箭头连线 → 画布级 `xrelationships`（BUG 128）。
+ *
+ * **与 XMind 的关系线用同一份存储**（`xrelationships`），不要再立一套
+ * 「FreeMind 专用」的字段 —— 一个概念存两处，迟早只修一处（BUG 127 之前
+ * 的图标就是这么漏的）。好处是 .mm 导入的连接线导出 .xmind 时同样带得走。
+ *
+ * 行序与前序节点**一一对应**（与 applyCollapsed / applyLinks 等四个函数同构），
+ * 所以按行号就能定位节点。
+ *
+ * 只有**两端都能定位**才收：
+ *   · `DESTINATION` 指向的 ID 在文件里没有对应节点 → 死链，比不写更糟；
+ *   · 指向自己 → 自环，画不出来。
+ * 与 `readRelationships`（xmind.js）同一口径。
+ *
+ * 端点节点会被补上 `data.id`（优先用文件里原有的 ID）—— kityminder 的
+ * 关系线按节点 id 引用，而 `rowsToKm` 建出来的节点**没有 id**。
+ *
+ * @param {object} root kityminder 根
+ * @param {Array|null} extras 每行的 `freemindExtras` 结果
+ * @returns {Array} `[{ id, end1Id, end2Id }]`
+ */
+export function freemindRelationships(root, extras) {
+  if (!root || !Array.isArray(extras) || !extras.length) return [];
+  const order = [];
+  walkKm(root, (n) => order.push(n));
+  const indexById = new Map();
+  for (let i = 0; i < order.length && i < extras.length; i++) {
+    const id = extras[i]?.id;
+    if (id && !indexById.has(id)) indexById.set(id, i);
+  }
+  const ensureId = (i) => {
+    const n = order[i];
+    n.data = n.data || {};
+    if (!String(n.data.id ?? '').trim()) {
+      n.data.id = String(extras?.[i]?.id || '').trim() || genKmId();
+    }
+    return String(n.data.id);
+  };
+  const out = [];
+  for (let i = 0; i < order.length && i < extras.length; i++) {
+    const arrows = extras[i]?.arrows;
+    if (!arrows || !arrows.length) continue;
+    for (const dest of arrows) {
+      if (out.length >= MAX_FREEMIND_ARROWS) break;
+      const j = indexById.get(dest);
+      if (j == null || j === i) continue;   // 死链 / 自环
+      out.push({ id: genKmId(), end1Id: ensureId(i), end2Id: ensureId(j) });
+    }
+  }
+  return out;
+}
+
+/** 关系线封顶（畸形文件几千条箭头连线会撑爆画布数据） */
+const MAX_FREEMIND_ARROWS = 50;
+
+const genKmId = () => 'fm' + Math.random().toString(36).slice(2, 10);
 
 /** 行序列里的图标 / 外框回填到树上（与 applyCollapsed 等四个函数同构） */
 function applyExtras(root, extras) {
@@ -1163,6 +1295,10 @@ export const EXCHANGE_KEEP = {
   markdown: {},
   freemind: { hyperlink: true, collapsed: true, note: true,
     fmIcons: true, fmCloud: true,
+    // BUG 128：箭头连线（`<arrowlink>`）带得走；但它的**标题**带不走 ——
+    // FreeMind 官方属性表里 arrowlink 只有 color / destination /
+    // startarrow / endarrow / startinclination / endinclination，没有标题。
+    relationships: true,
     styleKeys: ['color', 'background',
       'font-family', 'font-size', 'font-weight', 'font-style'] },
   opml: { hyperlink: true },
@@ -1270,10 +1406,17 @@ export function exchangeLoss(content, kind, sheet) {
    * BUG 123：关系线（BUG 122 收在画布级 `xrelationships`）同样装不下。
    * 它是**画布级**字段，不在节点里 —— 所以单独数，且**不计进 nodes**：
    * 一句"共涉及 N 个节点"对"画布上有几条线"不成立。
+   *
+   * ⓘ `keep.relationships` 为真时（目前只有 .mm，BUG 128）连线本身带得走，
+   *   但**标题带不走**（FreeMind 的 arrowlink 没有标题属性）—— 所以数的是
+   *   "有标题的线"：把整条线说成丢失是虚报，把丢标题说成没丢是瞒报。
    */
-  out.relationships = !keep.relationships && Array.isArray(sheet?.xrelationships)
-    ? sheet.xrelationships.filter((r) => r && (r.end1Id || r.end2Id)).length
-    : 0;
+  const rels = Array.isArray(sheet?.xrelationships)
+    ? sheet.xrelationships.filter((r) => r && (r.end1Id || r.end2Id))
+    : [];
+  out.relationships = keep.relationships
+    ? rels.filter((r) => String(r.title ?? '').trim()).length
+    : rels.length;
   out.nodes = touched.size;
   return out;
 }
