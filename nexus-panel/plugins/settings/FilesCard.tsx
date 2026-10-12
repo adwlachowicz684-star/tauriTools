@@ -39,9 +39,18 @@ export default function FilesCard() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  /*
+   * 空输入**不能静默 return**。
+   *
+   * 按钮已经置灰，但回车键绕不过置灰 —— 只靠 disabled 的话，
+   * 在空输入框里敲回车依然是"按下去毫无反应、也不说为什么"。
+   * 同一张设置页里的 FavDirsCard 就是这么写的（置灰 + 回车也提示），
+   * 两张卡片不能一个说法一个做法。
+   */
   const add = async () => {
     const p = draft.trim();
-    if (!p || busy) return;
+    if (!p) { ctx.toast('先粘贴要授权的目录完整路径', 'err'); return; }
+    if (busy) return;
     setBusy(true);
     try {
       await ctx.invoke<string[]>('af_fs_allow_root', { path: p });
@@ -128,7 +137,7 @@ export default function FilesCard() {
         <button
           className="p-btn primary"
           style={{padding: '0 14px', fontSize: 'var(--fs-12, 12px)' }}
-          disabled={busy}
+          disabled={busy || !draft.trim()}
           onClick={add}
         >
           添加目录

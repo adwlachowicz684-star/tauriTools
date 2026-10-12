@@ -50,9 +50,13 @@ function useExternalApi() {
   return {
     channel,
     load,
+    /* 三个写入接口都**如实带回"存没存成"**（boolean），不吞掉失败：
+       外链策略是安全设置，谎报成功比不报更糟。 */
     savePolicy: (p: Policy) => call('save', 'savePolicy', [p]),
-    setStatus: (host: string, status: string) => call('setStatus', 'setHostStatus', [host, status]),
-    removeHost: (host: string) => call('remove', 'removeHost', [host]),
+    setStatus: async (host: string, status: string) =>
+      (await call('setStatus', 'setHostStatus', [host, status]))?.saved !== false,
+    removeHost: async (host: string) =>
+      (await call('remove', 'removeHost', [host]))?.saved !== false,
     suggestCsp: (p: Policy) => call('suggestCsp', 'suggestCsp', [p]),
     rescan: () => call('rescan', 'rescanAll', []),
   };
@@ -123,10 +127,32 @@ export default function ExternalCard() {
 
   const pending = hosts.filter((x) => x.status === 'pending');
 
+  /*
+   * 每个动作都必须有可见结果。
+   *
+   * 早先这里是 `await fn()` 直接往外抛：失败时 Promise 被 onClick 丢掉，
+   * 界面**一点反应都没有**（连一句提示都没有），只有控制台里一条
+   * unhandled rejection —— 用户只会以为"信任 / 禁止 / ✕ 这几个按钮坏了"。
+   * 而且 `okMsg` 是**不管存没存成**都弹的，属于谎报成功。
+   *
+   * 现在：`fn` 返回 false 表示"没落盘"，抛异常表示"根本没做成"，
+   * 两种都要说出来；只有真的成了才弹成功提示。
+   */
   const act = async (fn: () => Promise<any>, okMsg?: string) => {
-    await fn();
-    if (okMsg) ctx.toast(okMsg, 'ok');
+    let msg: string | null = null;
+    try {
+      const saved = await fn();
+      if (saved === false) {
+        msg = '改动没能保存（浏览器存储不可用：隐私模式或配额已满），重启后会回到原来的设置';
+      } else if (okMsg) {
+        ctx.toast(okMsg, 'ok');
+      }
+    } catch (e: any) {
+      msg = String(e?.message ?? e);
+    }
     await refresh();
+    // refresh 成功会清掉 err，所以要在刷新之后再落错误
+    if (msg) setErr(msg);
   };
 
   return (

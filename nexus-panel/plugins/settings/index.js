@@ -752,8 +752,21 @@ export default definePlugin({
         const sel = h('select.p-input', {
           style: { width: '160px', height: '30px', fontSize: '12px', padding: '0 8px' },
           onchange: (e) => {
-            ext.savePolicy({ ...policy, mode: e.target.value });
-            ctx.toast('外链策略已更新', 'ok');
+            /*
+             * 存不下就不能说「已更新」。
+             *
+             * 存储不可用（隐私模式 / 配额满）时 `savePolicy` 返回 false，
+             * 而下面 `renderExternal()` 重画读的是 `loadPolicy()`（磁盘上那份），
+             * 于是下拉框会**弹回旧值** —— 若这时已经弹过「已更新」，
+             * 用户看到的就是"提示成功 + 选项自己跳回去"，只会以为功能抽风。
+             * 真相得由这一句说出来：这一条根本没记下来，重启后照旧。
+             */
+            const saved = ext.savePolicy({ ...policy, mode: e.target.value });
+            if (saved === false) {
+              ctx.toast('外链策略没能保存（浏览器存储不可用：隐私模式或配额已满），重启后会回到原来的设置', 'err');
+            } else {
+              ctx.toast('外链策略已更新', 'ok');
+            }
             renderExternal();
           },
         }, ext.POLICY_MODES.map((m) =>
@@ -770,7 +783,18 @@ export default definePlugin({
               ext.POLICY_MODES.find((m) => m.value === policy.mode)?.desc || ''),
             h('button.p-btn', {
               style: { height: '30px', padding: '0 12px', fontSize: '12px' },
-              onclick: () => { ext.rescanAll(); setTimeout(renderExternal, 600); },
+              onclick: () => {
+                /*
+                 * 重新检查是异步的，且不 await 就不知道它成没成。
+                 * 早先 `ext.rescanAll(); setTimeout(renderExternal, 600);` ——
+                 * 失败时（外壳没接 / 插件入口读不到）Promise 被丢掉，
+                 * 唯一的反馈是 600ms 后列表**没变化**，看着就是"点了没反应"。
+                 */
+                Promise.resolve()
+                  .then(() => ext.rescanAll())
+                  .then(() => renderExternal())
+                  .catch((e) => ctx.toast(`重新检查失败：${e?.message || e}`, 'err'));
+              },
             }, '重新检查'),
           ),
         );
@@ -793,7 +817,14 @@ export default definePlugin({
             const mk = (label, status, cls) => h('button.p-btn', {
               class: x.status === status ? cls : '',
               style: { height: '26px', padding: '0 9px', fontSize: '11px' },
-              onclick: () => { ext.setHostStatus(x.host, status); renderExternal(); },
+              onclick: () => {
+                const r = ext.setHostStatus(x.host, status);
+                // 逐条放行 / 禁止是安全设置：没落盘就必须说，不能靠"列表没变"暗示
+                if (r.saved === false) {
+                  ctx.toast(`「${x.host}」没能保存（浏览器存储不可用），重启后会回到原来的状态`, 'err');
+                }
+                renderExternal();
+              },
             }, label);
             box.appendChild(
               h('div.p-row', {
@@ -815,7 +846,13 @@ export default definePlugin({
                 h('button.p-btn', {
                   style: { height: '26px', padding: '0 8px', fontSize: '11px' },
                   title: '从清单移除',
-                  onclick: () => { ext.removeHost(x.host); renderExternal(); },
+                  onclick: () => {
+                    const r = ext.removeHost(x.host);
+                    if (r.saved === false) {
+                      ctx.toast(`「${x.host}」没能移除（浏览器存储不可用），重启后会回到清单里`, 'err');
+                    }
+                    renderExternal();
+                  },
                 }, '✕'),
               ),
             );
@@ -879,7 +916,14 @@ export default definePlugin({
           flex: '1', height: '30px', fontSize: '12px', padding: '0 10px', minWidth: '0',
         },
         onkeydown: (e) => { if (e.key === 'Enter') add(); },
+        // 空输入时把「添加目录」置灰：按钮能点却什么都不做，只会让人以为坏了
+        oninput: () => { addBtn.disabled = !(input.value || '').trim(); },
       });
+      const addBtn = h('button.p-btn.primary', {
+        style: { height: '30px', padding: '0 14px', fontSize: '12px' },
+        disabled: true,
+        onclick: add,
+      }, '添加目录');
 
       const render = async () => {
         list.innerHTML = '';
@@ -928,10 +972,15 @@ export default definePlugin({
 
       async function add() {
         const p = (input.value || '').trim();
-        if (!p) return;
+        /*
+         * 空输入不能静默 return：置灰挡得住点击、挡不住回车。
+         * 与 React 版（FilesCard.tsx）同一套说法 —— 两版行为必须一致。
+         */
+        if (!p) { ctx.toast('先粘贴要授权的目录完整路径', 'err'); return; }
         try {
           await ctx.invoke('af_fs_allow_root', { path: p });
           input.value = '';
+          addBtn.disabled = true;
           ctx.toast('已加入授权范围', 'ok');
         } catch (e) {
           // Rust 侧的报错已经写清了原因（不是目录 / 范围过大 / 系统目录）
@@ -952,10 +1001,7 @@ export default definePlugin({
           list,
           h('div.p-row', { style: { marginTop: '12px' } },
             input,
-            h('button.p-btn.primary', {
-              style: { height: '30px', padding: '0 14px', fontSize: '12px' },
-              onclick: add,
-            }, '添加目录'),
+            addBtn,
           ),
         ),
       );
@@ -994,12 +1040,24 @@ export default definePlugin({
         }
       };
 
+      /*
+       * 先本地反映（桥接慢也不显得卡顿），但**失败必须回滚**。
+       *
+       * 不回滚的话：选「退出程序」保存失败，界面仍把它画成选中，
+       * 而外壳里生效的还是「隐藏到托盘」—— 界面说 A、实际是 B，
+       * 只有一声 toast，用户下次点标题栏 ✕ 才会发现不对。
+       */
       const pick = async (v) => {
+        const prev = cur;
         cur = v;
         paint();
         try {
+          // 拿不到外壳接口时必须报错，不能静默跳过（点了有反应、其实没生效）
+          if (!ctx.shell?.window) throw new Error('拿不到外壳窗口接口，这次选择没能保存');
           await ctx.shell.window.setCloseAction(v);
         } catch (e) {
+          cur = prev;
+          paint();
           ctx.toast?.('保存失败：' + (e?.message || e), 'err');
         }
       };

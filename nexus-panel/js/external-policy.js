@@ -89,12 +89,36 @@ export function loadPolicy() {
   } catch { return { ...DEFAULT_POLICY, hosts: {} }; }
 }
 
+/**
+ * 落盘策略，并**如实回答"存没存成"**。
+ *
+ * 早先这里是一个 `catch { /* 忽略 *\/ }`，什么都不返回 ——
+ * 于是调用方（设置页的两处外链卡片）**没有任何办法知道**这次改动
+ * 到底有没有写进去，只能在后面无条件弹「外链策略已更新」。
+ *
+ * 存储不可用时（隐私模式 / 配额满 / 隔离态）的真实表现是：
+ *   弹了「已更新」→ 下拉框在被 `renderExternal()` 重画时又**弹回旧值**
+ *   （重画读的是 `loadPolicy()`，读回来的还是磁盘上那份）。
+ * 用户看到"提示成功 + 选项自己跳回去"，只会以为这个功能抽风，
+ * 而真相是"这一条根本没记下来，重启后照旧"。
+ *
+ * 外链策略是**安全设置**（放行哪些域），谎报成功比不报更糟：
+ * 不报他还会再点一次，报了成功他就不会再确认。
+ *
+ * @returns {boolean} true = 已落盘；false = 没存成（调用方必须说出来）
+ */
 export function savePolicy(p) {
   try {
     localStorage.setItem(KEY, JSON.stringify(p));
-    // 通知其他界面（设置页 / 外壳）同步
+  } catch {
+    return false; // 存储不可用：不能算"已更新"
+  }
+  try {
+    // 通知其他界面（设置页 / 外壳）同步。
+    // 这一步失败**不影响**已经落盘的事实，所以与上面分开 try。
     globalThis.dispatchEvent?.(new CustomEvent(EVENT, { detail: p }));
-  } catch { /* 存储不可用时忽略 */ }
+  } catch { /* 通知不到而已 */ }
+  return true;
 }
 
 export function onPolicyChange(fn) {
@@ -119,7 +143,15 @@ export function decideHost(host, policy = loadPolicy()) {
   }
 }
 
-/** 记录一次决策 */
+/**
+ * 记录一次决策。
+ *
+ * 返回值带上 `saved`：**改了内存不等于落了盘**。
+ * 逐条放行 / 禁止是安全设置，存不下却显示成"已信任"，
+ * 等于界面给了一个与事实相反的安全感 —— 而重启后它会悄悄回到原样。
+ *
+ * @returns {{policy: Policy, saved: boolean}}
+ */
 export function setHostStatus(host, status, meta = {}) {
   const p = loadPolicy();
   const prev = p.hosts[host] || {};
@@ -130,15 +162,14 @@ export function setHostStatus(host, status, meta = {}) {
     kind: meta.kind ?? prev.kind ?? 'unknown',
     sample: meta.sample ?? prev.sample,
   };
-  savePolicy(p);
-  return p;
+  return { policy: p, saved: savePolicy(p) };
 }
 
+/** @returns {{policy: Policy, saved: boolean}} 同上：必须能看出存没存成 */
 export function removeHost(host) {
   const p = loadPolicy();
   delete p.hosts[host];
-  savePolicy(p);
-  return p;
+  return { policy: p, saved: savePolicy(p) };
 }
 
 /** 登记扫描到的外链（不改变已有决策） */

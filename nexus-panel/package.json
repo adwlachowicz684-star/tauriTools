@@ -41,6 +41,7 @@
     "test:errdiag": "node err-diag-test.mjs",
     "test:external": "node external-test.mjs",
     "test:external-card-loop": "node external-card-loop-test.mjs",
+    "test:external-save-report": "node external-save-report-test.mjs",
     "test:file-claims": "node file-claims-test.mjs",
     "test:flash": "node plugin-flash-test.mjs",
     "test:folder-picker": "node folder-picker-test.mjs",

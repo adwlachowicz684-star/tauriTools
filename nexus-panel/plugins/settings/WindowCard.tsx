@@ -40,15 +40,32 @@ export default function WindowCard() {
     return () => { alive = false; };
   }, [sh]);
 
+  /*
+   * 先本地反映，桥接慢也不显得卡顿 —— 但**失败必须回滚**。
+   *
+   * 不回滚的后果：选「退出程序」保存失败时，`cur` 已经变成 'close'，
+   * 界面把它画成选中，而外壳里生效的仍是「隐藏到托盘」。
+   * 用户看着"退出程序"被选中，就会以为点标题栏 ✕ 会结束进程 ——
+   * 而实际上程序只是藏起来。这种"界面说 A、实际是 B"不会报错，
+   * 只有底部一行小字提了一句，很容易漏看。
+   */
   const pick = useCallback(async (v: CloseAction) => {
-    setCur(v); // 先本地反映，桥接慢也不显得卡顿
+    const prev = cur;
+    setCur(v);
     setErr(null);
     try {
-      await sh?.setCloseAction(v);
+      /*
+       * 拿不到外壳接口时**必须报错**，不能 `sh?.` 静默跳过：
+       * 那样界面照样把新选项画成选中，而这一次点击什么都没改 ——
+       * 点了有反应（高亮跟着走）、其实没生效，是最难发现的一类。
+       */
+      if (!sh) throw new Error('拿不到外壳窗口接口（隔离态下读不到），这次选择没能保存');
+      await sh.setCloseAction(v);
     } catch (e: any) {
+      setCur(prev); // 回滚：界面只显示真正生效的那个
       setErr(String(e?.message ?? e));
     }
-  }, [sh]);
+  }, [sh, cur]);
 
   return (
     <div className="p-card">
