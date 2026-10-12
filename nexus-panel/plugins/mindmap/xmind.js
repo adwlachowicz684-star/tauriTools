@@ -65,7 +65,7 @@ async function deflateRaw(bytes) {
  *
  * 对齐 mediainfo.js 的做法：那里对同等不可信的二进制输入也设了 guard++/depth 上限。
  */
-import { htmlToPlain, plainToHtml, isCollapsed, fontSizeNum } from './formats.js';
+import { htmlToPlain, plainToHtml, elToPlain, isCollapsed, fontSizeNum } from './formats.js';
 
 export const MAX_INFLATE_BYTES = 64 * 1024 * 1024;
 
@@ -1535,9 +1535,20 @@ function buildKmFromXmlTopic(t, depth = 0, styles = null) {
    */
   if (str(t.getAttribute('branch')) === 'folded') data.expandState = 'collapse';
 
+  /*
+   * BUG 138：备注。老版把备注写在 `<notes>` 里（纯文本走 `<plain>`，带格式的走
+   * `<richcontent TYPE="NOTE">`，后者是 XHTML）。早先这里直接用 `textContent`，
+   * 于是 `<br/>` 和 `</p>` 全被抹平 —— 实测「段一<p/>段二」变成「段一段二」、
+   * 「行1<br/>行2」变成「行1行2」，导入别人的 XMind 8 文件后备注挤成一团。
+   * 而 zen 档同样的内容走 topicNote + htmlToPlain，出来是带换行的 —— 同一份
+   * 内容两种档位两种结果。所以这里复用 formats.js 的 elToPlain（与 FreeMind
+   * 的 richcontent 同一份逻辑，BUG 113 那次提出的共用）。
+   */
   const notesEl = childrenOf(t, 'notes')[0];
   if (notesEl) {
-    const text = (notesEl.textContent || '').trim();
+    const plainEl = childrenOf(notesEl, 'plain')[0];
+    const richEl = childrenOf(notesEl, 'richcontent')[0];
+    const text = elToPlain(plainEl || richEl || notesEl);
     if (text) data.note = text;
   }
 

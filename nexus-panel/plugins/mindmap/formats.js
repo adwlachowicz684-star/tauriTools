@@ -1036,13 +1036,21 @@ function freemindNote(el) {
  * 两个段落也会被拼成一段（BUG 113）。所以得自己走一遍子节点：
  * `<br>` 是换行，块级标签**结束**时补一个换行，其余只取文字。
  * XML 里的实体（`&lt;` `&amp;`）在文本节点里已经还原好了。
+ *
+ * ⓘ 标签名必须按**本地名**判，不能拿 nodeName 直接用：XMind 8 的
+ *   `<richcontent>` 走 XML 命名空间，子标签是 `<xhtml:p>`（nodeName 就是
+ *   `xhtml:p`），照 nodeName 判块级标签的话一个都匹配不上 —— 段又拼成一段了。
+ *
+ * ⓘ 本函数由 FreeMind 的 `<richcontent TYPE="NOTE">`（BUG 113）与 XMind 8
+ *   的 `<notes>`（BUG 138）共用 —— 各写一份迟早只修一处。
  */
-function elToPlain(el) {
+export function elToPlain(el) {
   let out = '';
   for (const c of Array.from(el.childNodes || [])) {
     if (c.nodeType === 3) { out += String(c.nodeValue || ''); continue; }
     if (c.nodeType !== 1) continue;
-    const tag = String(c.nodeName || '').toLowerCase();
+    const raw = String(c.nodeName || '');
+    const tag = String(c.localName || raw.replace(/^.*:/, '') || '').toLowerCase();
     if (tag === 'br') { out += '\n'; continue; }
     out += elToPlain(c);
     if (/^(p|div|li|h[1-6]|tr|blockquote|ul|ol|table|pre)$/.test(tag)) out += '\n';

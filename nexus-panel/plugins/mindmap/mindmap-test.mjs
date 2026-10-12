@@ -18505,6 +18505,113 @@ ${withRels ? `<relationships>
     "★ buildKmFromXmlTopic 必须认 branch=\"folded\"（与 zen 档同一判据）");
 }
 
+/* ------------------------------------------------------------------
+   BUG 138：XMind 8 老文件的备注，换行与分段被抹平
+
+   老版把备注写在 `<notes>` 里：纯文本走 `<plain>`，带格式的走
+   `<richcontent TYPE="NOTE">`（XHTML）。而读侧写的是
+   `(notesEl.textContent || '').trim()` —— DOM 解析完标签已经没了，于是
+   `<br/>` 和 `</p>` 无从判断：
+
+     plain「第一行<br/>第二行」    → 「第一行第二行」
+     richcontent 两段              → 「段一段二」
+     richcontent「行1<br/>行2」    → 「行1行2」
+
+   而 zen 档（content.json）同样的内容走 topicNote + htmlToPlain，出来是
+   带换行的 —— **同一份内容、两种档位两种结果**。用户从 XMind 8 导入后
+   备注挤成一团，不报错，也数不进任何提示。
+
+   修法是复用 formats.js 的 elToPlain（FreeMind 的 richcontent 也是它，
+   BUG 113 那次提出的共用）。两个必须守住的边界：
+     · 标签名按**本地名**判 —— richcontent 的子标签是 `<xhtml:p>`，
+       nodeName 带着前缀，照 nodeName 判块级标签一个都匹配不上；
+     · 实体只解一次 —— `&amp;amp;` 必须是 `&amp;`，解两次就把内容改了。
+   ------------------------------------------------------------------ */
+group('BUG 138 · XMind 8 的备注：换行与分段不能被抹平');
+
+{
+  const X138 = await import('./xmind.js');
+  const NS = 'xmlns="urn:xmind:xmap:xmlns:content:2.0"';
+  const XH = 'xmlns:xhtml="http://www.w3.org/1999/xhtml"';
+
+  const legacyNote = async (notesXml) => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<xmap-content ${NS} version="2.0"><sheet id="s1"><topic id="t0"><title>根</title>
+<children><topics type="attached"><topic id="c1"><title>A</title>${notesXml}</topic>
+</topics></children></topic><title>画布</title></sheet></xmap-content>`;
+    const zb = await X138.zipWrite([{ name: 'content.xml', data: new TextEncoder().encode(xml) }]);
+    try {
+      const r = await X138.readXMind(new Uint8Array(zb));
+      return { note: JSON.parse(r.sheets[0].content).root.children[0].data.note, err: null };
+    } catch (e) {
+      return { note: null, err: String(e?.message || e) };
+    }
+  };
+
+  // ① 纯文本备注不受影响（修这个不能把好数据改坏）
+  {
+    const { note, err } = await legacyNote('<notes><plain>abc</plain></notes>');
+    ok(!err, '老版文件仍能导入', err || '');
+    eq(note, 'abc', '纯文本备注原样读出');
+  }
+
+  // ② 换行 / 分段必须保住
+  {
+    const { note } = await legacyNote('<notes><plain>第一行<br/>第二行</plain></notes>');
+    eq(note, '第一行\n第二行', '★ <plain> 里的 <br/> 要变成换行（不能拼成一行）');
+  }
+  {
+    const { note } = await legacyNote(
+      `<notes><richcontent TYPE="NOTE" ${XH}><xhtml:p>段一</xhtml:p><xhtml:p>段二</xhtml:p></richcontent></notes>`);
+    eq(note, '段一\n段二', '★ richcontent 两个段落不能拼成一段');
+  }
+  {
+    const { note } = await legacyNote(
+      `<notes><richcontent TYPE="NOTE" ${XH}><xhtml:p>行1<xhtml:br/>行2</xhtml:p></richcontent></notes>`);
+    eq(note, '行1\n行2', '★ richcontent 里的 <br/> 要变成换行');
+  }
+
+  // ③ 实体只解一次（解两次等于把内容改了）
+  {
+    const { note } = await legacyNote(`<notes><plain>a &amp;amp; b</plain></notes>`);
+    eq(note, 'a &amp; b', '★ 实体只解一次（解两次「&amp;amp;」会变成「&」）');
+  }
+
+  // ④ 与 zen 档同内容必须同结果 —— 两条读侧不许各走各的
+  {
+    const zenNote = async (notes) => {
+      const cj = [{ id: 's1', title: '画布', rootTopic: { id: 't0', title: '根',
+        children: { attached: [{ id: 'c1', title: 'A', notes }] } } }];
+      const zb = await X138.zipWrite([{ name: 'content.json',
+        data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+      const r = await X138.readXMind(new Uint8Array(zb));
+      return JSON.parse(r.sheets[0].content).root.children[0].data.note;
+    };
+    const z = await zenNote({ realHTML: { content: '<p>段一</p><p>段二</p>' } });
+    const l = (await legacyNote(
+      `<notes><richcontent TYPE="NOTE" ${XH}><xhtml:p>段一</xhtml:p><xhtml:p>段二</xhtml:p></richcontent></notes>`)).note;
+    eq(l, z, '★ 同一份备注，老版档与 zen 档必须读出同一个结果');
+    eq(z, '段一\n段二', '（对照）zen 档是带换行的');
+  }
+
+  // ⑤ 没写备注不能凭空长出
+  {
+    const { note } = await legacyNote('');
+    eq(note, undefined, '没有 <notes> 时不写 note');
+  }
+
+  /* ⑥ 源码契约：读侧必须用 elToPlain，且从 formats.js 引入
+     —— 锚 `elToPlain(` 会命中 import 行本身（引了不用照样绿），
+     所以锚的是**调用形状**。 */
+  const xm138 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+  ok(/elToPlain\(plainEl \|\| richEl \|\| notesEl\)/.test(xm138),
+    '★ 老版备注必须走 elToPlain（直接用 textContent 会把换行抹平）');
+  ok(!/notesEl\.textContent/.test(xm138), '★ 不能再出现 notesEl.textContent');
+  const fm138 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+  ok(/c\.localName \|\| raw\.replace\(\/\^\.\*:\/,\s*''\)/.test(fm138),
+    '★ 块级标签必须按本地名判（<xhtml:p> 的 nodeName 带前缀，照它判一个都匹配不上）');
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
