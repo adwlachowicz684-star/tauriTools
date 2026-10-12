@@ -1632,22 +1632,42 @@ function applyXmlBoundaries(pairs, boundariesEl) {
  * 与 workbook.deepNodeCount 同口径：导出时说出来，是唯一能提醒的机会
  * （导入是整体替换，等用户导回来发现少了已经晚了）。
  *
- * 三类损失分开统计，提示才能说清是哪一种：
+ * 五类损失分开统计，提示才能说清是哪一种：
  *   · blocked      节点上有超链接 → href 被超链接占掉，附件**一个都挂不上**
  *   · unlinked     没有超链接，但附件多于 1 个 → 只有第一个挂得上
  *   · images       图片（槽位 + 横幅合计）多于 1 张 → 只有第一张写进 image
+ *   · fmIcons      FreeMind 的 `<icon BUILTIN>`（BUG 127 收在 data.fmIcons）
+ *   · fmCloud      FreeMind 的 `<cloud>`（同上，收在 data.fmCloud）
+ *
+ * ⓘ 后两类是 BUG 135 补的。它们是 BUG 127 才有的数据，而 XMind **没有对应
+ *   字段**（XMind 的 marker 是另一套 id，cloud 更没有对应概念），于是：
+ *   导入别人的 .mm（带图标 / 外框）→ 导出 .xmind → 全丢，而这里报 0、
+ *   界面只说「XMind 已导出」。与 BUG 123 是同一个洞 —— 那次补的是交换格式
+ *   的 exchangeLoss，`xmindLossCount` 这条路径一直没人同步。
  *
  * @param {Array} sheets 画布数组（content 为 kityminder JSON 文本或对象）
- * @returns {{blocked:number, unlinked:number, images:number}} 0 = 没有损失
+ * @returns {{blocked:number, unlinked:number, images:number,
+ *            fmIcons:number, fmCloud:number}} 0 = 没有损失
  */
 export function xmindLossCount(sheets) {
-  const out = { blocked: 0, unlinked: 0, images: 0 };
+  const out = { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0 };
   for (const s of sheets || []) {
     const km = parseKm(s?.content);
     if (!km) continue;              // 坏内容不算 —— 它本来也导不出东西
     walkKmNodes(km, (node) => {
       const d = node?.data;
       if (!d) return;
+
+      /*
+       * FreeMind 的图标 / 外框（BUG 135）。
+       *
+       * 必须放在附件那段**之前** —— 那段末尾有一句 `if (!total) return;`，
+       * 没有附件的节点会在那里提前退出，写在这后面就永远数不到。
+       */
+      for (const one of Array.isArray(d.fmIcons) ? d.fmIcons : []) {
+        if (str(one).trim()) out.fmIcons++;
+      }
+      if (String(d.fmCloud ?? '').trim()) out.fmCloud++;
 
       // 图片：槽位一张 + 横幅若干张，XMind 只写 src 一个
       const imgs = [];

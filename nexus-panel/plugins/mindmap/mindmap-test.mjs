@@ -18208,6 +18208,107 @@ group('BUG 132 写盘失败时不能说「已调整画布顺序 / 已删除文�
   ok(str && /ok\b/.test(str[0]), '这句要带上保存结果（写失败时不能无条件说已重载）');
 }
 
+/* ------------------------------------------------------------------
+   BUG 135：从 .mm 导入来的标记图标 / 外框，导出 .xmind 时全丢却一句不说
+   ------------------------------------------------------------------ */
+group('BUG 135 · FreeMind 图标与外框导成 XMind 会丢，必须数出来且说出来');
+
+{
+  const X135 = await import('./xmind.js');
+  const S135 = (d) => ({ id: 'sh1', title: 'T', theme: null, layout: null,
+    content: JSON.stringify({ root: { data: { id: 'nR', text: '根', ...d }, children: [] } }) });
+
+  // ① 数得出来
+  eq(X135.xmindLossCount([S135({ fmIcons: ['flag', 'star'] })]).fmIcons, 2,
+    '★ 节点上两个 FreeMind 图标 → 2（XMind 没有对应字段，全丢）');
+  eq(X135.xmindLossCount([S135({ fmCloud: '1' })]).fmCloud, 1,
+    '★ 节点上有个 FreeMind 外框 → 1');
+  eq(X135.xmindLossCount([S135({ fmCloud: '#ff0000' })]).fmCloud, 1, '外框带颜色也算');
+  eq(X135.xmindLossCount([S135({ fmCloud: '   ' })]).fmCloud, 0, '空白不算（等于没有）');
+  eq(X135.xmindLossCount([S135({ fmIcons: ['  '] })]).fmIcons, 0, '空白图标名不算');
+  eq(X135.xmindLossCount([S135({ fmIcons: 'flag' })]).fmIcons, 0,
+    '非数组不算（脏数据不能让它崩，也不能虚报）');
+
+  /*
+   * ② 没有附件的节点也要数得到。
+   *
+   * xmindLossCount 的附件段末尾有一句 `if (!total) return;` —— 图标/外框的
+   * 统计**必须排在它前面**，否则「只挂了图标、没挂附件」的节点会在那里提前
+   * 退出，一项都数不到（实测 fmIcons 报 0）。这条就是那个坑的回归锁。
+   */
+  eq(X135.xmindLossCount([S135({ fmIcons: ['flag'] })]).fmIcons, 1,
+    '★ 没有附件的节点也要数得到（附件段有提前 return）');
+
+  /*
+   * ③ XMind **写得出**的那些不能误报。
+   *    xmarkers 是 XMind 自己的标记（BUG 110 起写进 markers[]），
+   *    把它算成 fmIcons 就是在虚报损失 —— 那会让人以为文件被改坏了。
+   */
+  {
+    const r = X135.xmindLossCount([S135({ xmarkers: ['flag-red', 'star'] })]);
+    eq(r.fmIcons, 0, '★ XMind 自己的标记图标不算损失（它写得进 markers）');
+    eq(r.fmCloud, 0, '同上');
+  }
+
+  /*
+   * ④ 行为实据：这些是真的会丢，不是统计口径想出来的。
+   *    写一份真的 .xmind，看 content.json 里到底有没有 icon / cloud 的影子。
+   */
+  {
+    const sheets = [{ id: 'sh1', title: 'T', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根' }, children: [
+        { data: { id: 'n1', text: '带图标', fmIcons: ['flag', 'star'] }, children: [] },
+        { data: { id: 'n2', text: '带外框', fmCloud: '#ff0000' }, children: [] },
+        { data: { id: 'n3', text: '带标记', xmarkers: ['people'] }, children: [] },
+      ] } }) }];
+    const blob = await X135.writeXMind(sheets, 'sh1');
+    const en = await X135.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    const cj = JSON.parse(new TextDecoder().decode(en.get('content.json')));
+    const kids = cj[0].rootTopic.children.attached;
+    eq(kids.length, 3, '三个子节点都写出来了');
+    ok(!JSON.stringify(kids[0]).includes('flag'),
+      '★ FreeMind 图标没写进 content.json（导出即丢失）', JSON.stringify(kids[0]));
+    ok(!JSON.stringify(kids[1]).includes('cloud'),
+      '★ FreeMind 外框没写进 content.json（导出即丢失）', JSON.stringify(kids[1]));
+    ok(JSON.stringify(kids[2].markers || []).includes('people'),
+      '对照：XMind 自己的标记写进去了（说明上面两条是"这一类的洞"，不是全部都丢）');
+  }
+
+  // ⑤ 导出侧必须说出来
+  {
+    const isrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const i = isrc.indexOf('async function exportXMind');
+    ok(i > 0, '能定位 exportXMind');
+    const body = isrc.slice(i, i + 3200);
+    for (const k of ['fmIcons', 'fmCloud']) {
+      ok(body.includes('loss.' + k), `★ 提示带上 ${k} 这一类（不数就等于没修）`);
+    }
+    ok(body.includes('个标记图标未能写入'), '图标那句说清楚是什么丢了');
+    ok(body.includes('个外框未能写入'), '外框那句同上');
+    /*
+     * 只加 seg.push 而不加进 lossTotal 的话，整段 `if` 根本不会进 ——
+     * 提示永远不出现。这条盯的是"改了一半"。
+     */
+    const lt = body.slice(body.indexOf('const lossTotal'), body.indexOf('if (lost > 0 || lossTotal > 0)'));
+    ok(body.indexOf('const lossTotal') > 0 && lt.includes('fmIcons') && lt.includes('fmCloud'),
+      '★ 两项都进了 lossTotal（否则整段提示不出现）');
+    /*
+     * 两类损失的原因不同（"只能挂 1 个" vs "根本没有这个字段"），
+     * 共用一句括注就会给错原因 —— 用户照着"只能挂 1 个"去删附件，白忙。
+     */
+    ok(body.includes('只有 .mm 带得走'), '原因要分开说（图标/外框不是"只能挂 1 个"的问题）');
+  }
+
+  // ⑥ xmind.js 侧：图标/外框的统计必须排在附件段的提前 return 之前
+  {
+    const xsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    const iFm = xsrc.indexOf('out.fmIcons++');
+    const iRet = xsrc.indexOf('if (!total) return;');
+    ok(iFm > 0 && iRet > 0 && iFm < iRet,
+      '★ 图标统计排在 `if (!total) return;` 之前（否则没附件的节点数不到）');
+  }
+}
+
 /* ============================================================
    结果
    ============================================================ */

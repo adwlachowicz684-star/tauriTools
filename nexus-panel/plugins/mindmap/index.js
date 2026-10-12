@@ -2594,15 +2594,36 @@ async function gcOrphanAssets(quiet = false) {
        *               在别的 XMind 软件里打开却是没有那个附件的。
        */
       const lost = wanted - packed;
-      const loss = xmind.xmindLossCount(workbook.sheets) || { blocked: 0, unlinked: 0, images: 0 };
-      const lossTotal = loss.blocked + loss.unlinked + loss.images;
+      const loss = xmind.xmindLossCount(workbook.sheets)
+        || { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0 };
+      /*
+       * BUG 135：FreeMind 的标记图标 / 外框（data.fmIcons / data.fmCloud，
+       * BUG 127 起从别人的 .mm 收进来）在 XMind 里**没有对应字段** ——
+       * 导入别人的 .mm 再导出 .xmind，这两项全丢，而 xmindLossCount 报 0，
+       * 界面只说「XMind 已导出」。与 BUG 123 同一个洞（那次补的是交换格式）。
+       *
+       * 两类损失的原因不同，所以**分开说**，不能共用一句括注：
+       *   · 附件 / 图片  → XMind 每个节点只能挂 1 个
+       *   · 图标 / 外框  → XMind 根本没有这两个概念（只有 .mm 带得走）
+       */
+      const lossTotal = loss.blocked + loss.unlinked + loss.images
+        + loss.fmIcons + loss.fmCloud;
       if (lost > 0 || lossTotal > 0) {
         const seg = [];
         if (lost > 0) seg.push(`${lost} 个附件未能打包`);
         if (loss.blocked > 0) seg.push(`${loss.blocked} 个附件被超链接挤掉`);
         if (loss.unlinked > 0) seg.push(`${loss.unlinked} 个附件未能挂到节点`);
         if (loss.images > 0) seg.push(`${loss.images} 张图片未能写入`);
-        status(`XMind 已导出，但有 ${seg.join('、')}（XMind 每个节点只能挂 1 个附件、1 张图片）`, true);
+        if (loss.fmIcons > 0) seg.push(`${loss.fmIcons} 个标记图标未能写入`);
+        if (loss.fmCloud > 0) seg.push(`${loss.fmCloud} 个外框未能写入`);
+        const why = [];
+        if (lost + loss.blocked + loss.unlinked + loss.images > 0) {
+          why.push('XMind 每个节点只能挂 1 个附件、1 张图片');
+        }
+        if (loss.fmIcons + loss.fmCloud > 0) {
+          why.push('XMind 没有标记图标 / 外框的对应字段，这两项只有 .mm 带得走');
+        }
+        status(`XMind 已导出，但有 ${seg.join('、')}（${why.join('；')}）`, true);
       } else if (packed > 0) status(`XMind 已导出（含 ${packed} 个附件）`);
     } catch (e) {
       status('XMind 导出失败：' + (e?.message || e), true);
