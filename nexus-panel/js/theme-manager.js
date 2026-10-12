@@ -1036,6 +1036,15 @@ export function setThemeShift(hue, light, themeId) {
   const h = Math.max(-180, Math.min(180, Math.round(Number(hue) || 0)));
   const l = Math.max(-50, Math.min(50, Math.round(Number(light) || 0)));
   const id = themeId || current?.id || getThemeId();
+  /*
+   * 存不上（隐私模式 / 配额满）只影响"下次启动还记不记得"，
+   * 不该让滑块拖动当场失败 —— 所以这里吞掉，下面的重绘照常走。
+   *
+   * ⚠️ 别把这里的 catch 当成"反正不重要"：本文件开头记过一次事故 ——
+   * deleteCustomTheme() 里的一次抛错被外层空 catch 吞掉，
+   * 清理从那行起**全部中断**（后面的偏移键一个都没删），
+   * 而界面照常提示"删除成功"。症状是"删了又出现"，排查时却没有任何报错。
+   */
   try {
     localStorage.setItem(shiftKey(KEY_HUE, id), String(h));
     localStorage.setItem(shiftKey(KEY_LIGHT, id), String(l));

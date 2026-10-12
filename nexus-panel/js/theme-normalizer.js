@@ -48,6 +48,8 @@ export function getPluginOverride(id) {
   try { return localStorage.getItem(PLUGIN_KEY(id)); } catch { return null; }
 }
 export function setPluginOverride(id, v) {
+  /* 存不上（隐私模式 / 配额满）只能下次不生效，不能让"改主题"这个动作
+     整个失败 —— 所以这里吞掉。getPluginOverride 读不到会回落到全局策略。 */
   try { v ? localStorage.setItem(PLUGIN_KEY(id), v) : localStorage.removeItem(PLUGIN_KEY(id)); } catch {}
 }
 /** 单插件最终策略：插件级覆盖 > 全局策略 */

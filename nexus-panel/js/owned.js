@@ -73,6 +73,9 @@ export function createOwned(pluginId, opts = {}) {
       if (!target?.addEventListener) return () => {};
       try { target.addEventListener(type, handler, options); } catch { return () => {}; }
       return api.addUndo('global-listen', () => {
+        /* 撤销时的摘除是尽力而为：目标可能已经随容器一起没了，
+           抛错说明它本来就不用摘。撤销链后面还有别的句柄要摘，
+           不能在这一步中断。 */
         try { target.removeEventListener(type, handler, options); } catch {}
       });
     },
