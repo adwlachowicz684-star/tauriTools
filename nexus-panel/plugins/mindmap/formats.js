@@ -814,28 +814,75 @@ export function toPlantUml(content) {
   return lines.join('\n') + '\n';
 }
 
+/**
+ * 这一行是不是 PlantUML mindmap 的**节点行**（BUG 130）。
+ *
+ * 官方支持三套前缀：`*`（默认）、`+`（右侧分支）、`-`（左侧分支），
+ * 层级就是前缀的个数（`+++` / `---` 都是第三层）。早先只认 `*`，
+ * 于是别人的文件里用 `+ / -` 写的节点**整行被忽略** —— 节点消失、
+ * 子树整层抬到祖父身上（与 BUG 98 / 99 / 100 同一类，只是换了个格式）。
+ *
+ * 判准"这是节点行"还有一个用途：`@startmindmap` / `@endmindmap`
+ * 的标记判定必须**排除节点行**（BUG 104），否则节点文字里带这两个
+ * 词时，那一行会被当标记吃掉。所以这个判据和下面的解析正则
+ * 必须口径一致 —— 改成一处不改另一处，就会两头都错。
+ */
+const isPumlNodeLine = (line) => /^[*+-]/.test(String(line ?? '').trim());
+
+/**
+ * `[#…]` 里是不是一个**像颜色**的值（BUG 130）。
+ *
+ * 只剥"确实是颜色"的那一段：节点文字真的以 `[#1] 议题`、`[#2024 计划]`
+ * 这类开头时不能被剥掉，否则是被静默改了内容。
+ * PlantUML 的颜色写法是 `#RGB` / `#RRGGBB` / `#RRGGBBAA` 或颜色名（纯字母）。
+ */
+const isPumlColorTag = (v) => /^(?:[A-Za-z]{2,20}|[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(String(v ?? ''));
+
 /** PlantUML mindmap → 画布内容（纯函数，可测） */
 export function fromPlantUml(text) {
   const rows = [];
   let inBlock = false;
   const src = String(text || '').split(/\r?\n/);
   // 允许没有 @startmindmap / @endmindmap 包裹（有些片段只有 * 行）
-  // ★ 只看**非节点行**（BUG 104）：节点行以 `*` 开头，文字里带
-  //   `@startmindmap` 时也会被 `/@startmindmap/i` 命中，于是那一行被当成
+  // ★ 只看**非节点行**（BUG 104；BUG 130 起节点行是 `* / + / -` 三套前缀）：
+  //   节点行以 `*`（或 `+` / `-`）开头，文字里带 `@startmindmap`
+  //   时也会被 `/@startmindmap/i` 命中，于是那一行被当成
   //   标记吃掉 —— 节点消失 + 子树抬层，与 Mermaid 的 `mindmap` 头行同一个毛病。
-  const anyMarker = src.some((l) => !l.trim().startsWith('*') && /@startmindmap/i.test(l));
+  const anyMarker = src.some((l) => !isPumlNodeLine(l) && /@startmindmap/i.test(l));
   for (const raw of src) {
     const line = raw.trim();
-    // 同上：节点行（以 `*` 开头）永不参与标记判定
-    if (!line.startsWith('*')) {
+    // 同上：节点行永不参与标记判定
+    if (!isPumlNodeLine(line)) {
       if (/@startmindmap/i.test(line)) { inBlock = true; continue; }
       if (/@endmindmap/i.test(line)) { inBlock = false; continue; }
     }
     if (anyMarker && !inBlock) continue;
     if (!line || line.startsWith("'")) continue;
-    const m = line.match(/^(\*+)\s*(.*)$/);
+    const m = line.match(/^(\*+|\++|-+)\s*(.*)$/);
     if (!m) continue;
     let t = m[2].trim();
+    /*
+     * **inline color `*[#Orange] …`**（BUG 130）。
+     * PlantUML 官方的「节点颜色」写法，颜色标记不进标签，不剥就整串留在
+     * 节点文字里（实测 `*[#pink] Root` 导回是 `[#pink] Root`）。
+     *
+     * ⓘ 只剥 `[#` 起头、且后面是合法颜色的那一小段 —— 节点文字真的以
+     *   `[#争议]` 之类开头时会被剥掉，但这种写法本身会被 PlantUML 当颜色
+     *   吃掉（后果一样），所以不影响往返。
+     */
+    t = t.replace(/^\[#([^\]]*)\]\s*/, (all, c) => (isPumlColorTag(c) ? '' : all));
+    /*
+     * **多行框 `: … ;`**（BUG 130）。
+     * PlantUML 用 `:` 与 `;` 包住多行文本（官方示例 `**:right_1.1 right_1.2;`），
+     * 两个符号都不属于标签内容。
+     *
+     * ⓘ 只处理**同一行内成对**的情况：真正的多行写法（`:` 在行尾、内容
+     *   跨几行、`;` 单独一行）这边按行解析无从还原，那些行会被当成
+     *   非节点行跳过 —— 与「不支持」等价，好过猜错。
+     */
+    if (t.length >= 2 && t.charCodeAt(0) === 58 /* : */ && t.charCodeAt(t.length - 1) === 59 /* ; */) {
+      t = t.slice(1, -1).trim();
+    }
     /*
      * **空标题不能丢行**（BUG 100，与 BUG 98 / 99 同一类）。
      *

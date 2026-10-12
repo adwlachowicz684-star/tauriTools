@@ -5780,8 +5780,8 @@ group('BUG 105 · 语法标记不得吃掉同名节点（Mermaid / PlantUML）')
     const iP = fsrc.indexOf('export function fromPlantUml');
     ok(iP > 0, '能定位 fromPlantUml');
     const pBody = fsrc.slice(iP, iP + 1600);
-    ok(pBody.includes("!line.startsWith('*')"), '★ PlantUML 标记判定排除节点行（以 * 开头）');
-    ok(/!l\.trim\(\)\.startsWith\('\*'\)/.test(pBody), '★ anyMarker 同样排除节点行');
+    ok(/!isPumlNodeLine\(line\)/.test(pBody), '★ PlantUML 标记判定排除节点行');
+    ok(/!isPumlNodeLine\(l\)/.test(pBody), '★ anyMarker 同样排除节点行');
   }
 }
 
@@ -5856,6 +5856,119 @@ group('PlantUML（.puml）');
   eq(JSON.parse(f.fromPlantUml('* a\n** b')).root.data.text, 'a', '无 @start 包裹也能解析');
   eq(f.fromPlantUml(''), null, '空 → null');
   eq(f.fromPlantUml('@startmindmap\n@endmindmap'), null, '无节点 → null');
+}
+
+group('BUG 130 · 导入别人的 .puml：`+ / -` 节点、内联颜色、多行框');
+
+{
+  const f130 = await import('./formats.js');
+  const N = (t, ch) => ({ data: { text: t }, children: ch || [] });
+  const wrap = (r) => JSON.stringify({ root: r });
+  /*
+   * 展平成 [文字, 深度] 序列。
+   * ★ 必须先判 null：fromPlantUml 失败时返回 null，直接 `JSON.parse(c).root`
+   *   会抛 TypeError，整个测试进程当场崩掉，后面的断言一条都跑不到 ——
+   *   看着"抓到了"其实漏了大半（本项目反复栽在这一条上）。
+   */
+  const flat = (c) => {
+    if (!c) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(JSON.parse(c).root, 0);
+    return out;
+  };
+  const J = (v) => JSON.stringify(v);
+
+  /*
+   * ① `+` / `-` 是官方的左右侧分支写法（层数 = 前缀个数）。
+   *    官方示例就是 `+ OS / ++ Ubuntu / -- Windows 95`。
+   *    早先解析正则只认 `*`，于是这些行**整行被忽略** —— 节点消失、
+   *    子树整层抬到祖父身上（与 BUG 98 / 99 / 100 同一类，只是换了个格式）。
+   */
+  eq(J(flat(f130.fromPlantUml('+ OS\n++ Ubuntu\n+++ Kubuntu\n-- Windows 95\n--- Windows 10\n'))),
+    J([['OS', 0], ['Ubuntu', 1], ['Kubuntu', 2], ['Windows 95', 1], ['Windows 10', 2]]),
+    '★ + / - 前缀的节点必须解析出来（早先整行被忽略 → 节点消失 + 子树抬层）');
+  eq(J(flat(f130.fromPlantUml('* R\n++ A\n-- B\n'))),
+    J([['R', 0], ['A', 1], ['B', 1]]),
+    '★ `* ` 根与 `+ / -` 子节点混用也不掉');
+
+  // ② 空节点同样不能丢行（丢一行 = 子树抬层；只剩它时返回 null → 文件报废）
+  eq(J(flat(f130.fromPlantUml('+ \n++ A\n++ B\n'))),
+    J([[f130.EMPTY_NODE_TEXT, 0], ['A', 1], ['B', 1]]),
+    '★ `+ ` 空节点补占位，子树不被抬层');
+  ok(f130.fromPlantUml('+ '), '★ 只有一个 `+ ` 空节点时也不返回 null（早先 → 整份文件导不进来）');
+  eq(J(flat(f130.fromPlantUml('- \n-- A\n'))),
+    J([[f130.EMPTY_NODE_TEXT, 0], ['A', 1]]),
+    '★ `- ` 空节点同样处理');
+
+  /*
+   * ③ 标记判定必须排除 `+ / -` 节点行（BUG 104 的判据要跟着扩）。
+   *    判据写成"以 `*` 开头"的话，`++ 语法 @endmindmap` 会被当成结束标记，
+   *    它**之后**的节点全部被 `anyMarker && !inBlock` 跳过。
+   */
+  eq(J(flat(f130.fromPlantUml('+ R\n++ A\n++ 语法 @startmindmap\n'))),
+    J([['R', 0], ['A', 1], ['语法 @startmindmap', 1]]),
+    '★ 无包裹片段：`+` 行含 @startmindmap 不得让前面的节点消失');
+  eq(J(flat(f130.fromPlantUml('@startmindmap\n+ R\n++ 语法 @endmindmap\n++ B\n@endmindmap\n'))),
+    J([['R', 0], ['语法 @endmindmap', 1], ['B', 1]]),
+    '★ 有包裹：`+` 行含 @endmindmap 不得提前结束块（否则 B 被跳过）');
+
+  // ④ 内联颜色 `*[#pink] …` / `**[#FFBBCC] …`：颜色标记不进标签
+  eq(J(flat(f130.fromPlantUml('*[#pink] Root\n**[#FFBBCC] Idea\n'))),
+    J([['Root', 0], ['Idea', 1]]),
+    '★ 内联颜色必须剥掉（早先整串留在节点文字里）');
+  eq(J(flat(f130.fromPlantUml('* R\n**[#0f0] 绿\n'))),
+    J([['R', 0], ['绿', 1]]),
+    '3 位十六进制颜色同样剥掉');
+
+  /*
+   * ⑤ ★ 不是颜色的 `[#…]` **不许剥**。
+   *    一刀切的话 `[#1] 议题` 会变成 `议题` —— 那是被静默改了内容，
+   *    比"颜色标记留在文字里"严重。所以注释里那句"且后面是合法颜色"
+   *    必须真的有判据，不能只是写在注释里。
+   */
+  eq(J(flat(f130.fromPlantUml('* R\n**[#1] 议题\n'))),
+    J([['R', 0], ['[#1] 议题', 1]]),
+    '★ `[#1]` 不是颜色，不许剥（剥了就是静默改文字）');
+  eq(J(flat(f130.fromPlantUml('* R\n**[#2024 计划] X\n'))),
+    J([['R', 0], ['[#2024 计划] X', 1]]),
+    '★ 含空格的 `[#…]` 不是颜色，不许剥');
+  eq(J(flat(f130.fromPlantUml('* R\n**[#争议] X\n'))),
+    J([['R', 0], ['[#争议] X', 1]]),
+    '★ 非字母的 `[#…]` 不是颜色，不许剥');
+
+  // ⑥ 多行框 `**:…;`：官方用 `:` 与 `;` 包住内容，两个符号都不属于标签
+  eq(J(flat(f130.fromPlantUml('* R\n**:right_1.1 right_1.2;\n'))),
+    J([['R', 0], ['right_1.1 right_1.2', 1]]),
+    '★ 同行成对的 `: … ;` 要剥掉两个符号');
+  eq(J(flat(f130.fromPlantUml('* R\n**:没有封口\n'))),
+    J([['R', 0], [':没有封口', 1]]),
+    '★ 只有 `:` 没有 `;` 时不许剥（不成对 → 按原样）');
+
+  // ⑦ 本工具自己的往返不受影响（导出只写 `*`，不写颜色 / 框）
+  {
+    const tree = wrap(N('根', [N('子1', [N('孙')]), N('子2')]));
+    eq(J(flat(f130.fromPlantUml(f130.toPlantUml(tree)))),
+      J([['根', 0], ['子1', 1], ['孙', 2], ['子2', 1]]),
+      '本工具往返结构不变');
+  }
+  eq(J(flat(f130.fromPlantUml(f130.toPlantUml(wrap(N('[#1] 议题', [])))))),
+    J([['[#1] 议题', 0]]),
+    '★ 文字以 `[#…]` 开头的节点往返不变（不会被自己的解析器剥掉）');
+
+  // ⑧ 源码层（先剥注释：这些正则本身就写在注释里，不剥会命中注释而永远绿）
+  {
+    const fsrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/const isPumlNodeLine = /.test(fsrc), '能定位 isPumlNodeLine');
+    ok(/\^\(\\\*\+\|\\\+\+\|-\+\)/.test(fsrc),
+      '★ 解析正则必须同时认 `*` / `+` / `-` 三套前缀');
+    ok(/isPumlColorTag\(c\)/.test(fsrc),
+      '★ 颜色标记必须真的判「像颜色」（否则 `[#1] 议题` 会被剥成 `议题`）');
+    const iP = fsrc.indexOf('export function fromPlantUml');
+    ok(iP > 0, '能定位 fromPlantUml');
+    const pBody = fsrc.slice(iP, iP + 1600);
+    ok(/!isPumlNodeLine\(line\)/.test(pBody), '★ PlantUML 标记判定排除节点行');
+    ok(/!isPumlNodeLine\(l\)/.test(pBody), '★ anyMarker 同样排除节点行');
+  }
 }
 
 group('格式识别 detectFormat（内容优先于扩展名）');
