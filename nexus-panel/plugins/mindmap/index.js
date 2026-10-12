@@ -2858,7 +2858,7 @@ async function gcOrphanAssets(quiet = false) {
     // BUG 122：关系线本工具不显示，但已原样保留、导出 .xmind 时会写回 ——
     // 不说的话用户看到"关系线没了"会以为文件被改坏。
     const warns = [await warnForeignAssets(sheets), unsupportedMarkersTip(sheets),
-      unsupportedRelationshipsTip(sheets)].filter(Boolean);
+      unsupportedRelationshipsTip(sheets), unsupportedFmExtrasTip(sheets)].filter(Boolean);
     status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`
       + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容')
       + (warns.length ? ' ⚠ ' + warns.join('；') : ''), warns.length > 0);
@@ -2921,6 +2921,44 @@ async function gcOrphanAssets(quiet = false) {
     if (!nodes) return '';
     return `${nodes} 个节点上的 ${total} 个标记图标本工具不显示`
       + '（已原样保留，导出 .xmind 时会写回）';
+  }
+
+  /**
+   * BUG 127：FreeMind 的 `<icon BUILTIN>`（收在 `data.fmIcons`）与 `<cloud>`
+   * （收在 `data.fmCloud`）同样**本工具不显示** —— 内核没有 marker / cloud
+   * 的概念，但已原样保留、导出 .mm 时会写回。不说的话，用户导入别人的 .mm
+   * 看到"图标和外框没了"会以为文件被改坏（措辞与 unsupportedMarkersTip 对齐）。
+   *
+   * ⓘ 与 xmarkers 分开统计：那是 XMind 的数据、写回 .xmind；这是 FreeMind 的
+   *   数据、写回 .mm —— 混在一起的话措辞里的"导出 .xmind 时会写回"会说错。
+   *
+   * @param {Array} sheets 画布数组
+   * @returns {string} 提示串；没有则 ''
+   */
+  function unsupportedFmExtrasTip(sheets) {
+    let nodes = 0;
+    let icons = 0;
+    let clouds = 0;
+    const walk = (n, depth) => {
+      if (!n || depth > 200) return;
+      const ic = Array.isArray(n?.data?.fmIcons) ? n.data.fmIcons.length : 0;
+      const cl = String(n?.data?.fmCloud ?? '').trim() ? 1 : 0;
+      if (ic || cl) nodes++;
+      icons += ic;
+      clouds += cl;
+      for (const c of n.children || []) walk(c, depth + 1);
+    };
+    for (const sh of sheets || []) {
+      let root = null;
+      try { root = JSON.parse(sh?.content || '{}').root; } catch { /* 坏内容跳过 */ }
+      walk(root, 0);
+    }
+    if (!nodes) return '';
+    const parts = [];
+    if (icons) parts.push(`${icons} 个标记图标`);
+    if (clouds) parts.push(`${clouds} 个外框`);
+    return `${nodes} 个节点上的 ${parts.join('、')}本工具不显示`
+      + '（已原样保留，导出 .mm 时会写回）';
   }
 
   /**

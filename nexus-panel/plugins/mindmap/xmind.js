@@ -65,7 +65,7 @@ async function deflateRaw(bytes) {
  *
  * 对齐 mediainfo.js 的做法：那里对同等不可信的二进制输入也设了 guard++/depth 上限。
  */
-import { htmlToPlain, plainToHtml, isCollapsed } from './formats.js';
+import { htmlToPlain, plainToHtml, isCollapsed, fontSizeNum } from './formats.js';
 
 export const MAX_INFLATE_BYTES = 64 * 1024 * 1024;
 
@@ -478,12 +478,7 @@ const fromPx = (v) => (/px$/i.test(v.trim()) ? v.trim().slice(0, -2).trim() : v.
  * ⓘ 拿不到数字（`'large'` 之类）时返回 null：让调用方**不设**这个键，
  *   回落主题默认字号 —— 比塞一个 NaN 进去好得多。
  */
-const fontSizeNum = (v) => {
-  const m = /^([+-]?\d+(?:\.\d+)?)/.exec(String(v ?? '').trim());
-  if (!m) return null;
-  const n = Number(m[1]);
-  return n > 0 ? String(n) : null;
-};
+/* fontSizeNum 已提到 formats.js（BUG 127：FreeMind 的 <font SIZE> 同样要剥单位） */
 
 /**
  * 写侧：一律归一成 `<数字>pt`。

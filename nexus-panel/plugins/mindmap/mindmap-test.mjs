@@ -7082,7 +7082,12 @@ group('BUG 115 · XMind 折叠状态（branch: "folded"）双向');
   // ⑤ 折叠判定复用 formats.js 的 isCollapsed（不许各写一份）
   {
     const xsrc = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
-    ok(/import \{ htmlToPlain, plainToHtml, isCollapsed \} from '\.\/formats\.js'/.test(xsrc),
+    // ⓘ 不能把 import 那一行**整行写死**：往后往里加一个共用函数（BUG 127 加了
+    //   fontSizeNum）就会把它顶红，而"引入了 isCollapsed"这件事并没有变。
+    //   改成解析出引入列表再判成员。
+    const im = /^import \{([^}]*)\} from '\.\/formats\.js'/m.exec(xsrc);
+    const imNames = im ? im[1].split(',').map((x) => x.trim()) : [];
+    ok(imNames.includes('isCollapsed'),
       '★ 折叠判定也从 formats.js 引入（与 FreeMind 的 FOLDED 同一份判据）');
     // ⓘ 光"引入了"不算 —— 必须真的**用**上。断言只写 `isCollapsed(` 会被
     //   import 那一行本身命中（删掉调用点照样绿），所以先剥掉 import 行再数。
@@ -7168,12 +7173,14 @@ group('BUG 114 · FreeMind 节点颜色（COLOR / BACKGROUND_COLOR）双向');
     eq(back.root.children[0]?.data?.color, 'a"b<c', '色值带特殊字符往返保住');
   }
 
-  // ⑤ exchangeLoss：只设颜色不算丢，设了字号才算丢
+  // ⑤ exchangeLoss：只设颜色（以及 BUG 127 起带得走的字体）不算丢，设了圆角才算丢
   {
     const onlyColor = JSON.stringify({ root: { data: { id: 'r', text: '根', color: '#ff0000' }, children: [] } });
     eq(fmt.exchangeLoss(onlyColor, 'freemind').style, 0, '★ 只设了颜色 → FreeMind 带得走，不计入丢失');
     const withFont = JSON.stringify({ root: { data: { id: 'r', text: '根', 'font-size': 20 }, children: [] } });
-    eq(fmt.exchangeLoss(withFont, 'freemind').style, 1, '★ 设了字号 → 仍是丢的（FreeMind 没有对应属性）');
+    eq(fmt.exchangeLoss(withFont, 'freemind').style, 0, '★ 设了字号 → FreeMind 现在也带得走（BUG 127）');
+    const withRadius = JSON.stringify({ root: { data: { id: 'r', text: '根', 'node-radius': 8 }, children: [] } });
+    eq(fmt.exchangeLoss(withRadius, 'freemind').style, 1, '★ 设了圆角 → 仍是丢的（FreeMind 没有对应属性）');
     eq(fmt.exchangeLoss(onlyColor, 'opml').style, 1, 'OPML 连颜色都带不走');
     eq(fmt.exchangeLoss(onlyColor, 'mermaid').style, 1, 'Mermaid 连颜色都带不走');
   }
@@ -7300,7 +7307,9 @@ group('BUG 113 · FreeMind 备注（richcontent TYPE=NOTE）双向');
   {
     const fsrc = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
     const xsrc = fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8');
-    ok(/import \{ htmlToPlain, plainToHtml, isCollapsed \} from '\.\/formats\.js'/.test(xsrc),
+    const im2 = /^import \{([^}]*)\} from '\.\/formats\.js'/m.exec(xsrc);
+    const im2Names = im2 ? im2[1].split(',').map((x) => x.trim()) : [];
+    ok(im2Names.includes('htmlToPlain') && im2Names.includes('plainToHtml'),
       '★ xmind.js 从 formats.js 引入，不再各写一份');
     ok(!/^function htmlToPlain/m.test(xsrc), '★ xmind.js 里没有 htmlToPlain 的私有副本');
     ok(!/^function plainToHtml/m.test(xsrc), '★ xmind.js 里没有 plainToHtml 的私有副本');
@@ -7394,8 +7403,9 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
   {
     const c = mkContent({ id: 'r', text: '根', note: '备注', hyperlink: 'https://a.x',
       priority: 4, progress: 7, labels: ['A'] }, [
-      // background 是 FreeMind 带得走的（BUG 114），font-size 才是装不下的
-      { data: { id: 'c1', text: '子1', expandState: 'collapse', background: '#f00', 'font-size': 20 }, children: [] },
+      // background 是 FreeMind 带得走的（BUG 114），node-radius 才是装不下的
+      // （font-size 现在也带得走了 —— BUG 127，不能再用它当"装不下"的例子）
+      { data: { id: 'c1', text: '子1', expandState: 'collapse', background: '#f00', 'node-radius': 8 }, children: [] },
       { data: { id: 'c2', text: '子2' }, children: [] },
     ]);
     const fm = fmt.exchangeLoss(c, 'freemind');
@@ -7409,7 +7419,7 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
     eq(fm.priority, 1, 'FreeMind 装不下优先级');
     eq(fm.progress, 1, 'FreeMind 装不下进度');
     eq(fm.labels, 1, 'FreeMind 装不下标签');
-    eq(fm.style, 1, '★ FreeMind 装不下的自定义样式（font-size）—— 颜色两项带得走，不算');
+    eq(fm.style, 1, '★ FreeMind 装不下的自定义样式（node-radius）—— 颜色与字体带得走，不算');
     eq(fm.nodes, 2, 'FreeMind：受影响节点数（去重）');
 
     eq(op.hyperlink, 0, '★ OPML 带得走超链接（url），不计入丢失');
@@ -17562,6 +17572,130 @@ group('BUG 126 · 下载没发起时不能说「已保存 / 已导出」');
     const b = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8'));
     const n = (a.match(/io\.downloadOk\(/g) || []).length + (b.match(/io\.downloadOk\(/g) || []).length;
     eq(n, 5, '★ 恰好五处判据（index.js 2 + panels.js 3）');
+  }
+}
+
+/* ------------------------------------------------------------------
+   BUG 127：导入别人的 .mm，字体 / 标记图标 / 外框（云朵）静默丢光
+   ------------------------------------------------------------------
+   实测（jsdom 真实 DOMParser）：一份别人的 .mm 里带这三样 ——
+     <font NAME SIZE BOLD ITALIC/>  → 导入后 data 里一个字体键都没有
+     <icon BUILTIN="flag"/>         → 图标消失
+     <cloud COLOR="#ff0000"/>       → 外框消失
+   再导出，产物里连字样都找不到，而 exchangeLoss 报 nodes=0，导出时一句提示都没有。
+
+   ⓘ 字体四项与图标/外框不同：内核**本来就渲染** font-size / font-family /
+     font-weight / font-style（xmind.js 的 StyleMap 用的就是这些键），
+     读出来就能在画布上看见 —— 不是"保住了但看不见"的那种。
+------------------------------------------------------------------ */
+group('BUG 127 · FreeMind 的 <font> / <icon> / <cloud> 双向');
+
+{
+  const f7 = await import('file://' + path.join(HERE, 'formats.js'));
+  const mk = (kids) => JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: kids } });
+
+  // ① 导入**别人的** .mm：三样都要读出来
+  {
+    const mm = `<map version="1.0.1"><node TEXT="根">
+ <node TEXT="粗体字"><font NAME="SansSerif" SIZE="18" BOLD="true" ITALIC="true"/></node>
+ <node TEXT="带图标"><icon BUILTIN="flag"/><icon BUILTIN="help"/></node>
+ <node TEXT="带云朵"><cloud COLOR="#ff0000"/></node>
+ <node TEXT="素节点"/>
+</node></map>`;
+    const r = JSON.parse(f7.fromFreemind(mm));
+    const c1 = r.root.children[0];
+    const c2 = r.root.children[1];
+    const c3 = r.root.children[2];
+    const c4 = r.root.children[3];
+    eq(c1.data['font-family'], 'SansSerif', '★ 导入别人的 .mm：<font NAME> → font-family');
+    eq(c1.data['font-size'], 18, '★ 导入别人的 .mm：<font SIZE> → font-size（数字，不是 "18pt"）');
+    eq(c1.data['font-weight'], 'bold', '★ 导入别人的 .mm：BOLD="true" → font-weight');
+    eq(c1.data['font-style'], 'italic', '★ 导入别人的 .mm：ITALIC="true" → font-style');
+    eq(JSON.stringify(c2.data.fmIcons), '["flag","help"]', '★ 导入别人的 .mm：<icon BUILTIN> → fmIcons');
+    eq(c3.data.fmCloud, '#ff0000', '★ 导入别人的 .mm：<cloud COLOR> → fmCloud');
+    ok(!c4.data.fmIcons && !c4.data.fmCloud && !c4.data['font-size'],
+      '★ 没写这三样的节点不长出对应字段');
+  }
+
+  // ② 往返：自己导出再导回
+  {
+    const c = mk([
+      { data: { id: 'c1', text: '粗体', 'font-size': 20, 'font-family': '宋体',
+        'font-weight': 'bold', 'font-style': 'italic' }, children: [] },
+      { data: { id: 'c2', text: '图标', fmIcons: ['star', 'people'] }, children: [] },
+      { data: { id: 'c3', text: '云朵', fmCloud: '#00ff00' }, children: [] },
+      { data: { id: 'c4', text: '素' }, children: [] },
+    ]);
+    const out = f7.toFreemind(c);
+    ok(/<font NAME="宋体" SIZE="20" BOLD="true" ITALIC="true"\/>/.test(out), '★ 导出写了 <font>');
+    ok(/<icon BUILTIN="star"\/>/.test(out), '★ 导出写了 <icon>（第一个）');
+    ok(/<icon BUILTIN="people"\/>/.test(out), '★ 导出写了 <icon>（第二个）');
+    ok(/<cloud COLOR="#00ff00"\/>/.test(out), '★ 导出写了带颜色的 <cloud>');
+    const back = JSON.parse(f7.fromFreemind(out));
+    eq(back.root.children[0].data['font-size'], 20, '往返：字号保住');
+    eq(back.root.children[0].data['font-weight'], 'bold', '往返：粗体保住');
+    eq(back.root.children[0].data['font-family'], '宋体', '往返：字体保住');
+    eq(JSON.stringify(back.root.children[1].data.fmIcons), '["star","people"]', '往返：图标保住且保序');
+    eq(back.root.children[2].data.fmCloud, '#00ff00', '往返：外框颜色保住');
+    ok(!back.root.children[3].data.fmIcons, '往返：素节点不长出图标');
+  }
+
+  // ③ 无颜色的 <cloud/>：用占位值保住，写回时还原成 <cloud/>
+  {
+    const r = JSON.parse(f7.fromFreemind(`<map version="1.0.1"><node TEXT="根">
+ <node TEXT="云"><cloud/></node></node></map>`));
+    eq(r.root.children[0].data.fmCloud, '1', '★ 无颜色 <cloud/> 用占位值保住');
+    const out = f7.toFreemind(JSON.stringify({ root: { data: { text: '根' },
+      children: [{ data: { text: '云', fmCloud: '1' }, children: [] }] } }));
+    ok(/<cloud\/>/.test(out), '★ 占位值写回成 <cloud/>');
+    ok(!/COLOR="1"/.test(out), '★ 占位值不能被当成颜色写出去（会写出坏色值）');
+  }
+
+  // ④ 带单位的脏字号：只取数字（BUG 117 同款，剥不出就不设）
+  {
+    const r = JSON.parse(f7.fromFreemind(`<map version="1.0.1"><node TEXT="根">
+ <node TEXT="px"><font SIZE="20px"/></node>
+ <node TEXT="字"><font SIZE="large"/></node></node></map>`));
+    eq(r.root.children[0].data['font-size'], 20, '★ SIZE="20px" 剥成数字 20');
+    ok(!r.root.children[1].data['font-size'], '★ 剥不出数字的 SIZE 不设（不塞 NaN / "large"）');
+  }
+
+  // ⑤ 带得走 / 装不下：按格式分别统计（统一一句会说错）
+  {
+    const c = mk([
+      { data: { id: 'c1', text: '粗体', 'font-weight': 'bold' }, children: [] },
+      { data: { id: 'c2', text: '图标', fmIcons: ['star'] }, children: [] },
+      { data: { id: 'c3', text: '云朵', fmCloud: '#00ff00' }, children: [] },
+    ]);
+    const fm = f7.exchangeLoss(c, 'freemind');
+    eq(fm.style, 0, '★ FreeMind 带得走字体（<font>），只设粗体不算样式丢失');
+    eq(fm.markers, 0, '★ FreeMind 带得走自家图标（<icon>），不计入丢失');
+    eq(fm.boundary, 0, '★ FreeMind 带得走外框（<cloud>），不计入丢失');
+    const op = f7.exchangeLoss(c, 'opml');
+    eq(op.style, 1, 'OPML 装不下字体');
+    eq(op.markers, 1, '★ OPML 装不下图标 —— 计入丢失');
+    eq(op.boundary, 1, '★ OPML 装不下外框 —— 计入丢失');
+    const md = f7.exchangeLoss(c, 'markdown');
+    eq(md.markers, 1, 'Markdown 装不下图标');
+    eq(md.boundary, 1, 'Markdown 装不下外框');
+    // XMind 的 xmarkers 与 FreeMind 的 fmIcons 是两套数据，不能混为一谈
+    const cx = mk([{ data: { id: 'c1', text: 'XMind 标记', xmarkers: ['flag-red'] }, children: [] }]);
+    eq(f7.exchangeLoss(cx, 'freemind').markers, 1, '★ .mm 装不下 XMind 的标记图标（xmarkers）');
+    eq(f7.exchangeLoss(cx, 'freemind').boundary, 0, 'xmarkers 不该被算成外框');
+  }
+
+  // ⑥ 导入回执必须说出来：本工具不显示图标 / 外框，但已保住（BUG 110 同款）
+  {
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    // ⓘ 只写 `unsupportedFmExtrasTip(` 会被**函数定义**那一行命中 ——
+    //   删掉调用点照样绿（BUG 110 / BUG 122 都栽过）。先剥掉定义行再数。
+    const body = code.split('\n')
+      .filter((l) => !/^\s*function unsupportedFmExtrasTip\b/.test(l)).join('\n');
+    const uses = (body.match(/unsupportedFmExtrasTip\(/g) || []).length;
+    eq(uses, 1, '★ 导入回执里真的调用了它（不是只定义）—— 实测 ' + uses + ' 处');
+    ok(/warnForeignAssets\(sheets\)[\s\S]{0,240}unsupportedFmExtrasTip\(sheets\)/.test(code),
+      '★ 提示接进了 warns（自己 status 会把「已导入」那句盖掉）');
+    ok(/导出 \.mm 时会写回/.test(code), '★ 措辞里写回的是 .mm，不是 .xmind');
   }
 }
 

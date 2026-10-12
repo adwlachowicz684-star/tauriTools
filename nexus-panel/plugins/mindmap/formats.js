@@ -155,6 +155,22 @@ export const flattenBreaks = (v) => String(v ?? '').replace(/[\r\n\u2028\u2029]+
  */
 export const inlineText = (v) => String(v ?? '').replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ').trim();
 
+/**
+ * 字号取**数字部分**：`"20pt"` / `"20px"` / `"1.2em"` 一律 → `"20"` / `"20"` / `"1.2"`。
+ * 拿不到数字（`'large'` 之类）返回 null（不是 0）—— 让调用方**不设**这个键、
+ * 回落主题默认字号，比塞一个 NaN 进内核好（BUG 117：带单位的值会让
+ * `line-height * font-size` 算成 NaN，实测 `<text y="NaN">`、文字位置错乱）。
+ *
+ * ⓘ 原本是 xmind.js 的私有函数（BUG 117 加的）。FreeMind 的 `<font SIZE>`
+ *   同样要剥单位（BUG 127），两份实现迟早对不上 —— 提到这里共用。
+ */
+export const fontSizeNum = (v) => {
+  const m = /^([+-]?\d+(?:\.\d+)?)/.exec(String(v ?? '').trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n > 0 ? String(n) : null;
+};
+
 export function nodeText(n, fallback = EMPTY_NODE_TEXT) {
   return inlineText(n?.data?.text) || fallback;
 }
@@ -301,15 +317,47 @@ export function toFreemind(content) {
      * **一个字都不提示**。同一个状态走 .xmind 保得住、走 .mm 悄悄丢掉。
      */
     if (isCollapsed(n)) attrs.push('FOLDED="true"');
+    /*
+     * BUG 127：`<font>` / `<icon>` / `<cloud>` 是 <node> 的**子元素**，
+     * 早先一样都不写 —— 导入别人的 .mm 后这些全丢、再导出就没了。
+     * 有子元素就必须写成开合标签（自闭合写法塞不进子元素）。
+     */
+    const inner = [];
+    const fontAttrs = freemindFontAttrs(n?.data);
+    if (fontAttrs) inner.push(`<font ${fontAttrs}/>`);
+    for (const ic of Array.isArray(n?.data?.fmIcons) ? n.data.fmIcons : []) {
+      const b = String(ic ?? '').trim();
+      if (b) inner.push(`<icon BUILTIN="${escXml(b)}"/>`);
+    }
+    const cloud = String(n?.data?.fmCloud ?? '').trim();
+    if (cloud) {
+      inner.push(cloud && cloud !== '1' ? `<cloud COLOR="${escXml(cloud)}"/>` : '<cloud/>');
+    }
+    const pad = '  '.repeat(depth + 1);
     const kids = n?.children || [];
-    if (!kids.length && !noteHtml) {
-      lines.push('  '.repeat(depth + 1) + `<node ${attrs.join(' ')}/>`);
+    if (!kids.length && !noteHtml && !inner.length) {
+      lines.push(pad + `<node ${attrs.join(' ')}/>`);
       return;
     }
-    lines.push('  '.repeat(depth + 1) + `<node ${attrs.join(' ')}>`);
+    lines.push(pad + `<node ${attrs.join(' ')}>`);
     if (noteHtml) lines.push(noteHtml);
+    for (const one of inner) lines.push(pad + '  ' + one);
     for (const c of kids) emit(c, depth + 1);
-    lines.push('  '.repeat(depth + 1) + '</node>');
+    lines.push(pad + '</node>');
+  }
+
+  /** 内核的字体 data 键 → `<font>` 的属性串（没有则返回 ''） */
+  function freemindFontAttrs(data) {
+    const a = [];
+    const fam = String(data?.['font-family'] || '').trim();
+    if (fam) a.push(`NAME="${escXml(fam)}"`);
+    // BUG 117：存量可能是 "20px" 之类带单位的脏值，只取数字部分
+    const size = fontSizeNum(data?.['font-size']);
+    if (size > 0) a.push(`SIZE="${size}"`);
+    const w = String(data?.['font-weight'] || '').trim().toLowerCase();
+    if (w === 'bold' || (Number(data?.['font-weight']) || 0) >= 600) a.push('BOLD="true"');
+    if (String(data?.['font-style'] || '').trim().toLowerCase() === 'italic') a.push('ITALIC="true"');
+    return a.length ? a.join(' ') : '';
   }
 
   /**
@@ -358,7 +406,8 @@ function freemindNodeText(el) {
  * 一概忽略 —— 它们承载的都是样式，本工具的主题体系不认。
  */
 export function fromFreemind(text) {
-  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText, 'LINK', freemindNote, freemindStyle);
+  const rows = readXmlNodes(text, 'node', 'TEXT', freemindNodeText, 'LINK', freemindNote,
+    freemindStyle, freemindExtras);
   if (!rows) return null;
   if (!rows.length) return null;
   const { root } = rowsToKm(rows);
@@ -370,6 +419,8 @@ export function fromFreemind(text) {
   applyNotes(root, rows.map((r) => r.note));
   // BUG 114：颜色回填（COLOR / BACKGROUND_COLOR）
   applyStyles(root, rows.map((r) => r.style));
+  // BUG 127：图标 / 外框回填（<icon BUILTIN> / <cloud>）
+  applyExtras(root, rows.map((r) => r.extra));
   return stringifyKm(root);
 }
 
@@ -693,7 +744,7 @@ export function fromPlantUml(text) {
  * @param {string} attr 取文字的属性名
  * @returns {Array|null} null = 解析失败（不是「空」）
  */
-function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null, noteReader = null, styleReader = null) {
+function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null, noteReader = null, styleReader = null, extraReader = null) {
   const src = String(text || '').trim();
   if (!src) return null;
   let doc = null;
@@ -726,6 +777,8 @@ function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null, not
       note: noteReader ? String(noteReader(el) || '') : '',
       // BUG 114：颜色（COLOR / BACKGROUND_COLOR）
       style: styleReader ? styleReader(el) : null,
+      // BUG 127：FreeMind 的 <icon> / <cloud>（内核没有对应概念，只保住往返）
+      extra: extraReader ? extraReader(el) : null,
     });
   }
   return rows;
@@ -823,7 +876,91 @@ function freemindStyle(el) {
   if (c) out.color = c;
   const b = normColor(el?.getAttribute?.('BACKGROUND_COLOR'));
   if (b) out.background = b;
+  /*
+   * BUG 127：`<font NAME SIZE BOLD ITALIC/>` 是 FreeMind 1.0.1 的**标准子元素**
+   * （Freeplane 同样写它）。早先只读颜色两个属性，字号 / 字体 / 粗体 / 斜体
+   * 一律不看 —— 导入别人的 .mm，节点上的字体样式**静默丢失**，而自己导出的
+   * .mm 也从来不写，往返同样丢。
+   *
+   * 这四项与颜色不同：**内核本来就渲染它们**（font-size / font-family /
+   * font-weight / font-style 都是 kityminder 的 data 键，见 xmind.js 的
+   * StyleMap），读出来就能在画布上看见，不是"保住了但看不见"的那种。
+   */
+  const f = freemindFont(el);
+  for (const k of Object.keys(f)) out[k] = f[k];
   return out;
+}
+
+/** `<font>` 里 BOLD / ITALIC 只认 `true`（FreeMind 规范值），大小写都吃掉 */
+const isTrueAttr = (v) => String(v ?? '').trim().toLowerCase() === 'true';
+
+/**
+ * 取 <node> 的 `<font>` 子元素（FreeMind 的字体写法），没有则返回空对象。
+ *
+ * 只认第一个 —— FreeMind 一个节点只有一个 <font>。
+ */
+function freemindFont(el) {
+  const out = {};
+  const kids = el ? (el.children || el.childNodes) : null;
+  for (const c of Array.from(kids || [])) {
+    if (c.nodeType !== 1) continue;
+    if (String(c.nodeName || '').toLowerCase() !== 'font') continue;
+    const name = String(c.getAttribute?.('NAME') || '').trim();
+    if (name) out['font-family'] = name;
+    // SIZE 是 pt（FreeMind 的字号单位），与本项目写出去的单位一致（BUG 117）；
+    // 别的软件也可能写 "20px"，同样只取数字（剥不出来就不设，不塞 NaN）
+    const size = Number(fontSizeNum(c.getAttribute?.('SIZE')));
+    if (size > 0) out['font-size'] = size;
+    if (isTrueAttr(c.getAttribute?.('BOLD'))) out['font-weight'] = 'bold';
+    if (isTrueAttr(c.getAttribute?.('ITALIC'))) out['font-style'] = 'italic';
+    break;
+  }
+  return out;
+}
+
+/**
+ * 取 <node> 上「内核没有对应概念」的两样东西：`<icon>` 与 `<cloud>`（BUG 127）。
+ *
+ * `<icon BUILTIN="flag"/>` 是 FreeMind 的标记图标（与 XMind 的 marker 同类，
+ * BUG 110），`<cloud>` 是节点外框（与 XMind 的 boundary 同类）。早先两者都
+ * 不读 —— 导入别人的 .mm 静默消失、再导出就没了，**一句提示都没有**。
+ *
+ * 保不住图标名里的脏字符（会写出别的软件打不开的 .mm），所以走白名单；
+ * 封顶与 xmarkers 一致（20 个），防止畸形文件撑爆 data。
+ */
+function freemindExtras(el) {
+  const icons = [];
+  let cloud = '';
+  const kids = el ? (el.children || el.childNodes) : null;
+  for (const c of Array.from(kids || [])) {
+    if (c.nodeType !== 1) continue;
+    const tag = String(c.nodeName || '').toLowerCase();
+    if (tag === 'icon') {
+      const b = String(c.getAttribute?.('BUILTIN') || '').trim();
+      if (b && /^[A-Za-z0-9._-]{1,40}$/.test(b) && !icons.includes(b) && icons.length < 20) {
+        icons.push(b);
+      }
+    } else if (tag === 'cloud' && !cloud) {
+      // `<cloud COLOR="#f00"/>` 带颜色、`<cloud/>` 不带 —— 都用真值占位，
+      // 写回时按有没有颜色还原（'1' 是占位，本身不是合法色值）
+      cloud = normColor(c.getAttribute?.('COLOR')) || '1';
+    }
+  }
+  return (icons.length || cloud) ? { icons, cloud } : null;
+}
+
+/** 行序列里的图标 / 外框回填到树上（与 applyCollapsed 等四个函数同构） */
+function applyExtras(root, extras) {
+  let i = 0;
+  walkKm(root, (n) => {
+    const e = extras && extras[i];
+    if (e) {
+      n.data = n.data || {};
+      if (e.icons && e.icons.length) n.data.fmIcons = e.icons;
+      if (e.cloud) n.data.fmCloud = e.cloud;
+    }
+    i++;
+  });
 }
 
 /** 行序列里的颜色回填到树上（与 applyCollapsed / applyLinks / applyNotes 同构） */
@@ -1014,14 +1151,20 @@ const NODE_STYLE_KEYS = [
  * ⓘ 备注：FreeMind 走 `<richcontent TYPE="NOTE">`（BUG 113 补上）。
  * ⓘ Markdown 只带「文字 + 层级」：备注 / 超链接 / 优先级 / 进度 / 标签 /
  *   折叠状态 / 自定义样式一概装不下（BUG 116 起在导出时说清）。
- * ⓘ 样式：FreeMind 只带得走**颜色**两项（`COLOR` / `BACKGROUND_COLOR`，
- *   BUG 114 补上）—— 字号 / 圆角 / 连线等一概没有对应属性，仍是丢的。
+ * ⓘ 样式：FreeMind 带得走**颜色**两项（`COLOR` / `BACKGROUND_COLOR`，
+ *   BUG 114 补上）与**字体四项**（`<font NAME SIZE BOLD ITALIC/>`，
+ *   BUG 127 补上）—— 圆角 / 连线 / 描边等一概没有对应属性，仍是丢的。
+ * ⓘ `<icon>` / `<cloud>` 是 FreeMind 自家的标记图标与外框（BUG 127 补上），
+ *   只有 .mm 带得走 —— 其余四种格式一律丢，所以按 `fmIcons` / `fmCloud`
+ *   单独判，不能混进 `markers` / `boundary`（那两个是 XMind 的数据）。
  */
 export const EXCHANGE_KEEP = {
   // 空对象 = 除了文字与层级，其余一概装不下（exchangeLoss 会全算成丢失）
   markdown: {},
   freemind: { hyperlink: true, collapsed: true, note: true,
-    styleKeys: ['color', 'background'] },
+    fmIcons: true, fmCloud: true,
+    styleKeys: ['color', 'background',
+      'font-family', 'font-size', 'font-weight', 'font-style'] },
   opml: { hyperlink: true },
   mermaid: {},
   plantuml: {},
@@ -1114,6 +1257,14 @@ export function exchangeLoss(content, kind, sheet) {
      * 它是 BUG 110 才有的数据，加进来时漏了这一步。
      */
     if (!keep.markers && Array.isArray(d.xmarkers) && d.xmarkers.length) bump(n, 'markers');
+    /*
+     * BUG 127：FreeMind 的 `<icon>` 收在 `fmIcons` 里，同样只有 .mm 带得走。
+     * 导入别人的 .mm（带图标）再导出成 .opml / .md，图标全没了却一句提示
+     * 都没有 —— 与 BUG 123 漏掉 xmarkers 是同一个洞。
+     */
+    if (!keep.fmIcons && Array.isArray(d.fmIcons) && d.fmIcons.length) bump(n, 'markers');
+    // BUG 127：FreeMind 的 `<cloud>` 收在 `fmCloud` 里，同理只有 .mm 带得走
+    if (!keep.fmCloud && String(d.fmCloud ?? '').trim()) bump(n, 'boundary');
   });
   /*
    * BUG 123：关系线（BUG 122 收在画布级 `xrelationships`）同样装不下。
