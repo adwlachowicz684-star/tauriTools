@@ -29,18 +29,7 @@ type Props = {
 export default function DirPicker({
   initial = '', title = '选择导出目录', onPick, onCancel, onPickAsDefault,
 }: Props) {
-  /*
-   * cwd 与 picked 是两样东西，不能合并成一个：
-   *   · cwd    —— 输入框的值，用户随时可以敲一个还打不开的路径
-   *   · picked —— 已经成功打开过的目录，才是「选这里」真正交出去的那个
-   *
-   * 合并的后果（与 project-group/DirDialog 曾犯的同一个洞）：列不出来时只
-   * 清 entries 而 cwd 留在上一次的值 → 界面显示的是刚敲的那条路径，交出去
-   * 的却是**另一个**目录；反过来若把输入框的值直接交出去，就是一个根本列
-   * 不出来的目录。两种情况界面都不报错，而磁盘上真会按它建目录。
-   */
   const [cwd, setCwd] = useState(initial);
-  const [picked, setPicked] = useState('');
   const [entries, setEntries] = useState<DirEntryLite[]>([]);
   const [roots, setRoots] = useState<DirEntryLite[]>([]);
   const [busy, setBusy] = useState(false);
@@ -81,7 +70,6 @@ export default function DirPicker({
       if (!alive.current) return;
       setEntries(r);
       setCwd(p);
-      setPicked(p);
     } catch (e) {
       if (!alive.current) return;
       /*
@@ -91,12 +79,6 @@ export default function DirPicker({
        */
       setErr(`打不开这个目录：${String((e as Error)?.message ?? e)}`);
       setEntries([]);
-      /*
-       * 没打开就不许选：picked 空了「选这里」会自动变灰（disabled={!picked}），
-       * 否则交出去的是一个连列都列不出来的目录。
-       * cwd 刻意不动 —— 留着用户刚敲的那条，改一个字符就能重试。
-       */
-      setPicked('');
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -163,11 +145,10 @@ export default function DirPicker({
   if (fallback === null) return null;
 
   const up = useMemo(() => {
-    /* 优先从已打开的目录往上；还没打开过就退而用输入框那条，失败后也能退回去 */
-    const s = String(picked || cwd || '').replace(/[\\/]+$/, '');
+    const s = String(cwd ?? '').replace(/[\\/]+$/, '');
     const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
     return i > 0 ? s.slice(0, i) : null;
-  }, [cwd, picked]);
+  }, [cwd]);
 
   return (
     <div className="dirpicker-mask" onClick={onCancel}>
@@ -195,20 +176,13 @@ export default function DirPicker({
           </div>
         ) : null}
         {err ? <div className="dirpicker-err">⚠ {err}</div> : null}
-        {err && cwd ? (
-          /*
-           * 不加这句的话：输入框里是自己敲的路径、底部却是「（未选）」、
-           * 按钮还灰着，三处各说各的，用户只会以为选择器坏了。
-           */
-          <div className="dirpicker-err">上方路径尚未打开，已停用「选这里」；改好后点「打开」</div>
-        ) : null}
 
         {roots.length > 0 ? (
           <div className="dirpicker-roots">
             {roots.map((r) => (
               <button
                 key={r.path}
-                className={`chip${r.path === picked ? ' on' : ''}`}
+                className={`chip${r.path === cwd ? ' on' : ''}`}
                 onClick={() => void load(r.path)}
               >
                 {r.name}
@@ -243,9 +217,9 @@ export default function DirPicker({
 
         <div className="dirpicker-foot">
           <span className="dirpicker-cur">
-            当前：{picked || '（未选）'}
-            {picked ? (
-              withinRoots(picked, authorized)
+            当前：{cwd || '（未选）'}
+            {cwd ? (
+              withinRoots(cwd, authorized)
                 ? ' · 已授权'
                 : ' · 未授权（选中后会自动申请）'
             ) : null}
@@ -254,13 +228,13 @@ export default function DirPicker({
             {onPickAsDefault ? (
               <button
                 className="mini"
-                disabled={!picked}
-                onClick={() => { onPickAsDefault(picked); onPick(picked); }}
+                disabled={!cwd}
+                onClick={() => { onPickAsDefault(cwd); onPick(cwd); }}
               >
                 设为默认
               </button>
             ) : null}
-            <button className="mini primary" disabled={!picked} onClick={() => onPick(picked)}>
+            <button className="mini primary" disabled={!cwd} onClick={() => onPick(cwd)}>
               选这里
             </button>
           </span>

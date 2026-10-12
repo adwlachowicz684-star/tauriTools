@@ -363,21 +363,46 @@ export function redactParams(list: CanvasParam[] | undefined): CanvasParam[] {
 }
 
 /** 整个持久化状态脱敏（每个画布的节点都过一遍） */
+/**
+ * MCP 服务的环境变量脱敏。
+ *
+ * 服务的 env 是「启动命令要用的环境变量」—— 正是最顺手放 token 的地方
+ * （GITHUB_TOKEN、NOTION_API_KEY 都写在那里）。
+ *
+ * 以前只脱敏了 env.vars 与 params，**漏了这一处**：
+ * 填在 MCP 服务 env 里的密钥会**明文落进 localStorage**，
+ * 而本文件顶部写的是「密钥一律不落盘」—— 承诺了会挡、实际没挡。
+ */
+function redactServerEnv(env: Record<string, string> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env ?? {})) {
+    out[k] = looksLikeSecretName(k) ? '' : v;
+  }
+  return out;
+}
+
+/**
+ * 整份画布配置脱敏。
+ *
+ * 导出画布文件与写 localStorage 都走这一份 ——
+ * 各脱各的必然漏一处（env.vars / params / 服务的 env 三处都要挡）。
+ */
+export function redactCanvasConfig(cfg: CanvasConfig | undefined): CanvasConfig {
+  const base = normalizeCanvasConfig(cfg);
+  return {
+    mcpServers: base.mcpServers.map((s) => ({ ...s, env: redactServerEnv(s.env) })),
+    env: { vars: redactEnv(base.env?.vars ?? {}) },
+    params: redactParams(base.params),
+  };
+}
+
 export function redactSecrets(state: PersistedState): PersistedState {
   return {
     ...state,
     canvases: (state.canvases ?? []).map((c) => ({
       ...c,
       nodes: redactNodes(c.nodes),
-      ...(c.config
-        ? {
-            config: {
-              ...c.config,
-              env: { ...(c.config.env ?? { vars: {} }), vars: redactEnv(c.config.env?.vars ?? {}) },
-              params: redactParams(c.config.params),
-            },
-          }
-        : {}),
+      ...(c.config ? { config: redactCanvasConfig(c.config) } : {}),
     })),
   };
 }

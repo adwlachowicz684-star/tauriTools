@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
   updateCanvasContent, sortForDisplay, serialize, deserialize, toMeta,
-  redactNodes, redactSecrets, normalizeCanvasConfig,
+  redactNodes, redactSecrets, normalizeCanvasConfig, redactCanvasConfig,
+  redactEnv, redactParams,
   saveToStorage, loadFromStorage, STORAGE_KEYS,
 } from '../engine/canvasStore';
 
@@ -574,4 +575,102 @@ test('normalizeCanvasConfig: 坏字段归一，但不崩', () => {
   const cc = normalizeCanvasConfig({ mcpServers: [{ id: 's1', name: 'ok' }, 'junk', null] });
   assert.equal(cc.mcpServers.length, 1);
   assert.equal(cc.mcpServers[0].id, 's1');
+});
+/*
+ * MCP 服务的 env 是「启动命令要用的环境变量」，正是最顺手放 token 的地方。
+ * 以前只脱敏 env.vars 与 params，漏了这一处 —— 明文落进 localStorage，
+ * 而文件顶部写的是「密钥一律不落盘」。
+ */
+test('脱敏: MCP 服务 env 里的密钥也要挡住', () => {
+  const cfg = {
+    mcpServers: [
+      { id: 's1', name: '文件服务', command: 'npx -y fs', env: { GITHUB_TOKEN: 'ghp_xxx', PATH_LIKE: '/tmp' } },
+    ],
+    env: { vars: {} },
+    params: [],
+  } as never;
+  const r = redactCanvasConfig(cfg);
+  assert.equal(r.mcpServers[0].env?.GITHUB_TOKEN, '', '服务 env 里的 token 必须挖空');
+  assert.equal(r.mcpServers[0].env?.PATH_LIKE, '/tmp', '不是密钥的环境变量要保留');
+  // 服务的结构字段不能因为脱敏丢了
+  assert.equal(r.mcpServers[0].name, '文件服务');
+  assert.equal(r.mcpServers[0].command, 'npx -y fs');
+});
+
+/* 走 localStorage 那条路（serialize）也要挡住 —— 两条路必须是同一份口径 */
+test('脱敏: 服务 env 的密钥不进 localStorage', () => {
+  const c = {
+    ...makeCanvas('带服务'),
+    config: {
+      mcpServers: [{ id: 's1', name: 'n', command: 'x', env: { NOTION_API_KEY: 'secret_ntn' } }],
+      env: { vars: {} },
+      params: [],
+    },
+  };
+  const raw = serialize({ canvases: [c], activeId: c.id });
+  assert.ok(!raw.includes('secret_ntn'), '密钥不能出现在存档里');
+  const back = JSON.parse(raw).canvases[0].config;
+  assert.equal(back.mcpServers[0].env.NOTION_API_KEY, '');
+});
+
+/*
+ * 画布导出成文件 / 从文件导回来，配置必须跟着走。
+ *
+ * 以前 exportJson 只带 nodes/edges/triggers、importJson 只读 nodes/edges ——
+ * 于是「导出画布、换台机器导入」静默丢掉画布级配置（MCP 服务 + 画布参数），
+ * 节点里 {{params.路径}} 全部取空，且不报错。
+ *
+ * App.tsx 不进单测（要 DOM），所以扫源码。
+ */
+test('守卫: 画布导出带 config、导入读 config（丢一半就是"换台机器就用不了"）', () => {
+  const src = readFileSync(join(pluginRoot(), 'App.tsx'), 'utf8');
+  const noComment = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  const m = noComment.match(/const text = JSON\.stringify\(([\s\S]*?)\n\s*\);/);
+  assert.ok(m, '没找到导出那句 JSON.stringify');
+  assert.ok(/config/.test(m![1]), '导出必须带 config —— 只带 nodes/edges 会丢画布级配置');
+  assert.ok(
+    /redactCanvasConfig/.test(m![1]),
+    '导出必须脱敏 —— 配置里有服务 env 与参数卡，不脱敏就是把密钥写进要发给别人的文件',
+  );
+
+  assert.ok(
+    /\.config\b[\s\S]{0,200}normalizeCanvasConfig|normalizeCanvasConfig\(p\.config\)/.test(noComment),
+    '导入必须读 config 并归一 —— 文件可能手改过',
+  );
+
+  /*
+   * 导入是整体替换：文件里没有 nodes 数组时继续往下走，
+   * 会把当前画布清空（"导入了一个别的文件"是极常见的手误）。
+   */
+  assert.ok(
+    /Array\.isArray\(p\?\.nodes\)/.test(noComment),
+    '导入前必须确认 nodes 是数组 —— 否则拿 undefined 去 setNodes 会清空画布',
+  );
+});
+/*
+ * env.vars 与 params 的脱敏。
+ *
+ * 为什么单独钉住：故障注入时我发现——把 redactEnv 改成直接透传，
+ * **测试照样全绿**（此前没有任何一条测试真的检查过它）。
+ * 而它挡的是"变量名像密钥"这种最顺手填 token 的地方。
+ *
+ * 扫源码的守卫抓不住这种退化：源码里 `out[k] = v` 与
+ * `out[k] = 判据 ? '' : v` 都"看起来在脱敏"，只有跑一遍才看得出。
+ */
+test('脱敏: env.vars 里名字像密钥的要挖空', () => {
+  const r = redactEnv({ MY_TOKEN: 'abc', NOTION_API_KEY: 'ntn_x', PLAIN_PATH: '/tmp' });
+  assert.equal(r.MY_TOKEN, '', 'token 必须挖空');
+  assert.equal(r.NOTION_API_KEY, '', 'api key 必须挖空');
+  assert.equal(r.PLAIN_PATH, '/tmp', '不像密钥的变量名要保留');
+});
+
+test('脱敏: 参数卡里名字像密钥的要挖空', () => {
+  const r = redactParams([
+    { id: 'p1', name: 'apiKey', value: 'sk-live' } as never,
+    { id: 'p2', name: '路径', value: '/tmp' } as never,
+  ]);
+  assert.equal(r[0].value, '', '参数卡里的密钥必须挖空');
+  assert.equal(r[1].value, '/tmp', '普通参数要保留');
+  assert.equal(r[0].name, 'apiKey', '只挖值，名字要留着（界面还要显示）');
 });

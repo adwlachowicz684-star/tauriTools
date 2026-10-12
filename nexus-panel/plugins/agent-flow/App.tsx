@@ -125,7 +125,7 @@ import {
   updateCanvasContent, updateCanvasConfig, canvasConfigOf, sortForDisplay, toMeta,
   loadFromStorage, saveToStorage, STORAGE_KEYS,
   type Canvas,
-  redactNodes,
+  redactNodes, redactCanvasConfig, normalizeCanvasConfig,
 } from './engine/canvasStore';
 import {
   parseKeywords, parseMessages, matchKeywords, takeNew, newSeenState,
@@ -1876,7 +1876,19 @@ function reportSkipped(
     // 导出前脱敏：LLM 的 apiKey 不能跟着文件走。
     // 这个文件是要发给别人 / 传上仓库的，里面带密钥等于直接交出去，
     // 而填过密钥的人往往不会意识到它存在。
-    const text = JSON.stringify({ nodes: redactNodes(nodes), edges, triggers }, null, 2);
+    /*
+     * config 必须一起走 —— 以前只导出 nodes/edges/triggers，
+     * 于是「导出画布、在另一台机器上导入」会**静默丢掉画布级配置**
+     * （MCP 服务与画布参数）。节点里 {{params.路径}} 全部取空，且不报错。
+     *
+     * 走 redactCanvasConfig：配置里有服务 env 与参数卡，
+     * 不脱敏就等于把密钥写进要发给别人的文件。
+     */
+    const text = JSON.stringify(
+      { nodes: redactNodes(nodes), edges, triggers, config: redactCanvasConfig(canvasConfigOf(activeCanvas)) },
+      null,
+      2,
+    );
     exportText(
       text,
       'json',
@@ -1890,10 +1902,27 @@ function reportSkipped(
     reader.onload = () => {
       try {
         const p = JSON.parse(String(reader.result));
-        setNodes(p.nodes ?? []);
-        setEdges(p.edges ?? []);
+        /*
+         * 没有 nodes 数组就**不能**继续 —— 下面两行是整体替换，
+         * 拿 undefined 去 setNodes 会把当前画布清空。
+         * 而"导入了一个别的文件"是极常见的手误（比如拿了整份备份），
+         * 静默清空的代价远大于一句报错。
+         */
+        if (!Array.isArray(p?.nodes)) {
+          pushLog('导入失败：文件里没有节点数组（nodes）—— 当前画布未改动');
+          return;
+        }
+        setNodes(p.nodes);
+        setEdges(Array.isArray(p.edges) ? p.edges : []);
+        /*
+         * 配置随画布一起导入，否则导出去再导回来就丢一半。
+         * 走 normalizeCanvasConfig：文件可能手改过，字段不一定是数组。
+         */
+        if (p.config && activeId) {
+          setCanvases((cs) => updateCanvasConfig(cs, activeId, normalizeCanvasConfig(p.config)));
+        }
         // 触发器现在是画布上的节点，随 nodes 一起导入，不再单独存储
-        pushLog(`已导入 ${p.nodes?.length ?? 0} 个节点、${p.edges?.length ?? 0} 条连线`);
+        pushLog(`已导入 ${p.nodes.length} 个节点、${p.edges?.length ?? 0} 条连线`);
       } catch { pushLog('导入失败：不是合法 JSON'); }
     };
     reader.readAsText(file);
