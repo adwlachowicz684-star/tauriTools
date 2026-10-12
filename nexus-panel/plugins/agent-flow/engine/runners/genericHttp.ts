@@ -3,27 +3,15 @@ import { withNodeRun, NodeFailError } from '../runnerKit';
 import { resolveSecret } from '../credentials';
 import type { HttpRequester } from '../runTypes';
 import type { GenericHttpNodeData } from '../../types';
+/** 请求头解析走 headers.ts —— 脱敏用的是同一份，各写一份必然漂移 */
+import { parseHeaders } from '../headers';
 
 /**
  * 解析请求头文本：每行 `Name: value`，忽略空行与 # 开头的注释行。
  *
- * 放在这里而不是塞进 runners/extract.ts：HTTP 请求头与"数据提取"毫无关系，
- * 只因为文件名都带 extract 就放一起，日后改起来必踩坑（两个 extract 模块
- * 已经很容易看混，别再让它们互相依赖）。
+ * 搬到了 engine/headers.ts：脱敏也要按同样规则认请求头，
+ * 两边各写一份必然漂移（执行器认得、脱敏不认得 = 密钥明文进存档）。
  */
-export function parseHeaders(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const raw of (text ?? '').split('\n')) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const i = line.indexOf(':');
-    if (i < 0) continue;
-    const name = line.slice(0, i).trim();
-    const value = line.slice(i + 1).trim();
-    if (name) out[name] = value;
-  }
-  return out;
-}
 
 /**
  * 通用 HTTP 请求节点。

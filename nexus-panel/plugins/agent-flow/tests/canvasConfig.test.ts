@@ -160,6 +160,8 @@ test('两处 looksLikeSecretName 判断一致（内联副本没漂移）', () =>
   const samples: [string, boolean][] = [
     ['TOKEN', true], ['GH_SECRET', true], ['my_password', true],
     ['API_KEY', true], ['plainUrl', false], ['URL', false], ['name', false],
+    /* cookie：biliCookie 是整条会话凭据，两份清单都必须认它 */
+    ['biliCookie', true], ['COOKIE', true], ['feedUrl', false],
   ];
   for (const [k, want] of samples) {
     // 通过 redactEnv 的行为间接验证 canvasStore 里那份

@@ -184,9 +184,18 @@ test('SECRET_FIELDS 直接复用 SECRET_PATHS，不再自己抄一份', () => {
     !/const SECRET_FIELDS = \['llm\.apiKey'/.test(f),
     '不能再出现手写的密钥字段数组',
   );
+  /*
+   * 认「导入列表里含 SECRET_PATHS」，不认整行字面量。
+   *
+   * 以前写的是 /import \{ SECRET_PATHS \} from '\.\/sanitize';/ ——
+   * 要求这一行**只有** SECRET_PATHS 一个名字。于是往同一个模块再多导入
+   * 一个东西（redactHeadersText、blankSecretNamed）它就会红，
+   * 而红的理由是"守卫写窄了"，不是"代码错了" —— 这种红最耽误事：
+   * 人照着它去改，就会把 import 拆回两行（或更糟，把兜底摘掉）。
+   */
   assert.ok(
-    /import \{ SECRET_PATHS \} from '\.\/sanitize';/.test(f),
-    '要从 sanitize 引入',
+    /import \{[^}]*\bSECRET_PATHS\b[^}]*\} from '\.\/sanitize';/.test(f),
+    '要从 sanitize 引入（导入列表里含 SECRET_PATHS 即可）',
   );
 });
 

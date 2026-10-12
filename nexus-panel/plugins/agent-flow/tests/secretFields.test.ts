@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SECRET_PATHS } from '../engine/sanitize';
+import {
+  SECRET_PATHS, stripSecrets, hadInlineSecret,
+  redactHeadersText, headersHaveSecret, looksLikeSecretHeader,
+} from '../engine/sanitize';
+import { parseHeaders } from '../engine/headers';
 import { redactNodes } from '../engine/canvasStore';
+import { readSrc } from './srcScan';
 
 /**
  * 脱敏必须覆盖完整的一份密钥清单 —— 这是密钥**唯一**的防线。
@@ -86,4 +91,217 @@ test('SECRET_PATHS 覆盖三类已知密钥', () => {
       `SECRET_PATHS 应包含 ${p}`,
     );
   }
+});
+
+/* ---------------- 请求头里的密钥 ---------------- */
+
+/**
+ * 请求头是"最顺手写 Authorization: Bearer xxx"的地方。
+ *
+ * SECRET_PATHS 是三条**固定路径**，认不出"名字由用户随便起"的字段。
+ * 于是三处全漏，且每一处都不报错：
+ *   · redactNodes    → 明文进 localStorage 与导出的画布文件
+ *   · stripSecrets   → 明文进分享出去的自定义预设
+ *   · hadInlineSecret → 返回 false，界面不提示（等于暗示"这里安全"）
+ *
+ * 实测（修之前）：
+ *   HTTP headersText     : "Authorization: Bearer sk-live-123\nX-Foo: bar"
+ *   hadInlineSecret      : false
+ */
+
+const H = (headersText: string) =>
+  ({ id: 'h1', data: { kind: 'genericHttp', url: 'https://x', headersText } });
+
+const redactedHeaders = (src: string): string => {
+  const out = redactNodes([H(src)]) as unknown as { data: Record<string, unknown> }[];
+  return String(out[0].data.headersText ?? '');
+};
+
+test('请求头里的 Authorization 会被挖空，普通头不动', () => {
+  const text = redactedHeaders('Authorization: Bearer sk-live-123\nX-Foo: bar');
+  assert.equal(text.includes('sk-live-123'), false, 'Bearer 令牌必须挖掉');
+  assert.equal(text.includes('X-Foo: bar'), true, '普通请求头不能被动');
+});
+
+test('Cookie / X-Api-Key 这类也认得出来', () => {
+  const text = redactedHeaders('Cookie: session=abc\nX-Api-Key: k-1\nAccept: application/json');
+  assert.equal(text.includes('session=abc'), false, 'Cookie 带会话凭据');
+  assert.equal(text.includes('k-1'), false);
+  assert.equal(text.includes('Accept: application/json'), true);
+});
+
+test('挖空只挖值、留名字 —— 用户看得到哪一条要重填', () => {
+  assert.equal(redactedHeaders('Authorization: Bearer abc').trim(), 'Authorization:');
+});
+
+test('注释行里的令牌也挖（它一样以明文躺在存档里）', () => {
+  const text = redactedHeaders('# Authorization: Bearer commented');
+  assert.equal(text.includes('commented'), false);
+  assert.equal(text.trim().startsWith('#'), true, '注释标记要留着');
+});
+
+test('没有请求头密钥时内容原样不动', () => {
+  const src = 'Content-Type: application/json\nX-Trace: 1';
+  assert.equal(redactedHeaders(src), src);
+});
+
+test('stripSecrets 也会挖请求头（预设分享不能把令牌带出去）', () => {
+  const out = stripSecrets({ kind: 'genericHttp', headersText: 'Authorization: Bearer sk-1' });
+  assert.equal(String(out.headersText).includes('sk-1'), false);
+});
+
+test('hadInlineSecret 认得出请求头里的密钥（界面要提示）', () => {
+  assert.equal(
+    hadInlineSecret({ kind: 'genericHttp', headersText: 'Authorization: Bearer sk-1' }),
+    true,
+    '有密钥就该提示用户"这部分不会存进去"',
+  );
+  assert.equal(
+    hadInlineSecret({ kind: 'genericHttp', headersText: 'Accept: application/json' }),
+    false,
+  );
+});
+
+test('Authorization / Cookie 必须判为密钥头（它们不含 token 字样）', () => {
+  for (const n of ['Authorization', 'authorization', 'Cookie', 'X-Api-Key', 'X-Token']) {
+    assert.ok(looksLikeSecretHeader(n), `${n} 应判为密钥头`);
+  }
+  for (const n of ['Content-Type', 'Accept', 'X-Request-Id']) {
+    assert.equal(looksLikeSecretHeader(n), false, `${n} 不该判为密钥头`);
+  }
+});
+
+/*
+ * 端到端守卫：用**执行器同一份解析器**反着验一遍。
+ *
+ * 为什么这么写：脱敏侧若自己另写一份解析，两份迟早漂移 ——
+ * 表现是"执行器真把令牌发出去了，脱敏却没认出来"，而这种漏认不报错。
+ * 所以这里走 parseHeaders → 找出密钥头 → 确认脱敏后值真的空了，
+ * 顺带确认普通头没被挖过头。
+ */
+test('守卫: 执行器真会发出的密钥头，脱敏后必须为空', () => {
+  const samples = [
+    'Authorization: Bearer abc',
+    'authorization:bearer abc',
+    'X-Token: t\nContent-Type: application/json',
+    'Cookie: session=1',
+    'X-Api-Key: k\nAccept: */*',
+  ];
+  for (const s of samples) {
+    const before = parseHeaders(s);
+    const secretNames = Object.keys(before).filter((n) => looksLikeSecretHeader(n));
+    assert.ok(secretNames.length > 0, `样例应当含密钥头: ${JSON.stringify(s)}`);
+    const after = parseHeaders(redactHeadersText(s));
+    for (const n of secretNames) {
+      assert.equal(after[n], '', `${n} 的值必须被挖空`);
+    }
+    for (const n of Object.keys(before)) {
+      if (looksLikeSecretHeader(n)) continue;
+      assert.equal(after[n], before[n], `普通头 ${n} 不能被动`);
+    }
+  }
+});
+
+test('守卫: headersHaveSecret 与 redactHeadersText 口径一致', () => {
+  for (const s of ['Authorization: Bearer a', 'Accept: */*', '# Authorization: Bearer a', '']) {
+    assert.equal(
+      redactHeadersText(s) !== s,
+      headersHaveSecret(s),
+      `有密钥就该改动、没有就不该动: ${JSON.stringify(s)}`,
+    );
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* 固定路径覆盖不到的那两处                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * SECRET_PATHS 是点号路径枚举，表达不了数组下标，也管不到没进清单的字段。
+ * 实测这两处此前是**明文落盘**的：
+ *
+ *   触发器   entries[].config.token   —— webhook 校验令牌，
+ *            泄露意味着别人能伪造请求触发你的工作流（能起 CLI、读写授权目录）
+ *   检测更新 biliCookie / targets[].biliCookie —— 整条会话 Cookie，
+ *            用来绕过风控，名字里却不含 token / key 字样
+ *
+ * 两处都不报错：hadInlineSecret 也返回 false，
+ * 于是界面上那句"不会存进默认"根本不出现 —— 用户以为自己填的东西是安全的。
+ */
+test('触发器 entries[].config.token 会被挖空（数组路径）', () => {
+  const out = redactNodes([
+    N('t1', {
+      kind: 'trigger',
+      entries: [{ id: 'te1', kind: 'webhook', enabled: true, config: { token: 'WH_SECRET', port: 8787, path: '/hooks/run' } }],
+    }),
+  ]) as never[];
+  const cfg = (out as unknown as { data: Record<string, unknown> }[])[0]
+    .data.entries[0].config as Record<string, unknown>;
+  assert.equal(cfg.token, '', 'webhook 校验令牌必须被挖空');
+  assert.equal(cfg.port, 8787, '同层的非密钥字段要保留');
+  assert.equal(cfg.path, '/hooks/run', '同层的非密钥字段要保留');
+});
+
+test('biliCookie 会被挖空（顶层与 targets 里）', () => {
+  const out = redactNodes([
+    N('u1', {
+      kind: 'update',
+      biliCookie: 'SESSDATA=top',
+      targets: [
+        { id: 'g1', kind: 'bili', enabled: true, biliUid: '123', biliCookie: 'SESSDATA=inner' },
+        { id: 'g2', kind: 'wechat', enabled: true, feedUrl: 'https://example.com/feed.xml' },
+      ],
+    }),
+  ]) as never[];
+  const d = (out as unknown as { data: Record<string, unknown> }[])[0].data;
+  const t = d.targets as Record<string, unknown>[];
+  assert.equal(d.biliCookie, '', '顶层 biliCookie 必须被挖空');
+  assert.equal(t[0].biliCookie, '', 'targets 里的 biliCookie 必须被挖空');
+  assert.equal(t[0].biliUid, '123', '同层的非密钥字段要保留');
+  assert.equal(t[1].feedUrl, 'https://example.com/feed.xml', '普通订阅地址不能被动');
+});
+
+test('这两处也会被 hadInlineSecret 认出来（界面提示才出现）', () => {
+  /*
+   * 只挖空还不够：hadInlineSecret 若返回 false，面板上的
+   * "这部分不会存进默认"就不会出现 —— 用户以为填的东西是安全的。
+   * 所以它必须与"会不会被挖空"同口径。
+   */
+  assert.equal(hadInlineSecret({
+    kind: 'trigger',
+    entries: [{ id: 'te1', kind: 'webhook', config: { token: 'x' } }],
+  }), true, '触发器 entries 里的 token 要被认出来');
+  assert.equal(hadInlineSecret({ kind: 'update', biliCookie: 'x' }), true, 'biliCookie 要被认出来');
+  assert.equal(hadInlineSecret({ kind: 'update', targets: [{ kind: 'bili', biliCookie: 'x' }] }), true);
+  assert.equal(hadInlineSecret({ kind: 'log', msg: 'hi' }), false, '没有密钥时不该误报');
+});
+
+test('预设分享也会带上这两处（stripSecrets 要一起挖）', () => {
+  const s = stripSecrets({
+    kind: 'trigger',
+    entries: [{ id: 'te1', kind: 'webhook', config: { token: 'WH', port: 8787 } }],
+    biliCookie: 'SESS',
+  });
+  assert.equal((s.entries as Record<string, unknown>[])[0].config.token, '', '预设里的 webhook token 要挖空');
+  assert.equal((s.entries as Record<string, unknown>[])[0].config.port, 8787, '非密钥字段要保留');
+  assert.equal(s.biliCookie, '', '预设里的 biliCookie 要挖空');
+});
+
+test('守卫: redactNode 走了按名字兜底（退化成只靠路径会红）', () => {
+  /*
+   * 扫源码而不是只测行为：把兜底摘掉后，上面几条会一起红；
+   * 但反过来 —— 只盯"有没有调用"挡不住空壳，所以两者都要有。
+   */
+  const src = readSrc('engine/canvasStore.ts');
+  assert.ok(
+    /blankSecretNamed\(/.test(src),
+    'canvasStore 必须调 sanitize 的按名字兜底 —— 只靠 SECRET_PATHS 会漏掉数组里的密钥',
+  );
+});
+
+test('守卫: cookie 进了密钥名字清单（两份都要有）', () => {
+  const san = readSrc('engine/sanitize.ts');
+  const store = readSrc('engine/canvasStore.ts');
+  assert.ok(/'cookie'/.test(san), 'sanitize 的 SECRET_NAME_HINTS 要含 cookie');
+  assert.ok(/'cookie'/.test(store), 'canvasStore 内联那份也要含 cookie（两份由 canvasConfig 那条盯着同义）');
 });

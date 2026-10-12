@@ -11,7 +11,7 @@
  */
 import { type CanvasConfig, type McpServer, emptyCanvasConfig } from './canvasConfig';
 import type { CanvasParam } from './canvasParams';
-import { SECRET_PATHS } from './sanitize';
+import { SECRET_PATHS, redactHeadersText, blankSecretNamed } from './sanitize';
 
 /*
  * 判断一个名字像不像密钥。
@@ -24,7 +24,12 @@ import { SECRET_PATHS } from './sanitize';
 function looksLikeSecretName(name: string): boolean {
   const n = String(name ?? '').toLowerCase().replace(/[^a-z]/g, '');
   if (!n) return false;
-  const hints = ['token', 'secret', 'password', 'passwd', 'apikey', 'accesskey'];
+  /*
+   * 'cookie' 是后加的：检测更新的 biliCookie 是一整条会话凭据，
+   * 名字里却不含 token / key。两份清单（这里与 sanitize 那份）
+   * 的一致性由 tests/canvasConfig 那条测试盯住，样本里含 cookie。
+   */
+  const hints = ['token', 'secret', 'password', 'passwd', 'apikey', 'accesskey', 'cookie'];
   for (const h of hints) {
     if (n.includes(h)) return true;
   }
@@ -320,6 +325,25 @@ function redactNode(n: unknown): unknown {
   for (const f of SECRET_FIELDS) {
     if (getSecretField(next, f) !== null) next = blankSecretField(next, f);
   }
+  /*
+   * 请求头里的 Authorization / Cookie 也是内联密钥 ——
+   * 按路径枚举认不出来（名字用户随便起），要按"名字像不像密钥"判。
+   */
+  if (typeof next.headersText === 'string') {
+    const redacted = redactHeadersText(next.headersText);
+    if (redacted !== next.headersText) next = { ...next, headersText: redacted };
+  }
+  /*
+   * 最后按名字再兜一层 —— 固定路径覆盖不到的那些：
+   *   · 触发器的 entries[].config.token（带数组下标，点号路径表达不了）
+   *   · 检测更新的 biliCookie / targets[].biliCookie（压根不在清单里）
+   *
+   * 上面那句「以后新增任何带 llm / token 的节点都会自动覆盖」在这里
+   * 曾经是空话：除 headersText 外一律靠路径，路径漏了就是明文落盘。
+   * 有了这层兜底，那句话才真的成立。
+   */
+  const named = blankSecretNamed(next);
+  if (named !== next) next = named as Record<string, unknown>;
   if (next === dd) return n;
   return { ...o, data: next };
 }
