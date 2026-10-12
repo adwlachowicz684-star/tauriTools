@@ -951,5 +951,128 @@ console.log('\n=== 10. escapeHtml 实现必须转义满 5 个字符 ===');
     })());
 }
 
+/* ============================================================
+ * 11. 拖拽内核：两套实现必须逐项等价
+ * ------------------------------------------------------------
+ * 仓库里有**两套拖拽排序内核**，各自带一份纯逻辑：
+ *   A 外壳侧：js/drag-reorder.js            （+ react 层，settings 插件在用）
+ *   B 插件侧：plugins/project-group/utils/dragSort.ts（项目组四套拖拽在用）
+ *
+ * 有 6 个函数是**同名同语义**的：
+ *   movedEnough / clampIndex / deadZone /
+ *   swapIndexWithDeadZone / edgeScrollSpeed / resolveMoveIndex
+ * 外加常量 DRAG_THRESHOLD = 5、以及死区(8, .2)与贴边(48, 14)两组默认值
+ * —— B 侧把它们写成了**字面量默认参数**（deadZone 的 fixed=8/ratio=.2、
+ *    edgeScrollSpeed 的 zone=48/maxSpeed=14），所以改 A 的常量不会带动 B。
+ *
+ * 本轮实测：24000 组随机入参下 6 个函数**输出全部相同**，
+ * 所以这不是现存 BUG，而是"随时会漂"的结构。漂了的后果：
+ *   同一台机器上，设置里的列表拖动与项目组的卡片拖动**手感不一致**
+ *   （阈值、死区、贴边加速、落点纠偏任一处对不上）。
+ * 而**各自都有测试且都会全绿** —— drag-reorder-test 49 项只测 A，
+ * drag-sort-test 145 项只测 B，谁都不会发现对面变了。
+ * 这正是"两份实现 + 两份各自的测试"的经典盲区。
+ *
+ * 为什么**不合掉**（看起来更彻底）：
+ *   B 是 .ts、A 是 .js，且 B 还有一堆 project-group 专属的东西
+ *   （外部拖入判定、分框/页签/动作的 payload 解析）。
+ *   让插件去 import 外壳的 js/ 也违背了插件自包含的方向。
+ *   既然物理上确实有两份，就让**等价性**被钉住 —— 谁改一处，这里立刻报红。
+ *
+ * 判据取"同入参同输出"而不是"源码文本相同"：
+ *   两份的循环写法本就不同（for vs while）、辅助函数名不同
+ *   （depthToSpeed vs ratio），钉文本会立刻误伤。
+ * ============================================================ */
+console.log('\n=== 11. 拖拽内核两套实现等价 ===');
+{
+  let modA = null, modB = null;
+  try { modA = await import('./js/drag-reorder.js'); } catch (e) { /* 下面判据失效 */ }
+  try {
+    const ts3 = await import('typescript');
+    const src = read('plugins/project-group/utils/dragSort.ts');
+    const out = ts3.transpileModule(src, {
+      compilerOptions: { module: ts3.ModuleKind.ESNext, target: ts3.ScriptTarget.ES2020 },
+    }).outputText;
+    /* data: URL 直接 import，不落临时文件（本文件不该往仓库里写东西） */
+    modB = await import('data:text/javascript;base64,' + Buffer.from(out).toString('base64'));
+  } catch (e) { /* 下面判据失效 */ }
+
+  t('两侧模块都能加载（判据不能空转）', !!modA && !!modB,
+    `A=${!!modA} B=${!!modB}`);
+
+  const NAMES = ['movedEnough', 'clampIndex', 'deadZone',
+    'swapIndexWithDeadZone', 'edgeScrollSpeed', 'resolveMoveIndex'];
+
+  /* 固定种子的伪随机 —— 每次跑同一批入参，报红可复现。
+     注意必须**每次调用都新建**：若共用一个闭包，前面某函数提前 break
+     会吃掉不同数量的随机值，后面函数拿到的入参就跟着漂 ——
+     实测踩到：改坏 B 侧 deadZone 后，元断言那条也跟着假红，
+     因为它拿到的随机入参变了（正好撞上 A 侧也返回 0 的情况）。 */
+  const mkRnd = (seed = 20261012) => {
+    let x = seed;
+    return () => ((x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  };
+  /** 每个函数的入参生成器（覆盖越界/负值/空列表等边界） */
+  const argsOf = (n, rnd) => {
+    switch (n) {
+      case 'movedEnough': return [{ x: rnd() * 100, y: rnd() * 100 }, rnd() * 100, rnd() * 100, rnd() * 10];
+      case 'clampIndex': return [Math.floor(rnd() * 20) - 5, Math.floor(rnd() * 10)];
+      case 'deadZone': return [rnd() * 100, rnd() * 20, rnd()];
+      case 'swapIndexWithDeadZone': {
+        const len = 1 + Math.floor(rnd() * 6);
+        const centers = [], sizes = []; let acc = 0;
+        for (let i = 0; i < len; i++) { const s = 10 + rnd() * 60; centers.push(acc + s / 2); sizes.push(s); acc += s; }
+        return [rnd() * acc, centers, sizes, Math.floor(rnd() * len)];
+      }
+      case 'edgeScrollSpeed': {
+        const top = rnd() * 100, bot = top + rnd() * 400;
+        return [top + rnd() * (bot - top), top, bot, 10 + rnd() * 60, 5 + rnd() * 20];
+      }
+      default: return [Math.floor(rnd() * 8) - 1, Math.floor(rnd() * 8) - 1, Math.floor(rnd() * 8)];
+    }
+  };
+  /** 返回不一致的函数名列表 —— 抽成函数是为了下面做元断言 */
+  const mismatches = (a, b, rounds = 800) => {
+    const rnd = mkRnd();
+    const bad = [];
+    for (const n of NAMES) {
+      if (typeof a?.[n] !== 'function' || typeof b?.[n] !== 'function') { bad.push(n + '(缺失)'); continue; }
+      for (let k = 0; k < rounds; k++) {
+        const args = argsOf(n, rnd);
+        let ra, rb;
+        try { ra = a[n](...args); } catch { ra = 'THROW'; }
+        try { rb = b[n](...args); } catch { rb = 'THROW'; }
+        if (ra !== rb) { bad.push(n); break; }
+      }
+    }
+    return bad;
+  };
+
+  if (modA && modB) {
+    const bad = mismatches(modA, modB);
+    t('6 个共用函数同入参同输出', bad.length === 0,
+      bad.length ? `不一致：${bad.join('、')}` : `实测 ${NAMES.length} 个 × 800 组入参`);
+    t('DRAG_THRESHOLD 两侧相同', modA.DRAG_THRESHOLD === modB.DRAG_THRESHOLD,
+      `A=${modA.DRAG_THRESHOLD} B=${modB.DRAG_THRESHOLD}`);
+    /* B 侧把死区/贴边的默认值写成了字面量默认参数，拿默认调用比一次即可 */
+    t('死区默认值等价（8 / .2）',
+      modA.deadZone(50) === modB.deadZone(50) && modA.deadZone(0) === modB.deadZone(0),
+      `A=${modA.deadZone(50)} B=${modB.deadZone(50)}`);
+    t('贴边加速默认值等价（48 / 14）',
+      modA.edgeScrollSpeed(10, 0, 400) === modB.edgeScrollSpeed(10, 0, 400),
+      `A=${modA.edgeScrollSpeed(10, 0, 400)} B=${modB.edgeScrollSpeed(10, 0, 400)}`);
+
+    /* 元断言：判据失明比数字难看危险得多 ——
+       若比较器永远返回空数组，上面四条会一直全绿而毫无保护力。 */
+    /* 假实现返回 NaN：NaN 与任何值（含它自己）都不相等，
+       所以无论随机入参落在哪，都必然被判为不一致 ——
+       用 `() => 0` 不行，A 侧本来就常返回 0（比如指针不在贴边区）。 */
+    t('改坏一个函数照样被抓（判据没失明）',
+      mismatches(modA, { ...modB, deadZone: () => NaN, edgeScrollSpeed: () => NaN }, 1)
+        .sort().join(',') === 'deadZone,edgeScrollSpeed');
+    t('完全一致的不算坏（不能误伤）', mismatches(modA, modA, 1).length === 0);
+  }
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
