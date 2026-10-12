@@ -97,3 +97,38 @@ import { readFileSync } from 'node:fs';
 export function readStripped(path) {
   return stripComments(readFileSync(path, 'utf8'));
 }
+
+/* ---- 汇总行解析 ---- */
+
+/**
+ * 汇总行的几种写法（项目里不统一，全列出来；少一种就会把正常测试误判成"没汇总"）。
+ *
+ * ⚠️ 曾经漏掉「数字在前」那一族（"依赖清单：59 通过 / 0 失败"），后果不是漏报 ——
+ *    退出码 0 却解析不出汇总行 → 被判成「可疑」，把 246 条断言的 runtime-deps、
+ *    59 条的 deps-manifest 一起列进"可疑"，真可疑项淹没在假警报里，体检单从此没人看。
+ *
+ * 解析不出时返回 `pass: null`（不是 0）—— 调用方靠它区分
+ *   · 跑完了但是 0 条断言（pass === 0，可疑）
+ *   · 根本没跑到汇总行（pass === null，崩在半路）
+ * 两者在体检单上是两回事，混成一个值就会把"崩了"当成"通过"。
+ *
+ * 这份与 sweep-tests.mjs 里那份**同源**；等那边改成 import 之后，
+ * 这一份就是唯一实现（目前两份并存，改一处请同步另一处）。
+ */
+export const SUMMARY = [
+  /通过\s*(\d+)\s*项[，,]\s*失败\s*(\d+)\s*项/,
+  /(\d+)\s*passed\s*,\s*(\d+)\s*failed/i,
+  /通过\s*(\d+)\s*\/\s*失败\s*(\d+)/,
+  /通过\s*(\d+)\s*项/,
+  /(\d+)\s*\/\s*(\d+)\s*(?:通过|通过项)/,
+  /(\d+)\s*通过\s*\/\s*(\d+)\s*失败/,   // 数字在前：deps-manifest / runtime-deps / theme-tokens / publish-update
+  /(\d+)\s*项通过/,                      // 只报通过数：md-render
+];
+
+export function parseSummary(out) {
+  for (const re of SUMMARY) {
+    const m = String(out).match(re);
+    if (m) return { pass: Number(m[1]), fail: m[2] !== undefined ? Number(m[2]) : 0 };
+  }
+  return { pass: null, fail: null };
+}

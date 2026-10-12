@@ -13,6 +13,7 @@ import { JSDOM } from 'jsdom';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', { url: 'http://localhost/' });
@@ -120,13 +121,32 @@ t('推送两条路都覆盖（iframe 推消息 / module 重写内联变量）',
   /await pushTheme\(inst\.iframe,\s*inst\.manifest\?\.id\)/.test(hostSrc2)
   && /applyThemeVarsTo\(inst\.root,\s*varsForPlugin\(inst\.manifest\?\.id\)/.test(hostSrc2));
 
-/* 文案：主题改动不应再提示"重载" */
+/* 文案：主题改动不应再提示"重载"
+ *
+ * 这里守的是**意图**（主题即时生效，所以不该说"重载"），不是写法。
+ * 原先的判据是 `setPluginConfig(...)` 之后 220 字符内出现 toast('已保存','ok')
+ * ——钉的是旧调用形式。落盘失败要如实报错之后，中间多了 `if (!saved)`
+ * 分支和说明注释，距离与调用名都变了，于是断言红，而它守的东西一直是对的。
+ *
+ * 所以改成：themeRow 这段里**有**成功的 toast，且**不出现**「重载」。
+ * 必须剥注释再判 —— 这段的注释里恰好写着"不需要重载""那个确实要重载"，
+ * 不剥的话「不含重载」永远不成立（注释里的字把意图判成了反的）。
+ * 用 stripCommentsJs（块注释 + `//` 行注释）：那两句恰恰是 `//` 行注释，
+ * 只剥块注释的 stripComments 管不到它们。 */
 const shellSrc = src('js/shell.js');
-const sb = shellSrc.slice(shellSrc.indexOf('插件自选主题'));
+const shellCode = stripCommentsJs(shellSrc);
+const rowStart = shellCode.indexOf('const themeRow =');
+const rowEnd = shellCode.indexOf('box.innerHTML', rowStart);
+const themeRowSrc = rowStart >= 0 && rowEnd > rowStart ? shellCode.slice(rowStart, rowEnd) : '';
+/* 切片自检：切不到就整体报红，别让"没验到"装成"通过" */
+t('（自检）themeRow 段切到了（含 onchange、不含开关段）',
+  themeRowSrc.includes('sel.onchange') && !themeRowSrc.includes('toggleRow'),
+  `len=${themeRowSrc.length}`);
 t('主题下拉的提示不再要求重载',
-  /setPluginConfig\(manifest\.id, \{ \[key\]: sel\.value \|\| null \}\);[\s\S]{0,220}?toast\('已保存', 'ok'\)/.test(sb));
+  /toast\(\s*'已保存',\s*'ok'\s*\)/.test(themeRowSrc) && !themeRowSrc.includes('重载'),
+  themeRowSrc.includes('重载') ? '段里仍出现「重载」' : '');
 t('沙箱开关仍保留重载提示（isolated 确实要重载）',
-  /toast\('已保存，重载插件后生效', 'ok'\)/.test(shellSrc));
+  /toast\('已保存，重载插件后生效', 'ok'\)/.test(shellCode));
 t('React 版说明标注立即生效', /立即生效/.test(src('src/components/SandboxSection.tsx')));
 
 /* ---------- 8. 源码级：调用点确实接上了 ---------- */

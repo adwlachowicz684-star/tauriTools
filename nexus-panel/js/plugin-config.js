@@ -48,13 +48,43 @@ export function getPluginConfig(id) {
   } catch { return { ...DEFAULTS }; }
 }
 
-export function setPluginConfig(id, patch) {
+/**
+ * 写入并**如实回答落没落盘**。
+ *
+ * 这是给界面用的那一个：开关拨过去之后要说"已保存"，就必须先知道
+ * 到底存没存成。存储不可用（配额满、隐身模式、隔离态 SecurityError）时
+ * `localStorage.setItem` 会抛 —— 那时**一个字节都没写进去**，而调用方
+ * 拿到的 `next` 看起来跟成功时一模一样。
+ *
+ * 照旧写法的后果：界面把开关画成"已开启"、弹一句「已保存，重载插件后生效」，
+ * 用户照着提示重载插件 —— 值还是旧的。**说了保存却没保存**，且全程不报错，
+ * 与本项目一贯的"谎报成功比不报更糟"同一类。
+ *
+ * @returns {{config: object, saved: boolean}}
+ */
+export function savePluginConfig(id, patch) {
   const next = { ...getPluginConfig(id), ...patch };
+  let saved = false;
   try {
     localStorage.setItem(KEY(id), JSON.stringify(next));
+    saved = true;
+  } catch { /* 存储不可用：如实回 saved=false，不假装成功 */ }
+  // 只在真的写成了才广播：没落盘却让宿主按新值重推，同样是谎报
+  if (saved) {
     globalThis.dispatchEvent?.(new CustomEvent(EVENT, { detail: { id, config: next } }));
-  } catch { /* 存储不可用时忽略 */ }
-  return next;
+  }
+  return { config: next, saved };
+}
+
+/**
+ * 只回配置（**不告诉调用方落没落盘**）。
+ *
+ * 保留它是因为 `ctx.shell.pluginConfig.set` 的对外契约就是"回配置对象"
+ * （插件那边按 `get` 的返回值形状在用）。需要向用户报"已保存"的
+ * **界面**一律用 `savePluginConfig` —— 说成功之前必须先知道成功没有。
+ */
+export function setPluginConfig(id, patch) {
+  return savePluginConfig(id, patch).config;
 }
 
 export function onPluginConfigChange(fn) {

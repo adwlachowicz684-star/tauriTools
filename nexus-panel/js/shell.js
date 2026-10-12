@@ -15,7 +15,7 @@ import {
 } from './theme-manager.js';
 import { h } from './plugin-sdk.js';
 import * as extPolicy from './external-policy.js';
-import { getPluginConfig, setPluginConfig } from './plugin-config.js';
+import { getPluginConfig, savePluginConfig } from './plugin-config.js';
 import { openThemePicker } from './theme-picker.js';
 import { installTooltip, refreshTooltip } from './tooltip.js';
 import { installInspector, toggleInspector, isInspectorOn, escInspector } from './inspector.js';
@@ -338,13 +338,23 @@ function renderShellSection(box, manifest) {
     }, dot, txt);
     const desc = h('div.p-muted.cfg-row-desc', {}, cfg[keyName] ? texts.on : texts.off);
     btn.onclick = () => {
-      const next = setPluginConfig(manifest.id, { [keyName]: !getPluginConfig(manifest.id)[keyName] });
+      const was = !!getPluginConfig(manifest.id)[keyName];
+      const { config: next, saved } = savePluginConfig(manifest.id, { [keyName]: !was });
       const on = !!next[keyName];
-      btn.classList.toggle('on', on);
-      btn.setAttribute('aria-pressed', String(on));
-      txt.textContent = on ? '已开启' : '已关闭';
-      desc.textContent = on ? texts.on : texts.off;
-      toast('已保存，重载插件后生效', 'ok');
+      /*
+       * 没存成就把开关**拨回去**，不能停在没落盘的值上。
+       *
+       * 存储不可用时（配额满 / 隐身模式 / 隔离态），画成"已开启"却没写进去
+       * 是最坏的一种：界面说 A、磁盘上是 B，重载后打回原样，而用户
+       * 记得的只有那句「已保存」。先拨回去，再报没保存。
+       */
+      const shown = saved ? on : was;
+      btn.classList.toggle('on', shown);
+      btn.setAttribute('aria-pressed', String(shown));
+      txt.textContent = shown ? '已开启' : '已关闭';
+      desc.textContent = shown ? texts.on : texts.off;
+      if (saved) toast('已保存，重载插件后生效', 'ok');
+      else toast('没能保存：插件配置写不进本地存储（配额或隐私模式），改动未生效', 'err');
     };
     return h('div.cfg-row', {},
       h('div.cfg-row-main', {},
@@ -371,7 +381,20 @@ function renderShellSection(box, manifest) {
       ...all.map((t) => h('option', { value: t.id, selected: cfg[key] === t.id }, t.name)),
     );
     sel.onchange = () => {
-      setPluginConfig(manifest.id, { [key]: sel.value || null });
+      const prev = cfg[key] ?? '';
+      const { saved } = savePluginConfig(manifest.id, { [key]: sel.value || null });
+      if (!saved) {
+        /*
+         * 没存成就把下拉拨回原样，并且**不能再说「已保存」**。
+         * 与上面沙箱开关同一条：写了失败还要报成功，就是"界面说 A、磁盘是 B"。
+         * 这里还多一层 —— 主题是即时生效的，写失败时 host 根本收不到
+         * 配置变更事件、不会重推变量，插件外观一动不动，而下拉却停在
+         * 新选的那套上：看着像主题没生效，其实是配置没存下。
+         */
+        sel.value = prev;
+        toast('没能保存：插件配置写不进本地存储（配额或隐私模式），改动未生效', 'err');
+        return;
+      }
       // 主题是即时生效的（host 订阅了配置变更并会重推变量），不需要重载。
       // 与上面「沙箱」开关不同 —— 那个确实要重载。
       toast('已保存', 'ok');

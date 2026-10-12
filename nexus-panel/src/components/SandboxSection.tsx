@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { PluginManifest } from '../../js/host.js';
-import { getPluginConfig, setPluginConfig } from '../../js/plugin-config.js';
+import { getPluginConfig, savePluginConfig } from '../../js/plugin-config.js';
 import { listThemes } from '../../js/theme-manager.js';
 import * as extPolicy from '../../js/external-policy.js';
 import SettingGroup from './SettingGroup';
@@ -18,15 +18,28 @@ import SettingGroup from './SettingGroup';
  */
 export default function SandboxSection({ manifest }: { manifest: PluginManifest }) {
   const [cfg, setCfg] = useState(() => getPluginConfig(manifest.id));
+  const [err, setErr] = useState<string | null>(null);
   const [, bump] = useState(0);
 
   useEffect(() => { setCfg(getPluginConfig(manifest.id)); }, [manifest.id]);
 
-  const toggle = (key: 'isolated') => {
-    const next = setPluginConfig(manifest.id, { [key]: !cfg[key] });
-    setCfg(next);
+  /*
+   * 写失败就**停在原值**，不能停在没落盘的那个上。
+   *
+   * 存储不可用（配额满 / 隐私模式 / 严格沙箱下 localStorage 被拒）时
+   * `localStorage.setItem` 会抛，一个字节都没写进去。照旧写法的后果：
+   * 开关画成"已开启"、组标题上的徽章跟着变"严格"，而磁盘上还是"宽松" ——
+   * 重载插件后打回原样，用户记得的只有顶上那句「改动在下次加载时生效」。
+   * **界面说 A、实际是 B，且不报错**，与无构建版（shell.js）同一套判据。
+   */
+  const write = (patch: Record<string, unknown>) => {
+    const { config: next, saved } = savePluginConfig(manifest.id, patch);
+    if (saved) { setCfg(next); setErr(null); }
+    else setErr('插件配置写不进本地存储（配额或隐私模式），这次改动没有生效');
     bump((n) => n + 1);
   };
+
+  const toggle = (key: 'isolated') => write({ [key]: !cfg[key] });
 
   const mine = extPolicy.listHosts().filter((x) => x.pluginId === manifest.id);
 
@@ -57,7 +70,7 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
         <select
           className="p-input sm"
           value={cfg[key] ?? ''}
-          onChange={(e) => setCfg(setPluginConfig(manifest.id, { [key]: e.target.value || null }))}
+          onChange={(e) => write({ [key]: e.target.value || null })}
         >
           <option value="">跟随全局</option>
           {all.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -68,6 +81,16 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
 
   return (
     <>
+      {/*
+       * 保存失败的说明放在**所有分组之上**：失败可能来自沙箱开关，也可能来自
+       * 插件主题那两个下拉，放在某一组里面的话，另一组出问题时这句在折叠状态下
+       * 根本看不见 —— 而那两个下拉自己不会发声（成功时也不需要发声）。
+       */}
+      {err ? (
+        <div className="p-muted" style={{ padding: '0 0 10px', fontSize: '11px', color: 'var(--danger)' }}>
+          保存失败：{err}
+        </div>
+      ) : null}
       <SettingGroup
         title="沙箱"
         badge={cfg.isolated ? '严格' : '宽松'}
