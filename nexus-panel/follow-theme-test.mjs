@@ -23,7 +23,17 @@
  * 第 4、5 节是**仍然生效**的部分（data-nexus-base 与品牌色双档），保留原样。
  */
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { stripCommentsJs } from './test-scan-utils.mjs';
+
+// ⚠️ 路径必须按本文件位置解析，不能用裸相对路径：
+//    裸相对路径由「从哪个目录敲 node」决定，从仓库根跑就会 ENOENT 崩在半路
+//    （本文件 4 处 read 全崩 → 19 条断言一条没跑，而报错看不出真因）。
+//    ⚠️ 它躲过了静态守卫：assertion-hygiene 第 5 节只认 `process.cwd()` 和
+//    「fs 紧跟相对字面量」，而这里是**经 read(p) 变量中转**——静态看不见，
+//    是 cwd-invariant-test.mjs（真跑两遍比对结论）把它抓出来的。
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 let pass = 0;
 const fails = [];
@@ -31,7 +41,7 @@ const t = (name, cond, extra = '') => {
   if (cond) pass++;
   else fails.push(`${name}${extra ? ' → ' + extra : ''}`);
 };
-const read = (p) => readFileSync(p, 'utf8');
+const read = (p) => readFileSync(resolve(HERE, p), 'utf8');
 
 const registry = read('plugins/registry.js');
 const host = read('js/host.js');

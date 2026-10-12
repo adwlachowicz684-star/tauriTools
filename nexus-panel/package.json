@@ -27,6 +27,7 @@
     "test:bridge": "node bridge-test.mjs",
     "test:build-entry": "node build-entry-test.mjs",
     "test:canvas-theme": "node canvas-theme-test.mjs",
+    "test:cwd-invariant": "node cwd-invariant-test.mjs",
     "test:command-consistency": "node command-consistency-test.mjs",
     "test:controls": "node controls-test.mjs",
     "test:crossend-fault": "node crossend-fault-injection-test.mjs",

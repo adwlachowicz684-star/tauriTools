@@ -136,6 +136,34 @@ const walkResolvesHere = (src) => {
   return defs.every((m) => /HERE|__dirname|fileURLToPath|import\.meta\.url|ROOT/
     .test(src.slice(m.index, m.index + 900)));
 };
+/*
+ * 第 5 节**第三层漏网面**：相对路径**经薄封装中转**。
+ *
+ * 第二层只认"fs 紧跟字面量"。而写成
+ *     const read = (p) => readFileSync(p, 'utf8');  read('css/a.css');
+ * 时，字面量离 fs 有**一层变量**，第二层一个都抓不到 —— 但结论一样由
+ * "从哪个目录敲 node"决定。实测（第一百五十二轮）：
+ *   · follow-theme-test.mjs 的 4 处 read() → 换 cwd 后 19 条断言一条没跑；
+ *   · responsive-test.mjs 的 6 处 read()  → 换 cwd 后 18 条断言一条没跑。
+ * 两处都是 ENOENT 崩在半路，**既不报红也不出现在体检单的失败里**。
+ * 静态层补上这一层；运行态那层由 cwd-invariant-test.mjs 兜底。
+ */
+const FS_FNS = 'readFileSync|readdirSync|existsSync|statSync|lstatSync|writeFileSync|appendFileSync|opendirSync|readdir';
+/* 薄封装：`const NAME = (p) => fsFn(p` —— 参数名原样透传给 fs */
+const WRAP_DEF = new RegExp(
+  '(?:const|let|var)\\s+(\\w+)\\s*=\\s*\\(?\\s*(\\w+)\\s*\\)?\\s*=>\\s*(?:' + FS_FNS + ')\\s*\\(\\s*\\2\\b', 'g');
+const wrapResolvesHere = (src, from) =>
+  /HERE|__dirname|fileURLToPath|import\.meta\.url|\bROOT\b|resolve\s*\(/.test(src.slice(from, from + 160));
+const wrapHits = (src) => {
+  const out = [];
+  for (const d of src.matchAll(WRAP_DEF)) {
+    const [name, from] = [d[1], d.index];
+    if (wrapResolvesHere(src, from)) continue; /* 内部已按本文件位置拼 → 安全 */
+    const call = new RegExp('\\b' + name + '\\s*\\(\\s*([\'"`])([^\'"`\\n]+)\\1', 'g');
+    for (const c of src.matchAll(call)) if (!c[2].startsWith('/')) out.push(`${name}():${c[2]}`);
+  }
+  return out;
+};
 const relRootHits = (src) => {
   const out = [];
   const m1 = FS_REL_CALL.exec(src);
@@ -145,6 +173,7 @@ const relRootHits = (src) => {
     if (walkResolvesHere(src)) continue;
     out.push(`walk:${m[2]}`);
   }
+  out.push(...wrapHits(src));
   return out;
 };
 
@@ -557,6 +586,12 @@ console.log('\n=== 5. 测试不得依赖 process.cwd() 定位源码 ===');
   t('walk 内部按 HERE 拼的不算漏判（addcard-cross-tab 那种）',
     relRootHits("const walk = (d) => { fs.readdirSync(path.join(HERE, d)); };\nwalk('.')")
       .length === 0);
+  /* 第三层反面证据：判据清空后上面那条照样绿，只有这两条会喊 */
+  t('薄封装判据确能命中（反面证据）',
+    relRootHits("const read = (p) => readFileSync(p, 'utf8');\nread('css/a.css')").length === 1
+    && relRootHits("const read = (p) => readFileSync(resolve(HERE, p), 'utf8');\nread('css/a.css')")
+      .length === 0,
+    '裸命中 / 内部按 HERE 拼不命中');
 }
 
 console.log('\n=== 6. 断言不能拿带 g / y 标志的正则做 .test() ===');
