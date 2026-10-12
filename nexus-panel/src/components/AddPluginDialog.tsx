@@ -89,6 +89,10 @@ export default function AddPluginDialog({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  /* 「添加」的前置条件。
+     置灰与说明缺一不可：只置灰不说原因，用户知道点不动，却不知道该去填哪个。 */
+  const canAdd = !!name.trim() && !!entry.trim();
+
   const meta = (p: PluginManifest) =>
     [
       p.version ? 'v' + p.version : null,
@@ -213,12 +217,21 @@ export default function AddPluginDialog({
         </div>
 
         <div className="p-row" style={{ marginTop: 'var(--sp-8, 16px)', justifyContent: 'flex-end', flex: '0 0 auto' }}>
+          {/* 填不齐时把原因写在按钮左边 ——
+              原来是「点了静默 return」：按钮不置灰、也不说为什么，
+              用户按下去毫无反应，只会以为这个按钮坏了。 */}
+          {tab === 'add' && !canAdd ? (
+            <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)', marginRight: 'auto' }}>
+              {name.trim() ? '还差入口文件' : '还差插件名称'}
+            </span>
+          ) : null}
           <button className="p-btn" onClick={onClose}>关闭</button>
           {tab === 'add' ? (
             <button
               className="p-btn primary"
+              disabled={!canAdd}
               onClick={() => {
-                if (!name.trim() || !entry.trim()) return;
+                if (!canAdd) return;   // 兜底：置灰之外的路径（如回车触发）也挡住
                 onSubmit({
                   name: name.trim(), entry: entry.trim(), type,
                   icon: icon.trim() || '◌', kind: 'app',
