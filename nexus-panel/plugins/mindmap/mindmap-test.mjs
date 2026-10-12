@@ -5971,6 +5971,71 @@ group('BUG 130 · 导入别人的 .puml：`+ / -` 节点、内联颜色、多行
   }
 }
 
+group('BUG 131 · 导入别人的 .puml：无边框节点 `_`（boxless）');
+
+{
+  const f131 = await import('./formats.js');
+  const N131 = (t, ch) => ({ data: { text: t }, children: ch || [] });
+  const wrap131 = (r) => JSON.stringify({ root: r });
+  const flat131 = (c) => {
+    if (!c) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(JSON.parse(c).root, 0);
+    return out;
+  };
+  const J131 = (v) => JSON.stringify(v);
+
+  /*
+   * ① 官方 boxless 语法：下划线紧跟前缀、不留空格
+   *   （PlantUML 文档 boxless 一节的示例就是 `***_ Ubuntu`）。
+   *   早先下划线整串留在节点文字里 —— 导入别人的 .puml 后节点上顶着一个
+   *   多余的 `_`，属于"静默改了别人的内容"。
+   */
+  eq(J131(flat131(f131.fromPlantUml(
+    '@startmindmap\n* Linux\n** NixOS\n** Debian\n***_ Ubuntu\n**** Linux Mint\n**** Kubuntu\n@endmindmap\n'))),
+  J131([['Linux', 0], ['NixOS', 1], ['Debian', 1],
+    ['Ubuntu', 2], ['Linux Mint', 3], ['Kubuntu', 3]]),
+  '★ `***_ Ubuntu` 的下划线不许留在文字里（早先是 `_ Ubuntu`）；层级不变');
+  eq(J131(flat131(f131.fromPlantUml('* Linux\n**_Ubuntu\n'))),
+    J131([['Linux', 0], ['Ubuntu', 1]]),
+    '★ 紧贴写法 `**_Ubuntu` 同样剥');
+  eq(J131(flat131(f131.fromPlantUml('* R\n-_ 左侧无框\n'))),
+    J131([['R', 0], ['左侧无框', 1]]),
+    '★ WBS 式的 `-_ 任务` 同样剥（WBS 官方示例就是 `-_ Task …`）');
+
+  /*
+   * ② ★ 中间有空格的不属于这个语法 —— 那时下划线是文字的一部分。
+   *    剥掉就是静默改内容，比"下划线留在文字里"更坏。
+   */
+  eq(J131(flat131(f131.fromPlantUml('* Linux\n** _ Ubuntu\n** _internal\n'))),
+    J131([['Linux', 0], ['_ Ubuntu', 1], ['_internal', 1]]),
+    '★ 前缀与 `_` 之间有空格时不许剥（那是真文字）');
+
+  // ③ 只有下划线、没有文字 → 补占位，不能丢行（丢行 = 子树抬层，同 BUG 100）
+  eq(J131(flat131(f131.fromPlantUml('* R\n**_\n*** A\n'))),
+    J131([['R', 0], [f131.EMPTY_NODE_TEXT, 1], ['A', 2]]),
+    '★ `**_` 空节点补占位，子树不被抬层');
+  ok(f131.fromPlantUml('*_'), '★ 只有一个 `*_` 时也不返回 null（早先 → 整份文件导不进来）');
+
+  // ④ 本工具自己的往返不受影响：文字真以 `_` 开头时导出写 `* _x`，导回仍是 `_x`
+  for (const t of ['_ Ubuntu', '_internal', '_']) {
+    eq(J131(flat131(f131.fromPlantUml(f131.toPlantUml(wrap131(N131(t, [])))))),
+      J131([[t, 0]]), `本工具往返：文字 ${J131(t)} 一字不改`);
+  }
+
+  // ⑤ 源码层（先剥注释：正则本身就写在注释里，不剥会命中注释而永远绿）
+  {
+    const s131 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    const i131 = s131.indexOf('const PUML_LINE');
+    ok(i131 > 0, '能定位 PUML_LINE');
+    ok(/\(_\?\)/.test(s131.slice(i131, i131 + 200)),
+      '★ 解析正则必须有无边框下标那一组（否则 `***_ Ubuntu` 的文字里多个 `_`）');
+    const iF131 = s131.indexOf('export function fromPlantUml');
+    ok(/PUML_LINE\)/.test(s131.slice(iF131, iF131 + 2500)),
+      '★ fromPlantUml 必须真的用这个正则（定义了不调用 = 空转）');
+  }
+}
+
 group('格式识别 detectFormat（内容优先于扩展名）');
 
 {

@@ -830,6 +830,15 @@ export function toPlantUml(content) {
 const isPumlNodeLine = (line) => /^[*+-]/.test(String(line ?? '').trim());
 
 /**
+ * PlantUML 节点行：三套前缀（`*` / `+` / `-`，BUG 130）+ 可选的无边框下划线
+ * （BUG 131）+ 文字。
+ *
+ * ⓘ 这个正则和 `isPumlNodeLine` 的判据必须一致 —— 两处口径不同就会
+ *   一头认、另一头不认（BUG 130 的教训）。
+ */
+const PUML_LINE = /^(\*+|\++|-+)(_?)\s*(.*)$/;
+
+/**
  * `[#…]` 里是不是一个**像颜色**的值（BUG 130）。
  *
  * 只剥"确实是颜色"的那一段：节点文字真的以 `[#1] 议题`、`[#2024 计划]`
@@ -858,9 +867,19 @@ export function fromPlantUml(text) {
     }
     if (anyMarker && !inBlock) continue;
     if (!line || line.startsWith("'")) continue;
-    const m = line.match(/^(\*+|\++|-+)\s*(.*)$/);
+    /*
+     * `(_?)` 是**无边框节点**（BUG 131）。
+     * PlantUML 官方的 boxless 写法：下划线紧跟在前缀**之后**、中间不留空格
+     * （官方文档 boxless 一节的示例就是 `***_ Ubuntu`，WBS 里是 `-_ Task …`）。
+     * 不剥的话下划线整串留在节点文字里（实测 `***_ Ubuntu` 导回是 `_ Ubuntu`）。
+     *
+     * ⓘ 中间**有空格**的（`** _ Ubuntu` / `** _internal`）不属于这个语法 ——
+     *   那时下划线是文字的一部分，剥掉就是静默改内容。所以判据是"紧贴前缀"，
+     *   不是"文字以 `_` 开头"。
+     */
+    const m = line.match(PUML_LINE);
     if (!m) continue;
-    let t = m[2].trim();
+    let t = m[3].trim();
     /*
      * **inline color `*[#Orange] …`**（BUG 130）。
      * PlantUML 官方的「节点颜色」写法，颜色标记不进标签，不剥就整串留在
