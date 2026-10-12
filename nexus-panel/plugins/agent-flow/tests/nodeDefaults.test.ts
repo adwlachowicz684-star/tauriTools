@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readSrc } from './srcScan';
 import {
   loadAll, getDefault, hasDefault, setDefault, clearDefault,
   sanitizeForDefault, withDefault, matchPresetKey, NODE_DEFAULTS_KEY,
@@ -302,4 +303,102 @@ test('单字段存的值要深拷贝（嵌套对象不能共享）', () => {
   opts.a = 999;
   // 改原对象不该影响已存的默认值
   assert.equal((getDefault('task:codebuddy', kv).opts as { a: number }).a, 1);
+});
+
+/* ---------------- 按字段存：值里嵌套的密钥 ---------------- */
+
+/*
+ * 整份存（setDefault）走 stripSecrets，值里的密钥是挡住的。
+ * 按字段存以前只判**字段名**（isSecretField），于是下面这三个
+ * ——字段名都不像密钥、值里却明文躺着凭据——被整个落进明文默认值，
+ * 而返回给界面的 skipped 是空的，提示写的是「已设为默认」。
+ *
+ * 同一个节点的两种存法口径不一致，这在与安全相关的判据上最要不得。
+ */
+test('按字段存：请求头里的 Authorization 不能明文进默认值', () => {
+  const kv = memKV();
+  const r = setFieldsDefault('generic-http', {
+    headersText: 'Authorization: Bearer sk-live-xxxx\nX-Normal: 1',
+  }, kv);
+  assert.equal(r.ok, true);
+  assert.equal(r.redacted.includes('headersText'), true, '要记进 redacted，界面才说得清');
+  const stored = String(getDefault('generic-http', kv).headersText ?? '');
+  assert.equal(stored.includes('sk-live-xxxx'), false, '令牌不能落进明文默认值');
+  // 只挖值、留名字 —— 用户看得到「这一条要重填」
+  assert.equal(stored.includes('Authorization'), true);
+  // 不该顺手把无关的请求头也挖了
+  assert.equal(stored.includes('X-Normal: 1'), true);
+});
+
+test('按字段存：数组里的 config.token 不能明文进默认值', () => {
+  const kv = memKV();
+  const r = setFieldsDefault('trigger', {
+    entries: [{ id: 'e1', config: { token: 'ghp_abcdef' } }],
+  }, kv);
+  assert.equal(r.ok, true);
+  assert.equal(r.redacted.includes('entries'), true);
+  const stored = kv.get(NODE_DEFAULTS_KEY) ?? '';
+  assert.equal(stored.includes('ghp_abcdef'), false, '令牌不能落进明文默认值');
+});
+
+test('按字段存：biliCookie 不能明文进默认值', () => {
+  const kv = memKV();
+  setFieldsDefault('update', {
+    targets: [{ kind: 'bili', biliCookie: 'SESSDATA=xxxx' }],
+  }, kv);
+  assert.equal((kv.get(NODE_DEFAULTS_KEY) ?? '').includes('SESSDATA=xxxx'), false);
+});
+
+/* 加严最容易出的错就是连正常的一起拦掉 */
+test('没有凭据的字段不该被误判成 redacted', () => {
+  const kv = memKV();
+  const r = setFieldsDefault('task:codebuddy', {
+    prompt: 'hello',
+    model: 'gpt-4o',
+    headersText: 'Content-Type: application/json',
+  }, kv);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.redacted, [], '正常值不能报成被挖过');
+  const d = getDefault('task:codebuddy', kv);
+  assert.equal(d.prompt, 'hello');
+  assert.equal(d.model, 'gpt-4o');
+  assert.equal(d.headersText, 'Content-Type: application/json');
+});
+
+/*
+ * 两条存法必须同一口径 —— 各写一份判定的结果就是
+ * 「整份存挡住了、按字段存没挡住」（这次正是这么出的）。
+ */
+test('整份存与按字段存对同一份输入的脱敏结果一致', () => {
+  const input = {
+    headersText: 'Authorization: Bearer sk-live-xxxx',
+    entries: [{ config: { token: 'ghp_abcdef' } }],
+    prompt: 'p',
+  };
+  const kv1 = memKV();
+  setDefault('generic-http', input, kv1);
+  const kv2 = memKV();
+  setFieldsDefault('generic-http', input, kv2);
+  const a = JSON.stringify(getDefault('generic-http', kv1));
+  const b = JSON.stringify(getDefault('generic-http', kv2));
+  assert.equal(a.includes('sk-live-xxxx'), false);
+  assert.equal(b.includes('sk-live-xxxx'), false);
+  assert.equal(a.includes('ghp_abcdef'), false);
+  assert.equal(b.includes('ghp_abcdef'), false);
+  // 非密钥部分两边都得留下
+  assert.equal(b.includes('"prompt":"p"'), true);
+});
+
+/*
+ * 源码守卫：按字段存必须复用 stripSecrets，不能在这里另写一份判定。
+ * 只测行为抓不住"抄了一份"——抄的那份此刻也能通过，
+ * 要等将来 stripSecrets 加了新规则才漂开，那时已经晚了。
+ */
+test('setFieldsDefault 的脱敏走 stripSecrets（不另写判据）', () => {
+  const src = readSrc('engine/nodeDefaults.ts');
+  const body = src.slice(src.indexOf('export function setFieldsDefault'));
+  const end = body.indexOf('\nexport ');
+  const fn = end > 0 ? body.slice(0, end) : body;
+  assert.ok(/stripSecrets\(/.test(fn), 'setFieldsDefault 要调 stripSecrets');
+  assert.ok(/redacted/.test(fn), '要把被挖过的字段记下来给界面');
 });

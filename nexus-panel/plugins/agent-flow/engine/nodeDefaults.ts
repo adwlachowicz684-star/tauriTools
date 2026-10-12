@@ -107,28 +107,49 @@ export function isSecretField(fieldKey: string): boolean {
  * 得先把整个节点配成想要的样子再整份存 —— 而这会顺带把其它字段
  * 当前的值也一并定死（哪怕你只是路过改了一下）。
  *
- * @returns ok 是否真的存了；skipped 是因为密钥 / 空值被跳过的字段名
+ * ================= 值里面嵌套的密钥 =================
+ *
+ * 只按**字段名**判是不够的 —— 下面三个字段名本身都不像密钥，
+ * 而值里都明文躺着凭据：
+ *
+ *   · headersText → `Authorization: Bearer xxx`（最顺手写令牌的地方）
+ *   · entries     → 触发器每张卡的 entries[].config.token
+ *   · targets     → 检测更新每张卡的 biliCookie（整条会话凭据）
+ *
+ * 以前这里只判 isSecretField(k)，于是它们被整份落进**明文**默认值，
+ * 而返回给界面的是 skipped 为空 —— 提示写的是「已设为默认」，
+ * 用户以为全存下了。整份存（setDefault）那一侧当时是挡住的，
+ * 于是同一个节点的两种存法口径不一致 —— 与安全相关的判据最忌这个。
+ *
+ * 所以值也要过一遍。判定走 stripSecrets 而不是在这里另写一份：
+ * 只要 stripSecrets 加了新规则，两条存法同时跟上，不会又漂成两份。
+ *
+ * @returns ok 是否真的存了；skipped 是因为密钥 / 空值被跳过的字段名；
+ *          redacted 是存下了、但值里的凭据被挖掉的字段名
  */
 export function setFieldsDefault(
   presetKey: string,
   patch: Record<string, unknown>,
   kv: KV = defaultKV(),
-): { ok: boolean; skipped: string[] } {
+): { ok: boolean; skipped: string[]; redacted: string[] } {
   const clean: Record<string, unknown> = {};
   const skipped: string[] = [];
+  const redacted: string[] = [];
   for (const k of Object.keys(patch ?? {})) {
     const v = patch[k];
     if (isSecretField(k)) { skipped.push(k); continue; }
     // undefined 不存：分不清是"想设成空"还是"这个字段压根没值"
     if (v === undefined) { skipped.push(k); continue; }
-    clean[k] = cloneData(v);
+    const cleaned = stripSecrets({ [k]: v })[k];
+    if (cleaned !== v) redacted.push(k);
+    clean[k] = cloneData(cleaned);
   }
-  if (Object.keys(clean).length === 0) return { ok: false, skipped };
+  if (Object.keys(clean).length === 0) return { ok: false, skipped, redacted };
 
   const file = loadAll(kv);
   file[presetKey] = { ...(file[presetKey] ?? {}), ...clean };
   saveAll(file, kv);
-  return { ok: true, skipped };
+  return { ok: true, skipped, redacted };
 }
 
 /** 清掉某几个字段的默认值。整份空了就把键删掉，别留一个 {} */
