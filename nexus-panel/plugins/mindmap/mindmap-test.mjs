@@ -17801,6 +17801,104 @@ group('BUG 128 · FreeMind 的 <arrowlink> 双向');
 }
 
 /* ============================================================
+   BUG 129：导入别人的 .mmd —— Cloud / Bang 形状、::icon() 与 :::class
+   ============================================================ */
+
+group('BUG 129 · Mermaid 的形状与装饰后缀');
+{
+  const f = await import('./formats.js');
+
+  /* 一、形状表：Square / Rounded / Circle / Hexagon / Cloud / Bang 六种 */
+  eq(f.mermaidTextOf('[Square]'), 'Square', 'Square `[x]` 取文字');
+  eq(f.mermaidTextOf('(Rounded)'), 'Rounded', 'Rounded `(x)` 取文字');
+  eq(f.mermaidTextOf('((Circle))'), 'Circle', 'Circle `((x))` 取文字');
+  eq(f.mermaidTextOf('{{Hexagon}}'), 'Hexagon', 'Hexagon `{{x}}` 取文字');
+  eq(f.mermaidTextOf(')Cloud('), 'Cloud', '★ Cloud `)x(` 取文字（早先整串保留）');
+  eq(f.mermaidTextOf('))Bang(('), 'Bang', '★ Bang `))x((` 取文字（早先整串保留）');
+  eq(f.mermaidTextOf('id)Cloud('), 'Cloud', '★ Cloud 带 id 也要认');
+  eq(f.mermaidTextOf('id))Bang(('), 'Bang', '★ Bang 带 id 也要认');
+
+  /* 二、不能因为加形状而误伤文字 */
+  eq(f.mermaidTextOf('B'), 'B', '纯文字不被当成 id 吃掉（回归）');
+  eq(f.mermaidTextOf('plain text'), 'plain text', '含空格的纯文字不被吃（回归）');
+  eq(f.mermaidTextOf('A)'), 'A)', '★ 文字里带右括号不被当成 id + cloud');
+  eq(f.mermaidTextOf('价格)'), '价格)', '★ 右括号结尾的中文文字也不被吃');
+
+  /* 三、装饰后缀：同行 */
+  eq(f.mermaidTextOf('A ::icon(fa fa-book)'), 'A', '★ 同行 ::icon(…) 剥掉');
+  eq(f.mermaidTextOf('A :::urgent'), 'A', '★ 同行 :::class 剥掉');
+  eq(f.mermaidTextOf('(B) ::icon(mdi mdi-skull-outline)'), 'B', '★ 形状 + 同行图标');
+  eq(f.mermaidTextOf(')Cloud( ::icon(fa fa-cloud)'), 'Cloud', '★ Cloud + 同行图标');
+  eq(f.mermaidTextOf('["A::icon(x)"]'), 'A::icon(x)', '★ 引号形式不被后缀规则误伤（那是真文字）');
+
+  /* 四、Cloud / Bang 里的成对引号（官方示例就带引号） */
+  eq(f.mermaidTextOf('))"Bang 形状"(('), 'Bang 形状', '★ Bang 内引号剥掉');
+  eq(f.mermaidTextOf(')"云形状的节点"('), '云形状的节点', '★ Cloud 内引号剥掉');
+  eq(f.mermaidTextOf('["引用"]'), '引用', '引号形式仍取内部');
+
+  /* 五、独立成行的 ::icon() / :::class —— 不能变成节点 */
+  {
+    const mmd = 'mindmap\n  root((R))\n    A\n      ::icon(fa fa-book)\n    B\n';
+    const root = JSON.parse(f.fromMermaid(mmd)).root;
+    const kids = (root.children || []).map((n) => n.data.text);
+    eq(kids.length, 2, '★ 独立的 ::icon() 行不生成节点（早先凭空多一个）');
+    eq(JSON.stringify(kids), JSON.stringify(['A', 'B']), '★ 只剩下真正的两个节点');
+    /*
+     * ⓘ 上面两条看的是 root.children，而 `::icon()` 挂在 **A 下面** ——
+     *   只看根的孩子数，变异「不跳过装饰行」照样全绿（它变成 A 的子，
+     *   根的孩子还是 2 个）。必须再往下看一层才真在把关。
+     */
+    eq((root.children[0].children || []).length, 0, '★ A 下面没有多出 ::icon() 子节点');
+  }
+  {
+    const mmd = 'mindmap\n  root((R))\n    A\n      :::urgent\n';
+    const kids = (JSON.parse(f.fromMermaid(mmd)).root.children || []).map((n) => n.data.text);
+    eq(kids.length, 1, '★ 独立的 :::class 行同样不生成节点');
+  }
+  /* 整份文件只有装饰行时不该产出空画布 */
+  ok(f.fromMermaid('mindmap\n  root((R))\n    ::icon(fa fa-book)\n') !== null,
+    '★ 只剩装饰行时仍解析得出画布（不是 null）');
+
+  /* 六、别人的 .mmd 整体导回 */
+  {
+    const mmd = [
+      'mindmap',
+      '  root((中心))',
+      '    ) brainstorming(',
+      '    ))bang 形状((',
+      '    [Square]',
+      '    A ::icon(fa fa-book)',
+      '    B',
+      '      ::icon(mdi mdi-skull-outline)',
+    ].join('\n');
+    const root = JSON.parse(f.fromMermaid(mmd)).root;
+    eq(root.data.text, '中心', '★ 根文字（root((x)) 形状）');
+    const kids = (root.children || []).map((n) => n.data.text);
+    eq(JSON.stringify(kids),
+      JSON.stringify(['brainstorming', 'bang 形状', 'Square', 'A', 'B']),
+      '★ 四种形状与图标节点全部就位');
+    const deep = root.children[4].children || [];
+    eq(deep.length, 0, '★ B 下面的 ::icon() 没有变成子节点');
+  }
+
+  /* 七、往返不受影响（我们自己导出的形状不变） */
+  {
+    const km = JSON.stringify({
+      root: { data: { text: '中心' }, children: [
+        { data: { text: 'A(1)' }, children: [] },
+        { data: { text: 'B' }, children: [] },
+        { data: { text: 'a#quot;b' }, children: [] },
+        { data: { text: 'A::icon(x)' }, children: [] },
+      ] },
+    });
+    const back = f.fromMermaid(f.toMermaid(km));
+    const texts = JSON.parse(back).root.children.map((n) => n.data.text);
+    eq(JSON.stringify(texts), JSON.stringify(['A(1)', 'B', 'a#quot;b', 'A::icon(x)']),
+      '★ 自己导出再导回：含 #quot; 与 ::icon 的文字一字不改');
+  }
+}
+
+/* ============================================================
    结果
    ============================================================ */
 

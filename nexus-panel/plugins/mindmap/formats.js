@@ -598,23 +598,75 @@ export function mermaidLabel(text) {
 }
 
 /**
+ * Mermaid 节点行里的**装饰后缀**：`::icon(fa fa-book)` 与 `:::className`。
+ *
+ * 两者都是 Mermaid 官方语法（图标 / CSS 类），渲染时**不进标签**——官方文档
+ * 明写 CSS class 的 "the suffix is stripped from the rendered label"。
+ * 不剥掉的话它们会整串留在节点文字里（实测 `A ::icon(fa fa-book)` 导回
+ * 后节点文字就是这一整串）。
+ *
+ * ⓘ 只在**行尾**剥，且要求 `::icon(` 后面确实有收尾的 `)`：
+ * 引号写法 `["A::icon(x)"]` 的结尾是 `"]` 而不是 `)`，不会被误伤 ——
+ * 那是**用户真写着** `A::icon(x)` 的文字（我们的写侧遇到 `(` 一律加引号）。
+ */
+const MERMAID_SUFFIX = /\s*(?:::icon\([^)]*\)|:::[^\s]+)\s*$/;
+
+/**
+ * Mermaid 节点行的形状表（纯函数，可测）。
+ *
+ * 括号对齐全，顺序**先长后短**：`))Bang((` 必须排在 `)Cloud(` 之前，
+ * 否则前者会被后者的 `\)(.*)\(` 误吃。
+ *
+ * ⓘ Cloud `)x(` 与 Bang `))x((` 是 Mermaid mindmap 的官方形状
+ *   （Square `[x]` / Rounded `(x)` / Circle `((x))` / Hexagon `{{x}}` 之外
+ *   的两种），早先只认前四种，于是导入别人的 .mmd 时节点文字带着一对
+ *   括号尾巴：`)Cloud(` 导回还是 `)Cloud(`（BUG 129）。
+ *
+ * 开头的 id 是**可选**的，且必须紧跟某个形状符号 —— 否则像 `A)` 这种
+ * 「文字里带右括号」的行会被当成 `id + cloud` 剥掉一个字母。
+ */
+const MERMAID_SHAPE = /^(?:(?:[A-Za-z_][\w-]*\s*)?(?:\(\((.*)\)\)|\["(.*)"\]|\[(.*)\]|\)\)(.*)\(\(|\)(.*)\(|\((.*)\)|\{\{(.*)\}\})|(.*))$/s;
+
+/**
  * 从 Mermaid 节点行里剥出纯文字（纯函数，可测）。
- * 处理 `id((text))`、`id[text]`、`id(text)`、`id{{text}}`、裸文字 几种写法。
+ *
+ * 处理 Square `id[x]` / Rounded `id(x)` / Circle `id((x))` / Hexagon `id{{x}}`
+ * / Cloud `id)x(` / Bang `id))x((` / 引号 `id["x"]` / 裸文字，并剥掉
+ * `::icon(…)` 与 `:::class` 后缀（BUG 129）。
  */
 export function mermaidTextOf(line) {
   let s = String(line ?? '').trim();
   if (!s) return '';
-  // 去掉开头的 id（如 `root((x))` 里的 root、`id1[x]` 里的 id1）。
-  //
-  // **必须要求 id 后紧跟 `[` `(` `{`** —— 否则 `B`、`plan` 这类
-  // 纯文字节点会被整条当成 id 吃掉，解析结果为空、节点直接丢失。
-  // （这个 bug 初版就有：回环测试里 B / B1 两个节点凭空消失。）
-  s = s.replace(/^[A-Za-z_][\w-]*(?=\s*[\[({])/, '');
-  // 去掉结尾（可能有 onCreate 之类指令）
-  const m = s.match(/^(?:\(\((.*)\)\)|\["(.*)"\]|\[(.*)\]|\(\((.*)\)\)|\((.*)\)|\{\{(.*)\}\}|(.*))$/s);
+  s = s.replace(MERMAID_SUFFIX, '');
+  /*
+   * 去掉开头的 id（如 `root((x))` 里的 root、`id1[x]` 里的 id1）并剥形状。
+   *
+   * **两步合成一条正则**：早先是「先剥 id、再剥形状」，而剥 id 用的是
+   * 「id 后紧跟 `[` `(` `{`」—— Cloud / Bang 以 `)` 起头，加进去又会让
+   * 文字 `A)` 里的 `A` 被当成 id 吃掉。合并成「id 可选 + 后面必须是完整
+   * 形状」之后，`Plain`、`A)` 这类都落到 `(.*)` 兜底，不会误伤。
+   *
+   * ⓘ **必须要求后面有形状符号**，否则 `B`、`plan` 这类纯文字节点会被
+   *   整条当成 id 吃掉，解析结果为空、节点直接丢失。
+   *   （这个 bug 初版就有：回环测试里 B / B1 两个节点凭空消失。）
+   */
+  const m = s.match(MERMAID_SHAPE);
   let t = '';
   if (m) {
-    t = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? m[6] ?? m[7] ?? '';
+    t = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? m[6] ?? m[7] ?? m[8] ?? '';
+    /*
+     * Cloud / Bang 里的**成对引号**是 Mermaid 的「特殊字符包裹」，与 `["x"]`
+     * 同义 —— 官方示例就写 `))"Bang 形状"((` 和 `)"云形状的节点"(`。
+     * 不剥的话文字里多出一对引号。
+     *
+     * ⓘ **只剥这两个分支**：`["x"]` 那条不能跟着剥 —— 它的内部已经过
+     *   unescMermaid 还原，用户真写着 `"引用"` 时取出来的就是 `"引用"`，
+     *   再剥一次会把它吞掉（往返从 `"引用"` 变成 `引用`）。
+     */
+    if ((m[4] != null || m[5] != null) && t.length >= 2
+      && t.charCodeAt(0) === 34 /* " */ && t.charCodeAt(t.length - 1) === 34) {
+      t = t.slice(1, -1);
+    }
   }
   return unescMermaid(String(t)).trim();
 }
@@ -706,6 +758,21 @@ export function fromMermaid(text) {
      * 行首是 `[`、不再命中注释 —— 两边一起才叫往返安全。
      */
     if (/^\s*(%%|\/\/:)/.test(raw)) continue;      // 注释
+    /*
+     * **独立成行的 `::icon(…)` / `:::class`（BUG 129）。**
+     *
+     * Mermaid 里这两个写法是**给上一个节点加装饰**，不是节点 —— 官方示例
+     * 就是 `A` 下面缩进一行 `::icon(fa fa-book)`。早先不认，于是它被当成
+     * 一个真实节点，导回后凭空多出一个名叫 `::icon(fa fa-book)` 的子节点
+     * —— 那是**结构被改**，比丢一个装饰严重得多。
+     *
+     * 装饰本身带不走（kityminder 的图标库是自带的，不是 Font Awesome /
+     * Material 的 id，映射不过去），所以丢弃 —— 但**不能**因此生成一个节点。
+     *
+     * ⓘ 只认**整行就是**装饰：节点文字真叫 `::icon(x)` 时写侧会加引号
+     *   （`["::icon(x)"]`，因为它含 `(`），行首是 `[`、不会命中这里。
+     */
+    if (/^\s*(?:::icon\([^)]*\)|:::[^\s]+)\s*$/.test(raw)) continue;
     const indent = (raw.match(/^[ \t]*/) || [''])[0].replace(/\t/g, '  ').length;
     let body = mermaidTextOf(raw);
     /*
