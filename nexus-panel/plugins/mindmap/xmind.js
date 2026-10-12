@@ -1883,11 +1883,22 @@ export async function readXMind(input, saveAsset = null) {
   }
 
   // 2) XMind Zen / 2020+
+  //    ⓘ parseZen 只在 JSON.parse 失败时抛错，而这一抛会把整档优先级链打断：
+  //    XMind 2020 为向后兼容，包里 content.json 与 content.xml **两份都写**
+  //    （2021 起 content.xml 才退化成升级提示），于是 content.json 损坏时
+  //    明明还有一份完好的 content.xml，文件却整个导不进来。
+  //    与第 1) 档「坏快照继续往下走」同一口径：坏了就往下一档走，别中止。
+  let zenErr = null;
   if (!wb) {
     const content = readText(ContentEntry);
     if (content) {
-      const r = parseZen(content);
-      if (r.sheets.length) { wb = r; source = 'zen'; }
+      try {
+        const r = parseZen(content);
+        if (r.sheets.length) { wb = r; source = 'zen'; }
+      } catch (e) {
+        // 记下原因：三档都拿不到内容时，它比「不是有效的 XMind 文件」有用得多
+        zenErr = e;
+      }
     }
   }
 
@@ -1903,6 +1914,9 @@ export async function readXMind(input, saveAsset = null) {
   }
 
   if (!wb || !wb.sheets?.length) {
+    // content.json 存在但坏了、且 content.xml 也没救回来时，
+    // 说清是哪一档坏的 —— 比一句笼统的「不是有效的 XMind 文件」好定位
+    if (zenErr) throw zenErr;
     throw new Error('不是有效的 XMind 文件（未找到 content.json / content.xml）');
   }
 

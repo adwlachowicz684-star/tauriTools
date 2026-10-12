@@ -18612,6 +18612,117 @@ group('BUG 138 · XMind 8 的备注：换行与分段不能被抹平');
     '★ 块级标签必须按本地名判（<xhtml:p> 的 nodeName 带前缀，照它判一个都匹配不上）');
 }
 
+/* ------------------------------------------------------------------
+   BUG 139：content.json 坏了，整份 .xmind 就导不进来
+
+   readXMind 的文件头注释写明优先级是「无损快照 → content.json →
+   content.xml」，第 1) 档坏快照也确实是 `catch { 继续往下走 }`。
+   但第 2) 档 parseZen 只在 JSON.parse 失败时抛错，而这一抛把整条链
+   打断了 —— 文件里那份完好的 content.xml 再也没人去读。
+
+   这不是纸面情况：XMind 2020 为向后兼容，包里 content.json 与
+   content.xml **两份都写**（2021 起 content.xml 才退化成升级提示）。
+   于是 content.json 一坏，原本还能救回来的文件整个变成「无法识别」。
+
+   实测（修复前）：
+     content.json 坏 JSON + content.xml 完好  → 抛「content.json 解析失败」
+     content.json 好但没 rootTopic + 同上     → 正常回落 ✔（同一档，行为不一致）
+     无损快照坏 + content.json 好             → 正常回落 ✔
+
+   修法：parseZen 抛错时记下原因、继续往下一档走；三档都拿不到内容时，
+   把记下的原因抛出去 —— 比一句笼统的「不是有效的 XMind 文件」好定位。
+   ------------------------------------------------------------------ */
+group('BUG 139 · content.json 坏了必须回落到 content.xml，不能整份导不进来');
+
+{
+  const X = await import('./xmind.js');
+  const enc = new TextEncoder();
+  const NS = 'xmlns="urn:xmind:xmap:xmlns:content:2.0"';
+
+  const legacyXml = `<?xml version="1.0" encoding="UTF-8"?>
+<xmap-content ${NS} version="2.0"><sheet id="sh1">
+<topic id="r" structure-class="org.xmind.ui.logic.right"><title>中心主题</title>
+<children><topics type="attached">
+<topic id="a"><title>A</title><children><topics type="attached">
+<topic id="a1"><title>A1</title></topic></topics></children></topic>
+<topic id="b"><title>B</title></topic>
+</topics></children></topic><title>画布一</title></sheet></xmap-content>`;
+
+  const BAD_ZEN = '{"rootTopic": { ';   // 截断的 JSON
+  const GOOD_ZEN = JSON.stringify([{ id: 'z1', title: 'zen画布',
+    rootTopic: { id: 'r', title: '中心', children: { attached: [{ id: 'z', title: 'Z' }] } } }]);
+
+  const read = async (files) => {
+    const zb = await X.zipWrite(files.map(([n, d]) => ({ name: n, data: enc.encode(d) })));
+    try { return { r: await X.readXMind(new Uint8Array(zb)), err: null }; }
+    catch (e) { return { r: null, err: String(e?.message || e) }; }
+  };
+
+  // ① content.json 坏 + content.xml 完好 → 必须从老版救回来
+  {
+    const { r, err } = await read([['content.json', BAD_ZEN], ['content.xml', legacyXml]]);
+    ok(!err, '★ content.json 坏了不能让整份文件导不进来', err || '');
+    eq(r?.sheets?.length, 1, '救回来的是那一张画布');
+    eq(r?.sheets?.[0]?.title, '画布一', '★ 内容来自 content.xml（不是 zen 那份坏的）');
+  }
+
+  // ② 救回来的内容必须完整：子节点、层级、布局
+  {
+    const { r } = await read([['content.json', BAD_ZEN], ['content.xml', legacyXml]]);
+    /* ⓘ 必须可空取值：r 为 null 时若直接 .sheets[0]，整个测试进程会当场抛
+       TypeError —— 后面的断言一条都跑不到，「抓到了」其实是漏了大半。 */
+    const km = (() => { try { return JSON.parse(r?.sheets?.[0]?.content || 'null'); } catch { return null; } })();
+    eq(km?.root?.children?.map((c) => c.data.text).join(','), 'A,B', '★ 子节点都在');
+    eq(km?.root?.children?.[0]?.children?.[0]?.data?.text, 'A1', '★ 层级没被抬平');
+    eq(r?.sheets?.[0]?.layout, 'right', '★ 布局也读回来了（structure-class 照走老版那条）');
+  }
+
+  // ③ zen 是好的时候必须照旧走 zen —— 这个改动不许把正常路径带坏
+  {
+    const { r } = await read([['content.json', GOOD_ZEN], ['content.xml', legacyXml]]);
+    eq(r?.sheets?.[0]?.title, 'zen画布', 'zen 完好时优先走 zen（不能被回落逻辑抢走）');
+  }
+
+  // ④ zen 解析出 0 张画布（不抛错那条路）→ 仍要回落（回归：这条原来就对）
+  {
+    const { r, err } = await read([['content.json', '[{"id":"x","title":"没有根话题"}]'],
+      ['content.xml', legacyXml]]);
+    ok(!err, 'zen 空也不该导不进来', err || '');
+    eq(r?.sheets?.[0]?.title, '画布一', 'zen 拿不到画布时回落到 content.xml');
+  }
+
+  // ⑤ 三档都拿不到内容时，说清是哪一档坏的（不能只剩一句笼统的话）
+  {
+    const { err } = await read([['content.json', BAD_ZEN]]);
+    ok(/content\.json/.test(err || ''),
+      `★ 全档落空时要报出是 content.json 坏的（实际："${err}"）`);
+    ok(!/不是有效的 XMind 文件/.test(err || ''),
+      '★ 不能退化成笼统的「不是有效的 XMind 文件」');
+  }
+  {
+    const { err } = await read([['content.json', BAD_ZEN], ['content.xml', '<xmap-content/坏']]);
+    ok(!!err, 'content.xml 也坏时仍然要报错（不能静默变成空画布）');
+  }
+
+  // ⑥ 无损快照坏 + zen 坏 + legacy 好 —— 两道都断了也得救回来
+  {
+    const { r, err } = await read([['kityminder.json', '{ 坏快照'],
+      ['content.json', BAD_ZEN], ['content.xml', legacyXml]]);
+    ok(!err, '坏快照 + 坏 zen 也不该导不进来', err || '');
+    eq(r?.sheets?.[0]?.title, '画布一', '★ 两档都坏时仍回落到 content.xml');
+  }
+
+  /* ⑦ 源码契约：parseZen 的调用必须包在 try 里，且错误要记下来、
+     最后真的抛出去。锚 `parseZen(` 会命中函数定义本身，所以锚的是
+     **调用形状**。 */
+  const xm139 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+  ok(/try\s*\{\s*const r = parseZen\(content\);/.test(xm139),
+    '★ parseZen 的调用必须在 try 里（不在 try 里，一抛就打断整条优先级链）');
+  ok(/zenErr = e;/.test(xm139), '★ 抛错时要记下原因（不然全档落空时只能给一句笼统的话）');
+  ok(/if \(zenErr\) throw zenErr;/.test(xm139),
+    '★ 记下的原因必须真的抛出去（只记不抛等于把有用的报错吞了）');
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
