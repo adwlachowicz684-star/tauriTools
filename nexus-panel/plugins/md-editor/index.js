@@ -15,11 +15,19 @@ import { bootServicePlugin } from '../../js/plugin-sdk.js';
  * 而插件真正需要的语法（标题/强调/代码/列表/引用/链接/表格）本就不多。
  */
 
-/** 先转义 HTML，再按 md 语法替换 —— 顺序反了等于允许注入 */
+/**
+ * 先转义 HTML，再按 md 语法替换 —— 顺序反了等于允许注入。
+ *
+ * ⚠️ 必须转义满 5 个字符（& < > " '），与 js/host.js 的 escapeHtml 对齐。
+ * 本实现原先**漏了单引号**：当前 render 生成的属性都是双引号的
+ * （`<a href="…">`），所以暂时安全；但降级渲染器是会被改的，
+ * 哪天有人加一个单引号属性，漏掉的那个 `'` 就是一条注入口。
+ * 补上它对现有输出没有任何影响（浏览器把 &#39; 渲染成 '）。
+ */
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /**

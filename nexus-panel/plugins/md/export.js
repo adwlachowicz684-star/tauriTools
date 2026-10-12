@@ -115,13 +115,23 @@ ${bodyHtml || ''}
 </html>`;
 }
 
-/** 转义 title —— 它来自文件名，可能含 `<`/`&`，不转义会破坏 head */
+/**
+ * 转义 title —— 它来自文件名，可能含 `<`/`&`，不转义会破坏 head。
+ *
+ * ⚠️ 必须转义满 5 个字符（& < > " '），与 js/host.js 的 escapeHtml 对齐。
+ * 本实现原先**漏了单引号**，而它是 export 出去的公共函数：
+ * 当前只用在 `<title>`（文本上下文，确实安全），但谁将来把它用在
+ * 单引号包裹的属性里（`title='…'`），漏掉的 `'` 就是一条注入口。
+ * 安全函数的两份实现不对齐，比"多转义一个字符"危险得多 ——
+ * 补上单引号对 `<title>` 的显示没有任何影响（浏览器把 &#39; 渲染成 '）。
+ */
 export function escapeHtml(s) {
   return String(s || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**
