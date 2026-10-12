@@ -18313,6 +18313,198 @@ group('BUG 135 · FreeMind 图标与外框导成 XMind 会丢，必须数出来�
    结果
    ============================================================ */
 
+
+/* ------------------------------------------------------------------
+   BUG 136：节点没有 data.id 时，导出 .xmind 的外框整条消失
+   ------------------------------------------------------------------
+   buildTopic 写的是 `id: safeId(data.id)` —— 节点没有 data.id 时**就是
+   null**。而外框（boundary）与关系线（relationship）都是**按 id 引用**的：
+
+     · buildBoundaries 里 `if (!a || !b) return;` —— 引用不到就整条不写；
+     · buildRelationships 里 `if (!ids.has(a) || !ids.has(b)) continue;`
+
+   从 .mm / .opml / .md / .mmd / .puml 导入建出来的节点**一律没有 id**
+   （rowsToKm 不给 id，BUG 128 那句的注释就是这么写的），所以：
+
+     导入 .md → 给两个节点加外框 → 导出 .xmind → 外框静默消失
+     而 xmindLossCount 报 0，界面只说「XMind 已导出」
+
+   ⓘ 关系线那条路暂时踩不到：它只来自 .xmind 导入（topic 自带 id）与 .mm
+     的 <arrowlink>（BUG 128 的 ensureId 会给端点补 id）。外框没有这层兜底，
+     所以先在外框上发作。
+
+   XMind 的 topic 本来就该有 id（外框 / 关系线 / 概要都靠它引用），所以修在
+   根子上：缺了就生成一个，而不是给每种引用各打一次补丁。
+   ------------------------------------------------------------------ */
+group('BUG 136 · 没有 data.id 的节点，topic.id 不能是 null（外框会整条消失）');
+
+{
+  const X136 = await import('./xmind.js');
+  const sheetOf = (root) => ({ id: 'sh1', title: 'T', theme: null, layout: null,
+    content: JSON.stringify({ root }) });
+
+  /*
+   * 只看 content.json：本工具自己的无损快照 kityminder.json 会原样保留 data，
+   * 那条路径里什么都能保住 —— 看不出导出侧到底写没写。
+   */
+  const cjOf = async (root) => {
+    const blob = await X136.writeXMind([sheetOf(root)], 'sh1');
+    const es = await X136.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    return JSON.parse(new TextDecoder().decode(es.get('content.json')));
+  };
+
+  /* 一、核心：没有 data.id 时 topic.id 必须有值 */
+  const cj1 = await cjOf({ data: { text: '根' }, children: [
+    { data: { text: 'A' } }, { data: { text: 'B' } }] });
+  const kids1 = cj1[0].rootTopic.children.attached;
+  eq(cj1[0].rootTopic.id == null, false, '★ 根没有 data.id 时 topic.id 也不能是 null');
+  eq(kids1[0].id == null, false, '★ 子节点没有 data.id 时 topic.id 也不能是 null');
+  ok(kids1[0].id !== kids1[1].id,
+    '★ 生成的 id 不能撞车（撞了外框区间会指到同一个节点）');
+
+  /* 二、有 id 时原样保留 —— 修这个不能把既有 id 换掉 */
+  const cj2 = await cjOf({ data: { id: 'nR', text: '根' },
+    children: [{ data: { id: 'nA', text: 'A' } }] });
+  eq(cj2[0].rootTopic.id, 'nR', '有 data.id 时原样保留（不能换掉）');
+  eq(cj2[0].rootTopic.children.attached[0].id, 'nA', '子节点同理');
+
+  /* 三、空白 id 等于没有（safeId 把 '   ' 判成 null） */
+  const cj3 = await cjOf({ data: { id: '   ', text: '根' }, children: [] });
+  eq(cj3[0].rootTopic.id == null, false, '空白 data.id 也要生成（等于没有）');
+
+  /* 四、★ 用户可见的效果：无 id 节点的同组外框 */
+  const root4 = { data: { text: '根' }, children: [
+    { data: { text: 'A', boundaryGroup: 'bg1' } },
+    { data: { text: 'B', boundaryGroup: 'bg1' } },
+    { data: { text: 'C' } }] };
+  const cj4 = await cjOf(root4);
+  const bd4 = cj4[0].rootTopic.boundaries;
+  ok(Array.isArray(bd4) && bd4.length === 1,
+    '★ 无 id 节点的同组外框必须写得出去（早先 topic.id 是 null，整条没了）');
+  // 引用必须指到真实存在的 topic，否则别的文件打开是一条挂在空处的框
+  const idSet4 = new Set([cj4[0].rootTopic.id,
+    ...cj4[0].rootTopic.children.attached.map((t) => t.id)]);
+  const refs4 = String(bd4?.[0]?.range ?? '').replace(/[()]/g, '').split(',').filter(Boolean);
+  ok(refs4.length > 0 && refs4.every((r) => idSet4.has(r)),
+    '外框 range 引用的 id 必须真实存在（不能是死链）');
+
+  /* 五、完整往返：剥掉无损快照，模拟被别的软件存过一遍 */
+  const blob4 = await X136.writeXMind([sheetOf(root4)], 'sh1');
+  const es4 = await X136.zipRead(new Uint8Array(await new Blob([blob4]).arrayBuffer()));
+  const only4 = [...es4].filter(([k]) => k === 'content.json')
+    .map(([name, data]) => ({ name, data }));
+  const r4 = await X136.readXMind(new Uint8Array(await X136.zipWrite(only4)));
+  const back4 = JSON.parse(r4.sheets[0].content).root;
+  eq(back4.children[0].data.boundaryGroup, 'bg1', '★ 往返后 A 仍在外框里');
+  eq(back4.children[1].data.boundaryGroup, 'bg1', '★ 往返后 B 仍在外框里');
+  eq(back4.children[2].data.boundaryGroup, undefined,
+    'C 不被框进来（BUG 87 那条：不能把无关节点划进外框）');
+
+  /* 六、源码契约 */
+  const xm136 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+  ok(/id:\s*safeId\(data\.id\)\s*\|\|\s*shortId\(/.test(xm136),
+    '★ topic.id 必须有生成兜底（写成 `safeId(data.id)` 就是 null）');
+}
+
+/* ------------------------------------------------------------------
+   BUG 137：XMind 8（content.xml）的关系线与折叠状态整条丢失
+
+   同为「导进来的数据被静默丢掉」，zen 档（content.json）两条都读得好好的：
+     · 关系线 —— BUG 122 加的 readRelationships，只挂在 parseZen 上；
+     · 折叠   —— BUG 115 加的 `branch === 'folded'`，只写在 buildKmNode 上。
+   而老版走的是 parseLegacy + buildKmFromXmlTopic **另一套**，两条都没接。
+
+   于是：从 XMind 8 导入的画布里，用户画的关系线整条消失、收起的分支
+   全部被摊开 —— 不报错，也数不进任何丢失提示（xrelationships 读不到就是
+   0 条，提示自然不出现）。
+
+   老版的字段名与 zen 不同（端点 `end1` / `end2` 而非 `end1Id` / `end2Id`；
+   标题既有属性 `title` 也有子 `<title>`），所以两条写法都要认。
+   ------------------------------------------------------------------ */
+group('BUG 137 · XMind 8 老文件的关系线与折叠状态必须读出来');
+
+{
+  const X = await import('./xmind.js');
+
+  const NS = 'xmlns="urn:xmind:xmap:xmlns:content:2.0"';
+  /*
+   * 关系线三种情形各一条：
+   *   r1 子 <title> 写标题 / r2 属性 title 写标题 / r3 自环（不该收）
+   * 折叠两种情形各一个节点：
+   *   c1 branch="folded"（该收起） / c2 branch="expand"（不该当折叠）
+   */
+  const mkContent = (withRels = true) => `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<xmap-content ${NS} version="2.0"><sheet id="s1" theme="th1">
+<topic id="t0"><title>根</title><children><topics type="attached">
+<topic id="c1" branch="folded"><title>A</title><children><topics type="attached">
+<topic id="c11"><title>A1</title></topic></topics></children></topic>
+<topic id="c2" branch="expand"><title>B</title></topic>
+<topic id="c3"><title>C</title></topic>
+</topics></children></topic>
+<title>画布</title>
+${withRels ? `<relationships>
+<relationship id="r1" end1="c1" end2="c2"><title>关联一</title></relationship>
+<relationship id="r2" end1="c2" end2="c3" title="关联二"/>
+<relationship id="r3" end1="c1" end2="c1"/>
+</relationships>` : ''}
+</sheet></xmap-content>`;
+
+  /*
+   * 包 try/catch：被检查的东西坏掉时必须**报失败**，不能把进程崩掉 ——
+   * 早先多轮变异验证里，进程崩在半路导致后面用例一条都没跑，看着像
+   * "抓到了"，其实漏了大半。
+   */
+  const read = async (withRels) => {
+    const zb = await X.zipWrite([
+      { name: 'content.xml', data: new TextEncoder().encode(mkContent(withRels)) },
+    ]);
+    try {
+      const r = await X.readXMind(new Uint8Array(zb));
+      return { r, root: JSON.parse(r.sheets[0].content).root, err: null };
+    } catch (e) {
+      return { r: null, root: null, err: String(e?.message || e) };
+    }
+  };
+
+  // ① 关系线：两条有效都读出来，标题两种写法都要认
+  {
+    const { r, root, err } = await read(true);
+    ok(!err, '★ 老版文件仍能导入', err || '');
+    const rels = r?.sheets?.[0]?.xrelationships || [];
+    eq(rels.length, 2, '★ 两条有效关系线读出来了');
+    eq(rels[0]?.end1Id, 'c1', 'r1 的起点（老版属性是 end1）');
+    eq(rels[0]?.end2Id, 'c2', 'r1 的终点（老版属性是 end2）');
+    eq(rels[0]?.title, '关联一', '★ 子 <title> 写法的标题读出来了');
+    eq(rels[1]?.title, '关联二', '★ 属性 title 写法的标题读出来了');
+    ok(!rels.some((x) => x.end1Id === x.end2Id), '自环不收（画不出关系）');
+
+    // ② 折叠：只认 `branch="folded"` 这一个字面值
+    eq(root.children[0].data.expandState, 'collapse',
+      '★ branch="folded" 的分支仍是收起的');
+    eq(root.children[0].children.length, 1, '（对照）A 的子节点还在');
+    eq(root.children[1].data.expandState, undefined,
+      '★ branch 是别的取值时不算折叠（宁可展开，不要静默改结构）');
+    eq(root.children[2].data.expandState, undefined, '没写 branch 的节点不带折叠状态');
+  }
+
+  // ③ 没有 <relationships> 时不凭空长出关系线
+  {
+    const { r, err } = await read(false);
+    ok(!err, '缺 <relationships> 时仍能导入', err || '');
+    eq(r?.sheets?.[0]?.xrelationships, undefined, '★ 没有关系线就不写这个字段');
+  }
+
+  /* ④ 源码契约：两处调用点都必须存在
+     只匹配函数名会命中**函数定义本身**（`function readXmlRelationships(sheetEl)`），
+     删掉调用点照样绿 —— 所以锚的是 `readRelationships(readXmlRelationships(` 这个
+     **调用形状**，以及折叠那句完整判据。 */
+  const xm137 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+  ok(/readRelationships\(readXmlRelationships\(/.test(xm137),
+    '★ parseLegacy 必须接住关系线（老版是另一套读侧，只修 zen 等于没修）');
+  ok(/str\(t\.getAttribute\('branch'\)\)\s*===\s*'folded'/.test(xm137),
+    "★ buildKmFromXmlTopic 必须认 branch=\"folded\"（与 zen 档同一判据）");
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {

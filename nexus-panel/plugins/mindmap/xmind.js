@@ -1421,15 +1421,43 @@ function parseLegacy(xml, stylesXml = null) {
     // 老版 content.xml 把结构类写在根 topic 的 structure-class 属性上
     const legacySc = topicEls[0].getAttribute?.('structure-class');
     const wrapper = { root: kmRoot, template: 'default', theme: 'fresh-blue', version: '1.4.43' };
+    const rels = readRelationships(readXmlRelationships(sheetEl));
     sheets.push({
       id: sheetEl.getAttribute('id') || newSheetId(),
       title: title || ('画布 ' + index),
       content: pretty(wrapper),
       theme: 'fresh-blue',
       layout: StructureToLayout[str(legacySc) || ''] || 'default',
+      // BUG 137：关系线在老版里也是 sheet 级数据，只走 zen 那条读侧的话，
+      // 从 XMind 8 导入的文件里关系线**整条消失**（不报错、也不计入提示）。
+      ...(rels.length ? { xrelationships: rels } : {}),
     });
   }
   return { sheets };
+}
+
+/**
+ * 老版 `<sheet><relationships><relationship end1 end2 [title]/>` → 关系线数组。
+ *
+ * 端点属性名与 zen 档不同（zen 是 `end1Id` / `end2Id`，老版是 `end1` / `end2`），
+ * 标题在老版里两种写法都有（属性 `title` 与子 `<title>`）—— 两种都认。
+ * `<controlpoint>`（折线坐标）不收，同 zen 档口径（见 readRelationships）。
+ */
+function readXmlRelationships(sheetEl) {
+  const out = [];
+  for (const relsEl of childrenOf(sheetEl, 'relationships')) {
+    for (const r of childrenOf(relsEl, 'relationship')) {
+      if (!r) continue;
+      const t = str(childrenOf(r, 'title')[0]?.textContent) ?? r.getAttribute('title');
+      out.push({
+        id: r.getAttribute('id'),
+        end1Id: r.getAttribute('end1'),
+        end2Id: r.getAttribute('end2'),
+        title: t === '' ? null : t,
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -1498,6 +1526,14 @@ function buildKmFromXmlTopic(t, depth = 0, styles = null) {
     created: Date.now(),
     text: childrenOf(t, 'title')[0]?.textContent ?? '',
   };
+
+  /*
+   * BUG 137：折叠状态。老版写在 topic 的 `branch="folded"` 上（与 zen 档的
+   * `branch: "folded"` 同一个字段名同一个值），只修 zen 那条读侧的话，
+   * 从 XMind 8 导入的画布里**收起的分支全部被摊开** —— 不报错，用户只会
+   * 以为"这个软件不认折叠"。
+   */
+  if (str(t.getAttribute('branch')) === 'folded') data.expandState = 'collapse';
 
   const notesEl = childrenOf(t, 'notes')[0];
   if (notesEl) {
