@@ -102,7 +102,12 @@ test('stripSecrets 挖嵌套时不破坏同层其它字段', () => {
 test('stripViewKeys 剥掉显示与布局状态', () => {
   const out = stripViewKeys({ prompt: 'p', size: 'sm', stackParent: 'A', stackCollapsed: true });
   assert.equal(out.prompt, 'p');
-  assert.equal(out.size, undefined);
+  /*
+   * size 是**配置**不是显示状态：用户在面板上点按钮设的卡片高度
+   * （NodeBasics 的 `onChange(node.id, { size: k })`）。
+   * 剥掉它 = 存成模块后卡片高度回到默认，用户明明设了却丢了。
+   */
+  assert.equal(out.size, 'sm', '节点显示高度是用户配置，不能当显示状态剥掉');
   assert.equal(out.stackParent, undefined);
   assert.equal(out.stackCollapsed, undefined);
 });

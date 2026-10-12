@@ -6,7 +6,7 @@ import {
   sanitizeForDefault, withDefault, matchPresetKey, NODE_DEFAULTS_KEY,
   isSecretField, setFieldsDefault, clearFieldsDefault, hasFieldDefault,
 } from '../engine/nodeDefaults';
-import { hadInlineSecret, VIEW_KEYS } from '../engine/sanitize';
+import { hadInlineSecret, VIEW_KEYS, DERIVED_KEYS, redactNodes } from '../engine/sanitize';
 
 /*
  * 刻意不写返回类型注解：strip-ts.py 处理不了 `KV & { map: ... }`
@@ -92,12 +92,16 @@ test('剥掉运行时字段（不然新节点看起来已经跑过）', () => {
  * stackParent 不剥的话，每个新建节点都"嵌合"到一个不存在的父节点上，
  * 引擎把它转成边，于是新节点莫名不执行。
  */
-test('剥掉显示与布局状态（size / stackParent / stackCollapsed）', () => {
+test('剥掉显示与布局状态（stackParent / stackCollapsed，但保留配置 size）', () => {
   const out = sanitizeForDefault({
     prompt: 'p', size: 'sm', stackParent: 'A', stackCollapsed: true,
   });
   assert.equal(out.prompt, 'p');
-  assert.equal(out.size, undefined);
+  /*
+   * size 要留着 —— 卡片显示高度是用户点的按钮，不是"当前这份画布的状态"。
+   * 剥掉的话：设为默认后新建的节点不继承高度，用户设了等于没设。
+   */
+  assert.equal(out.size, 'sm', '显示高度是配置，默认值要带走');
   assert.equal(out.stackParent, undefined);
   assert.equal(out.stackCollapsed, undefined);
 });
@@ -187,8 +191,59 @@ test('类型完全没预设时返回 null', () => {
 
 test('显示状态清单非空（被误清空会导致 stackParent 存进默认值）', () => {
   assert.ok(VIEW_KEYS.includes('stackParent'), 'stackParent 必须在剥离清单里');
-  assert.ok(VIEW_KEYS.includes('size'));
   assert.ok(VIEW_KEYS.includes('stackCollapsed'));
+  /*
+   * size **不许**在清单里 —— 它是用户在面板上设的配置。
+   * 加回来会让"存成模块 / 设为默认"丢掉卡片高度，且不报错。
+   */
+  assert.ok(
+    !VIEW_KEYS.includes('size'),
+    'size 是用户配置（面板按钮设的卡片高度），不能当显示状态剥掉',
+  );
+  /*
+   * 钉住**整个清单**，而不是只钉几项。
+   *
+   * 只查几项的话，往里塞一个新的配置字段（比如下次新加的"卡片配色"）
+   * 测试照样全绿 —— 而每加一项都是"用户设了、存完就没了"。
+   * 钉住全量，加一项就得改这里一次，也就得写一次理由。
+   */
+  assert.deepEqual(
+    [...VIEW_KEYS].sort(),
+    ['argLinkIssues', 'hasStackChild', 'onFireManual', 'stackCollapsed', 'stackParent'],
+    '显示状态清单变了 —— 加一项要写清它是派生值还是布局状态，配置字段不许进',
+  );
+  /* 派生项也必须在模块那份清单里（模块路径要剥得比存档更多） */
+  for (const k of DERIVED_KEYS) {
+    assert.ok(VIEW_KEYS.includes(k), `${k} 是派生值，也必须在 VIEW_KEYS 里`);
+  }
+});
+
+/*
+ * 存档路径此前**完全不剥**派生字段 —— 三处注释都写着
+ * 「不落盘（见 VIEW_KEYS）」，而存档走的是 redactNodes，它不调 stripViewKeys。
+ * 那三处之所以真的没落盘，靠的是"派生数组不回流 state"，与清单无关。
+ *
+ * 清单与机制对不上，代价落在将来：有人把 argLinkIssues 缓存进 nodes 省重算
+ * （很自然的优化），注释会让人以为有兜底 —— 于是出现
+ * 「上游已经改对了，这里还是红的」，而这份红来自上一次存档。
+ */
+test('存档路径剥掉渲染派生字段，但保留用户的嵌合与折叠', () => {
+  const out = redactNodes([{
+    id: 'n1',
+    data: {
+      kind: 'task',
+      stackParent: 'p1', stackCollapsed: true, size: 'lg',
+      argLinkIssues: [{ bad: true }], hasStackChild: true, onFireManual: null,
+    },
+  }]) as { data: Record<string, unknown> }[];
+  const d = out[0].data;
+  assert.equal(d.argLinkIssues, undefined, '派生字段不该进存档');
+  assert.equal(d.hasStackChild, undefined, '派生字段不该进存档');
+  assert.equal(d.onFireManual, undefined, '派生字段不该进存档');
+  /* 这三项是**用户数据**，刷新后必须在 —— 剥掉等于丢掉嵌合关系 */
+  assert.equal(d.stackParent, 'p1', '嵌合＝隐式边，存档必须保留');
+  assert.equal(d.stackCollapsed, true, '折叠状态存档必须保留');
+  assert.equal(d.size, 'lg', '显示高度是配置，存档必须保留');
 });
 
 

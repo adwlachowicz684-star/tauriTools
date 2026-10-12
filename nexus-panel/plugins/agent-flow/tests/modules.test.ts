@@ -438,14 +438,18 @@ test('模块节点放在选中区域中心，不跳位', () => {
 });
 
 /** stackParent 不剥的话，内部节点还"嵌合"在外部节点上，展开时指向不存在的地方 */
-test('剥掉显示状态：stackParent / size / stackCollapsed', () => {
+test('剥掉显示状态：stackParent / stackCollapsed（但保留配置 size）', () => {
   const r = packSelection(
     [PN('a', 0, 0, { kind: 'task', stackParent: '外面的节点', size: 'tall', stackCollapsed: true })],
     [],
   );
   const d = (r.nodes[0] as { data: Record<string, unknown> }).data;
   assert.equal(d.stackParent, undefined);
-  assert.equal(d.size, undefined);
+  /*
+   * size 要留着 —— 它是用户设的卡片高度。以前也在这份清单里被一起剥掉，
+   * 表现为"存成模块后卡片高度回到默认"，且不报错。
+   */
+  assert.equal(d.size, 'tall', '显示高度是配置，存模块要带走');
   assert.equal(d.stackCollapsed, undefined);
   assert.equal(d.kind, 'task', '配置字段得留着');
 });

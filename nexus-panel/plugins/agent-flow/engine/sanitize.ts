@@ -155,9 +155,31 @@ export function headersHaveSecret(text: string): boolean {
  * 全图（上游产出什么）。存进存档就是脏数据 —— 上游改了它不会跟着变，
  * 表现为"上游已经改对了，这里还是红的"。列进来也让复制节点时把它剥掉。
  */
+/*
+ * size 曾经也在这份清单里 —— **那是错的**，已移除。
+ *
+ * size 是用户在面板上点按钮设的"卡片显示高度"（NodeBasics 那三个按钮
+ * `onChange(node.id, { size: k })`），是**配置**不是渲染派生值。
+ * 列进剥离清单的后果：存成模块后卡片高度回到默认、设为默认后新建的
+ * 节点也不继承 —— 用户明明设了，拖出来却没了，且不报错。
+ *
+ * 这与下面两个看着像、实则不同：
+ *   · stackParent —— 指向**模块外**的节点，留在模块里会指向不存在的地方
+ *     （有 stackEdges 把隐式边转成显式边来补偿，所以剥掉是对的）
+ *   · stackCollapsed —— 折叠是"当前这一份画布"上的状态
+ */
 export const VIEW_KEYS = [
-  'size', 'stackParent', 'stackCollapsed', 'hasStackChild', 'onFireManual', 'argLinkIssues',
-];
+  'stackParent', 'stackCollapsed', 'hasStackChild', 'onFireManual', 'argLinkIssues',
+] as const;
+
+/*
+ * 渲染派生 —— 与上面那份**不同**：这些是算出来的，任何出口都不该带。
+ *
+ * 分开的原因是存档路径（serialize → redactNodes）只剥这一份：
+ * stackParent / stackCollapsed 是用户数据，刷新后必须在；
+ * 而这三个一旦进了存档就是"上游已经改对了、这里还是红的"那类脏数据。
+ */
+export const DERIVED_KEYS = ['hasStackChild', 'onFireManual', 'argLinkIssues'] as const;
 
 /** 数据里是否含内联密钥 —— 用于提示用户"这部分不会被存进去" */
 export function hadInlineSecret(data: unknown): boolean {
@@ -286,6 +308,12 @@ export function redactNodeSecrets(n: unknown): unknown {
   const dd = d as Record<string, unknown>;
   if (typeof dd.kind !== 'string') return n;
 
+  /* 派生字段与密钥一样不该进存档 —— 见 stripDerivedKeys 的说明 */
+  if (DERIVED_KEYS.some((k) => k in dd)) {
+    const stripped = stripDerivedKeys(dd);
+    return redactNodeSecrets({ ...o, data: stripped } as unknown);
+  }
+
   let next = dd;
   for (const f of SECRET_PATHS) {
     if (pathGet(next, f) !== null) next = blankSecretField(next, f);
@@ -323,6 +351,32 @@ export function redactNodes(nodes: unknown[]): unknown[] {
 }
 
 /**
+ * 剥掉渲染派生字段。
+ *
+ * 接进存档路径（redactNodes 会调它）的理由：三处注释都写着
+ * 「不落盘（见 VIEW_KEYS）」，而存档走的是 redactNodes ——
+ * 它此前**根本不剥 VIEW_KEYS**。那三处之所以真的没落盘，
+ * 靠的是"派生数组不回流 state"（App 的 canvasNodes 只是渲染 prop），
+ * 与这份清单无关。
+ *
+ * 清单与机制对不上的代价是将来的：一旦有人为了省每帧重算而把
+ * argLinkIssues 缓存进 nodes（很自然的优化），注释会让人以为有兜底，
+ * 实际没有 —— 那就是 argLinkIssues 注释里明写的
+ * 「上游已经改对了，这里还是红的」。
+ *
+ * 只剥 DERIVED_KEYS，不剥 stackParent / stackCollapsed：
+ * 那两个是用户数据，刷新后必须在（嵌合＝隐式边，丢了等于丢连接）。
+ */
+export function stripDerivedKeys(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(data)) {
+    if ((DERIVED_KEYS as readonly string[]).indexOf(k) >= 0) continue;
+    out[k] = data[k];
+  }
+  return out;
+}
+
+/**
  * 变量值的脱敏。
  *
  * 变量存的是**一组的字段值**（如 llm 对象、headersText），
@@ -346,7 +400,7 @@ export function redactVarValues(values: Record<string, unknown>): Record<string,
 export function stripViewKeys(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(data)) {
-    if (VIEW_KEYS.indexOf(k) >= 0) continue;
+    if ((VIEW_KEYS as readonly string[]).indexOf(k) >= 0) continue;
     out[k] = data[k];
   }
   return out;
