@@ -796,5 +796,160 @@ console.log('\n=== 8. 静默吞异常：空 catch 必须有交代 ===');
     silentCatch('try{ a(); } catch (e) { console.error(e); }').length === 0);
 }
 
+/* ============================================================
+ * 9. 预设图标清单：三份必须一致
+ * ------------------------------------------------------------
+ * 同一个东西**抄了三处**：
+ *   ① plugins/project-group/preseticons/*.ico  —— 唯一物理来源（122 个）
+ *   ② plugins/icon-picker/iconNames.js          —— 选图标插件的清单
+ *   ③ plugins/project-group/presetIcons.ts      —— 项目组预设图标网格的清单
+ *
+ * ②③ 当前**逐项完全一致**（本轮实测：122/122/122，零差异），
+ * 所以这不是现存的 BUG，而是"随时会漂"的结构：
+ *
+ *   · icon-picker 加了图标、project-group 没加 —— 用户在图标选择器里
+ *     能选到，在项目组预设里选不到；
+ *   · 反向（project-group 多一个）—— 网格里列了一个指向不存在文件的
+ *     图标，显示成破图；
+ *   · 物理文件改名 / 删了一个 —— 两边清单都还写着旧名，同样破图。
+ *
+ * 三者都不是报错：前者是"功能少了"，后两者是"图裂了"。
+ * 而这个项目已有"图标整批消失但界面不报错"的前科
+ * （native-assets-test.mjs 记的 N62：dist 里 .ico 数量 = 0，
+ *  122 个图标全部 404，界面上只是图标位一片空白）。
+ *
+ * 为什么**不合掉这两份清单**（看起来更彻底）：
+ *   icon-picker 是**原生 JS 插件**，index.js 被浏览器直接加载，
+ *   import 不了 presetIcons.ts（那是 TS，要靠构建）。
+ *   而 icon-picker 用的物理文件本来就是 project-group/preseticons/
+ *   （它自己注释里写着用 `../project-group/preseticons/` 相对路径引用，
+ *   并警告"搬走要么断它的引用"）—— 跨插件引用物理资源是**既定设计**。
+ *   既然物理上只有一个来源，就让两份清单都去对齐它，而不是硬造转发。
+ * ============================================================ */
+console.log('\n=== 9. 预设图标清单三份一致 ===');
+{
+  const ICON_DIR = 'plugins/project-group/preseticons';
+  /* 两份文件写法不同（有无类型标注），但都是纯字符串字面量数组 */
+  const listOf = (rel) => {
+    const s = read(rel);
+    if (s === null) return null;
+    const m = s.match(/=\s*\[([\s\S]*?)\n\];/);
+    if (!m) return null;
+    return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  };
+
+  let files = [];
+  try { files = readdirSync(join(HERE, ICON_DIR)); } catch { /* 目录不在就算了 */ }
+  const onDisk = files.filter((f) => f.endsWith('.ico')).map((f) => f.replace(/\.ico$/, ''));
+  const picker = listOf('plugins/icon-picker/iconNames.js');
+  const pg = listOf('plugins/project-group/presetIcons.ts');
+
+  t('能读到物理图标目录（判据不能空转）', onDisk.length > 100, `实测 ${onDisk.length} 个 .ico`);
+  t('能解析出两份清单（判据不能空转）',
+    Array.isArray(picker) && picker.length > 100 && Array.isArray(pg) && pg.length > 100,
+    `icon-picker ${picker?.length ?? 'null'} / project-group ${pg?.length ?? 'null'}`);
+
+  if (onDisk.length && picker?.length && pg?.length) {
+    const diff = (a, b) => a.filter((x) => !b.includes(x)).concat(b.filter((x) => !a.includes(x)));
+    const d1 = diff(onDisk, picker);
+    const d2 = diff(onDisk, pg);
+    const d3 = diff(picker, pg);
+    t('icon-picker 清单 = 物理文件', d1.length === 0,
+      d1.length ? `差异 ${d1.length} 个：${d1.slice(0, 4).join('、')}` : '');
+    t('project-group 清单 = 物理文件', d2.length === 0,
+      d2.length ? `差异 ${d2.length} 个：${d2.slice(0, 4).join('、')}` : '');
+    t('两份清单彼此一致', d3.length === 0,
+      d3.length ? `差异 ${d3.length} 个：${d3.slice(0, 4).join('、')}` : '');
+    t('数量与物理文件相同（少了是漏登记，多了是破图）',
+      picker.length === onDisk.length && pg.length === onDisk.length,
+      `物理 ${onDisk.length} / icon-picker ${picker.length} / project-group ${pg.length}`);
+  }
+}
+
+/* ============================================================
+ * 10. escapeHtml 的每一份实现都必须转义满 5 个字符
+ * ------------------------------------------------------------
+ * 项目**已有**安全标准，不是这里另立：xss-test.mjs 第 47 条钉着
+ * js/host.js 的 escapeHtml 必须把 `'` 转成 `&#39;`。
+ *
+ * 而全仓一度有**三份** escapeHtml，且**只有 host.js 那一份达标**：
+ *   · js/host.js                    → & < > " '   ✅
+ *   · plugins/md/export.js          → & < > "     ❌ 漏单引号（已修）
+ *   · plugins/md-editor/index.js    → & < > "     ❌ 漏单引号（已修）
+ *
+ * 两份不达标的当前用法都恰好安全（一个只在 `<title>` 文本上下文，
+ * 一个生成的属性全是双引号），所以那不是现存的漏洞 ——
+ * 但它们是**抄开的两份实现**，且 md/export.js 那份是 export 出去的公共函数：
+ * 谁将来把它用在单引号包裹的属性里（`title='…'`），漏掉的 `'` 就是注入口。
+ * 而"安全的那一份"和"不安全的那一份"长得很像，挑错非常容易。
+ *
+ * 补上单引号对现有输出**零影响**（浏览器把 &#39; 渲染成 '），
+ * 所以这里做的是"对齐既有标准"，不是改行为。
+ *
+ * 判据取"实现体里五个实体都在"，而不是钉某个具体写法 ——
+ * 三份写法各不相同（一次 replace+映射表 / 链式 replace），
+ * 钉写法会立刻误伤正在写的新实现。
+ * ============================================================ */
+console.log('\n=== 10. escapeHtml 实现必须转义满 5 个字符 ===');
+{
+  const REQUIRED = ['&amp;', '&lt;', '&gt;', '&quot;', '&#39;'];
+  /* 取函数体：从 `function escapeHtml` 起，括号配平到闭合大括号 */
+  const implBody = (src) => {
+    const m = src.match(/function\s+escape(?:Html|HTML)\s*\([^)]*\)\s*\{/);
+    if (!m) return null;
+    const st = m.index + m[0].length - 1;
+    let d = 0;
+    for (let i = st; i < src.length; i++) {
+      if (src[i] === '{') d++;
+      else if (src[i] === '}') { d--; if (d === 0) return src.slice(st, i + 1); }
+    }
+    return null;
+  };
+
+  /*
+   * 排除测试文件：本文件（以及别的守卫）在元断言里会写
+   * `function escapeHtml(s){…}` 的**样例字符串**来证明判据有效，
+   * 那是"待检查的样本"不是实现 —— 扫进来会把自己判成漏转义。
+   * 实测踩到：第一版没排除，本文件被自己报"缺 &#39;"
+   * （取到的正是那条**故意写漏**的样例）。
+   * 这与第 8 节排掉 -test.mjs 是同一个道理。
+   */
+  const files = walk(HERE).filter((p) => /\.(ts|tsx|js|jsx|mjs)$/.test(p)
+    && !p.endsWith('.min.js') && !/kity\.min/.test(p)
+    && !p.endsWith('.d.ts')
+    && !p.endsWith('-test.mjs') && !p.endsWith('.test.ts')
+    && !p.split('/').includes('tests'));
+  const impls = [];
+  for (const p of files) {
+    const src = readFileSync(p, 'utf8');
+    if (!/function\s+escape(?:Html|HTML)\s*\(/.test(src)) continue;
+    const body = implBody(src);
+    if (!body) continue;
+    const missing = REQUIRED.filter((e) => !body.includes(e));
+    impls.push({ rel: relativeTo(p), missing });
+  }
+  const bad = impls.filter((x) => x.missing.length);
+
+  t('找得到 escapeHtml 的实现（判据不能空转）', impls.length >= 3,
+    `实测 ${impls.length} 份：${impls.map((x) => x.rel).join('、')}`);
+  t('每一份 escapeHtml 都转义满 & < > " \'（对齐 xss-test 钉的标准）',
+    bad.length === 0,
+    bad.length ? bad.map((x) => `${x.rel} 缺 ${x.missing.join(' ')}`).join('；') : '');
+  /* 元断言：判据失明比数字难看危险得多 ——
+     漏判的话上面那条会永远全绿，而它防的是"挑错一份不安全的实现"。 */
+  t('漏了单引号的实现照样被抓（判据没失明）',
+    (() => {
+      const src = "function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}";
+      const b = implBody(src);
+      return b !== null && REQUIRED.filter((e) => !b.includes(e)).length === 1;
+    })());
+  t('五个都齐的不算漏（不能误伤）',
+    (() => {
+      const src = "function escapeHtml(s){return s.replace(/[&<>\"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]));}";
+      const b = implBody(src);
+      return b !== null && REQUIRED.every((e) => b.includes(e));
+    })());
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
