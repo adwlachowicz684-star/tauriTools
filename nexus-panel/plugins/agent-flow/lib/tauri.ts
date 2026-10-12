@@ -225,6 +225,8 @@ export async function startWebhook(
 
   return () => {
     un();
+    /* 停不掉也要让卸载正常返回：这是清理动作，失败只意味着服务端还在跑，
+       而调用方此时已经拿不到任何句柄，再报错也无从处理。 */
     void invoke<void>('webhook_stop', { id }).catch(() => {});
   };
 }

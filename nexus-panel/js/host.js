@@ -733,6 +733,9 @@ export function createHost(opts = {}) {
       try { window.removeEventListener('message', inst.bridgeHandler); } catch {}
       inst.iframe.remove();
     }
+    /* 下面两步都是"尽力而为"的收尾：wrap 与 cleanupFns 都属于别的分支
+       已经摘过的资源，这里只是兜底再摘一次。抛错说明它已经没了 —— 而
+       卸载流程必须走到最后的 audit，不能被一步残留卡住。 */
     try { inst.wrap?.remove(); } catch {}
     inst.cleanupFns?.forEach((fn) => { try { fn(); } catch {} });
 

@@ -719,5 +719,82 @@ console.log('\n=== 7. 导入预设的跳过原因 ===');
   }
 }
 
+/* ============================================================
+ * 8. 静默吞异常：空的 catch 必须就近写明为什么可以吞
+ * ------------------------------------------------------------
+ * 这一类**在本仓库造成过真实 BUG**，证据就在被测代码自己的注释里：
+ * js/theme-manager.js 开头写着 —— deleteCustomTheme() 遍历 STYLE_PARAMS
+ * 清风格参数覆盖时抛了异常，被外面的 `catch {}` 吞掉，于是**清理从那行
+ * 起全部中断**（基调/风格之后的偏移键一个都没删），而界面上"删除成功"
+ * 照常提示。症状是"删了又出现"，排查方向却被"没有报错"整个带偏。
+ *
+ * 所以空 catch 本身不是错（收尾类代码大量需要），**没有交代**才是错：
+ * 后来的人分不清"这里可以吞"和"这里忘了处理"，改代码时不敢动，
+ * 也发现不了自己新引入的那次抛错就是从这里漏过去的。
+ *
+ * 为什么是"就近有注释"而不是"catch 里必须有注释"：
+ *   实测 35 处里有大量把理由写在**上一行**或 try 块上方（
+ *   `/* 不 await 也不抛：存不上只是下次不恢复，不该打断滚动 *​/` 紧接着
+ *   `.catch(() => {})`），强行塞进大括号反而割裂。所以判据取
+ *   "前面 400 字符内有注释"，代价是宽松了些（一条不相关的上方注释
+ *   也能过关），换来的是**不会再有人被逼着写 `catch { /* 忽略 *​/ }`
+ *   这种占位说明**——那比不写更糟，因为它看着像有理由。
+ *
+ * 两种形态都算：`try { … } catch {}` 与 `promise.catch(() => {})`。
+ * ============================================================ */
+console.log('\n=== 8. 静默吞异常：空 catch 必须有交代 ===');
+{
+  const SRC_EXT = /\.(ts|tsx|js|jsx|mjs)$/;
+  const files = walk(HERE).filter((p) => SRC_EXT.test(p)
+    && !p.endsWith('.min.js') && !/kity\.min/.test(p)
+    && !p.endsWith('-test.mjs') && !p.endsWith('.test.ts')
+    && !p.split('/').includes('tests'));
+
+  /*
+   * 判据只有这一处（护栏与元断言共用），写成两处必然漂移 ——
+   * 这个项目已经因为"判据分两份"踩过好几次。
+   *
+   * 返回 true = 这处空 catch **没有交代**。
+   */
+  const silentCatch = (src) => {
+    const out = [];
+    const pats = [
+      /catch\s*(?:\([^)]*\))?\s*\{\s*\}/g,
+      /\.catch\(\s*(?:\(\)\s*=>|function\s*\(\s*\))\s*\{\s*\}\s*\)/g,
+    ];
+    for (const re of pats) {
+      for (const m of src.matchAll(re)) {
+        /* 往前 400 字符内有 // 或 /* 就算交代过了 */
+        const pre = src.slice(Math.max(0, m.index - 400), m.index);
+        if (!/\/\/|\/\*/.test(pre)) out.push(m[0]);
+      }
+    }
+    return out;
+  };
+
+  const bad = [];
+  for (const p of files) {
+    const src = readFileSync(p, 'utf8');
+    const hits = silentCatch(src);
+    if (hits.length) bad.push(`${relativeTo(p)}（${hits.length} 处）`);
+  }
+  t('能遍历到源码（判据不能空转）', files.length > 100, `实测 ${files.length} 个源文件`);
+  t('没有"吞掉异常却不说明理由"的空 catch', bad.length === 0,
+    bad.length ? bad.slice(0, 6).join('；') : '');
+  /*
+   * 元断言：判据失明比数字难看危险得多 ——
+   * 把"有没有注释"写反的话，上面那条会**永远全绿**，
+   * 而它要防的正是"没人看得出这里吞了异常"。
+   */
+  t('写了理由的空 catch 不算漏（不能误伤）',
+    silentCatch('/* 存不上只是下次不恢复 */\ntry{ a(); } catch {}').length === 0
+    && silentCatch('// 不 await 也不抛\np.catch(() => {})').length === 0);
+  t('真·静默的空 catch 照样被抓（判据没失明）',
+    silentCatch('try{ a(); } catch {}').length === 1
+    && silentCatch('p.catch(() => {})').length === 1);
+  t('catch 里真做了事的不算空（不能误伤）',
+    silentCatch('try{ a(); } catch (e) { console.error(e); }').length === 0);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

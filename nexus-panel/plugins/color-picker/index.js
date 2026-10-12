@@ -197,6 +197,7 @@ async function open({ initial = '#3E63DD' } = {}, ctx) {
       const c = cur();
       if (!PRESET_COLORS.includes(c) && !custom.includes(c)) {
         custom = [c, ...custom].slice(0, MAX_CUSTOM);
+        /* 自定义色存不上不影响这一次取色：面板照常返回当前色。 */
         ctx.store.set('custom', custom).catch(() => {});
       }
       ui.innerHTML = '';
