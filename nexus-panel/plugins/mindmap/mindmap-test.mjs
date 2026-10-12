@@ -6980,8 +6980,11 @@ group('BUG 116 · Markdown 导出也要说清装不下什么');
     ok(!!mdFn, '找到 exportMarkdown');
     const next = starts.filter((f) => f.i > mdFn.i).sort((a, b) => a.i - b.i)[0];
     const body = src.slice(mdFn.i, next ? next.i : src.length);
-    ok(/fmt\.exchangeLoss\(/.test(body),
-      '★ exportMarkdown 里调用了 exchangeLoss（不提示等于没修）');
+    // BUG 124：这里导出的是整本工作簿，所以走 exchangeLossAll(workbook.sheets)。
+    // 写成宽松的 /exchangeLoss/ 会命中上面注释里的那句「复用同一个 exchangeLoss」，
+    // 删掉调用点照样绿 —— 必须锚住 callsite 的真实形状。
+    ok(/fmt\.exchangeLossAll\(workbook\.sheets,\s*'markdown'\)/.test(body),
+      '★ exportMarkdown 里调用了 exchangeLossAll（不提示等于没修）');
     ok(/'markdown'/.test(body), '★ 传的 kind 是 markdown');
     // 深于 6 级那条（BUG 102）不能被这条顶掉
     ok(/deepNodeCount/.test(body), '★ 深于 6 级的提示仍然保留（两条并存）');
@@ -16873,9 +16876,12 @@ group('BUG 119 · 交换格式丢掉的图片 / 附件 / 外框必须计入提�
     const has = (s) => /image: '图片与图标'/.test(s) && /attachment: '附件'/.test(s)
       && /boundary: '外框'/.test(s);
     // BUG 123：签名加了第三个参数（画布本身，用于数关系线），锚点跟着改
-    const iMd = code.indexOf("exchangeLoss(sheet()?.content || '', 'markdown', sheet())");
+    // BUG 124：Markdown 那条路改按整本工作簿统计（exchangeLossAll），锚点跟着改
+    const iMd = code.indexOf('exchangeLossAll(workbook.sheets');
     const iEx = code.indexOf('exchangeLoss(s.content, kind, s)');
-    ok(iMd > 0 && iEx > 0, '两条导出路径都在调 exchangeLoss');
+    ok(iMd > 0 && iEx > 0, '两条导出路径都在算丢失');
+    // 两张 NAME 表相距约 1600 字符，窗口取 900 不会互相盖住 ——
+    // 窗口一旦跨过去，删掉其中一张表也会被另一张顶成绿，那就是空转
     ok(has(code.slice(iMd, iMd + 900)), '★ Markdown 提示带上新三类');
     ok(has(code.slice(iEx, iEx + 900)), '★ 交换格式提示带上新三类');
   }
@@ -17272,14 +17278,21 @@ group('BUG 123 · 交换格式丢掉的标记图标与关系线必须计入提�
       ok(/markers: '标记图标'/.test(code.slice(at, at + 400)),
         `★ 第 ${i + 1} 张提示表带上标记图标`, code.slice(at, at + 120));
     });
-    const iMd = code.indexOf("exchangeLoss(sheet()?.content || '', 'markdown', sheet())");
+    const iMd = code.indexOf('fmt.exchangeLossAll(workbook.sheets');
     const iEx = code.indexOf('exchangeLoss(s.content, kind, s)');
-    ok(iMd > 0 && iEx > 0, '两条导出路径都在调 exchangeLoss（且把画布传进去了）');
+    ok(iMd > 0 && iEx > 0, '两条导出路径都在调统计（且把画布传进去了）');
     const relSeg = (code.split('关系线 ${loss.relationships} 条').length - 1);
     ok(relSeg >= 2, '★ 关系线按「条」写进两段提示里', `实际 ${relSeg} 处`);
-    // 「共涉及」的措辞：只有关系线时不能硬套「N 个节点」
-    ok(/function lossScope/.test(code) && /条关系线/.test(code),
-      '★ 「共涉及」按节点 / 关系线分别措辞');
+    /*
+     * 「共涉及」只在**有节点级丢失**时才带，且只说节点 ——
+     * 早先 lossScope 把关系线也拼进去，而 seg 里已经有一句「关系线 N 条」，
+     * 于是同一句话里出现两次「关系线」（「…关系线 2 条（共涉及 1 个节点、
+     * 2 条关系线）」）。数一下 scope 的写法：两处都得是「有节点才说」。
+     */
+    ok((code.split('const scope = loss.nodes > 0 ?').length - 1) >= 2,
+      '★ 「共涉及」只在有节点级丢失时出现（不再把关系线说两遍）');
+    ok(!/function lossScope/.test(code),
+      'lossScope 已删（留着只会假装在把关）');
   }
 
   // ⑥ 不该报的别乱报
@@ -17292,6 +17305,118 @@ group('BUG 123 · 交换格式丢掉的标记图标与关系线必须计入提�
       eq(l.nodes, 0, `${kind}：干净画布不报损失`);
     }
     eq(fmt2.exchangeLoss(mk({ xmarkers: [] }), 'opml').markers, 0, '空标记数组不算');
+  }
+}
+
+/* ------------------------------------------------------------------
+   BUG 124：Markdown 导出的是整本工作簿，丢失却只按当前画布统计
+
+   `exportMarkdown` 写的是 `workbookToMarkdown(workbook.sheets)` —— **全部画布**
+   （每张前面一个 `## 画布：` 标记）。而统计那句用的是
+   `exchangeLoss(sheet()?.content, …)` —— **只有当前一张**。
+
+   于是：备注 / 图片 / 进度挂在**别的**画布上时，算出来 nodes=0，
+   提示整段不出现，状态栏干干净净一句「已保存」。而 .md 是最常被当成备份
+   的格式，导入又是整体替换且不可撤销 —— 等导回来才发现没了。
+
+   同一个函数里上面那句 `deepNodeCount(workbook.sheets)` 是按全部画布算的，
+   两句话口径不一致，本身就是破绽。
+
+   顺带修掉一处措辞：关系线已经在清单里说过一次「N 条」，
+   「共涉及 …」里又说一遍「N 条关系线」，同一句话里出现两次。
+   ------------------------------------------------------------------ */
+
+group('BUG 124 · Markdown 导出的丢失必须按整本工作簿统计');
+
+{
+  const fs2 = await import('node:fs');
+  const path2 = await import('node:path');
+  const fmt2 = await import('file://' + path2.join(HERE, 'formats.js'));
+
+  const clean = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+    { data: { id: 'a', text: 'A' } },
+  ] } });
+  const withNote = JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [
+    { data: { id: 'b', text: 'B', note: '这条备注会丢' } },
+  ] } });
+  const REL2 = [{ id: 'r1', end1Id: 'x', end2Id: 'y', title: '关系' }];
+
+  // ① 事实：Markdown 导出的是全部画布
+  {
+    const wb2 = await import('file://' + path2.join(HERE, 'workbook.js'));
+    const md = wb2.workbookToMarkdown([
+      { id: 's1', title: '甲', content: clean, theme: 'fresh-blue', layout: 'default' },
+      { id: 's2', title: '乙', content: withNote, theme: 'fresh-blue', layout: 'default' },
+    ]);
+    ok(/画布：甲/.test(md) && /画布：乙/.test(md),
+      '★ Markdown 产物里两张画布都在（导出的是整本工作簿）');
+    ok(/这条备注会丢/.test(md) === false, '而备注确实写不进 Markdown');
+  }
+
+  // ② 只按当前画布算 → 漏报（这就是 BUG 本身）
+  {
+    const sheets = [
+      { id: 's1', content: clean },
+      { id: 's2', content: withNote },
+    ];
+    eq(fmt2.exchangeLoss(sheets[0].content, 'markdown', sheets[0]).nodes, 0,
+      '只算第一张画布：nodes=0 → 提示整段不出现（BUG 现场）');
+    const all = fmt2.exchangeLossAll(sheets, 'markdown');
+    ok(all.nodes > 0, '★ 按整本工作簿算：nodes>0（提示才会出现）');
+    eq(all.note, 1, '★ 备注那 1 处被数到了');
+  }
+
+  // ③ 跨画布累加：各类都要加，nodes 逐张相加而不是按 id 去重
+  {
+    const two = [
+      { id: 's1', content: withNote },
+      { id: 's2', content: withNote },
+    ];
+    const all = fmt2.exchangeLossAll(two, 'markdown');
+    eq(all.note, 2, '★ 两张各有一处备注 → 合计 2（不是 1）');
+    eq(all.nodes, 2, '★ 不同画布的同 id 节点算两个（逐张相加，不去重）');
+    const withRel = [
+      { id: 's1', content: clean, xrelationships: REL2 },
+      { id: 's2', content: clean, xrelationships: REL2 },
+    ];
+    eq(fmt2.exchangeLossAll(withRel, 'markdown').relationships, 2,
+      '★ 关系线也跨画布累加');
+  }
+
+  // ④ 干净工作簿不报；空数组 / 坏内容不炸
+  {
+    const all = fmt2.exchangeLossAll([
+      { id: 's1', content: clean }, { id: 's2', content: clean },
+    ], 'markdown');
+    eq(all.nodes, 0, '干净工作簿不报损失');
+    eq(all.relationships, 0, '干净工作簿不报关系线');
+    eq(fmt2.exchangeLossAll([], 'markdown').nodes, 0, '空工作簿不炸');
+    eq(fmt2.exchangeLossAll([{ id: 's1', content: '坏内容' }], 'markdown').nodes, 0,
+      '坏内容按无损失处理');
+    eq(fmt2.exchangeLossAll(null, 'markdown').nodes, 0, 'null 不炸');
+  }
+
+  // ⑤ 源码契约：Markdown 那条路必须走 exchangeLossAll(workbook.sheets
+  {
+    const code = stripCommentsFlatJs(fs2.readFileSync(path2.join(HERE, 'index.js'), 'utf8'));
+    const md = fnBody(code, 'async function exportMarkdown');
+    ok(md.length > 0, '取到 exportMarkdown 的函数体');
+    ok(/fmt\.exchangeLossAll\(workbook\.sheets/.test(md),
+      '★ Markdown 丢失按 workbook.sheets 统计（不能只算 sheet()）');
+    ok(!/exchangeLoss\(sheet\(\)\?\.content/.test(md),
+      '★ 不再用当前画布一份代替整本工作簿');
+    // 与上面 deepNodeCount 同一口径，两条都在才自洽
+    ok(/deepNodeCount\(workbook\.sheets\)/.test(md),
+      '深级统计与丢失统计同口径（都按全部画布）');
+    ok(/fmt\.exchangeLossAll/.test(md), '统计真的接进 Markdown 导出');
+  }
+
+  // ⑥ 「共涉及」只在有节点级丢失时带，且不再把关系线说两遍
+  {
+    const code = stripCommentsFlatJs(fs2.readFileSync(path2.join(HERE, 'index.js'), 'utf8'));
+    ok((code.split('const scope = loss.nodes > 0 ?').length - 1) >= 2,
+      '★ 两处提示的「共涉及」都只在有节点级丢失时出现');
+    ok(!/lossScope/.test(code), '★ 旧的 lossScope 已删（它会把关系线说两遍）');
   }
 }
 

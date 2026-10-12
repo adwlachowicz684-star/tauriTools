@@ -1127,6 +1127,37 @@ export function exchangeLoss(content, kind, sheet) {
   return out;
 }
 
+/** `exchangeLoss` 结果里需要跨画布累加的字段 */
+const LOSS_KEYS = ['note', 'hyperlink', 'priority', 'progress', 'labels',
+  'collapsed', 'style', 'image', 'attachment', 'boundary', 'markers',
+  'relationships', 'nodes'];
+
+/**
+ * 多张画布合计的丢失统计（Markdown 导出用）。
+ *
+ * **不能拿当前画布一份代替整本工作簿**：`exportMarkdown` 导出的是
+ * `workbookToMarkdown(workbook.sheets)` —— 全部画布，而 `exchangeLoss`
+ * 只吃一张。用 `sheet()` 那份去算，等于只报当前画布的丢失 ——
+ * 备注/图片挂在别的画布上时，提示整段不出现，用户拿到的是一句干净的
+ * 「已保存」，等导回来才发现没了（导入是整体替换且不可撤销）。
+ *
+ * `nodes` 是**逐张相加**而不是按 id 去重：不同画布的节点 id 可能重复，
+ * 但它们是不同的节点，去重会把损失数少报。
+ *
+ * @param {Array} sheets 画布数组
+ * @param {string} kind 交换格式名
+ * @returns {Object} 与 `exchangeLoss` 同形状，值为各画布之和
+ */
+export function exchangeLossAll(sheets, kind) {
+  const out = {};
+  for (const k of LOSS_KEYS) out[k] = 0;
+  for (const s of sheets || []) {
+    const one = exchangeLoss(s?.content, kind, s);
+    for (const k of LOSS_KEYS) out[k] += Number(one?.[k]) || 0;
+  }
+  return out;
+}
+
 /**
  * XMind 备注的 **XHTML → 纯文本**。
  *
