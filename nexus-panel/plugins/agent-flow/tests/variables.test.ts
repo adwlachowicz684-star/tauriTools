@@ -6,9 +6,10 @@ import {
   exportVariables, importVariables, duplicateVar, checkVarForNode, patchForVar,
   registerVariableGroup, getVariableGroup, resolveVars, redirectVarPatch,
   varSnapshotOf,
-  patchVariableValues, setVariableGlobal, saveVariables, LEGACY_CARDS_KEY,
+  patchVariableValues, setVariableGlobal, saveVariables, LEGACY_CARDS_KEY, VARIABLES_KEY,
   type Variable, type VariableGroupDef, type KV,
 } from '../engine/variables';
+import { readSrc } from './srcScan';
 
 function memKV() {
   const map = new Map<string, string>();
@@ -596,4 +597,90 @@ test('varSnapshotOf：变量被删了就跳过，不留空壳', () => {
   const data = { varRefs: { 'github-repo': c.id } };
   removeVariable(c.id, kv);
   assert.deepEqual(varSnapshotOf(data, kv), []);
+});
+
+/* ================= 密钥脱敏（变量是"存成变量 → 导出分享"的） ================= */
+
+const LLM_WITH_KEY = {
+  llm: { provider: 'openai', model: 'gpt-4o', apiKey: 'sk-live-VARSECRET' },
+};
+const VAR_SECRETS = ['sk-live-VARSECRET'];
+
+test('存成变量时不带明文 apiKey', () => {
+  /*
+   * llm-config 这组管的是整个 llm 对象，而节点上内联填的 apiKey
+   * 就在里面。组定义里写着"卡片里存的是模型与供应商，本来就不该带密钥"，
+   * 而那句话此前没有任何东西保证 —— currentValues() 拷的是整个 llm，
+   * apiKey 跟着明文进 localStorage、进导出文件。
+   */
+  const kv = memKV();
+  const v = addVariable({ group: 'llm-config', name: '我的模型', values: LLM_WITH_KEY }, kv);
+  assert.equal((v.values.llm as { apiKey?: string })?.apiKey, '', 'apiKey 要被挖空');
+  // 非密钥的部分要留下，否则变量等于空的
+  assert.equal((v.values.llm as { model?: string })?.model, 'gpt-4o', '模型名要保留');
+  const raw = kv.get(VARIABLES_KEY) ?? '';
+  for (const sec of VAR_SECRETS) assert.ok(!raw.includes(sec), `localStorage 里不该有 ${sec}`);
+});
+
+test('改变量值时也不会把明文写回去', () => {
+  /* 只在新建时脱的话，手动改一次值就全回来了 */
+  const kv = memKV();
+  const v = addVariable({ group: 'llm-config', name: '我的模型', values: LLM_WITH_KEY }, kv);
+  patchVariableValues(v.id, { llm: { provider: 'anthropic', apiKey: 'sk-live-AGAIN' } }, kv);
+  const raw = kv.get(VARIABLES_KEY) ?? '';
+  assert.ok(!raw.includes('sk-live-AGAIN'), '改值写入的明文也要挖掉');
+  const got = findVar(v.id, kv)!;
+  assert.equal((got.values.llm as { provider?: string })?.provider, 'anthropic', '非密钥字段照常改');
+});
+
+test('导出变量时没有明文（含修复前已存下的旧数据）', () => {
+  /* 与模块同一条理由：旧数据里的明文照样会被导出带走 */
+  const kv = memKV();
+  saveVariables([{
+    id: 'v-old', group: 'llm-config', name: '旧变量', values: LLM_WITH_KEY, createdAt: 0,
+  }] as Variable[], kv);
+  const json = exportVariables(kv);
+  for (const sec of VAR_SECRETS) assert.ok(!json.includes(sec), `导出文件里不该有 ${sec}`);
+});
+
+test('导入含明文密钥的变量文件，落库时不带明文', () => {
+  const kv = memKV();
+  const file = JSON.stringify({
+    version: 1,
+    variables: [{ id: 'v-x', group: 'llm-config', name: '别人的', values: LLM_WITH_KEY, createdAt: 0 }],
+  });
+  importVariables(file, undefined, kv);
+  const raw = kv.get(VARIABLES_KEY) ?? '';
+  for (const sec of VAR_SECRETS) assert.ok(!raw.includes(sec), `导入后不该有 ${sec}`);
+});
+
+/* ================= 源码守卫：变量侧的出口都过同一份判定 ================= */
+
+test('源码守卫：变量的三个出口都调用 redactVarValues（不各写一份）', () => {
+  const src = readSrc('engine/variables.ts');
+  for (const fn of ['addVariable', 'exportVariables', 'importVariables']) {
+    const at = src.indexOf(`function ${fn}`);
+    assert.ok(at >= 0, `源码里要有 ${fn}`);
+    /* 只截到本函数结束 —— 截到文件末尾会让"去掉某处的调用"照样通过，
+       那证明的是"文件里某处有"，不是"每个出口都有" */
+    const end = src.indexOf('\n}', at);
+    const body = end > 0 ? src.slice(at, end) : src.slice(at, at + 2000);
+    assert.ok(/redactVarValues\s*\(/.test(body), `${fn} 必须调用 redactVarValues（共用一份判定）`);
+  }
+});
+
+test('源码守卫：节点密钥判定只有一份（canvasStore 不再自己实现）', () => {
+  /*
+   * 判定此前只活在 canvasStore 里，于是只有画布存档走过它 ——
+   * 模块、变量这些出口一律裸着。
+   *
+   * 这条例盯的是"不会再长出第二份"：pathSet / blankSecretField
+   * 这类私有助手若又出现在 canvasStore 里，就是又要各抄一份了。
+   */
+  const cs = readSrc('engine/canvasStore.ts');
+  assert.ok(!/function\s+pathSet/.test(cs), 'canvasStore 不该再有 pathSet（判定已收进 sanitize）');
+  assert.ok(!/function\s+blankSecretField/.test(cs), 'canvasStore 不该再有 blankSecretField');
+  assert.ok(/redactNodes\s*\(/.test(cs), 'canvasStore 仍要提供 redactNodes 给既有调用方');
+  const sz = readSrc('engine/sanitize.ts');
+  assert.ok(/export function redactNodeSecrets/.test(sz), 'sanitize 里要有判定本体');
 });

@@ -11,30 +11,22 @@
  */
 import { type CanvasConfig, type McpServer, emptyCanvasConfig } from './canvasConfig';
 import type { CanvasParam } from './canvasParams';
-import { SECRET_PATHS, redactHeadersText, blankSecretNamed } from './sanitize';
+import {
+  SECRET_PATHS,
+  looksLikeSecretName,
+  redactNodes as redactNodesInSanitize,
+} from './sanitize';
 
 /*
- * 判断一个名字像不像密钥。
+ * 「一个名字像不像密钥」的判定**只此一份**，在 ./sanitize 里。
  *
- * 这里**内联**了一份，没有 import sanitize 那份 ——
- * 若在模块顶层直接取，会出现运行时 "looksLikeSecretName is not defined"
- * （且不报编译错，只在加载顺序不对时才炸）。
- * 两份的一致性由 tests/canvasConfig 里那条测试盯着。
+ * 这里以前内联过一份 hints —— 理由是"模块顶层 import 会炸"，但
+ * sanitize 只依赖 ./headers、不反向依赖本文件，并没有环，那条理由不成立；
+ * 而抄一份的代价是实的：sanitize 那份有 'api_key'，这份没有，
+ * 于是同一个变量名在两处会得到不同答案。安全口径抄成两份必然漂移。
+ *
+ * 所以直接用共享的那份。判定要改就改 SECRET_PATHS / SECRET_NAME_HINTS 一处。
  */
-function looksLikeSecretName(name: string): boolean {
-  const n = String(name ?? '').toLowerCase().replace(/[^a-z]/g, '');
-  if (!n) return false;
-  /*
-   * 'cookie' 是后加的：检测更新的 biliCookie 是一整条会话凭据，
-   * 名字里却不含 token / key。两份清单（这里与 sanitize 那份）
-   * 的一致性由 tests/canvasConfig 那条测试盯住，样本里含 cookie。
-   */
-  const hints = ['token', 'secret', 'password', 'passwd', 'apikey', 'accesskey', 'cookie'];
-  for (const h of hints) {
-    if (n.includes(h)) return true;
-  }
-  return false;
-}
 
 export type Canvas = {
   id: string;
@@ -260,97 +252,22 @@ export type PersistedState = {
  * 这正是"同一件事两处写"的老问题，只是这次抄的是安全清单。
  * 以后新增密钥字段只改 SECRET_PATHS 一处。
  */
-const SECRET_FIELDS = SECRET_PATHS;
-export type SecretField = (typeof SECRET_PATHS)[number];
 
-/** 按点号路径取值。路径不存在或不是非空字符串则返回 null */
-function pathGet(data: Record<string, unknown>, path: string): string | null {
-  const parts = path.split('.');
-  let cur: unknown = data;
-  for (const p of parts) {
-    if (!cur || typeof cur !== 'object') return null;
-    cur = (cur as Record<string, unknown>)[p];
-  }
-  return typeof cur === 'string' && cur !== '' ? cur : null;
-}
-
-/** 按点号路径写值，返回新的 data。只改这一条路径，其余保持原引用 */
-function pathSet(
-  data: Record<string, unknown>,
-  path: string,
-  value: string,
-): Record<string, unknown> {
-  const parts = path.split('.');
-  if (parts.length === 1) return { ...data, [parts[0]]: value };
-  const head = data[parts[0]];
-  if (!head || typeof head !== 'object' || Array.isArray(head)) return data;
-  return {
-    ...data,
-    [parts[0]]: { ...(head as Record<string, unknown>), [parts[1]]: value },
-  };
-}
-
-/** 取节点上某个密钥字段的值；不存在或不是字符串则返回 null */
-function getSecretField(data: Record<string, unknown>, field: SecretField): string | null {
-  return pathGet(data, field);
-}
-
-/** 把某个密钥字段写成空串，返回新的 data */
-function blankSecretField(
-  data: Record<string, unknown>,
-  field: SecretField,
-): Record<string, unknown> {
-  return pathSet(data, field, '');
-}
-
-/**
- * 判断并处理单个节点：把密钥字段挖空。
+/*
+ * 判定**不再在这里** —— 已收进 ./sanitize 的 redactNodeSecrets。
  *
- * 用鸭子类型而不是导入 isOcr / isTranslate：
- *  · Canvas.nodes 是 unknown[]，这层不该知道具体节点类型
- *  · 以后新增任何带 llm / token 的节点都会自动覆盖，不用回来改
+ * 收走的原因：节点数据不止"画布存档"一个出口。打包成模块、存成变量、
+ * 导出成文件走的都是同一批节点数据，而它们以前一律不脱敏 ——
+ * 同一个节点，存在画布里是空串，存成模块就是明文。
  *
- * 只认「节点形态」{ id, data: { kind, … } }，不去递归扫 output ——
- * 否则用户让 AI 生成一段恰好含 llm 字样的文本，会被误改。
+ * 留在这里的话，那些出口要么各抄一份（抄一份必然漂移），
+ * 要么继续裸着。所以只保留这个名字给既有调用方，实现共用一份。
  */
-function redactNode(n: unknown): unknown {
-  if (!n || typeof n !== 'object') return n;
-  const o = n as Record<string, unknown>;
-  const d = o.data;
-  if (!d || typeof d !== 'object') return n;
-  const dd = d as Record<string, unknown>;
-  if (typeof dd.kind !== 'string') return n;
-
-  let next = dd;
-  for (const f of SECRET_FIELDS) {
-    if (getSecretField(next, f) !== null) next = blankSecretField(next, f);
-  }
-  /*
-   * 请求头里的 Authorization / Cookie 也是内联密钥 ——
-   * 按路径枚举认不出来（名字用户随便起），要按"名字像不像密钥"判。
-   */
-  if (typeof next.headersText === 'string') {
-    const redacted = redactHeadersText(next.headersText);
-    if (redacted !== next.headersText) next = { ...next, headersText: redacted };
-  }
-  /*
-   * 最后按名字再兜一层 —— 固定路径覆盖不到的那些：
-   *   · 触发器的 entries[].config.token（带数组下标，点号路径表达不了）
-   *   · 检测更新的 biliCookie / targets[].biliCookie（压根不在清单里）
-   *
-   * 上面那句「以后新增任何带 llm / token 的节点都会自动覆盖」在这里
-   * 曾经是空话：除 headersText 外一律靠路径，路径漏了就是明文落盘。
-   * 有了这层兜底，那句话才真的成立。
-   */
-  const named = blankSecretNamed(next);
-  if (named !== next) next = named as Record<string, unknown>;
-  if (next === dd) return n;
-  return { ...o, data: next };
-}
+export type SecretField = (typeof SECRET_PATHS)[number];
 
 /** 节点数组脱敏。导出文件、写 localStorage 之前都应该过一遍。 */
 export function redactNodes(nodes: unknown[]): unknown[] {
-  return (nodes ?? []).map(redactNode);
+  return redactNodesInSanitize(nodes);
 }
 
 

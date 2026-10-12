@@ -1,6 +1,6 @@
 import { cloneData } from './duplicate';
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
-import { stripViewKeys } from './sanitize';
+import { redactNodes, stripViewKeys } from './sanitize';
 import { assertNoReplaceWipe } from './impExp';
 
 /**
@@ -107,8 +107,17 @@ export function addModule(
     id: newId(),
     name: input.name.trim() || '未命名模块',
     color: input.color ?? '#f59e0b',
-    // 深拷贝：调用方之后改了传入的数组，模块内容不该跟着变
-    nodes: cloneData(input.nodes) as unknown as Record<string, unknown>[],
+    /*
+     * 深拷贝：调用方之后改了传入的数组，模块内容不该跟着变。
+     *
+     * 顺带脱敏，判据与画布存档同一份（./sanitize 的 redactNodes）：
+     * 模块是**要导出分享**的，节点上内联填的 token / apiKey / 请求头
+     * 不脱的话，导出一份模块文件就等于把密钥贴给别人。
+     * 而画布存档走的是同一批节点数据却会脱敏 ——
+     * 同一个节点"存在画布里是空串、存成模块是明文"，
+     * 这种不一致不报错，只能靠共用一份判定来避免。
+     */
+    nodes: redactNodes(cloneData(input.nodes) as unknown as unknown[]) as Record<string, unknown>[],
     edges: cloneData(input.edges) as unknown as ModuleEdge[],
     createdAt: Date.now(),
     // 从内部节点扫出来 —— 见 ModuleDef.paramRefs 的说明
@@ -371,8 +380,24 @@ export function expandModules(
 /* 导入导出                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 模块导出。
+ *
+ * 导出时**再脱一遍**，尽管存的时候已经脱过。
+ *
+ * 为什么不只靠存时脱敏：老用户机器上的 localStorage 里已经躺着
+ * 脱敏之前存下的明文（那批数据是这次修复之前写进去的）。
+ * 只在存时脱敏，"修好了"就只是"以后不再新写明文"，
+ * 而**已经写进去的那些照样被导出带走**。
+ *
+ * 与 exportCustomPresets 同一套做法（那边导出的也是 sanitize 过的值）。
+ */
 export function exportModules(kv: KV = defaultKV()): string {
-  return JSON.stringify({ version: FORMAT_VERSION, modules: loadModules(kv) }, null, 2);
+  const list = loadModules(kv).map((m) => ({
+    ...m,
+    nodes: redactNodes(m.nodes) as Record<string, unknown>[],
+  }));
+  return JSON.stringify({ version: FORMAT_VERSION, modules: list }, null, 2);
 }
 
 export type ImportResult = { added: number; updated: number; skipped: string[] };
@@ -399,12 +424,18 @@ export function importModules(
       result.skipped.push(String((item as { name?: string })?.name ?? '(无名)'));
       continue;
     }
+    /*
+     * 导入的文件不受我们控制 —— 可能来自别人的机器，也可能手改过。
+     * 与自定义预设同一套：落库前先脱敏，免得"导入别人的文件"
+     * 把对方的密钥明文写进自己的 localStorage。
+     */
+    const safe = { ...item, nodes: redactNodes(item.nodes) as Record<string, unknown>[] };
     const at = current.findIndex((m) => m.id === item.id);
     if (at >= 0) {
-      current[at] = item;
+      current[at] = safe;
       result.updated += 1;
     } else {
-      current.push(item);
+      current.push(safe);
       result.added += 1;
     }
   }
@@ -562,14 +593,24 @@ export function packSelection(
   // 模块节点放在原选中区域的视觉中心，避免"打包完跳到别处"
   const at = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
 
-  const nodes = stripRuntimeNodes(list.map((n) => ({
+  /*
+   * 打包结果也要脱敏，不只是 addModule 存的时候再脱。
+   *
+   * packSelection 的产物会先给界面预览 / 撤销栈用一轮，
+   * 然后才落到 addModule。只在存时脱的话，内存里那份
+   * （以及任何拿 packSelection 结果直接干别的的调用方）
+   * 仍然带着明文 —— 而"内存里那份"随时可能被别处写进存档。
+   *
+   * 判据同样是 ./sanitize 的 redactNodes，不在这里另写一份。
+   */
+  const nodes = stripRuntimeNodes(redactNodes(list.map((n) => ({
     id: String(n.id),
     position: {
       x: Number((n.position as { x: number })?.x ?? 0) - minX,
       y: Number((n.position as { y: number })?.y ?? 0) - minY,
     },
     data: stripViewKeys((n.data ?? {}) as Record<string, unknown>),
-  })));
+  }))) as Record<string, unknown>[]);
 
   const edges: ModuleEdge[] = [];
   const crossing: CrossingEdge[] = [];

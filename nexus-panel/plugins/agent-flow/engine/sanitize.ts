@@ -215,6 +215,133 @@ export function stripSecrets(data: Record<string, unknown>): Record<string, unkn
   return blankSecretNamed(out) as Record<string, unknown>;
 }
 
+/* ------------------------------------------------------------------ */
+/* 节点级脱敏 —— 画布存档 / 模块 / 任何"要存进 localStorage 的节点"      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 这一层原来只活在 canvasStore 里，于是**只有画布存档走过它**。
+ *
+ * 而节点数据还有别的出口：打包成模块、存成变量、导出成文件。
+ * 那些出口当时一律不脱敏 —— 同一个节点，存在画布里是空串，
+ * 存成模块/变量就是明文，而且导出文件里也是明文。
+ *
+ * 症状最难查的那一类：不报错、功能正常，只是密钥在别人手里。
+ * 所以把判定收进这里，出口们共用一份（下面 redactNodes 的注释
+ * 里也写了为什么不能各抄一份）。
+ */
+
+export type SecretField = (typeof SECRET_PATHS)[number];
+
+/** 按点号路径取值。路径不存在或不是非空字符串则返回 null */
+function pathGet(data: Record<string, unknown>, path: string): string | null {
+  const parts = path.split('.');
+  let cur: unknown = data;
+  for (const p of parts) {
+    if (!cur || typeof cur !== 'object') return null;
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return typeof cur === 'string' && cur !== '' ? cur : null;
+}
+
+/** 按点号路径写值，返回新的 data。只改这一条路径，其余保持原引用 */
+function pathSet(
+  data: Record<string, unknown>,
+  path: string,
+  value: string,
+): Record<string, unknown> {
+  const parts = path.split('.');
+  if (parts.length === 1) return { ...data, [parts[0]]: value };
+  const head = data[parts[0]];
+  if (!head || typeof head !== 'object' || Array.isArray(head)) return data;
+  return {
+    ...data,
+    [parts[0]]: { ...(head as Record<string, unknown>), [parts[1]]: value },
+  };
+}
+
+/** 把某个密钥字段写成空串，返回新的 data */
+function blankSecretField(
+  data: Record<string, unknown>,
+  field: SecretField,
+): Record<string, unknown> {
+  return pathSet(data, field, '');
+}
+
+/**
+ * 判断并处理单个节点：把密钥字段挖空。
+ *
+ * 用鸭子类型而不是导入 isOcr / isTranslate：
+ *  · 节点在这层是 unknown，不该知道具体节点类型
+ *  · 以后新增任何带 llm / token 的节点都会自动覆盖，不用回来改
+ *
+ * 只认「节点形态」{ id, data: { kind, … } }，不去递归扫 output ——
+ * 否则用户让 AI 生成一段恰好含 llm 字样的文本，会被误改。
+ */
+export function redactNodeSecrets(n: unknown): unknown {
+  if (!n || typeof n !== 'object') return n;
+  const o = n as Record<string, unknown>;
+  const d = o.data;
+  if (!d || typeof d !== 'object') return n;
+  const dd = d as Record<string, unknown>;
+  if (typeof dd.kind !== 'string') return n;
+
+  let next = dd;
+  for (const f of SECRET_PATHS) {
+    if (pathGet(next, f) !== null) next = blankSecretField(next, f);
+  }
+  /*
+   * 请求头里的 Authorization / Cookie 也是内联密钥 ——
+   * 按路径枚举认不出来（名字用户随便起），要按"名字像不像密钥"判。
+   */
+  if (typeof next.headersText === 'string') {
+    const redacted = redactHeadersText(next.headersText);
+    if (redacted !== next.headersText) next = { ...next, headersText: redacted };
+  }
+  /*
+   * 最后按名字再兜一层 —— 固定路径覆盖不到的那些：
+   *   · 触发器的 entries[].config.token（带数组下标，点号路径表达不了）
+   *   · 检测更新的 biliCookie / targets[].biliCookie（压根不在清单里）
+   */
+  const named = blankSecretNamed(next);
+  if (named !== next) next = named as Record<string, unknown>;
+  if (next === dd) return n;
+  return { ...o, data: next };
+}
+
+/**
+ * 节点数组脱敏。
+ *
+ * 凡是"节点数据要离开内存"的地方都该过一遍：
+ *   写 localStorage、打包成模块、导出成文件、存成变量。
+ *
+ * 各出口自己写一份判定的后果已经见过两次（预设与画布各一份，
+ * 于是 webhook token 明文落盘）。所以只此一份，出口们调用它。
+ */
+export function redactNodes(nodes: unknown[]): unknown[] {
+  return (nodes ?? []).map(redactNodeSecrets);
+}
+
+/**
+ * 变量值的脱敏。
+ *
+ * 变量存的是**一组的字段值**（如 llm 对象、headersText），
+ * 与节点 data 同构但不带 kind，所以不能走 redactNodeSecrets。
+ *
+ * 判定与节点侧同一套（名字兜底 + 请求头），不另写一份 ——
+ * 变量是"存成变量 → 导出分享"的，漏了同样是明文外流。
+ */
+export function redactVarValues(values: Record<string, unknown>): Record<string, unknown> {
+  const v = (values ?? {}) as Record<string, unknown>;
+  let out = v;
+  if (typeof out.headersText === 'string') {
+    const redacted = redactHeadersText(out.headersText);
+    if (redacted !== out.headersText) out = { ...out, headersText: redacted };
+  }
+  const named = blankSecretNamed(out);
+  return (named ?? out) as Record<string, unknown>;
+}
+
 /** 剥掉显示与布局状态 */
 export function stripViewKeys(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

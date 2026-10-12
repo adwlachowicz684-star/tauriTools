@@ -4,8 +4,10 @@ import {
   addModule, loadModules, saveModules, removeModule, renameModule, findModule,
   modulePorts, stripRuntimeNodes, expandModules, innerId,
   packSelection, rewireCrossing, canPack,
-  exportModules, importModules, type ModuleDef, type ModuleEdge, type KV,
+  exportModules, importModules, MODULES_KEY,
+  type ModuleDef, type ModuleEdge, type KV,
 } from '../engine/modules';
+import { readSrc } from './srcScan';
 
 function memKV() {
   const map = new Map<string, string>();
@@ -684,4 +686,104 @@ test('普通流程边展开时不带多余字段（不制造 targetArg）', () =
   );
   const e = (g.edges as { data?: unknown }[])[0];
   assert.equal(e?.data, undefined, '流程边不该被塞上 data');
+});
+
+/* ---------------- 密钥脱敏（模块是导出分享的，不能带明文） ---------------- */
+
+/** 带内联密钥的一批节点：GitHub 令牌、大模型密钥、请求头里的 Authorization */
+function secretPicked() {
+  return [
+    { id: 'a1', position: { x: 0, y: 0 }, data: { kind: 'github-push', token: 'ghp_SUPERSECRET', owner: 'o', repo: 'r' } },
+    { id: 'a2', position: { x: 100, y: 0 }, data: { kind: 'llm', llm: { provider: 'openai', model: 'gpt-4o', apiKey: 'sk-live-XXXX' } } },
+    { id: 'a3', position: { x: 200, y: 0 }, data: { kind: 'generic-http', headersText: 'Authorization: Bearer sk-live-YYYY\nX-A: 1' } },
+  ] as never[];
+}
+
+const SECRETS = ['ghp_SUPERSECRET', 'sk-live-XXXX', 'Bearer sk-live-YYYY'];
+
+test('打包进模块的节点不带明文密钥', () => {
+  /*
+   * 画布存档走 redactNodes（空串），而模块以前**完全不脱敏** ——
+   * 同一个节点"存在画布里是空串、存成模块是明文"，且不报错。
+   * 模块是要导出给别人用的，明文等于把令牌贴出去。
+   */
+  const packed = packSelection(secretPicked(), []);
+  const s = JSON.stringify(packed.nodes);
+  for (const sec of SECRETS) {
+    assert.ok(!s.includes(sec), `打包结果里不该有明文 ${sec}`);
+  }
+  // 非密钥的业务字段要原样留下，不能连带剥掉
+  assert.ok(s.includes('gpt-4o'), '模型名不是密钥，要保留');
+  assert.ok(s.includes('"owner":"o"'), '仓库名不是密钥，要保留');
+});
+
+test('模块落库后 localStorage 里没有明文密钥', () => {
+  const kv = memKV();
+  addModule({ name: '含密钥', nodes: secretPicked() as never, edges: [] }, kv);
+  const raw = kv.get(MODULES_KEY) ?? '';
+  for (const sec of SECRETS) {
+    assert.ok(!raw.includes(sec), `localStorage 里不该有明文 ${sec}`);
+  }
+});
+
+test('导出模块文件时没有明文密钥（含修复前已存下的旧数据）', () => {
+  /*
+   * 存时脱敏只保证"以后不再新写明文"。
+   * 老用户的 localStorage 里已经躺着脱敏之前写进去的那批 ——
+   * 只在存时脱，导出照样把旧明文带走。所以导出必须再脱一遍。
+   */
+  const kv = memKV();
+  saveModules([{
+    id: 'md-old', name: '旧模块', color: '#f59e0b', createdAt: 0,
+    nodes: secretPicked() as Record<string, unknown>[],
+    edges: [],
+  }] as ModuleDef[], kv);
+  const json = exportModules(kv);
+  for (const sec of SECRETS) {
+    assert.ok(!json.includes(sec), `导出的模块文件里不该有明文 ${sec}`);
+  }
+});
+
+test('导入含明文密钥的模块文件，落库时不带明文', () => {
+  /* 导入的文件可能来自别人的机器 —— 不能把对方的密钥写进自己的存储 */
+  const kv = memKV();
+  const file = JSON.stringify({
+    version: 1,
+    modules: [{
+      id: 'md-x', name: '别人的模块', color: '#f59e0b', createdAt: 0,
+      nodes: secretPicked(), edges: [],
+    }],
+  });
+  importModules(file, undefined, kv);
+  const raw = kv.get(MODULES_KEY) ?? '';
+  for (const sec of SECRETS) {
+    assert.ok(!raw.includes(sec), `导入后不该有明文 ${sec}`);
+  }
+});
+
+/* ---------------- 源码守卫：出口都要过同一份判定 ---------------- */
+
+test('源码守卫：模块的三个出口都调用 redactNodes（不各写一份）', () => {
+  /*
+   * 只盯"有没有脱敏"不够 —— 各写一份判定也能通过，
+   * 而抄一份必然漂移（webhook token 那次就是这样）。
+   * 所以盯的是：都调用 ./sanitize 的同一个 redactNodes。
+   */
+  const src = readSrc('engine/modules.ts');
+  const bodies = ['addModule', 'exportModules', 'importModules', 'packSelection'];
+  for (const fn of bodies) {
+    const at = src.indexOf(`function ${fn}`);
+    assert.ok(at >= 0, `源码里要有 ${fn}`);
+    /*
+     * 只截到本函数结束（顶层收尾的 `}` 在行首）。
+     *
+     * 截到文件末尾的话，去掉 addModule 里的调用照样能过 ——
+     * 因为后面的 exportModules 里还有一处。那种"过了"是假的：
+     * 它证明的是"文件里某处有调用"，不是"每个出口都调用了"。
+     * 这正是本轮要防的那类失效，守卫自己不能踩。
+     */
+    const end = src.indexOf('\n}', at);
+    const body = end > 0 ? src.slice(at, end) : src.slice(at, at + 2000);
+    assert.ok(/redactNodes\s*\(/.test(body), `${fn} 必须调用 redactNodes（共用一份判定）`);
+  }
 });

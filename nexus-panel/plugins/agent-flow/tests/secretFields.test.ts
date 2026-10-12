@@ -287,21 +287,56 @@ test('预设分享也会带上这两处（stripSecrets 要一起挖）', () => {
   assert.equal(s.biliCookie, '', '预设里的 biliCookie 要挖空');
 });
 
+/*
+ * 取某个导出函数**自己的函数体**，不取整个文件。
+ *
+ * 以前这条守卫查的是"文件里出现 blankSecretNamed(" —— 那是假守卫：
+ * hadInlineSecret 里也调了一次，于是把脱敏那条摘掉，照样匹配得上。
+ * 盯不住的守卫比没有更糟：它红的时候人以为是别处的错，绿的时候其实什么也没盯。
+ */
+function bodyOf(src: string, name: string): string {
+  const i = src.indexOf(`export function ${name}(`);
+  assert.notEqual(i, -1, `${name} 找不到`);
+  const j = src.indexOf('\nexport ', i + 1);
+  return j === -1 ? src.slice(i) : src.slice(i, j);
+}
+
 test('守卫: redactNode 走了按名字兜底（退化成只靠路径会红）', () => {
   /*
-   * 扫源码而不是只测行为：把兜底摘掉后，上面几条会一起红；
-   * 但反过来 —— 只盯"有没有调用"挡不住空壳，所以两者都要有。
+   * 判定本体已收进 ./sanitize（模块 / 变量 / 画布存档共用一份），
+   * 所以这里盯的是 sanitize 里的两个节点脱敏入口各自的函数体。
    */
-  const src = readSrc('engine/canvasStore.ts');
+  const san = readSrc('engine/sanitize.ts');
+  /*
+   * 链条是 redactNodes → redactNodeSecrets → blankSecretNamed：
+   * 数组入口只做转发，按名字兜底发生在判定本体里。
+   * 所以两处各钉一头 —— 少钉一头，"把兜底摘掉只留路径判定"就抓不住。
+   */
   assert.ok(
-    /blankSecretNamed\(/.test(src),
-    'canvasStore 必须调 sanitize 的按名字兜底 —— 只靠 SECRET_PATHS 会漏掉数组里的密钥',
+    /blankSecretNamed\(/.test(bodyOf(san, 'redactNodeSecrets')),
+    'redactNodeSecrets 必须走按名字兜底 —— 只靠 SECRET_PATHS 会漏掉数组里的密钥',
+  );
+  assert.ok(
+    /redactNodeSecrets\b/.test(bodyOf(san, 'redactNodes')),
+    'redactNodes 必须转发到判定本体，不能自己再实现一遍（抄一份就会漏兜底）',
   );
 });
 
-test('守卫: cookie 进了密钥名字清单（两份都要有）', () => {
+test('守卫: cookie 进了密钥名字清单，且全 engine 只有一份', () => {
   const san = readSrc('engine/sanitize.ts');
-  const store = readSrc('engine/canvasStore.ts');
   assert.ok(/'cookie'/.test(san), 'sanitize 的 SECRET_NAME_HINTS 要含 cookie');
-  assert.ok(/'cookie'/.test(store), 'canvasStore 内联那份也要含 cookie（两份由 canvasConfig 那条盯着同义）');
+  /*
+   * 以前 canvasStore 里内联过一份 hints（且少了 'api_key'），
+   * 那条"两份都要有 cookie"的检查盯的正是那份副本 —— 副本删了它就红，
+   * 而红的理由是"守卫盯错了地方"，不是"代码错了"。
+   *
+   * 现在改为：engine 下不许再有第二份 hints。'passwd' 是这个清单里
+   * 最具特征、又不可能因别的原因出现的串，拿它当标记。
+   */
+  for (const f of ['engine/canvasStore.ts', 'engine/customPresets.ts', 'engine/nodeDefaults.ts']) {
+    assert.ok(
+      !/'passwd'/.test(readSrc(f)),
+      `${f} 里出现了内联的密钥 hints 副本 —— 判据只此一份，抄一份必然漂移`,
+    );
+  }
 });

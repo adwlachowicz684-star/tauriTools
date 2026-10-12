@@ -175,14 +175,27 @@ test('SECRET_FIELDS 直接复用 SECRET_PATHS，不再自己抄一份', () => {
    * 生成的 .mjs 直接语法错误（这是这个脚本第四次带来这类麻烦）。
    */
   const blockComment = new RegExp('/' + '\\*' + '[\\s\\S]*?' + '\\*' + '/', 'g');
-  const f = read(path.join(ROOT, 'engine/canvasStore.ts')).replace(blockComment, '');
+  /*
+   * 判定本体已经从 canvasStore 收进 sanitize（模块 / 变量这些出口要用同一份），
+   * 所以这里盯的是 sanitize 那份；canvasStore 改为只保留转发。
+   *
+   * 判据也随之换成"遍历 SECRET_PATHS"而不是"有一行 const 赋值" ——
+   * 盯某一行写法的话，换个写法（比如直接 for (const f of SECRET_PATHS)）
+   * 就会假红，而那种红会把人引向"把清单抄回来"。
+   */
+  const f = read(path.join(ROOT, 'engine/sanitize.ts')).replace(blockComment, '');
   assert.ok(
-    /const SECRET_FIELDS = SECRET_PATHS;/.test(f),
-    '保险箱必须直接用 sanitize 的清单，抄一份就会漏字段',
+    /for \(const f of SECRET_PATHS\)/.test(f),
+    'sanitize 的判定要直接遍历 SECRET_PATHS，抄一份就会漏字段',
   );
   assert.ok(
     !/const SECRET_FIELDS = \['llm\.apiKey'/.test(f),
     '不能再出现手写的密钥字段数组',
+  );
+  const cs = read(path.join(ROOT, 'engine/canvasStore.ts')).replace(blockComment, '');
+  assert.ok(
+    !/const SECRET_FIELDS = \['llm\.apiKey'/.test(cs),
+    'canvasStore 也不能再出现手写的密钥字段数组',
   );
   /*
    * 认「导入列表里含 SECRET_PATHS」，不认整行字面量。
@@ -194,8 +207,31 @@ test('SECRET_FIELDS 直接复用 SECRET_PATHS，不再自己抄一份', () => {
    * 人照着它去改，就会把 import 拆回两行（或更糟，把兜底摘掉）。
    */
   assert.ok(
-    /import \{[^}]*\bSECRET_PATHS\b[^}]*\} from '\.\/sanitize';/.test(f),
-    '要从 sanitize 引入（导入列表里含 SECRET_PATHS 即可）',
+    /import \{[^}]*\bSECRET_PATHS\b[^}]*\} from '\.\/sanitize';/.test(cs),
+    'canvasStore 要从 sanitize 引入（导入列表里含 SECRET_PATHS 即可）',
+  );
+  /*
+   * 再加一条：判定本体必须在 sanitize 里，且 canvasStore 只是转发。
+   *
+   * 少了这条，"把判定搬回 canvasStore、sanitize 里留个空壳"也能过 ——
+   * 那样模块 / 变量这些出口又会各写一份，回到这次修的问题。
+   */
+  assert.ok(
+    /export function redactNodeSecrets/.test(f),
+    '判定本体要在 sanitize 里（出口们共用一份）',
+  );
+  /*
+   * 签名写成 `nodes: unknown[]): unknown[] {` —— 参数后面还有返回类型注解。
+   *
+   * 以前的正则到 `\)` 就直接要 `{`，把返回类型漏掉了，于是**永远匹配不上**：
+   * 它红着，但红的理由是"守卫写窄了"。这种红最耽误事 —— 人照着它改，
+   * 会把转发拆回自己实现（那正是这里要防的）。
+   *
+   * 所以签名这一段用有边界的窗口放过，只钉住"函数体第一行就是转发"。
+   */
+  assert.ok(
+    /export function redactNodes\b[\s\S]{0,60}?\{\s*return redactNodesInSanitize\(nodes\);/.test(cs),
+    'canvasStore 的 redactNodes 必须转发到 sanitize，不能自己再实现一遍',
   );
 });
 

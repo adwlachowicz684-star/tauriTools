@@ -1,6 +1,7 @@
 import { cloneData } from './duplicate';
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 import { assertNoReplaceWipe } from './impExp';
+import { redactVarValues } from './sanitize';
 
 /**
  * 变量。
@@ -178,8 +179,19 @@ export function addVariable(
     id: newId(),
     group: input.group,
     name: input.name.trim() || '未命名',
-    // 存的时候也深拷贝：否则调用方之后改了传入的对象，变量内容跟着变
-    values: cloneData(input.values),
+    /*
+     * 存的时候也深拷贝：否则调用方之后改了传入的对象，变量内容跟着变。
+     *
+     * 顺带脱敏。变量存的是**一组的字段值**，其中 llm-config 这组
+     * 管的是整个 llm 对象 —— 节点上内联填的 apiKey 就在里面。
+     * 组定义里写着"卡片里存的是模型与供应商，本来就不该带密钥"，
+     * 而那句话此前没有任何东西保证：currentValues() 是把节点上的
+     * llm 整个拷过来的，apiKey 跟着一起明文进 localStorage、进导出文件。
+     *
+     * 判定走 ./sanitize 的 redactVarValues（与节点侧同一套），
+     * 不在这里另写一份。
+     */
+    values: redactVarValues(cloneData(input.values) as Record<string, unknown>),
     createdAt: Date.now(),
     global: input.global === true,
     canvasId: input.canvasId ?? '',
@@ -211,7 +223,12 @@ export function patchVariableValues(
   const list = loadVariables(kv);
   const at = list.findIndex((v) => v.id === id);
   if (at < 0) return;
-  list[at] = { ...list[at], values: { ...list[at].values, ...cloneData(patch) } };
+  /* 改值同样要脱敏 —— 手动改一次值就把明文写回去的话，
+     新建时脱的那一遍白做 */
+  list[at] = {
+    ...list[at],
+    values: redactVarValues({ ...list[at].values, ...cloneData(patch) }),
+  };
   saveVariables(list, kv);
 }
 
@@ -504,8 +521,16 @@ export function patchForVar(v: Variable): Record<string, unknown> {
 /* 导入导出（跨环境分享）                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 变量导出。
+ *
+ * 与模块导出同一条理由：**存时脱敏挡不住已经写进去的明文**。
+ * 老用户机器上的 localStorage 里躺着这次修复之前存下的 apiKey，
+ * 只改存时的话，"修好了"只是"以后不再新写"，而旧数据照样被导出带走。
+ */
 export function exportVariables(kv: KV = defaultKV()): string {
-  return JSON.stringify({ version: FORMAT_VERSION, variables: loadVariables(kv) }, null, 2);
+  const list = loadVariables(kv).map((v) => ({ ...v, values: redactVarValues(v.values) }));
+  return JSON.stringify({ version: FORMAT_VERSION, variables: list }, null, 2);
 }
 
 export type ImportResult = { added: number; updated: number; skipped: string[] };
@@ -535,7 +560,9 @@ export function importVariables(
     }
     // 同 id 视为同一条，覆盖。重复导入不会堆副本。
     const at = current.findIndex((v) => v.id === item.id);
-    const norm = normalize(item);
+    /* 导入的文件不受我们控制（可能来自别人的机器），落库前先脱敏 ——
+       与模块、自定义预设同一套 */
+    const norm = { ...normalize(item), values: redactVarValues(normalize(item).values) };
     if (at >= 0) {
       current[at] = norm;
       result.updated += 1;

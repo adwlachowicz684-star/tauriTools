@@ -151,12 +151,23 @@ test('updateCanvasConfig 只改目标画布', () => {
 });
 
 /**
- * canvasStore 里内联了一份 looksLikeSecretName（因为静态 import 会让
- * 生成的 .mjs 加载不了）。两份必须同义 —— 否则"导出时脱敏"与
- * "别处判断是否为密钥"会给出不同的答案。
+ * 「名字像不像密钥」的判定已收进 ./sanitize，**全仓只此一份**。
+ *
+ * 以前 canvasStore 里内联过一份 hints（少一个 'api_key'），靠"两份抽样比对"
+ * 盯着 —— 但抽样盯不住"将来在第三处再抄一份"，也盯不住"抄的时候漏一条
+ * 而样本里恰好没那条"。所以改成两条更硬的：
+ *   ① 源码里不许再出现内联的 hints 副本（特征串 'passwd' 只该在 sanitize 里）
+ *   ② 行为上 canvasStore 的脱敏必须给出与共享判据相同的答案
  */
-test('两处 looksLikeSecretName 判断一致（内联副本没漂移）', () => {
-  const store = redactEnv;
+test('密钥名字判据只此一份：不许再抄，且 canvasStore 用的就是它', () => {
+  for (const f of ['engine/canvasStore.ts', 'engine/customPresets.ts', 'engine/nodeDefaults.ts']) {
+    const src = readSrc(f);
+    assert.ok(
+      !/'passwd'/.test(src),
+      `${f} 里出现了内联的密钥 hints 副本 —— 判定只允许 ./sanitize 一份，抄一份就会漂移`,
+    );
+  }
+
   const samples: [string, boolean][] = [
     ['TOKEN', true], ['GH_SECRET', true], ['my_password', true],
     ['API_KEY', true], ['plainUrl', false], ['URL', false], ['name', false],
@@ -164,9 +175,8 @@ test('两处 looksLikeSecretName 判断一致（内联副本没漂移）', () =>
     ['biliCookie', true], ['COOKIE', true], ['feedUrl', false],
   ];
   for (const [k, want] of samples) {
-    // 通过 redactEnv 的行为间接验证 canvasStore 里那份
-    const got = store({ [k]: 'x' })[k] === '';
-    assert.equal(got, want, `${k}: canvasStore 判为 ${got}，期望 ${want}`);
+    // 通过 redactEnv / redactParams 的行为间接验证 canvasStore 接的是共享那份
+    assert.equal(redactEnv({ [k]: 'x' })[k] === '', want, `${k}: canvasStore 脱敏判为 ${!want}，期望 ${want}`);
     assert.equal(looksLikeSecretName(k), want, `${k}: sanitize 那份判错了`);
   }
 });
