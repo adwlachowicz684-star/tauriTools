@@ -649,6 +649,71 @@ test('守卫: 画布导出带 config、导入读 config（丢一半就是"换台
   );
 });
 /*
+ * 运行时状态（status / output / error / last*）与"要交出去的文件"。
+ *
+ * 四个出口——存模块、设为默认、存预设、复制节点——都剥运行时，
+ * 只有**导出画布**以前没剥。而导出的文件是要发给别人的：
+ * 每个节点都带着 status:'success' 和上次的实际输出，而那输出里可能是
+ * 脚本执行结果、接口响应、乃至令牌。收到的人看到一堆绿节点，
+ * 会以为这就是流程自带的结果。
+ */
+test('导出画布剥掉运行时状态（输出里可能带着上一次的真实结果）', () => {
+  const src = readFileSync(join(pluginRoot(), 'App.tsx'), 'utf8');
+  const noComment = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+  const m = noComment.match(/const text = JSON\.stringify\(([\s\S]*?)\n\s*\);/);
+  assert.ok(m, '没找到导出那句 JSON.stringify');
+  assert.ok(
+    /stripRuntimeNodes/.test(m![1]),
+    '导出必须剥运行时 —— 只调 redactNodes 会把 status/output 一起交出去',
+  );
+  assert.ok(
+    /redactNodes/.test(m![1]),
+    '导出仍要脱敏 —— 密钥与运行时是两回事，不能只剥一个',
+  );
+
+  /*
+   * 导入也要剥：防手改过的、或老版本导出的文件带进"已跑完"的假象。
+   *
+   * 锚点必须带上 p.nodes —— 只写 `setNodes\(` 会匹配到 App 里**第一处**
+   * setNodes（那处是切画布时读存档，与此无关），于是这条守卫要么恒绿
+   * （第一处恰好也剥了）、要么恒红（第一处没剥），两种都是假守卫。
+   */
+  const imp = noComment.match(/setNodes\(([^;]*\bp\.nodes\b[^;]*)\);/);
+  assert.ok(imp, '没找到导入那句 setNodes(...p.nodes...)');
+  assert.ok(
+    /stripRuntimeNodes/.test(imp![1]),
+    '导入必须剥运行时 —— 别处来的文件里 status:success 会让人以为这次跑过了',
+  );
+});
+
+/*
+ * 这条是**反向**的，专门守上面那条别被"统一"过去。
+ *
+ * 存档（localStorage）**不剥**运行时是有意的：那是本人本机的，
+ * 刷新后还想看得见上次跑的结果 —— 与"要交出去的文件"是两回事。
+ *
+ * 扫源码的守卫挡不住"顺手把存档也剥了"（那行代码本身没毛病），
+ * 所以钉行为：序列化之后 status / output 必须还在。
+ */
+test('存档保留运行时状态（刷新后还要看得见上次的结果）', () => {
+  const st = {
+    canvases: [{
+      id: 'c1', name: 'w', updatedAt: 0,
+      nodes: [{
+        id: 'n1', position: { x: 0, y: 0 },
+        data: { kind: 'task', prompt: 'p', status: 'success', output: '上次的结果' },
+      }],
+      edges: [],
+    }],
+    activeId: 'c1',
+  } as never;
+  const back = JSON.parse(serialize(st)).canvases[0].nodes[0].data;
+  assert.equal(back.status, 'success', '存档要保留状态 —— 刷新后看得见上次跑到哪');
+  assert.equal(back.output, '上次的结果', '存档要保留输出');
+});
+
+/*
  * env.vars 与 params 的脱敏。
  *
  * 为什么单独钉住：故障注入时我发现——把 redactEnv 改成直接透传，

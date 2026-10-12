@@ -1884,8 +1884,26 @@ function reportSkipped(
      * 走 redactCanvasConfig：配置里有服务 env 与参数卡，
      * 不脱敏就等于把密钥写进要发给别人的文件。
      */
+    /*
+     * 运行时状态也要剥（status / output / error / last*），判据走
+     * engine/runtimeKeys 那一份，与存模块、设为默认、存预设、复制节点同一套。
+     *
+     * 这条是**导出独有的**：上面那四个出口都已剥过，只有导出以前没剥。
+     * 不剥的话导出的文件里每个节点都带着「上次跑完了」和那次的实际输出 ——
+     * 而这个文件是要发给别人的（见本函数开头），output 里可能是脚本执行
+     * 结果、接口响应、乃至令牌。收到的人打开就看到一堆绿节点，
+     * 会以为这就是流程自带的结果。
+     *
+     * 存档（localStorage）**不剥**：那是本人本机的，刷新后还想看得见
+     * 上次跑的结果 —— 与"要交出去的文件"是两回事。
+     */
     const text = JSON.stringify(
-      { nodes: redactNodes(nodes), edges, triggers, config: redactCanvasConfig(canvasConfigOf(activeCanvas)) },
+      {
+        nodes: stripRuntimeNodes(redactNodes(nodes) as Record<string, unknown>[]),
+        edges,
+        triggers,
+        config: redactCanvasConfig(canvasConfigOf(activeCanvas)),
+      },
       null,
       2,
     );
@@ -1912,7 +1930,18 @@ function reportSkipped(
           pushLog('导入失败：文件里没有节点数组（nodes）—— 当前画布未改动');
           return;
         }
-        setNodes(p.nodes);
+        /*
+         * 运行时状态也剥一层 —— 与导出同一份判据。
+         *
+         * 导出已经剥过了，所以自家文件进来是干净的；这条防的是**别处来的**
+         * 文件：手改过的、或剥之前那份老版本导出的。那种文件里每个节点都
+         * 带着 status:'success' 和上次的输出，导入后表现为"还没跑就显示
+         * 跑完了、点开还看得见上一次的结果"，而用户以为那是这次的。
+         *
+         * status 剥掉后卡片按 idle 渲染（NodeShell 有 `?? 'idle'` 兜底），
+         * output 各处也都有 `?? ''` —— 不会显示成 undefined。
+         */
+        setNodes(stripRuntimeNodes(p.nodes as Record<string, unknown>[]) as FlowNode[]);
         setEdges(Array.isArray(p.edges) ? p.edges : []);
         /*
          * 配置随画布一起导入，否则导出去再导回来就丢一半。
