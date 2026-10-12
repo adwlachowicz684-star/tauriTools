@@ -86,7 +86,20 @@ t('空名仍有兜底', io.safeFileName('').length > 0, io.safeFileName(''));
   const calls = { downloaded: null, said: '' };
   const stubIo = {
     safeFileName: io.safeFileName,
-    downloadBlob: (n) => { calls.downloaded = n; },
+    /*
+     * 真实 downloadBlob 的返回契约只有两个值：'fallback'（`<a download>`
+     * 已点下去，文件由 WebView 落盘）与 'error'（URL.createObjectURL 或建
+     * `<a>` 就抛了 —— **一个字节都没出去**）。这里模拟"已发起"。
+     *
+     * 判据必须用真实的 io.downloadOk，不能自己写一个恒真的：
+     *   downloadBlob 返回 'error' 时 downloadOk 是 false，源码走的是
+     *   "保存失败：X 没能落到下载目录"。若这里写成 downloadOk: () => true，
+     *   即使一个字节都没出去也会走成功分支 —— 正好把"没发出去就不能说
+     *   已保存"这条（BUG 70 / 77 / 125 那一类）放掉，而这个测试恰恰是
+     *   靠"提示里出现的名字"来验的，谎报成功会让它整节失去意义。
+     */
+    downloadBlob: (n) => { calls.downloaded = n; return 'fallback'; },
+    downloadOk: io.downloadOk,
   };
   const stubStatus = (s) => { calls.said = String(s); };
   // eslint-disable-next-line no-new-func
@@ -103,6 +116,21 @@ t('空名仍有兜底', io.safeFileName('').length > 0, io.safeFileName(''));
   t('落盘与提示取的是同一个变量（不是各算一次）',
     /savedName/.test(body) && (body.match(/savedName/g) || []).length >= 2,
     String((body.match(/savedName/g) || []).length));
+
+  /*
+   * downloadBlob 返回 'error'（一个字节都没出去）时绝不能报位置。
+   * 只测成功路径等于把 downloadOk 这层判据晾在一边 —— 它存在的唯一理由
+   * 就是"没发出去就不能说已保存"，不测它，这层判据哪天被改没了没人知道，
+   * 而上面几条断言（都是验提示里的名字的）会照样全绿。
+   */
+  {
+    const stubErr = { ...stubIo, downloadBlob: () => 'error' };
+    let saidErr = '';
+    // eslint-disable-next-line no-new-func
+    new Function('io', 'status', 'name', 'rec', body)(stubErr, (s) => { saidErr = String(s); }, RAW, { blob: {} });
+    t('下载没发出去时不能说已保存到下载目录',
+      saidErr.includes('保存失败') && !saidErr.includes('已保存到下载目录'), saidErr.slice(0, 60));
+  }
 }
 
 /* ============================================================

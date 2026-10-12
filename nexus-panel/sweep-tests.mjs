@@ -23,11 +23,43 @@
  *     跑到一半被掐断 = 前面的结果全部丢失（明细只在最后才写盘）。
  */
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from 'node:fs';
+// 汇总行的 7 种写法收敛到共用实现：分着写两份会各改各的，一边认得出、一边认不出。
+import { parseSummary, stripCommentsJs } from './test-scan-utils.mjs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
+
+/* ---------------- 元测试判据（排除会展开全部测试的那个） ----------------
+ *
+ * 文件头说明 A 只排除了**自己**：`test:sweep` 指向本文件，不排除就无限 fork。
+ * 但"会 spawn 其他测试"的脚本不止本文件一个 —— `test:cwd-invariant` 会把
+ * 每个测试脚本**跑两遍**（基线目录 + 空目录），它自己就是一轮全量体检。
+ *
+ * 于是 sweep → cwd-invariant → 215 个脚本 × 2 遍，这就是说明 A 那类递归的
+ * **跨文件版本**。实测：第 1 分片跑到第 10 个就撞上它，170s 只推进 0 个，
+ * 命令超时退出，报错只指向超时 —— 看不出是嵌套展开。
+ *
+ * 判据不能写死文件名（"排除 cwd-invariant"这种清单，下次新增一个元测试
+ * 照样漏网，而漏网的表现是"跑不完"，没人会想到是这里）。所以用形态判定：
+ * 同时满足「spawn 子进程」+「遍历 .scripts」+「过滤 test: 前缀」三者，
+ * 才说明它"收集全部测试并逐个跑" —— 实测全仓只命中 sweep 自己与
+ * cwd-invariant 两个，零误报（普通测试即便 spawn 子进程也不收集 scripts）。
+ *
+ * 剥注释再判：注释里提到这些字样不该让一个普通测试被误排除。
+ */
+const META_SPAWN = /\bspawn(?:Sync)?\s*\(/;
+const META_SCRIPTS = /\.scripts\b/;
+const META_TEST = /startsWith\(\s*['"]test:|test:\*/;
+const isMetaTest = (cmd) => {
+  const m = /([\w./-]+\.(?:mjs|cjs|js|tsx?))/.exec(cmd);
+  if (!m) return false;
+  const p = join(ROOT, m[1]);
+  if (!existsSync(p)) return false;
+  const src = stripCommentsJs(readFileSync(p, 'utf8'));
+  return META_SPAWN.test(src) && META_SCRIPTS.test(src) && META_TEST.test(src);
+};
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 const only = (process.argv.find(a => a.startsWith('--only=')) || '').split('=')[1] || '';
 // 分片：--slice=1/6 表示把排序后的列表均分 6 份、跑第 1 份（1-based）。
@@ -39,7 +71,8 @@ const SELF = 'sweep-tests.mjs';
 let entries = Object.entries(pkg.scripts)
   .filter(([k, v]) => k.startsWith('test:') && /\.mjs|\.cjs|\.tsx?/.test(v))
   // A. 排除自己：test:sweep 指向本文件，不过滤就是无限 fork。
-  .filter(([, v]) => !v.includes(SELF))
+  //    再叠一层形态判定，把"会展开全部测试"的元测试一并排除（见顶部说明）。
+  .filter(([, v]) => !v.includes(SELF) && !isMetaTest(v))
   .filter(([k]) => !only || k.includes(only))
   .sort();
 
@@ -95,24 +128,8 @@ function remaining(list, done) {
 //    退出码 0 却解析不出汇总行 → 被判成「可疑」。把 246 条断言的 runtime-deps、
 //    59 条的 deps-manifest 一起列进"可疑"，真可疑项就淹没在假警报里，
 //    体检单从此没人看。所以下面每种写法都配 FIXTURES 钉住（第 B 条已有教训）。
-const SUMMARY = [
-  /通过\s*(\d+)\s*项[，,]\s*失败\s*(\d+)\s*项/,
-  /(\d+)\s*passed\s*,\s*(\d+)\s*failed/i,
-  /通过\s*(\d+)\s*\/\s*失败\s*(\d+)/,
-  /通过\s*(\d+)\s*项/,
-  /(\d+)\s*\/\s*(\d+)\s*(?:通过|通过项)/,
-  /(\d+)\s*通过\s*\/\s*(\d+)\s*失败/,   // 数字在前：deps-manifest / runtime-deps / theme-tokens / publish-update
-  /(\d+)\s*项通过/,                      // 只报通过数：md-render
-];
-
-function parseSummary(out) {
-  for (const re of SUMMARY) {
-    const m = out.match(re);
-    if (m) return { pass: Number(m[1]), fail: m[2] !== undefined ? Number(m[2]) : 0 };
-  }
-  return { pass: null, fail: null };
-}
-
+// 判据取自共用工具：cwd-invariant-test.mjs 用同一份。分着写两份会各改各的，
+// 一边认得出一边认不出，体检单上就只有一半可信。
 // B. 自检：汇总格式是"约定"不是"代码"，改一行就能让体检单失明。
 //    这里把每种写法的真实样本列成 fixture，认不出就直接算失败项。
 const FIXTURES = [
@@ -243,6 +260,28 @@ if (!hungNoFalse) selfFails.push('挂起判据误伤了真崩溃');
   const remEmpty = remaining(all, new Set());
   console.log(`${remEmpty.length === 3 ? '✅' : '❌'} 空明细时 remaining 不误删（首次跑要跑全部）`);
   if (remEmpty.length !== 3) selfFails.push('空明细时 remaining 误删了待跑项');
+}
+
+// 元测试排除：判据必须真的命中，否则它自己就是一场静默漏网 ——
+//   把 isMetaTest 改成恒 false，待跑清单会重新混进 cwd-invariant，
+//   sweep 被拖死而报错只说超时。所以这里钉住"确实认出了那一个"。
+{
+  const metas = Object.entries(pkg.scripts)
+    .filter(([k]) => k.startsWith('test:'))
+    .filter(([, v]) => isMetaTest(v))
+    .map(([k]) => k);
+  const allTest = Object.entries(pkg.scripts).filter(([k]) => k.startsWith('test:'));
+  selfTotal++;
+  const ok = metas.length >= 2 && metas.some((k) => k.includes('cwd-invariant'));
+  console.log(`${ok ? '✅' : '❌'} 元测试判据认出 ${metas.length} 个（含 cwd-invariant，判据不是空转） → ${metas.join(' | ')}`);
+  if (!ok) selfFails.push(`元测试判据漏网（只命中 ${metas.length} 个：${metas.join(' | ')}）`);
+
+  // 反向：普通测试不该被误排除 —— 判据放宽会静默吃掉真测试，
+  // 表现是"体检单变短了"，而不是报错。
+  selfTotal++;
+  const notTooWide = metas.length <= allTest.length - 10;
+  console.log(`${notTooWide ? '✅' : '❌'} 元测试判据没吃掉普通测试（排除 ${metas.length} / 共 ${allTest.length}）`);
+  if (!notTooWide) selfFails.push(`判据过宽，排除了 ${metas.length}/${allTest.length} 个`);
 }
 
 /*
