@@ -2193,10 +2193,29 @@ export function pluginOrder() {
  *   · 沙箱 iframe → document 是自己的，要往 parent 发；
  *     隔离态（opaque origin）下访问 parent 会抛，必须 try/catch
  */
-export function setPluginOrder(ids) {
+/**
+ * 落盘插件顺序并通知外壳重排，如实回答"存没存成"。
+ *
+ * 早先这里是 `catch { /* ignore *\/ }` 之后照常通知 —— 于是唯一调用方
+ * （设置页 React 版的拖放排序）**没有任何办法知道**这次排序有没有落盘，
+ * 只能无条件弹「已保存插件顺序」。
+ *
+ * 存不下不是假设：设置页在 Vite 模式下是隔离 iframe（opaque origin），
+ * localStorage 不可用。真实表现是：
+ *   拖完顺序 → 侧边栏立刻重排、提示说已保存 →
+ *   重启后**顺序回到原样**，而整个过程一句提示都没有。
+ * 与 js/toolbar-plugin.js 的 writeArr 同一口径（右上角那排按钮早先也是这样）。
+ *
+ * @param {string[]} ids
+ * @returns {{ saved: boolean }} saved=false 时调用方必须说出来
+ */
+export function savePluginOrder(ids) {
+  let saved = true;
   try {
     localStorage.setItem(PLUGIN_ORDER_KEY, JSON.stringify(ids));
-  } catch { /* ignore */ }
+  } catch {
+    saved = false;
+  }
   try {
     document.dispatchEvent(new CustomEvent(PLUGIN_ORDER_EVENT));
   } catch { /* ignore */ }
@@ -2205,6 +2224,18 @@ export function setPluginOrder(ids) {
       window.parent.document?.dispatchEvent(new CustomEvent(PLUGIN_ORDER_EVENT));
     }
   } catch { /* ignore */ }
+  return { saved };
+}
+
+/**
+ * 写入插件顺序并通知外壳重排（不回"存没存成"）。
+ *
+ * 与 saveCloseAction / setCloseAction 同一组约定：要向用户报「已保存」的
+ * **界面**一律用 savePluginOrder；这里保留 void 是因为它已经是对外导出
+ * 的旧形状，改返回类型会静默改掉契约。
+ */
+export function setPluginOrder(ids) {
+  savePluginOrder(ids);
 }
 
 /**

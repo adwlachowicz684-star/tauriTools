@@ -88,9 +88,39 @@ function readArr(key) {
   }
 }
 
+/**
+ * 写入，**如实回答"存没存成"**。
+ *
+ * 早先这里是 `catch { /* ignore *\/ }` 之后照常往下走 —— 于是调用方
+ * （两版设置页的「加入 / 取消加入 / 隐藏 / 展示」）**没有任何办法知道**
+ * 这次改动有没有落盘，只能无条件弹「已把「X」加到右上角」。
+ *
+ * 存不下不是假设：设置页在 Vite 模式下是隔离 iframe（opaque origin），
+ * localStorage 不可用 —— js/host.js 与 js/plugin-sdk.js 里同一段都有说明。
+ * 真实表现是：
+ *   点「加入」→ 右上角立刻出现按钮、提示说已加 →
+ *   重启后**按钮不见了**，而整个过程一句提示都没有。
+ * 用户只会以为这个功能不记事儿，不会想到是"根本没存下"。
+ *
+ * @returns {boolean} true = 真写进去了；false = 没落盘，调用方必须说出来
+ */
 function writeArr(key, arr) {
-  try { localStorage.setItem(key, JSON.stringify(arr)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(key, JSON.stringify(arr));
+    return true;
+  } catch {
+    return false;
+  }
 }
+
+/**
+ * 存不下时给用户的说明。
+ *
+ * 三处（加入 / 取消加入 / 排序）共用一句 —— 各写一份迟早在某处漏掉，
+ * 而漏掉的那处就是"点了有反应、重启就没了"。
+ */
+export const TOOLBAR_NOT_SAVED =
+  '这次改动没能保存（浏览器存储不可用：隐私模式或隔离态），重启后会回到原来的样子';
 
 /** 被隐藏的入口 id */
 export function hiddenIds() {
@@ -111,32 +141,46 @@ export function isHidden(id) {
   return hiddenIds().includes(id);
 }
 
-/** @param {string} id @param {boolean} hidden */
+/**
+ * @param {string} id
+ * @param {boolean} hidden
+ * @returns {boolean} 是否落盘 —— false 时调用方必须说出来
+ */
 export function setHidden(id, hidden) {
   const cur = new Set(hiddenIds());
   if (hidden) cur.add(id); else cur.delete(id);
-  writeArr(HIDDEN_KEY, [...cur]);
+  const saved = writeArr(HIDDEN_KEY, [...cur]);
   notifyToolbarChanged();
+  return saved;
 }
 
+/** @returns {boolean} 是否落盘 */
 export function toggleHidden(id) {
-  setHidden(id, !isHidden(id));
+  return setHidden(id, !isHidden(id));
 }
 
-/** 往右上角添加一个入口（用户手动添加的插件 id） */
+/**
+ * 往右上角添加一个入口（用户手动添加的插件 id）
+ * @returns {boolean} 是否落盘 —— 界面要报「已加到右上角」就必须先看这个
+ */
 export function addExtra(pluginId) {
   const cur = new Set(extraIds());
   cur.add(pluginId);
-  writeArr(EXTRA_KEY, [...cur]);
+  const saved = writeArr(EXTRA_KEY, [...cur]);
   /* 加进来时若在隐藏列表里，顺手取消隐藏 —— 否则"添加了却看不见" */
   setHidden(entryIdOf(pluginId), false);
+  return saved;
 }
 
+/**
+ * @returns {boolean} 是否落盘
+ */
 export function removeExtra(pluginId) {
   const cur = new Set(extraIds());
   cur.delete(pluginId);
-  writeArr(EXTRA_KEY, [...cur]);
+  const saved = writeArr(EXTRA_KEY, [...cur]);
   notifyToolbarChanged();
+  return saved;
 }
 
 /** 手动入口的 id 前缀（与 kind:'toolbar' 插件的 id 区分开） */
@@ -183,8 +227,12 @@ export function toolbarEntriesOf(manifests) {
 
 /**
  * 把某个入口上移/下移一位。
+ *
  * @param {string} id
  * @param {-1|1} dir  -1 上移，1 下移
+ * @returns {boolean} **是否真的生效**（移动了**且**落盘）。
+ *   没落盘却返回 true，界面就会在重启后悄悄变回去 ——
+ *   与 setHidden / addExtra 同一口径：false 时调用方必须说出来。
  */
 export function moveEntry(id, dir) {
   const all = orderedIds();
@@ -193,9 +241,9 @@ export function moveEntry(id, dir) {
   const j = i + dir;
   if (j < 0 || j >= all.length) return false;
   [all[i], all[j]] = [all[j], all[i]];
-  writeArr(ORDER_KEY, all);
+  const saved = writeArr(ORDER_KEY, all);
   notifyToolbarChanged();
-  return true;
+  return saved;
 }
 
 /**
@@ -214,6 +262,7 @@ export function moveEntry(id, dir) {
  *
  * @param {string} id
  * @param {number} toIndex
+ * @returns {boolean} 是否真的生效（移动了**且**落盘）—— 同 moveEntry
  */
 export function moveEntryTo(id, toIndex) {
   const all = orderedIds();
@@ -223,9 +272,9 @@ export function moveEntryTo(id, toIndex) {
   if (i === j) return false;
   const [item] = all.splice(i, 1);
   all.splice(j, 0, item);
-  writeArr(ORDER_KEY, all);
+  const saved = writeArr(ORDER_KEY, all);
   notifyToolbarChanged();
-  return true;
+  return saved;
 }
 
 /**
@@ -267,14 +316,20 @@ export function notifyToolbarChanged() {
   } catch { /* ignore */ }
 }
 
-/** 仅供测试：清空登记表与持久化状态 */
+/**
+ * 仅供测试：清空登记表与持久化状态
+ * @returns {boolean} 是否真清掉了（清不掉的话测试读到的还是旧状态）
+ */
 export function resetToolbar() {
   defs.clear();
   try {
     localStorage.removeItem(HIDDEN_KEY);
     localStorage.removeItem(ORDER_KEY);
     localStorage.removeItem(EXTRA_KEY);
-  } catch { /* ignore */ }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

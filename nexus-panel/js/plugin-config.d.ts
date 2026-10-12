@@ -19,6 +19,14 @@ export interface PluginSandboxConfig {
 export const DEFAULTS: PluginSandboxConfig;
 export function getPluginConfig(id: string): PluginSandboxConfig;
 export function setPluginConfig(id: string, patch: Partial<PluginSandboxConfig>): PluginSandboxConfig;
+/**
+ * 落盘并**如实回答"存没存成"** —— 要向用户报「已保存」的界面一律用这个。
+ * 缺了这条声明，React 侧就是"实际有、类型说没有"（编译不过）。
+ */
+export function savePluginConfig(
+  id: string,
+  patch: Partial<PluginSandboxConfig>,
+): { config: PluginSandboxConfig; saved: boolean };
 export function onPluginConfigChange(fn: (id: string, config: PluginSandboxConfig) => void): () => void;
 export function isIsolated(id: string): boolean;
 /* ⚠️ 这里原先还声明着 shouldAdaptTheme(id): boolean。

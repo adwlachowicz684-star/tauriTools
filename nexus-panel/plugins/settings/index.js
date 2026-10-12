@@ -33,7 +33,7 @@ import { prompt as askPrompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
-  toggleHidden, addExtra, removeExtra,
+  toggleHidden, addExtra, removeExtra, TOOLBAR_NOT_SAVED,
 } from '../../js/toolbar-plugin.js';
 /* 依赖清单：数据与判定逻辑都在共享模块里，两版只读同一份。
    各写一份的话，无构建模式下看到的"声明 vs 实装"就会与正式模式对不上 ——
@@ -101,15 +101,25 @@ function buildToolbarSection(ctx, plugins, sub) {
       const hid = e ? hidden.has(e.id) : false;
       const pos = rank.get(p.id);
 
-      /* 未加入时**禁用而不是不画**：按钮凭空消失，
-         用户只会以为漏了，不会想到"要先加入"。 */
+      /*
+       * 未加入时**禁用而不是不画**：按钮凭空消失，
+       * 用户只会以为漏了，不会想到"要先加入"。
+       *
+       * 「隐藏 / 展示」没有成功提示，唯一的反馈就是右上角**立刻**少一个/
+       * 多一个按钮（notifyToolbarChanged 照发）。于是"按钮变了"会被当成
+       * "已经存好了"，而重启后它又回到原样 —— 存不下时只有报错才能让
+       * 用户知道这次改动没落盘。
+       */
       const show = (!joined || !e)
         ? { label: '展示', title: '先加入右上角，才能控制是否显示', disabled: true }
         : hid
-          ? { label: '展示', title: '重新显示到右上角', act: () => toggleHidden(e.id) }
+          ? {
+            label: '展示', title: '重新显示到右上角',
+            act: () => { if (!toggleHidden(e.id)) ctx.toast(TOOLBAR_NOT_SAVED, 'err'); },
+          }
           : {
             label: '隐藏', title: '从右上角隐藏（保留位置与顺序，可再显示）',
-            act: () => toggleHidden(e.id),
+            act: () => { if (!toggleHidden(e.id)) ctx.toast(TOOLBAR_NOT_SAVED, 'err'); },
           };
 
       /* 两种禁用都要写明原因；不给 title 就是"点了没反应且不知道为什么"。 */
@@ -119,8 +129,12 @@ function buildToolbarSection(ctx, plugins, sub) {
           ? {
             label: '加入', title: '在右上角加一个按钮，点了切到这个插件',
             act: () => {
-              addExtra(p.id);
-              ctx.toast(`已把「${p.name || p.id}」加到右上角`, 'ok');
+              /* 只有真落盘了才说「已加到右上角」：早先无条件报成功，
+                 而右上角此刻确实多了按钮（通知照发）—— 用户看不出差别，
+                 直到重启后按钮又不见了。 */
+              const ok = addExtra(p.id);
+              ctx.toast(ok ? `已把「${p.name || p.id}」加到右上角` : TOOLBAR_NOT_SAVED,
+                ok ? 'ok' : 'err');
             },
           }
           : isTb
@@ -128,8 +142,9 @@ function buildToolbarSection(ctx, plugins, sub) {
             : {
               label: '取消加入', title: '从右上角移除这个按钮（不会卸载插件）',
               act: () => {
-                removeExtra(p.id);
-                ctx.toast(`已把「${p.name || p.id}」移出右上角`, 'ok');
+                const ok = removeExtra(p.id);
+                ctx.toast(ok ? `已把「${p.name || p.id}」移出右上角` : TOOLBAR_NOT_SAVED,
+                  ok ? 'ok' : 'err');
               },
             };
 

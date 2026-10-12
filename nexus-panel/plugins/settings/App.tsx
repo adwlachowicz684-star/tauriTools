@@ -9,14 +9,14 @@ import {
 } from 'react';
 import {
   toolbarEntriesOf, wantsEntry, hiddenIds, extraIds,
-  toggleHidden, addExtra, removeExtra,
+  toggleHidden, addExtra, removeExtra, TOOLBAR_NOT_SAVED,
   /* allToolbarDefs：标题栏**实际渲染用的那份**入口定义。
      卡片来源要并上它，理由见 ToolbarSection 内的注释。 */
   allToolbarDefs,
 } from '../../js/toolbar-plugin.js';
 import { useNexus } from '../../src/nexus-react';
 import type { PluginManifest } from '../../js/host.js';
-import { setPluginOrder, loadRegistry } from '../../js/host.js';
+import { savePluginOrder, loadRegistry } from '../../js/host.js';
 import { useDragReorder } from '../../js/drag-reorder-react.js';
 import {
   listThemes, applyTheme, setAccent, setEnvColor, resetColors,
@@ -513,11 +513,25 @@ function PluginManager({
      * 未加入时**禁用而不是不画** —— 按钮凭空消失，
      * 用户只会以为是漏了，不会想到"要先加入"。
      */
+    /*
+     * 存不下时必须说出来：这两个按钮没有成功提示，唯一的反馈就是
+     * 右上角**立刻**多出一个/少一个按钮（notifyToolbarChanged 照发）。
+     * 于是"按钮变了"会被当成"已经存好了"，而重启后它又回到原样 ——
+     * 只有报错才能让用户知道这次改动没落盘。
+     */
     const show: CardBtn = (!joined || !e)
       ? { label: '展示', title: '先加入右上角，才能控制是否显示', disabled: true }
       : hid
-        ? { label: '展示', title: '重新显示到右上角', act: () => toggleHidden(e.id) }
-        : { label: '隐藏', title: '从右上角隐藏（保留位置与顺序，可再显示）', act: () => toggleHidden(e.id) };
+        ? {
+          label: '展示',
+          title: '重新显示到右上角',
+          act: () => { if (!toggleHidden(e.id)) ctx?.toast?.(TOOLBAR_NOT_SAVED, 'err'); },
+        }
+        : {
+          label: '隐藏',
+          title: '从右上角隐藏（保留位置与顺序，可再显示）',
+          act: () => { if (!toggleHidden(e.id)) ctx?.toast?.(TOOLBAR_NOT_SAVED, 'err'); },
+        };
 
     /*
      * 「加入 / 取消加入」。
@@ -533,8 +547,16 @@ function PluginManager({
           label: '加入',
           title: '在右上角加一个按钮，点了切到这个插件',
           act: () => {
-            addExtra(p.id);
-            ctx?.toast?.(`已把「${p.name ?? p.id}」加到右上角`, 'ok');
+            /*
+             * 只有真落盘了才说「已加到右上角」：早先无条件报成功，
+             * 而右上角此刻确实多了按钮（通知照发） —— 于是用户看不出
+             * 差别，直到重启后按钮又不见了。
+             */
+            const ok = addExtra(p.id);
+            ctx?.toast?.(
+              ok ? `已把「${p.name ?? p.id}」加到右上角` : TOOLBAR_NOT_SAVED,
+              ok ? 'ok' : 'err',
+            );
           },
         }
         : isTb
@@ -543,8 +565,11 @@ function PluginManager({
             label: '取消加入',
             title: '从右上角移除这个按钮（不会卸载插件）',
             act: () => {
-              removeExtra(p.id);
-              ctx?.toast?.(`已把「${p.name ?? p.id}」移出右上角`, 'ok');
+              const ok = removeExtra(p.id);
+              ctx?.toast?.(
+                ok ? `已把「${p.name ?? p.id}」移出右上角` : TOOLBAR_NOT_SAVED,
+                ok ? 'ok' : 'err',
+              );
             },
           };
 
@@ -928,8 +953,14 @@ export default function Settings() {
     },
     onDrop: () => {
       const ids = (plugins || []).filter((p) => !p.kind || p.kind === 'app').map((p) => p.id);
-      setPluginOrder(ids);
-      ctx.toast('已保存插件顺序', 'ok');
+      /*
+       * 用落盘版：setPluginOrder 不回"存没存成"，于是这里只能无条件
+       * 弹「已保存插件顺序」—— 存不进去（隔离态下 localStorage 不可用）时
+       * 侧边栏已经重排、提示也说成功了，重启后却悄悄回到原顺序。
+       */
+      const { saved } = savePluginOrder(ids);
+      ctx.toast(saved ? '已保存插件顺序' : '插件顺序没能保存（浏览器存储不可用），重启后会回到原来的顺序',
+        saved ? 'ok' : 'err');
     },
   });
 

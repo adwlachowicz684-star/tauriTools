@@ -152,7 +152,9 @@ export const THEME_VARS: string[];
 export const PLUGIN_ORDER_EVENT: string;
 /** 用户在设置里排的插件 id 顺序；没排过返回空数组 */
 export function pluginOrder(): string[];
-/** 写入插件顺序并通知外壳重排（同页 / iframe 两种形态都覆盖） */
+/** 写入插件顺序并通知外壳重排；不回"存没存成"，要报「已保存」的界面用 savePluginOrder */
 export function setPluginOrder(ids: string[]): void;
+/** 落盘并如实回答"存没存成"；saved=false 时界面必须说出来 */
+export function savePluginOrder(ids: string[]): { saved: boolean };
 /** 按保存的顺序排好，没记录的排最后；**不改动原数组** */
 export function applyPluginOrder(plugins: PluginManifest[]): PluginManifest[];
