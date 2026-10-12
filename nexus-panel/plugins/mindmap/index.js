@@ -799,8 +799,16 @@ bootIframePlugin(async (ctx) => {
     onReorder: guard('调整顺序', (order) => applyTabOrder(order)),
   });
 
-  /** 按新顺序重排画布。order 来自 DOM，故以 DOM 为准做一次归并 */
-  function applyTabOrder(order) {
+  /**
+   * 按新顺序重排画布。order 来自 DOM，故以 DOM 为准做一次归并。
+   *
+   * ⓘ `persist()` 的返回值必须接住（BUG 132）：写失败时它自己写过一句红字
+   *   「保存失败」，而紧跟着这句「画布顺序已调整」会把它**盖掉** —— 用户
+   *   以为顺序存好了，重载后回到原样却完全不知情。与 duplicateSheet 那句
+   *   「已复制画布…（未能保存…）」同一口径，那边修了、这边一直没修
+   *   （同一条约束只修部分路径，本项目第 N 次）。
+   */
+  async function applyTabOrder(order) {
     const map = new Map(workbook.sheets.map((s) => [s.id, s]));
     const next = [];
     for (const id of order) {
@@ -812,8 +820,8 @@ bootIframePlugin(async (ctx) => {
     if (next.length !== workbook.sheets.length) { renderTabs(); return; }
     workbook.sheets = next;
     renderTabs();
-    persist();
-    status('画布顺序已调整');
+    const ok = await persist();
+    status('画布顺序已调整' + (ok ? '' : '（未能保存：重载后顺序会回到原样）'));
   }
 
   async function addSheet() {
@@ -1337,9 +1345,19 @@ async function gcOrphanAssets(quiet = false) {
     }
     const at = foldersList.indexOf(fo);
     foldersList = foldersList.filter((x) => x.id !== id);
-    // 文件夹没删掉就让它回到列表 —— 磁盘上它还在，内存里也该在，两边才一致
+    /*
+     * 文件夹没删掉就让它回到列表 —— 磁盘上它还在，内存里也该在，两边才一致。
+     *
+     * ⓘ 同时**不能再说「已删除文件夹」**（BUG 132）：写失败时磁盘上的文件夹
+     *   还在，界面（回滚后）也还显示着它，而状态栏说已删除 —— 用户会以为
+     *   刷新一下就没了，刷新后它还在。得把"文件已移到根目录、文件夹没删掉"
+     *   这个中间态如实说出来，否则它和"删成功了"在界面上无法区分。
+     */
     if (!await saveStore('文件夹列表', () => store.folders.save(foldersList))) {
       if (at >= 0) foldersList.splice(at, 0, fo);
+      renderFiles();
+      status('文件夹没能删除：文件夹列表写入失败（里面的脑图已移到根目录）', true);
+      return;
     }
     renderFiles();
     status('已删除文件夹');
@@ -1519,13 +1537,18 @@ async function gcOrphanAssets(quiet = false) {
 
   async function reloadEditor() {
     capture();
-    persist();
+    /*
+     * 同 applyTabOrder（BUG 132）：写失败时 persist 那句红字会被下面的
+     * 「编辑器已重载」盖掉。重载本身确实发生了，但**重载前的修改没落盘**
+     * 这件事必须说出来 —— 否则用户以为存好了，重载后没存的东西找不回来。
+     */
+    const ok = await persist();
     canvasEl.appendChild(loadingEl);
     await bridge.reload();
     loadingEl.remove();
     bridge.setCanvasTheme(lastCanvasTheme);   // 新页面没有旧配色，补套一次
     await loadSheet();
-    status('编辑器已重载');
+    status('编辑器已重载' + (ok ? '' : '（未能保存：重载前的修改没落盘）'));
   }
 
   /* ------------------------- 内容同步与持久化 ------------------------- */

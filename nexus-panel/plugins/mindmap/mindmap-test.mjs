@@ -18076,6 +18076,138 @@ group('BUG 129 · Mermaid 的形状与装饰后缀');
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 134：:::class 后缀规则必须排除引号，否则文字被截断
+   ------------------------------------------------------------------
+   MERMAID_SUFFIX 里 `:::` 那条吃的是「`:::` 之后到行尾的连续非空白」。
+   而引号写法的行尾是 `"]` —— 引号不是空白，于是整段 `:::cls"]` 被吃掉，
+   行从 `root["会议:::重要"]` 变成 `root["会议`，取出的文字就是
+   `root["会议` —— **既被截断、又残留一对引号残片**，比 BUG 129 修之前
+   「整串留在文字里」更糟。
+
+   `::icon(…)` 那条没有这个问题（它要求 `)` 收尾，而引号写法以 `"` 结尾），
+   所以只需给 `:::` 那条加上「不含引号」的限制。
+
+   裸写法 `A :::urgent`（别人的 .mmd 常见）行尾没有引号，照常要剥 ——
+   Mermaid 官方明写 class 后缀不进标签，剥掉才是对的。
+   ------------------------------------------------------------------ */
+group('BUG 134 · Mermaid 的 :::class 不能吃掉引号写法的行尾');
+
+{
+  const f = await import('./formats.js');
+
+  /* 一、引号写法：那是**用户真写着** ::: 的文字，一个字都不能动 */
+  eq(f.mermaidTextOf('root["会议:::重要"]'), '会议:::重要',
+    '★ 引号形式里的 ::: 不被剥（早先变成 root["会议）');
+  eq(f.mermaidTextOf('["a:::cls"]'), 'a:::cls', '★ 引号 + :::class 原样保留');
+  eq(f.mermaidTextOf('["x:::"]'), 'x:::', '★ 只有 ::: 的引号形式也保留');
+  eq(f.mermaidTextOf('[":::x"]'), ':::x', '★ 以 ::: 开头的文字也保留');
+  eq(f.mermaidTextOf('["a::icon(x):::c1"]'), 'a::icon(x):::c1',
+    '★ 图标 + class 混写的引号形式同样保留');
+
+  /* 二、裸写法仍要剥（Mermaid 官方语义：class 不进标签） */
+  eq(f.mermaidTextOf('A :::urgent'), 'A', '裸 :::class 仍剥掉（不回归）');
+  eq(f.mermaidTextOf('(B) :::urgent'), 'B', '★ 形状 + 裸 :::class 仍剥掉');
+  eq(f.mermaidTextOf('A ::icon(fa fa-book)'), 'A', '裸 ::icon() 仍剥掉（不回归）');
+
+  /* 三、往返：自己导出再导回必须一字不改 */
+  const round = (t) => {
+    const km = { root: { data: { text: t }, children: [{ data: { text: '子' }, children: [] }] } };
+    return JSON.parse(f.fromMermaid(f.toMermaid(km))).root;
+  };
+  for (const t of ['会议:::重要', 'a:::cls', 'a::icon(x):::c1', 'x:::', ':::x']) {
+    const r = round(t);
+    eq(r.data.text, t, `★ 往返无损：${JSON.stringify(t)}`);
+    /*
+     * ⓘ 只看根文字是不够的：修复前坏掉的是**整行**（`root["a`），
+     *   子节点仍在、数量也对。必须顺带确认子树没被抬层 —— 那是
+     *   BUG 98/99/100 那一类在 Mermaid 上的重演。
+     */
+    eq((r.children || []).map((n) => n.data.text).join(','), '子',
+      `★ 往返不丢子树：${JSON.stringify(t)}`);
+  }
+
+  /* 四、独立成行的 :::class 仍不生成节点（BUG 129 的行为不能回归） */
+  {
+    const root = JSON.parse(f.fromMermaid('mindmap\n  root((R))\n    A\n      :::urgent\n')).root;
+    eq((root.children || []).length, 1, '★ 独立 :::class 行仍不生成节点');
+    eq((root.children[0].children || []).length, 0, '★ A 下面没有多出子节点');
+  }
+
+  /* 五、源码契约：MERMAID_SUFFIX 的 ::: 分支必须排除引号 */
+  {
+    const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
+    const m = src.match(/const MERMAID_SUFFIX = (\/.*\/);/);
+    ok(!!m, '找到 MERMAID_SUFFIX');
+    /*
+     * 判的是这条正则**本身**的形状，不是"文件里出现过 :::"。
+     * 写 `:::[^\s]+` 就是 BUG；`:::[^\s"]+` 才是修好的。
+     * ⓘ 用 indexOf 整段匹配、不写 `\\s` —— 源码里 `\s` 是两个字符，
+     *   正则里写 `\s`（单词边界/空白类）匹配不到它（本项目第 N 次栽）。
+     */
+    ok(m && m[1].includes(':::[^\\s"]+'),
+      '★ MERMAID_SUFFIX 的 ::: 分支排除引号（否则吃掉 ["…"] 的行尾）');
+  }
+}
+
+
+/* ------------------------------------------------------------------
+   BUG 132：写盘失败时不能说「已调整 / 已删除」
+   ------------------------------------------------------------------
+   两处都是同一个毛病：**先写了一句红字「保存失败」，紧接着又被成功文案盖掉**。
+   persist() / saveStore() 写失败时磁盘上没变，界面却说做成了 —— 用户以为
+   存好了，重载后回到原样却完全不知情。
+
+   与 BUG 70 / 77 / 96 / 125 / 126 同一条约束，那边逐条堵过；这两处是漏网的
+   （同一条约束只修部分路径，本项目第 N 次）。
+   ------------------------------------------------------------------ */
+group('BUG 132 写盘失败时不能说「已调整画布顺序 / 已删除文件夹」');
+
+{
+  const idx = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+
+  /* 一、applyTabOrder：拖动页签排序后 persist 写失败 */
+  ok(idx.includes('async function applyTabOrder'), 'applyTabOrder 是 async（要 await persist）');
+  const fn = idx.slice(idx.indexOf('async function applyTabOrder'), idx.indexOf('function addSheet'));
+  ok(/const ok = await persist\(\)/.test(fn), '接住 persist 的返回值（早先是 fire-and-forget）');
+  const st = fn.match(/status\('画布顺序已调整'[\s\S]*?\);/);
+  ok(!!st, '找到「画布顺序已调整」这句');
+  /*
+   * 这条是核心：早先这里是 `status('画布顺序已调整');` —— **纯字面量**，
+   * 无论写没写成功都一样说。接了 ok 却不带进文案（写成
+   * `status('画布顺序已调整', false)`）同样抓不到，所以判的是这句里
+   * **有没有用到保存结果**，不是判 persist 有没有 await。
+   */
+  ok(st && /ok\b/.test(st[0]), '这句要带上保存结果（写失败时不能无条件说已调整）');
+
+  /* 二、deleteFolder：文件夹列表写失败时不能说「已删除文件夹」 */
+  const m = idx.match(/async function deleteFolder\(id\)\s*\{[\s\S]*?\n  \}/);
+  ok(!!m, '找到 deleteFolder');
+  const df = m[0];
+  const iF = df.indexOf("saveStore('文件夹列表'");
+  ok(iF > 0, 'deleteFolder 写文件夹列表');
+  const iOk = df.indexOf("status('已删除文件夹')");
+  ok(iOk > iF, '找到「已删除文件夹」这句，且排在写文件夹列表之后');
+  /*
+   * 写盘失败分支（回滚 + return）必须夹在两者之间：
+   *   · 没有 return → 一路走到下面那句「已删除文件夹」，磁盘上文件夹还在
+   *     （文件已移到根目录），界面也还显示着它，状态栏却说已删除
+   *   · 没有 status → 闷声回滚，用户点了删除、看到文件夹还在、一句话也没有
+   */
+  const between = df.slice(iF, iOk);
+  ok(/status\(/.test(between), '文件夹列表写失败要有提示（闷声回滚等于没说）');
+  ok(/return/.test(between), '写失败分支必须 return（否则会接着说「已删除」）');
+
+  /* 三、reloadEditor：重载编辑器前 persist 写失败 */
+  const mr = idx.match(/async function reloadEditor\(\)\s*\{[\s\S]*?\n  \}/);
+  ok(!!mr, '找到 reloadEditor');
+  const fr = mr[0];
+  ok(/const ok = await persist\(\)/.test(fr), 'reloadEditor 接住 persist 的返回值');
+  const str = fr.match(/status\('编辑器已重载'[\s\S]*?\);/);
+  ok(!!str, '找到「编辑器已重载」这句');
+  ok(str && /ok\b/.test(str[0]), '这句要带上保存结果（写失败时不能无条件说已重载）');
+}
+
 /* ============================================================
    结果
    ============================================================ */
