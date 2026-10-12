@@ -2379,6 +2379,8 @@ async function gcOrphanAssets(quiet = false) {
     const text = wb.workbookToMarkdown(workbook.sheets);
     const r = await io.saveText(io.stampName('脑图', 'md'), text, 'text/markdown');
     reportSave(r, 'Markdown');
+    // BUG 125：没存成（取消 / 失败）就别再说「导出的文件里不会保留 …」
+    if (!savedOk(r)) return;
     /*
      * Markdown 只有 6 级标题（CommonMark：7 个 `#` 不是标题），
      * 更深的层**没有合法写法**，只能拍平到第 6 级 —— 一棵 10 层的链
@@ -2471,6 +2473,9 @@ async function gcOrphanAssets(quiet = false) {
     );
     reportSave(r, meta.label);
 
+    // BUG 125：同上 —— 没存成就不能拿「装不下什么」去盖掉状态栏
+    if (!savedOk(r)) return;
+
     // BUG 111：装不下的字段必须**当场说清**。用户拿 .opml 当备份是最常见的
     // 用法，而备注/进度/标签/样式导出去就没了 —— 等导回来才发现已经晚了
     // （导入是整体替换且不可撤销）。放在保存之后，先让人看到文件存好了。
@@ -2535,6 +2540,8 @@ async function gcOrphanAssets(quiet = false) {
       const blob = await xmind.writeXMind(workbook.sheets, workbook.activeId, loadAsset);
       const r = await io.saveBlob(io.stampName('脑图', 'xmind'), blob);
       reportSave(r, 'XMind');
+      // BUG 125：取消 / 失败时下面那句「XMind 已导出（含 N 个附件）」是假的
+      if (!savedOk(r)) return;
       /*
        * 两类损失都要说，且**分开说** —— 混成一句「有 N 个附件」用户还是不知道该怪谁：
        *   · lost      字节没读出来，压根没进包（引用成了死链）
@@ -2689,6 +2696,20 @@ async function gcOrphanAssets(quiet = false) {
     if (r === 'cancel') return;
     if (r === 'error') { ctx.toast(`${what} 保存失败`, 'err'); return; }
     ctx.toast(r === 'fallback' ? `${what} 已导出（由浏览器选择保存位置）` : `${what} 已保存`, 'ok');
+  }
+
+  /**
+   * 这次保存**真的产出了文件**吗（`ok` = 用户选了位置，`fallback` = 已触发下载）。
+   *
+   * 三处导出会在 `reportSave` 之后往**状态栏**再补一句：
+   *   · exportMarkdown / exportExchange：「…这些内容在导出的文件里不会保留」
+   *   · exportXMind：「XMind 已导出（含 N 个附件）」
+   * 而 `reportSave` 走的是 **toast**，盖不掉状态栏那句。于是用户**点了取消**
+   * 或保存失败时，状态栏照样说「已导出 / 导出的文件里不会保留 …」——
+   * 那份文件根本不存在。与 BUG 70 / 77 同一类：措辞不能盖掉失败本身。
+   */
+  function savedOk(r) {
+    return r === 'ok' || r === 'fallback';
   }
 
   /**

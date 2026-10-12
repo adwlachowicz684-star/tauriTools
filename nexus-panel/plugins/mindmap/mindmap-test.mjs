@@ -17421,6 +17421,63 @@ group('BUG 124 · Markdown 导出的丢失必须按整本工作簿统计');
 }
 
 /* ============================================================
+   BUG 125：保存被取消 / 失败时，导出后补的那句提示必须闭嘴
+
+   `reportSave` 走的是 **toast**，盖不掉状态栏。而三处导出会在它之后
+   再往状态栏补一句：
+
+     exportMarkdown   「Markdown 装不下 …，这些内容在导出的文件里不会保留」
+     exportExchange   「{格式} 装不下 …，这些内容在导出的文件里不会保留」
+     exportXMind      「XMind 已导出（含 N 个附件）」           ← 这句最假
+
+   用户在保存对话框点了取消（saveBlob 返回 'cancel'）、或 `<a download>`
+   构造失败（'error'）时，文件根本没生成，那句却照样显示 —— 尤其
+   「已导出（含 N 个附件）」是**明说导出成功了**。与 BUG 70 / 77 同一类：
+   措辞不能盖掉失败本身。
+   ============================================================ */
+group('BUG 125 · 没存成时，导出后补的提示必须闭嘴');
+{
+  const src = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const code = stripCommentsFlatJs(src);
+
+  // ① 判据本身：只有真的产出了文件才算「存成」
+  {
+    const b = fnBody(code, 'function savedOk');
+    ok(b.length > 0, '取到 savedOk 的函数体');
+    ok(/r === 'ok'/.test(b) && /r === 'fallback'/.test(b),
+      '★ savedOk 只认 ok / fallback（cancel、error 都不算）');
+    // 写成 `return true` 的话下面三处守卫全成摆设 —— 这条必须抓到
+    ok(!/return true/.test(b), '★ savedOk 不能一律返回 true');
+  }
+
+  // ② 三处导出：reportSave 之后必须先挡一道，再谈"装不下什么"。
+  //    `after` 锚的是**真正把话说出去的那句 status** —— 锚在 `const deep = …`
+  //    这类中间变量上的话，守卫放在它前后是等价的，断言就成了摆设。
+  const CASES = [
+    { fn: 'async function exportMarkdown', after: 'status(`注意：' },
+    { fn: 'async function exportExchange', after: "status(notes.join('；')" },
+    { fn: 'async function exportXMind', after: 'status(`XMind 已导出' },
+  ];
+  for (const c of CASES) {
+    const b = fnBody(code, c.fn);
+    ok(b.length > 0, `取到 ${c.fn} 的函数体`);
+    const iSave = b.indexOf('reportSave(r,');
+    const iGuard = b.indexOf('if (!savedOk(r)) return;');
+    const iAfter = b.indexOf(c.after);
+    ok(iSave > 0, `${c.fn}：有 reportSave`);
+    ok(iGuard > iSave, `★ ${c.fn}：savedOk 守卫排在 reportSave 之后`);
+    ok(iAfter > 0 && iGuard < iAfter,
+      `★ ${c.fn}：守卫排在补充提示之前（挡不住就是没修）`);
+  }
+
+  // ③ 只有这三处会往状态栏补话 —— 多了就是新的漏网
+  {
+    const n = (code.match(/if \(!savedOk\(r\)\) return;/g) || []).length;
+    eq(n, 3, '★ 恰好三处守卫（新增导出分支时这里会提醒你补）');
+  }
+}
+
+/* ============================================================
    结果
    ============================================================ */
 
