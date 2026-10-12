@@ -101,8 +101,16 @@ for (const [name, cmd] of Object.entries(scripts)) {
 const scriptOnly = scriptFiles.filter(
   (f) => !/-test\.mjs$/.test(f) && !/\.test\.tsx?$/.test(f),
 );
+/*
+ * ⚠️ 这里必须存**绝对路径**：scriptFiles 里是相对名（'smoke-react.mjs'），
+ *    而下面 ②⑤⑥ 各节都要 readFileSync(f) 读源码。存相对名的话，
+ *    换个 cwd 跑就在 ② 节 ENOENT 崩在半路 —— 15 条护栏一条都跑不到，
+ *    既不报红也没有汇总行（第 155 轮 cwd-invariant 实测抓到）。
+ *    存绝对路径不影响显示：`f.replace(HERE,'')` 照样得到相对名。
+ */
 for (const f of scriptOnly) {
-  if (!tests.includes(f)) { tests.push(f); real.push(f); }
+  const abs = join(HERE, f);
+  if (!tests.includes(abs)) { tests.push(abs); real.push(abs); }
 }
 
 /*
@@ -167,7 +175,8 @@ function coveredByRunner(f) {
  *   跟 ③b「空集合 = 防线放水」是同一类。
  */
 t('只被 script 点名的测试也进得了视野（漏扫＝整批断言没人守，报告照样绿）',
-  scriptOnly.length > 0 && scriptOnly.every((f) => real.includes(f)),
+  // scriptOnly 存的是相对名，real 存的是绝对路径 → 比对时必须拼回 HERE
+  scriptOnly.length > 0 && scriptOnly.every((f) => real.includes(join(HERE, f))),
   scriptOnly.length === 0
     ? '没收到只靠 script 点名的测试（收集判据坏了）'
     : `只靠 script 点名：${scriptOnly.join(' | ')}`);
