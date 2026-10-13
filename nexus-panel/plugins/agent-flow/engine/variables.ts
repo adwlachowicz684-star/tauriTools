@@ -134,8 +134,31 @@ function normalize(v: Variable): Variable {
   };
 }
 
+/**
+ * 唯一的写入口 —— 脱敏收在这一层，而不是各调用点各写一份。
+ *
+ * ================= 为什么收在这里 =================
+ *
+ * 以前是"谁要存谁自己记得脱敏"，结果就是**漏一条**，与模块侧同源：
+ *   · addVariable / patchVariableValues —— 记得了，走 redactVarValues
+ *   · loadVariables 的旧存储迁移（读到 LEGACY_CARDS_KEY 就写回）—— 忘了。
+ *
+ * 迁移这条漏得尤其实：旧参数卡片是**脱敏机制存在之前**存下的，
+ * 里面本来就是明文。而迁移只发生一次 —— 老用户升级后第一次读变量，
+ * 明文就被搬进新存储并永久化，之后 addVariable 那道再也管不到它了。
+ * 于是"修好了"只是"以后新建的不写明文"，旧明文照样躺着、照样被导出。
+ *
+ * 放在各调用点各写一份，正是漏一条的成因 —— 所以这里统一兜住。
+ * 幂等：addVariable / patchVariableValues / importVariables 存前已脱过，
+ * 再脱一次结果不变。
+ */
 export function saveVariables(list: Variable[], kv: KV = defaultKV()): void {
-  saveWrapped(kv, VARIABLES_KEY, FORMAT_VERSION, 'variables', list);
+  const safe = (list ?? []).map((v) => (
+    v && typeof v.values === 'object' && v.values !== null
+      ? { ...v, values: redactVarValues(v.values as Record<string, unknown>) }
+      : v
+  ));
+  saveWrapped(kv, VARIABLES_KEY, FORMAT_VERSION, 'variables', safe);
 }
 
 /**

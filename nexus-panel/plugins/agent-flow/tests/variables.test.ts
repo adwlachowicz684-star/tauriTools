@@ -684,3 +684,75 @@ test('源码守卫：节点密钥判定只有一份（canvasStore 不再自己�
   const sz = readSrc('engine/sanitize.ts');
   assert.ok(/export function redactNodeSecrets/.test(sz), 'sanitize 里要有判定本体');
 });
+
+/*
+ * 脱敏收在 saveVariables（唯一写入口），而不是各调用点各写一份。
+ *
+ * 与模块侧同源：以前"谁要存谁自己记得脱敏"，漏掉了
+ * loadVariables 的**旧存储迁移**（读到 LEGACY_CARDS_KEY 就立刻写回）。
+ *
+ * 这条漏得尤其实：旧参数卡片是脱敏机制存在之前存下的，里面本来就是明文；
+ * 而迁移只发生一次 —— 老用户升级后第一次读变量，明文就被搬进新存储并
+ * **永久化**，之后 addVariable 那道再也管不到它。于是"修好了"只是
+ * "以后新建的不写明文"，旧明文照样躺着、照样被导出。
+ *
+ * 扫源码的守卫接不住这个洞（迁移那条路代码本身没毛病，就是少一次调用），
+ * 所以钉的是**行为**。
+ */
+test('存变量：任何写入路径都脱敏（旧存储迁移写回也算）', () => {
+  const kv = memKV();
+  kv.map.set(LEGACY_CARDS_KEY, JSON.stringify({
+    version: 1,
+    cards: [{
+      id: 'old1', group: 'llm-config', name: '老卡片', createdAt: 1,
+      values: { llm: { model: 'gpt-4o', apiKey: 'sk-LIVE-PLAIN' } },
+    }],
+  }));
+  loadVariables(kv);
+
+  const stored = JSON.parse(kv.map.get(VARIABLES_KEY) ?? '{}');
+  const v = stored.variables?.[0];
+  assert.ok(v, '迁移后要写回新存储');
+  assert.equal(
+    (v.values?.llm as { apiKey?: string } | undefined)?.apiKey,
+    '',
+    '迁移写回必须脱敏 —— 旧卡片里本来就是明文，而迁移只发生一次',
+  );
+});
+
+test('存变量：直接调 saveVariables 也要脱敏（第三条路）', () => {
+  const kv = memKV();
+  saveVariables(
+    [{
+      id: 'v1', group: 'llm-config', name: 'x', global: true, canvasId: '', createdAt: 0,
+      values: { llm: { model: 'gpt-4o', apiKey: 'sk-PLAIN', token: 'ghp_x' } },
+    }] as unknown as Variable[],
+    kv,
+  );
+  const back = loadVariables(kv)[0].values as { llm?: { model?: string; apiKey?: string; token?: string } };
+  assert.equal(back.llm?.apiKey, '', 'apiKey 必须挖空');
+  assert.equal(back.llm?.token, '', 'token 必须挖空');
+  assert.equal(back.llm?.model, 'gpt-4o', '模型名是普通配置，要保留');
+});
+
+test('存变量：只挖密钥，业务字段要留着（挖过了就是"存完配置没了"）', () => {
+  const kv = memKV();
+  saveVariables(
+    [{
+      id: 'v1', group: 'github-repo', name: 'x', global: true, canvasId: '', createdAt: 0,
+      values: { owner: 'acme', repo: 'web', token: 'ghp_x' },
+    }] as unknown as Variable[],
+    kv,
+  );
+  const back = loadVariables(kv)[0].values as Record<string, unknown>;
+  assert.equal(back.owner, 'acme', '普通字段要保留');
+  assert.equal(back.repo, 'web', '普通字段要保留');
+  assert.equal(back.token, '', '密钥要挖空');
+});
+
+test('存变量：条目没有 values 时不炸（不能为了脱敏把整条写坏）', () => {
+  const kv = memKV();
+  assert.doesNotThrow(() => {
+    saveVariables([{ id: 'v1', name: 'x' }] as unknown as Variable[], kv);
+  }, '没有 values 的条目不能让写入崩掉');
+});
