@@ -31,15 +31,13 @@ function nextId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/**
- * 从 CSP 指令反推外链类型。
- *
- * 这里**不再是本文件自己的实现**：此前它和 js/shell.js 的 kindOf()
- * 是同一段逻辑抄了两遍（本文件的注释还写着"与 shell.js 保持一致"——
- * 靠人记得同步，等于必然会漂）。现在统一走 external-policy 的
- * kindOfDirective：两个壳都 import 了那个模块，放那儿才谈得上同源。
+/*
+ * 「从 CSP 指令反推外链类型」这一环**不再在本文件出现**：
+ * 此前它和 js/shell.js 的 kindOf() 是同一段逻辑抄了两遍（本文件的注释
+ * 还写着"与 shell.js 保持一致"——靠人记得同步，等于必然会漂）。
+ * 现在由 external-policy 的 handleViolation 内部调用 kindOfDirective，
+ * 两个壳都只调 handleViolation，判据与文案都只有一份。
  */
-const kindOfDirective = extPolicy.kindOfDirective;
 
 /** CSP 违规上报的两种形状：宿主转发的是 blockedURI，watchViolations 给的是 host + sample */
 interface ViolationInfo {
@@ -126,27 +124,20 @@ export default function App() {
   }, []);
 
   /* ---------- 外链：被 CSP 拦下的请求统一登记 ---------- */
+  /*
+   * 判据与提示文案都在 external-policy 的 handleViolation 里 ——
+   * 本文件此前有一份自己的实现，与原生壳（js/shell.js）那份是
+   * **同一段逻辑抄了两遍**。React 这份是"对的那一半"（两种上报形状都兜），
+   * 但两份并存就意味着迟早有人只改一边。
+   * 只把 toast 这一步留在这里 —— 两个壳的提示机制本来就不是同一个。
+   */
   const handleCspViolation = useCallback((d: ViolationInfo, manifest?: PluginManifest) => {
-    const uri = d?.blockedURI || d?.sample || (d?.host ? `https://${d.host}` : '');
-    const host = extPolicy.hostOf(uri);
-    if (!host || extPolicy.LOCAL_HOSTS.has(host)) return;
-
-    const policy = extPolicy.loadPolicy();
-    const decision = extPolicy.decideHost(host, policy);
-    if (decision === 'allow') return;               // 用户已信任（说明 CSP 还没配上）
-
-    extPolicy.recordHosts([{
-      host,
-      kind: d?.kind || kindOfDirective(d?.directive),
-      sample: uri,
-    }], manifest?.id);
-
-    if (decision === 'ask' && policy.mode === 'smart') {
-      pushToast(`插件「${manifest?.name || ''}」想访问 ${host}，已拦下 · 设置里可放行`, 'err');
-    } else if (decision === 'block') {
-      console.warn('[external] 已拦截', host);
-    }
-    refreshExternalUIRef.current?.();
+    const r = extPolicy.handleViolation(d, {
+      pluginId: manifest?.id,
+      pluginName: manifest?.name,
+      notify: (msg: string, kind: string) => pushToast(msg, kind as never),
+    });
+    if (r) refreshExternalUIRef.current?.();
   }, [pushToast]);
 
   /** 安装 / 更新插件时扫一遍外链（用户要求：每次导入与更新都检查） */

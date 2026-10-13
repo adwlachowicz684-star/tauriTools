@@ -365,6 +365,70 @@ export function kindOfDirective(d) {
   return 'unknown';
 }
 
+/**
+ * 处理一次被 CSP 拦下的外链：登记 + 提示。
+ *
+ * ================= 为什么必须是全仓唯一一份 =================
+ * 这段逻辑一度在**两个壳里各写一遍**：
+ *   · js/shell.js   onPluginCspViolation()   —— 原生壳
+ *   · src/App.tsx   handleCspViolation()     —— React 壳
+ * 两者结构完全一致（取 host → 跳过本域 → 读策略 → 判决策 → 登记 → 提示），
+ * 于是它们**真的漂了**，而且漂的方式是其中一个静默失效。
+ *
+ * ================= 已经发生的 BUG：原生壳把它自己的违规全丢了 =========
+ * 违规上报有**两种形状**（见 watchViolations 与 SDK 转发两条路）：
+ *   · 宿主转发插件 iframe 内的 → 带 `blockedURI`
+ *   · 本模块 watchViolations 自己捕获的 → 只有 `host` + `sample`
+ *
+ * React 壳两种都兜（`blockedURI || sample || https://host`），
+ * 原生壳**只认 `blockedURI`**。而两个壳都用同一个 watchViolations
+ * 观测主文档自己的违规 —— 那条路给的是第二种形状，于是：
+ *   hostOf(undefined) → null → `if (!host) return`
+ * **原生壳把自己文档里每一次违规都静默丢了**：不登记、不提示、
+ * 设置页的待决策列表里永远不出现该域名，且**没有任何报错**。
+ *
+ * 症状是"同一个插件在 React 壳里会弹外链提醒、在原生壳里什么都不发生"，
+ * 而没人会往"两个壳各写了一份、其中一份漏了兜底"上想。
+ *
+ * 收敛到本模块：两个壳**本来就都 import 它**，且这里正是产出两种形状的
+ * 地方（watchViolations 在本文件），由它来定"两种形状都要认"最自然。
+ *
+ * @param {{blockedURI?:string, sample?:string, host?:string,
+ *          directive?:string, kind?:string}} d 违规信息（两种形状都收）
+ * @param {object} [opts]
+ * @param {string} [opts.pluginId]   归因到哪个插件
+ * @param {string} [opts.pluginName] 提示文案里的插件名
+ * @param {(msg:string, kind:string) => void} [opts.notify] 提示（toast）；
+ *        不传就只 console.warn，不打断任何东西
+ * @returns {{host:string, decision:string, policy:object}|null}
+ *          登记了才返回非 null（调用方据此决定要不要刷新 UI）
+ */
+export function handleViolation(d, opts = {}) {
+  /* 两种形状都要认 —— 只认 blockedURI 的话，watchViolations 捕获的
+     那一路会被整条丢掉（见上方 BUG 说明） */
+  const uri = d?.blockedURI || d?.sample || (d?.host ? `https://${d.host}` : '');
+  const host = hostOf(uri);
+  if (!host || LOCAL_HOSTS.has(host)) return null;
+
+  const policy = loadPolicy();
+  const decision = decideHost(host, policy);
+  if (decision === 'allow') return null;               // 用户已信任（说明 CSP 还没配上）
+
+  recordHosts([{
+    host,
+    /* 已算好用途的（watchViolations 给的）直接用，省一次反推 */
+    kind: d?.kind || kindOfDirective(d?.directive),
+    sample: uri,
+  }], opts.pluginId);
+
+  if (decision === 'ask' && policy.mode === 'smart') {
+    opts.notify?.(`插件「${opts.pluginName || ''}」想访问 ${host}，已拦下 · 设置里可放行`, 'err');
+  } else if (decision === 'block') {
+    console.warn('[external] 已拦截', host);
+  }
+  return { host, decision, policy };
+}
+
 /** 生成建议 CSP 片段（复制给用户在 index.html / tauri.conf.json 里配置） */
 export function suggestCsp(policy = loadPolicy()) {
   const trusted = Object.entries(policy.hosts)
