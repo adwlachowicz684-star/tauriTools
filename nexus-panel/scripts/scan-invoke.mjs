@@ -198,5 +198,16 @@ if (problems.length) {
   console.log('\n✓ 实测与声明完全一致（第三方插件逐条严格；内置插件的清单漂移见上方提示）');
 }
 
+/*
+ * 标准汇总行 —— 体检（sweep-tests.mjs）靠它判断"这个脚本到底跑完没有"。
+ * ⚠️ 上一轮给 package.json 补了 test:invoke-scan 入口，却漏了这行：
+ *    结果它在体检单上是「⚠️ 可疑：退出码 0 但无汇总行」，
+ *    等于**加了入口却仍然看不见它** —— 与「崩 ≠ 红」同一类，
+ *    这次换成了「有入口 ≠ 在跑」。
+ * 顺序有讲究：必须先打印再 exit(1)，否则失败时结论行根本不会出现。
+ */
+const checked = Object.values(declared).reduce((n, l) => n + l.length, 0);
+console.log(`通过 ${checked} 项，失败 ${problems.length} 项`);
+
 /* 退出码：有差异就非 0，方便进 CI */
 process.exit(problems.length ? 1 : 0);

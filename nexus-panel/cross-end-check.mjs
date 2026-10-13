@@ -283,4 +283,30 @@ if (notes.length) {
   console.log('');
 }
 
+/*
+ * ⚠️ 为什么"只报告"这个默认语义差点让本脚本变成摆设
+ * ------------------------------------------------------------------
+ * 本脚本以 npm script `crossend:check` 的形式存在，而那条 script **不带 --strict**：
+ *
+ *     "crossend:check": "node cross-end-check.mjs"
+ *
+ * 于是发现多少处跨端漂移，退出码都是 0。实测（往 fpx/base64.rs 注入一个
+ * 带 #[tauri::command] 但没写进 invoke_handler 的 dummy）：
+ *
+ *     非 --strict → 打印「❌ 发现 1 处不一致：[注册缺失] fpx_dummy_break_test」
+ *                   退出码 **0**
+ *     --strict    → 退出码 1
+ *
+ * 而体检（sweep-tests.mjs）只收 `test:*` 前缀的 script，`crossend:check` 不在
+ * 其中，所以它连"被人看到有问题"的机会都没有 —— **没人跑 + 跑了也永远绿**，
+ * 与本项目反复撞的「崩/错 ≠ 红」是同一类，只是换成了「报告 ≠ 退出非 0」。
+ *
+ * 因此这里补两件事（**不改**默认语义，只把进体检的那条路修好）：
+ *   ① 标准汇总行 —— 没有它，体检解析不出结论，会把它判成「可疑」；
+ *   ② 体检入口必须带 --strict（见 package.json 的 test:crossend-contract）。
+ * 默认（不带 --strict）仍然只报告、退出 0，保留给手工查看用。
+ */
+const checked = Object.keys(rustCmds).length + Object.keys(tsIfaces).length;
+console.log(`通过 ${checked} 项，失败 ${problems.length} 项`);
+
 if (process.argv.includes('--strict') && problems.length) process.exit(1);

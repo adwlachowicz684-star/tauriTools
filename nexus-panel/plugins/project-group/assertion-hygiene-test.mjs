@@ -249,6 +249,31 @@ const GY_DECL = new RegExp(
   '(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*'
   + '/(?![*/])(?:\\\\.|\\[(?:\\\\.|[^\\]])*\\]|[^/\\\\\\n])+/([a-z]*)', 'g');
 
+/**
+ * 数一数某个名字在本文件里被**绑定**了几次（含形参）。
+ *
+ * 为什么不能只数正则字面量声明：只数声明时，`re` 这类短名只要在本文件
+ * 别处还被用作**箭头函数形参**，`name.test(` 就会命中形参那一份，于是
+ * 把一份只用于 `.exec()` 循环（正则的规范用法）的 /g 正则误报成"复用
+ * lastIndex"。实测 regression-guard-test.mjs：`const re = /…/g`（1143 行，
+ * 只在 `for (let m; (m = re.exec(src));)` 里用）被 340 行的
+ * `BAD.some((re) => re.test(...))` 连坐 —— 两个 `re` 压根不是同一个绑定；
+ * 而且 BAD 那几个正则**根本没有 g 标志**，报它只会逼人给一份正确的代码
+ * 加冗余改名。
+ */
+const bindingsOf = (src, name) => {
+  const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let c = 0;
+  const cnt = (re) => { for (const _ of src.matchAll(re)) c++; };
+  cnt(new RegExp(`\\b(?:const|let|var)\\s+${n}\\b`, 'g'));        // 声明
+  cnt(new RegExp(`\\bfor\\s*\\(\\s*(?:const|let|var)\\s+${n}\\b`, 'g')); // for-of/in
+  cnt(new RegExp(`\\(\\s*${n}\\s*\\)\\s*=>`, 'g'));               // 带括号的箭头单参
+  cnt(new RegExp(`\\b${n}\\s*=>`, 'g'));                          // 裸箭头单参
+  cnt(new RegExp(`[(,]\\s*${n}\\s*[,)]`, 'g'));                   // 形参 / 实参位置
+  cnt(new RegExp(`\\b(?:function)\\s+${n}\\b`, 'g'));             // 具名函数
+  return c;
+};
+
 /** 返回形如 `NAME` 的命中名（已排除同名的多作用域声明，见下） */
 const gyTestVars = (src) => {
   const decls = [...src.matchAll(GY_DECL)];
@@ -257,23 +282,17 @@ const gyTestVars = (src) => {
     const [, name, flags] = d;
     if (!/[gy]/.test(flags)) continue;
     /*
-     * 同名在本文件里被声明成正则**不止一次** → 多半是 `re` 这类短名在
-     * 不同作用域各声明一份（mindmap 里 3 处），靠名字无法判定谁对应谁，
-     * 强行报会误伤。宁可漏，不可误报（误报会逼人给正确代码加冗余改动）。
-     */
-    const sameName = decls.filter((x) => x[1] === name).length;
-    if (sameName > 1) continue;
-    /*
-     * 同名还在别处被当成**形参**绑定过 → 那条 `.test` 用的多半不是这个
-     * g 字面量，而是外层数组里的元素。名字相同、绑定不同，靠名字判会误报。
+     * 同名在本文件里被绑定**不止一次** → 多半是 `re` 这类短名在不同作用域
+     * 各绑一份（mindmap 里 3 处正则声明；regression-guard 里一处正则声明
+     * + 两处箭头形参），靠名字无法判定谁对应谁，强行报会误伤。
+     * 宁可漏，不可误报（误报会逼人给正确代码加冗余改动）。
      *
-     * 实测（regression-guard-test.mjs）：`const re = /function\s+copyText\s*\(/g`
-     * 是配 exec 循环用的（g 的正确用法）；而 `BAD.some((re) => re.test(…))`
-     * 里的 re 是箭头函数形参，BAD 那几个正则**根本没有 g 标志** ——
-     * 报它只会逼人给一份正确的代码加冗余改名。
+     * 远端同期独立加了形参那一条判据（只看 `\(\s*name\s*[,)]|\bname\s*=>`），
+     * 与这里的 bindingsOf 是同一处修复。bindingsOf 是它的超集（还认声明、
+     * for-of、裸箭头单参、具名函数），故按本地这一份合并，把远端观察到的
+     * 两条证据并进说明——功能不重叠，不做二选一。
      */
-    const nb = name.replace(/\$/g, '\\$');
-    if (new RegExp(`\\(\\s*${nb}\\s*[,)]|\\b${nb}\\s*=>`).test(src)) continue;
+    if (bindingsOf(src, name) > 1) continue;
     if (new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\s*\\.\\s*test\\s*\\(`).test(src)) {
       if (!out.includes(name)) out.push(name);
     }
@@ -630,6 +649,17 @@ console.log('\n=== 6. 断言不能拿带 g / y 标志的正则做 .test() ===');
     bad.join(', ') || '干净');
   /* 空转自检：范围被改窄 / 目录读不到 → bad 恒空 → 绿得毫无意义 */
   t('扫描范围非空（判据不能空转）', all.length >= 20, `实测 ${all.length} 个`);
+  /*
+   * 多作用域放行是有代价的让步（真问题若恰好也叫 `re` 会被一起放过），
+   * 所以必须钉住**让步的边界**。少了这两条，把 bindingsOf 改成恒 2
+   * 也是绿的 —— 整节失明而报告全绿。
+   */
+  t('多作用域同名确实被放行（让步生效）',
+    gyTestVars('const re = /ab/g;\nfor (let m; (m = re.exec(s));) {}\nBAD.some((re) => re.test(x));')
+      .length === 0);
+  t('同一个绑定的两次 test 仍被抓（让步没把真问题放过）',
+    gyTestVars("const RX = /ab/g;\nt('命中', RX.test(s));\nt('不误伤', !RX.test(x));")
+      .includes('RX'));
 }
 
 console.log('\n=== 7. 反向自检：护栏本身能抓到 ===');

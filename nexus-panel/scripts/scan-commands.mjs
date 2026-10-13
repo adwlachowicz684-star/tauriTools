@@ -448,6 +448,14 @@ const strict = process.argv.includes('--strict');
 console.log(`\n合计问题 ${problems} 条`);
 if (problems) {
   console.log(strict ? '✗ --strict：有问题' : '（加 --strict 可让 CI 失败）');
-  process.exit(1);
 }
+/*
+ * 标准汇总行 —— 体检（sweep-tests.mjs）靠它判断"这个脚本到底跑完没有"。
+ * 本脚本此前只以 `scan:commands` 存在（不以 test: 开头），**从没进过体检**；
+ * 补 test:cmd-scan 入口后，少了这行会被判成「退出码 0 但解析不出结论 → 可疑」，
+ * 等于加了个入口却仍看不见它。
+ * 注意顺序：必须先打印再 exit(1)，否则失败时结论行根本不会出现。
+ */
+console.log(`通过 ${registered.size} 项，失败 ${problems} 项`);
+if (problems) process.exit(1);
 console.log('✓ 三份清单一致');
