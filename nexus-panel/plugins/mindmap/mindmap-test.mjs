@@ -6146,6 +6146,66 @@ group('BUG 131 · 导入别人的 .puml：无边框节点 `_`（boxless）');
   }
 }
 
+group('BUG 144 · 导入别人的 .puml：节点文字正好是语法标记（剥完就空 = 内容被改掉）');
+
+{
+  const f144 = await import('./formats.js');
+  const N144 = (t, ch) => ({ data: { text: t }, children: ch || [] });
+  const wrap144 = (r) => JSON.stringify({ root: r });
+  const flat144 = (c) => {
+    if (!c) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(JSON.parse(c).root, 0);
+    return out;
+  };
+  const J144 = (v) => JSON.stringify(v);
+  const rt144 = (t) => J144(flat144(f144.fromPlantUml(f144.toPlantUml(wrap144(N144(t, []))))));
+
+  /*
+   * ① ★ 节点文字**正好是**一个合法颜色标记。
+   *    导出去的一行是 `* [#pink]`，与「给空节点上粉色」长得一模一样；剥掉之后
+   *    `t` 变空 → 节点落成占位「未命名」——**本工具自己导出再导入就把文字改没了**。
+   */
+  eq(J144(flat144(f144.fromPlantUml('* [#pink]'))), J144([['[#pink]', 0]]),
+    '★ 文字正好是颜色标记时不得剥（早先 → 「未命名」，内容被改掉）');
+  eq(J144(flat144(f144.fromPlantUml('* [#ff0000]'))), J144([['[#ff0000]', 0]]),
+    '★ 十六进制颜色标记同样（剥完就空 = 它是文字本身）');
+
+  // ② ★ 剥完**还有内容**时照旧要剥 —— 那是装饰的正确读法，不能为了保住 ① 而一刀切不剥
+  eq(J144(flat144(f144.fromPlantUml('* [#pink] 议题'))), J144([['议题', 0]]),
+    '★ 颜色标记 + 真文字 → 照旧剥（这条不许被 ① 带坏）');
+
+  /*
+   * ③ 同一类：多行框 `: … ;`。整段就是一对 `: ;`（或带空格）时剥完也是空，
+   *    那是节点文字本身，不是「没有内容的多行框」。
+   */
+  eq(J144(flat144(f144.fromPlantUml('* :;'))), J144([[':;', 0]]),
+    '★ 文字正好是 `: ;` 对时不得剥（早先 → 空 → 占位，内容被改掉）');
+  eq(J144(flat144(f144.fromPlantUml('* : ;'))), J144([[': ;', 0]]),
+    '★ 中间有空格的 `: ;` 同样不得剥');
+  eq(J144(flat144(f144.fromPlantUml('* :内容;'))), J144([['内容', 0]]),
+    '★ 剥完还有内容 → 照旧剥（那是官方的多行框写法）');
+
+  // ④ 本工具自己的往返：这些文字一字不改
+  for (const t of ['[#pink]', '[#ff0000]', ':;', ': ;']) {
+    eq(rt144(t), J144([[t, 0]]), '本工具往返：文字 ' + J144(t) + ' 一字不改（早先变「未命名」）');
+  }
+
+  // ⑤ 子树不得被抬层（丢行 = 抬层，与 BUG 98 / 99 / 100 同一类）
+  eq(J144(flat144(f144.fromPlantUml(f144.toPlantUml(wrap144(N144('[#pink]', [N144('甲'), N144('乙')])))))),
+    J144([['[#pink]', 0], ['甲', 1], ['乙', 1]]),
+    '★ 带子节点时文字仍在、层级不变');
+
+  // ⑥ 源码层（先剥注释：这些写法本身就写在注释里，不剥会命中注释而永远绿）
+  {
+    const s144 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/t\.slice\(all\.length\)\.trim\(\) \? '' : all/.test(s144),
+      '★ 颜色标记必须有「剥完就空 → 整段保留」的判据（只写在注释里 = 没修）');
+    ok(/if \(inner\) t = inner;/.test(s144),
+      '★ 多行框必须有「剥完就空 → 整段保留」的判据');
+  }
+}
+
 group('格式识别 detectFormat（内容优先于扩展名）');
 
 {

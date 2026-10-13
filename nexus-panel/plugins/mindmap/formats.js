@@ -897,7 +897,21 @@ export function fromPlantUml(text) {
      *   `[#争议]` 之类开头时会被剥掉，但这种写法本身会被 PlantUML 当颜色
      *   吃掉（后果一样），所以不影响往返。
      */
-    t = t.replace(/^\[#([^\]]*)\]\s*/, (all, c) => (isPumlColorTag(c) ? '' : all));
+    t = t.replace(/^\[#([^\]]*)\]\s*/, (all, c) => {
+      if (!isPumlColorTag(c)) return all;
+      /*
+       * BUG 144：**剥完就空的话，它是文字本身，不是装饰**。
+       *
+       * 节点文字正好是 `[#pink]` / `[#ff0000]` 这类合法颜色标记时，导出去的
+       * 一行是 `* [#pink]` —— 与"给空节点上粉色"长得一模一样。剥掉之后 `t`
+       * 变空，节点落成占位「未命名」，**内容被静默改掉**（而且是本工具自己
+       * 导出再导入的路径）。
+       *
+       * 所以先算出剥完剩下的那段：没有内容就整段保留。
+       * 有内容才剥（`[#pink] 议题` → `议题`，这是装饰的正确读法）。
+       */
+      return t.slice(all.length).trim() ? '' : all;
+    });
     /*
      * **多行框 `: … ;`**（BUG 130）。
      * PlantUML 用 `:` 与 `;` 包住多行文本（官方示例 `**:right_1.1 right_1.2;`），
@@ -908,7 +922,12 @@ export function fromPlantUml(text) {
      *   非节点行跳过 —— 与「不支持」等价，好过猜错。
      */
     if (t.length >= 2 && t.charCodeAt(0) === 58 /* : */ && t.charCodeAt(t.length - 1) === 59 /* ; */) {
-      t = t.slice(1, -1).trim();
+      /*
+       * BUG 144：同上面的颜色标记 —— 整段就是一对 `: ;`（如 `:;` / `: ;`）时
+       * 剥完也是空，那是节点文字本身，不是没有内容的多行框。
+       */
+      const inner = t.slice(1, -1).trim();
+      if (inner) t = inner;
     }
     /*
      * **空标题不能丢行**（BUG 100，与 BUG 98 / 99 同一类）。
