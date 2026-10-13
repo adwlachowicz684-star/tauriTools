@@ -97,6 +97,7 @@
     "test:service-plugin": "node service-plugin-test.mjs",
     "test:settings": "node settings-test.mjs",
     "test:settings-cards": "node settings-cards-click-test.mjs",
+    "test:settings-note": "node settings-persist-note-test.mjs",
     "test:toolbar-persist": "node toolbar-persist-test.mjs",
     "test:shell-audit": "node shell-audit-test.mjs",
     "test:shortcut": "node shortcut-test.mjs",

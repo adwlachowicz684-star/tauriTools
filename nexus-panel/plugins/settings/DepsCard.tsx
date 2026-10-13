@@ -118,6 +118,22 @@ export default function DepsCard() {
   const [q, setQ] = useState('');
   const [installed, setInstalled] = useState<any[]>([]);
   const [rtMissing, setRtMissing] = useState(false);
+  /*
+   * 读取已装列表**失败**的原因。
+   *
+   * 与 rtMissing（后端还没接这个能力）是两件事，必须分开：
+   *   · rtMissing：能力不存在 → 「安装」本来就不可用，界面该说"尚未接入"
+   *   · rtErr：    能力在、但这一次读不出来（数据目录被占、权限、IO 错）
+   * 混成一句的话，用户会去升级版本，而真相是这次读取出错。
+   *
+   * 【为什么读不出来必须说出来】
+   * 读失败时 `list` 是空数组，而下面「已装 x@y」「移除」「整包卸载」
+   * 全都由这个列表驱动 —— 于是**整段消失**。用户看到的是：自己装进去
+   * 的那些运行时依赖凭空不见了，连删除入口都没了。他只会以为东西被删了，
+   * 而真相是这一次没读出来，重启可能就好了。界面主动给出与事实相反的
+   * 暗示，比什么都不显示更糟。
+   */
+  const [rtErr, setRtErr] = useState<string>('');
   const [busy, setBusy] = useState<string>('');
   const [msg, setMsg] = useState<{ k: string; text: string; bad: boolean } | null>(null);
   /* 用户手填的版本（键与 busy/msg 一致）。留空 = 用声明里的版本。 */
@@ -158,7 +174,16 @@ export default function DepsCard() {
   const refresh = useCallback(async () => {
     const r = await listRuntimeDeps(ctx);
     setRtMissing(!!r.missing);
-    setInstalled(r.list || []);
+    /*
+     * 读不出来**不能当成"什么都没装"**：
+     * 空列表会让下面整段已装区连同删除入口一起消失，界面等于在暗示
+     * "你装的东西没了"。必须连同原因一起摆出来。
+     *
+     * 刻意**不清空** installed：旧数据再旧也比空列表诚实 ——
+     * 清空会让"上次读到的"和"这次没读到"在界面上完全无法区分。
+     */
+    setRtErr(r.error ? String(r.error) : '');
+    if (!r.error) setInstalled(r.list || []);
     /*
      * 台账是模块级内存里的东西，不是后端数据 —— 它与 list 一起刷新，
      * 不单独发请求。同页插件（md）与设置页共享同一个模块实例才读得到。
@@ -324,6 +349,23 @@ export default function DepsCard() {
         <div className="dep-note" style={{ marginBottom: 'var(--sp-6, 12px)', color: 'var(--warn)' }}>
           后端尚未接入运行时依赖（<span className="p-mono">fpx_rt_dep_install</span>），「安装」暂不可用 ——
           请更新到支持该命令的版本，或复制命令后在源码目录执行。
+        </div>
+      ) : null}
+
+      {/*
+       * 读取失败。**必须说清"没显示 ≠ 被删了"** ——
+       * 否则用户看到已装区整段空白，第一反应是"我装的东西没了"，
+       * 而真相只是这次没读出来。
+       */}
+      {rtErr ? (
+        <div
+          className="dep-note"
+          style={{ marginBottom: 'var(--sp-6, 12px)', color: 'var(--warn)', lineHeight: 1.9 }}
+        >
+          读取已安装的运行时依赖失败（{rtErr}）。
+          <br />
+          下面不显示已装版本<strong>不等于它们被删了</strong> —— 只是这一次没读出来。
+          可以点「刷新状态」重试；若反复失败，检查工具数据目录是否可访问。
         </div>
       ) : null}
 

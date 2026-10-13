@@ -61,6 +61,8 @@ export default function UpdateCard() {
   const [busy, setBusy] = useState<null | 'check' | 'install'>(null);
   const [result, setResult] = useState<UpdateState | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  /** 「没能记住」这类提醒 —— 不是失败，用警告色，别让人以为操作没生效 */
+  const [note, setNote] = useState<string>('');
   /** 装完了、等用户决定何时重启 */
   const [installed, setInstalled] = useState<string | null>(null);
 
@@ -70,10 +72,28 @@ export default function UpdateCard() {
 
   const saveChannel = (v: string) => {
     setChannel(v);
+    /*
+     * 存不下**必须说出来**，不能 `catch { /* ignore *\/ }` 之后照常往下走。
+     *
+     * 通道是记在 localStorage 里的：下次启动由 `readChannel()` 读回。
+     * 而本页在 Vite 模式下是隔离 iframe（opaque origin），localStorage
+     * 会抛 —— `readChannel` 那个 catch 认的就是同一件事。写不进去的后果是：
+     * 下拉画成「内部测试」、本次检查也确实走 beta（通道是当次显式传的），
+     * 而**下次启动悄悄回到「正式版」**。界面从头到尾不说一句，用户只会
+     * 以为"它自己变回去了"，然后一次次重选。
+     *
+     * 刻意**不回滚**下拉：与「关闭窗口行为」（WindowCard）不同，通道是
+     * 本次调用时显式传给服务的，这次切换当场就生效 —— 回滚等于把一个
+     * 能用的选择收回去。要说清的是"没记住"，不是"没生效"。
+     */
     try {
       localStorage.setItem(CHANNEL_KEY, v);
+      setNote('');
     } catch {
-      /* 存不下不影响本次使用 */
+      setNote(
+        `已切到「${v === 'beta' ? '内部测试' : '正式版'}」，但这次选择没能记住` +
+          '（浏览器存储不可用：隐私模式或隔离态），下次启动会回到「正式版」。',
+      );
     }
     /* 换通道后旧结果不再成立：留着会显示"正式版已是最新"
        而用户其实刚切到内测版。 */
@@ -148,6 +168,25 @@ export default function UpdateCard() {
           </div>
         </div>
       </div>
+
+      {/*
+       * 「没能记住」必须真的画出来。
+       *
+       * setNote(...) 只改状态、界面上不出现的话，等于这段保护整个没生效 ——
+       * 用户看到的仍是"下拉切过去了、只字未提"，下次启动还是回到正式版。
+       *
+       * 用警告色（--warn）而不是危险色：这次切换**当场是真生效了**（通道是
+       * 当次显式传给服务的），标红会让人以为刚才那下操作失败了，从而再点一次
+       * —— 而再点一次同样存不下，只会把同一段提示重复弹给他。
+       */}
+      {note ? (
+        <div
+          className="p-muted"
+          style={{ marginTop: 'var(--sp-7, 14px)', color: 'var(--warn, #e0a020)', lineHeight: 1.9 }}
+        >
+          {note}
+        </div>
+      ) : null}
 
       <div className="p-row" style={{ marginTop: 'var(--sp-7, 14px)', gap: 'var(--sp-4, 8px)' }}>
         <button className="p-btn" onClick={check} disabled={busy !== null}>
