@@ -39,6 +39,7 @@
     "test:disclosure": "node disclosure-test.mjs",
     "test:drag-payload": "node plugins/project-group/drag-payload-test.mjs",
     "test:drag-reorder": "node drag-reorder-test.mjs",
+    "test:dts-drift": "node dts-drift-test.mjs",
     "test:errdiag": "node err-diag-test.mjs",
     "test:external": "node external-test.mjs",
     "test:external-card-loop": "node external-card-loop-test.mjs",
