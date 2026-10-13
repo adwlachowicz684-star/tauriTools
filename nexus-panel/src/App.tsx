@@ -431,10 +431,15 @@ export default function App() {
         />
         <Stage
           ref={stageRef}
-          title={activePlugin?.name ?? '未选择插件'}
-          subtitle={activePlugin
-            ? `${activePlugin.type === 'iframe' ? '沙箱模式' : '同页模式'}${activePlugin.version ? ' · v' + activePlugin.version : ''}`
-            : ''}
+          /* 标题 / 副标题**只认宿主上报的那一份**（onTitle / onSubtitle）。
+             不要在这里拿 activePlugin 重算 —— 那是同一件事的第二个真相源：
+             插件用 ctx.shell.title('…') 改名后，宿主会上报新值，
+             而重算出来的永远是 manifest.name，插件栏**不会跟着变**
+             （原生版 shell.js 的 onTitle 同时写 #bar-title 与 #tb-title，
+             两处同源；React 版此前只有标题栏同源，插件栏是另算的）。
+             subtitle 更彻底：上报的值此前根本没被读过（第二真相源把它顶掉了）。 */
+          title={title}
+          subtitle={subtitle}
           hasPlugin={!!activePlugin}
           onOpenSettings={openPluginSettings}
           onReload={reload}

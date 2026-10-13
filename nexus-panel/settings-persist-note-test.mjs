@@ -209,8 +209,16 @@ console.log('\n— 第 5 节：全量守卫（设了值却没人读的死状态�
     let m;
     while ((m = re.exec(code))) {
       const [, name, setter] = m;
-      // 只在"确实调用过 setter"时才要求有人读：纯初始值不写不算问题
-      if (!new RegExp(`\\b${setter}\\s*\\(`).test(code)) continue;
+      /*
+       * 只在"确实用过 setter"时才要求有人读：纯初始值不写不算问题。
+       *
+       * **不能只认 `setter(` 这种直接调用**：`onSubtitle: setSubtitle` 是把
+       * setter 当回调传出去，宿主会在挂载时调它 —— 那正是"值被写进来"的
+       * 那条路。按 `setter(` 判会让这一类整批溜走（本项目已经溜了一处）。
+       * 声明那一行本身算 1 次，所以"只出现过一次"= 真没用过。
+       */
+      const setterUses = (code.match(new RegExp(`\\b${setter}\\b`, 'g')) || []).length;
+      if (setterUses <= 1) continue;
       /*
        * 豁免**强制重渲染计数器**这类写法：`setTick((t) => t + 1)`。
        * 它的值本来就不必有人读，作用只是触发一次重渲染。
@@ -218,9 +226,27 @@ console.log('\n— 第 5 节：全量守卫（设了值却没人读的死状态�
        * 把 `const refresh = () => setTick(...)` 删掉 —— 那才是真把功能删了。
        */
       if (new RegExp(`\\b${setter}\\(\\s*\\(?\\s*\\w+\\s*\\)?\\s*=>`).test(code)) continue;
-      // 数一数 x 作为独立标识符出现的次数；声明那一行算 1 次
-      const uses = (code.match(new RegExp(`\\b${name}\\b`, 'g')) || []).length;
-      if (uses <= 1) bad.push(`${path.relative(HERE, f)} → ${name}（${setter} 调过，没人读）`);
+      /*
+       * 只数"**值位置**"的出现，且**不含声明行**。
+       *
+       * 不能按"标识符出现次数"判：`subtitle={…}` 里的 subtitle 是 JSX 的
+       * **prop 名**，不是读取 —— 宿主上报的 subtitle 正是这样被判成"有人读"
+       * 而溜过去的（React 版外壳把它存进 state 后从不显示，插件栏另算一份）。
+       * 所以后面紧跟 `={` / `:` / `=` 的一律不算（那是赋值位），
+       * `{subtitle}`、`subtitle.trim()`、`[subtitle]` 这类才算真读取。
+       */
+      const decl = new RegExp(
+        `const\\s*\\[\\s*${name}\\s*,[^\\]]*\\]\\s*=\\s*useState[^\\n]*`,
+      );
+      const body = code.replace(decl, '');
+      /*
+       * `=` 只排除**单独那个赋值等号**：`tabOver === i` 里的 `===` 以 `=`
+       * 开头，按 `[:=]` 一律排除会把最常见的比较判成"没人读"（13 条假红）。
+       */
+      const uses = (
+        body.match(new RegExp(`\\b${name}\\b(?!\\s*=\\s*\\{)(?!\\s*=(?!=))(?!\\s*:)`, 'g')) || []
+      ).length;
+      if (uses === 0) bad.push(`${path.relative(HERE, f)} → ${name}（${setter} 调过，没人读）`);
     }
   }
   t('没有"设了值却没人读"的死状态 ★', bad.length === 0, bad.length ? bad.join('；') : '全部配对');
