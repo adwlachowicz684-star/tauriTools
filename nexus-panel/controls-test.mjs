@@ -507,6 +507,20 @@ console.log('\n=== 8. 反馈类：空状态 / 加载 / Toast ===');
     && !/\.toast\.ok\s*\{[^}]*--env/.test(controls));
   t('Toast 容器不拦点击（右下角不该吃掉操作）',
     /#toasts\s*\{[^}]*pointer-events:\s*none/.test(controls));
+  /*
+   * 光查容器不够 —— 以前这里还跟着一条 `#toasts > * { pointer-events: auto }`，
+   * pointer-events 是继承属性，孩子再写 auto 就重新变成点击靶子：
+   * 容器那句"不拦点击"被它自己下面一行整个推翻，而断言只看容器，全绿。
+   * 所以这里改成**整棵子树都不许开 auto**。
+   */
+  t('Toast 单条也不拦点击（孩子不许再开 auto）',
+    /*
+     * 必须剥注释再判：那条规则被删掉时，删它的原因就写在注释里
+     * （注释里原样留着 `#toasts > * { pointer-events: auto }` 这串字），
+     * 不剥的话断言会**命中注释**而永远判"还有"—— 注释把断言喂反了。
+     */
+    !/#toasts\s*>\s*\*[^{]*\{[^}]*pointer-events:\s*auto/.test(stripComments(controls))
+    && !/\.nx-toasts\s*>\s*\*[^{]*\{[^}]*pointer-events:\s*auto/.test(stripComments(controls)));
 
   /* 重复定义清理 */
   t('外壳不再自己写 .toast 的完整实现',

@@ -124,6 +124,7 @@
     "test:toolbar": "node toolbar-test.mjs",
     "test:tooltip": "node tooltip-test.mjs",
     "test:tray": "node tray-test.mjs",
+    "test:toast-hittest": "node toast-hittest-test.mjs",
     "test:unmount-audit": "node unmount-audit-test.mjs",
     "test:updater": "node updater-test.mjs",
     "test:window-action": "node window-action-test.mjs",
