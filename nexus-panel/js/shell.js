@@ -140,7 +140,16 @@ function onPluginCspViolation(d, manifest) {
 
   extPolicy.recordHosts([{
     host,
-    kind: extPolicy.KIND_LABELS ? kindOf(d.directive) : 'unknown',
+    /*
+     * 用途统一走 external-policy 的 kindOfDirective ——
+     * 本文件此前有一份自己的 kindOf()，与 React 壳（src/App.tsx）那份
+     * 是**同一段逻辑抄了三遍**。漂了之后同一条外链在两个壳里会被标成
+     * 不同用途，而用户正是照着它决定"这个域名放不放行"。
+     * 两个壳都 import 了 external-policy，所以放那儿才谈得上同源。
+     * （原来的 `KIND_LABELS ? ... : 'unknown'` 是死判据：
+     *   KIND_LABELS 是模块级常量对象，恒为真。）
+     */
+    kind: extPolicy.kindOfDirective(d.directive),
     sample: d.blockedURI,
   }], manifest?.id);
 
@@ -150,17 +159,6 @@ function onPluginCspViolation(d, manifest) {
     console.warn('[external] 已拦截', host);
   }
   refreshExternalUI?.();
-}
-
-function kindOf(directive) {
-  const s = String(directive || '').toLowerCase();
-  if (s.includes('script')) return 'script';
-  if (s.includes('frame')) return 'frame';
-  if (s.includes('media')) return 'media';
-  if (s.includes('img')) return 'image';
-  if (s.includes('connect')) return 'fetch';
-  if (s.includes('style') || s.includes('font')) return 'style';
-  return 'unknown';
 }
 
 /** 设置页可能开着，给它一个刷新的机会 */

@@ -31,17 +31,15 @@ function nextId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** 从 CSP 指令反推外链类型，与 js/shell.js 的 kindOf() 保持一致 */
-function kindOfDirective(directive?: string): string {
-  const s = String(directive || '').toLowerCase();
-  if (s.includes('script')) return 'script';
-  if (s.includes('frame')) return 'frame';
-  if (s.includes('media')) return 'media';
-  if (s.includes('img')) return 'image';
-  if (s.includes('connect')) return 'fetch';
-  if (s.includes('style') || s.includes('font')) return 'style';
-  return 'unknown';
-}
+/**
+ * 从 CSP 指令反推外链类型。
+ *
+ * 这里**不再是本文件自己的实现**：此前它和 js/shell.js 的 kindOf()
+ * 是同一段逻辑抄了两遍（本文件的注释还写着"与 shell.js 保持一致"——
+ * 靠人记得同步，等于必然会漂）。现在统一走 external-policy 的
+ * kindOfDirective：两个壳都 import 了那个模块，放那儿才谈得上同源。
+ */
+const kindOfDirective = extPolicy.kindOfDirective;
 
 /** CSP 违规上报的两种形状：宿主转发的是 blockedURI，watchViolations 给的是 host + sample */
 interface ViolationInfo {
