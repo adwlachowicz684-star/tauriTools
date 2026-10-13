@@ -955,3 +955,85 @@ test('并发节点平铺时记明原因', () => {
     `并发平铺没说明：${JSON.stringify(r.skipped)}`,
   );
 });
+
+/* ==================================================================
+ * 流程 JSON 必须脱敏 —— 它是"要发给别人的文件"
+ *
+ * 以前 toJson 直接塞 g.nodes（裸的），于是同一张画布两个按钮：
+ *   工具栏「导出」  → token = ""            ✓ 剥过
+ *   流程 JSON       → token = "ghp_xxx"     ✗ 明文
+ * 都叫"导出 JSON"，一个脱敏一个不脱敏，用户无从分辨该信哪个。
+ *
+ * 而这份是要进仓库、发给同事的 —— 与工具栏「导出」同一性质，
+ * 必须过同一套判据（engine/sanitize + engine/runtimeKeys），不另写一份。
+ * ================================================================== */
+
+const SECRETS = ['sk-LIVE-PLAIN', 'ghp_PLAIN', 'sk-ant-PLAIN', 'HOOK_PLAIN'];
+
+const secretGraph = () => g([
+  { id: 'h1', data: { kind: 'apiPane', url: 'https://a.b/c', method: 'POST',
+    headersText: 'Authorization: Bearer sk-LIVE-PLAIN' } },
+  { id: 'g1', data: { kind: 'githubUpdate', repo: 'o/r', token: 'ghp_PLAIN' } },
+  { id: 'l1', data: { kind: 'llmChat', llm: { apiKey: 'sk-ant-PLAIN', model: 'm' }, prompt: 'hi' } },
+  { id: 't1', data: { kind: 'trigger', label: '外调',
+    entries: [{ id: 'e1', kind: 'webhook', enabled: true,
+      config: { token: 'HOOK_PLAIN', port: 8787, path: '/h' } }] } },
+], [e('h1', 'g1')]);
+
+test('流程 JSON：四类密钥一个都不许出现', () => {
+  const r = exportFlow(secretGraph(), 'json');
+  const hit = SECRETS.filter((s) => r.text.includes(s));
+  assert.deepEqual(hit, [], `导出的 JSON 里明文躺着：${hit.join('、')}`);
+});
+
+/*
+ * 反向：脱敏不能把业务字段一起吃掉 ——
+ * 只盯"有没有明文"的话，把整个 data 清成 {} 也算通过。
+ */
+test('流程 JSON：脱敏要留下业务字段（不是清空）', () => {
+  const r = exportFlow(secretGraph(), 'json');
+  const parsed = JSON.parse(r.text);
+  const byId = new Map(parsed.nodes.map((x: { id: string }) => [x.id, x]));
+  assert.equal(byId.get('g1').data.repo, 'o/r', '仓库名要留着');
+  assert.equal(byId.get('l1').data.llm.model, 'm', '模型名要留着');
+  assert.equal(byId.get('t1').data.entries[0].config.port, 8787, '端口要留着');
+  assert.equal(byId.get('h1').data.url, 'https://a.b/c', 'URL 要留着');
+});
+
+test('流程 JSON：剥掉运行时（否则收到的人看到一堆"已成功"）', () => {
+  const r = exportFlow(g([{
+    id: 'x1', data: { kind: 'task', status: 'success', output: '上一次的真实输出', lastFiredAt: 123 },
+  }]), 'json');
+  const parsed = JSON.parse(r.text);
+  assert.equal(parsed.nodes[0].data.status, undefined, 'status 要剥');
+  assert.equal(parsed.nodes[0].data.output, undefined, 'output 要剥');
+});
+
+test('源码守卫：流程 JSON 走共享判据，不另写一份', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  const m = src.match(/function toJson\([\s\S]*?\n\}/);
+  assert.ok(m, '没找到 toJson');
+  assert.ok(
+    /redactNodes/.test(m![0]) && /stripRuntimeNodes/.test(m![0]),
+    'toJson 必须复用共享判据 —— 另写一份必然与工具栏导出漂移',
+  );
+  assert.ok(
+    /from '\.\/sanitize'/.test(src) && /from '\.\/runtimeKeys'/.test(src),
+    '判据要从共享模块引入',
+  );
+});
+
+/*
+ * desc 说"可导入重放"，但这份**不带 config**（exportFlow 接不到）。
+ * 不说清的话，用户导入后发现 MCP 服务和画布参数没了 ——
+ * 而 {{params.路径}} 取空是不报错的，只会表现为"莫名其妙取不到值"。
+ */
+test('源码守卫：流程 JSON 的 desc 明说不含画布级配置', () => {
+  const src = readSrc('engine/scriptExport.ts');
+  const m = src.match(/id: 'json'[\s\S]*?\},/);
+  assert.ok(m, '没找到 json 那条格式定义');
+  assert.ok(
+    /画布级配置|MCP/.test(m![0]),
+    'desc 必须说清不含 config —— 写着"可导入重放"却不提，等于承诺做不到的事',
+  );
+});

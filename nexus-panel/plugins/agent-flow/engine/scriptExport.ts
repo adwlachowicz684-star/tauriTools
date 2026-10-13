@@ -28,13 +28,24 @@ import { opBrief } from './ops';
 import { paramLinksOf, linksInto, outLabelOf, outputsOf, OUT_DEFAULT } from './paramLinks';
 import { findPane, resolveApiPane, DEFAULT_TEMPERATURE } from './pane';
 import { loopBodyOf, unescapeSeparator } from './loop';
+/* 脱敏与剥运行时的判据各只有一份 —— 这里必须复用，不另写 */
+import { redactNodes } from './sanitize';
+import { stripRuntimeNodes } from './runtimeKeys';
 
 export type ExportFormat = 'shell' | 'python' | 'json' | 'markdown';
 
 export const EXPORT_FORMATS: { id: ExportFormat; label: string; ext: string; desc: string }[] = [
   { id: 'shell', label: 'Shell 脚本', ext: 'sh', desc: '能直接跑，适合定时任务' },
   { id: 'python', label: 'Python 脚本', ext: 'py', desc: '可读性与扩展性更好' },
-  { id: 'json', label: '流程 JSON', ext: 'json', desc: '可在另一个环境导入重放' },
+  /*
+   * desc 必须说清"不含画布级配置" ——
+   * 这个格式只带 nodes/edges（exportFlow 接不到 config），而导入侧会据此
+   * 重建画布，于是 MCP 服务与画布参数**静默丢失**，节点里 {{params.路径}}
+   * 全部取空且不报错。写着"可导入重放"却不提这个，等于承诺了做不到的事。
+   *
+   * 要带配置的用工具栏「导出」（那份走 redactCanvasConfig，带 config）。
+   */
+  { id: 'json', label: '流程 JSON', ext: 'json', desc: '可在另一个环境导入重放；不含画布级配置（MCP 服务、画布参数），要带这些的用工具栏「导出」' },
   { id: 'markdown', label: 'Markdown 说明', ext: 'md', desc: '给人或 AI 读的步骤说明' },
 ];
 
@@ -1401,11 +1412,29 @@ function toPython(g: Graph): ExportResult {
 /* JSON                                                                */
 /* ------------------------------------------------------------------ */
 
+/*
+ * 这个格式的定位是「可在另一个环境导入重放」，也就是**要发给别人的文件**
+ * —— 与工具栏「导出」同一性质。所以它必须过同一套脱敏，不是可选。
+ *
+ * 以前这里直接塞 `g.nodes`（裸的），于是同一张画布：
+ *   工具栏「导出」  → token = ""                      ✓ 剥过
+ *   这里的流程 JSON → token = "ghp_xxx"                ✗ 明文
+ * 两个按钮都叫"导出 JSON"，一个脱敏一个不脱敏 —— 用户无从分辨该信哪个，
+ * 而拿到的那份明文会直接进仓库、发给同事。
+ *
+ * 判据走 engine/sanitize 与 engine/runtimeKeys 那一份，与工具栏导出、
+ * 存模块、设为默认、存预设、复制节点同一套 —— 不在这里另写一份。
+ */
 function toJson(g: Graph): ExportResult {
+  /*
+   * 运行时也剥（status / output / error / last*）：
+   * 不剥的话导出的每个节点都带着「上次跑完了」和那次的实际输出，
+   * 收到的人打开就看到一堆绿节点，以为那是流程自带的结果。
+   */
   const payload = {
     format: 'agent-flow/v1',
     exportedAt: new Date().toISOString(),
-    nodes: g.nodes,
+    nodes: stripRuntimeNodes(redactNodes(g.nodes) as Record<string, unknown>[]),
     edges: g.edges,
   };
   return { text: JSON.stringify(payload, null, 2) + '\n', skipped: [], count: g.nodes.length };
