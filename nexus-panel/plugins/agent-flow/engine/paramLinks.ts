@@ -827,9 +827,24 @@ export function applyParamLinks<T extends Record<string, unknown>>(
   data: T,
   values: Record<string, string>,
 ): T {
-  if (Object.keys(values).length === 0) return data;
-  return { ...data, ...values } as T;
+  /*
+   * 分发依据（data.kind）绝不能被连线写掉。
+   *
+   * 它是 getRunner 选执行器的钥匙。参数连线按端口 key 平铺写，
+   * 而触发器的「触发方式」那一格端口名恰好就是 kind ——
+   * 写进去之后 RUNNERS['webhook'] 查不到，节点退化成"直通成功、
+   * 什么都没做"：节点是绿的、流程照跑，只是触发再也没发生过。
+   *
+   * 新连线已经连不上去了（端口不再画，见 ops.ts 的 linkableArgKey），
+   * 但存档里可能躺着修复之前连好的线 —— 那一刀必须在这里兜住。
+   */
+  const entries = Object.entries(values).filter(([k]) => !RESERVED_ARG_KEYS.has(k));
+  if (entries.length === 0) return data;
+  return { ...data, ...Object.fromEntries(entries) } as T;
 }
+
+/** 参数连线**永远不能写**的键：写了会改掉节点本身是什么 */
+const RESERVED_ARG_KEYS: ReadonlySet<string> = new Set(['kind']);
 
 /**
  * 取出某个节点**作为目标**的参数连线。

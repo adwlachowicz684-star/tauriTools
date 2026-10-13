@@ -413,6 +413,51 @@ export type BriefPart = {
   };
 };
 
+/**
+ * 这一格**能不能接参数连线** —— 能就返回端口 id 用的 key，不能返回 null。
+ *
+ * ================= 为什么有的格子不能接 =================
+ *
+ * 参数连线只有 `targetArg`（端口 key）这一个坐标，运行时按它平铺写
+ * `data[key] = 上游值`（见 applyParamLinks）。而 `edit.path` 存在的那些格子，
+ * 值根本不在 `data[key]` 上 —— 条件是 `rules[i].value`、
+ * 触发器是 `entries[i].kind`。
+ *
+ * 于是连上去的结果是**两种都不报错**：
+ *
+ *   · 值在嵌套处（条件规则）：连线写了 `data.value`，规则还是读
+ *     `rules[0].value` —— 连了跟没连一样，用户以为改了判定依据。
+ *
+ *   · key 恰好是真字段（触发器 `kind`）：写进 `data.kind`，而它是
+ *     **执行器分发依据**（getRunner 读它）—— 节点当场不再是触发器，
+ *     退化成"直通成功、什么都没做"。
+ *
+ * 第二种最糟：节点还是绿的、流程照跑，只是触发再也没发生过。
+ *
+ * ================= 为什么不改成"按 path 写" =================
+ *
+ * 看着只要把路径带给连线就行，但同一条规则组的每个格子共用同一个
+ * key（三条规则就有三个 `arg:value`）—— 端口 id 重复时 xyflow 只会
+ * 命中第一个，而"连到了哪条规则"取决于渲染顺序。要让每格唯一就得
+ * 改端口 id 的编码，牵动连线创建、去重、补齐与存档兼容，
+ * 是另一个改动面；在此之前**不画这个端口**才是诚实的：
+ * 画出来能连、连了不生效，比没有端口更骗人。
+ *
+ * 真要让判定依据跟着上游变，走规则里的「来源」选上游节点 —— 那条路是通的。
+ */
+export function linkableArgKey(part: BriefPart): string | null {
+  const k = part.key;
+  if (!k) return null;
+  /*
+   * 只认"值就平铺在 data[key] 上"的格子：
+   * 没有 edit.path，或 path 与 key 相同（写了等于没写）。
+   */
+  const p = part.edit?.path;
+  if (p && p !== part.edit?.key) return null;
+  return k;
+}
+
+
 /** 只有 val / op / fn 会被渲染成下凹的参数格，text 是连接它们的字 */
 export function isArgPart(p: BriefPart): boolean {
   return p.role !== 'text';

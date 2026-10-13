@@ -197,7 +197,17 @@ test('下拉选项从节点定义取（不在卡片上另抄一份列表）', ()
  */
 test('编辑态仍然渲染参数入口（连线不能断）', () => {
   const src = readSrc('components/ArgCell.tsx');
-  assert.ok(/const handle = part\.key \? \(/.test(src), '入口必须按 part.key 判');
+  /*
+   * 判的是「入口只算一次、三个分支共用」，不是「变量名叫什么」。
+   *
+   * 以前钉的是 `const handle = part.key ? (` —— 端口改成按 linkableArgKey
+   * 判（edit.path 那批格子不再画端口，见 tests/paramLinkPath.test.ts）
+   * 之后它就红了，而红的理由是**守卫盯了写法**：代码没错，
+   * 是端口的判据换了。照着那条红去改，会把刚接上的判据又摘掉。
+   *
+   * 所以这里钉语义：入口由判据算出、且三个分支都渲染它。
+   */
+  assert.ok(/const handle = \w+ \? \(/.test(src), '入口必须按端口判据算出，且只算一次');
   // 三个分支（下拉 / 输入框 / 静态）都要带上它
   const n = (src.match(/\{handle\}/g) ?? []).length;
   assert.equal(n, 3, '三个分支都要渲染入口，少一个就会在编辑时断线');

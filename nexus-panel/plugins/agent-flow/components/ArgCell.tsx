@@ -2,7 +2,7 @@ import { createContext, useContext, useState, type KeyboardEvent, type MouseEven
 import { Handle, Position } from '@xyflow/react';
 import { getDef } from '../nodes/registry';
 import { argHandleId } from '../engine/paramLinks';
-import type { BriefPart } from '../engine/ops';
+import { linkableArgKey, type BriefPart } from '../engine/ops';
 
 /**
  * 卡片上的**可编辑参数格**。
@@ -177,17 +177,27 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
    * 编辑态若把 Handle 换成 input 而丢掉它，已连上去的那根参数线
    * 会短暂找不到端口：线还在（按 id 记的），但这一端没了落点，
    * 表现为"改完参数，连线飘在半空"。
+   *
+   * ================= 哪些格子不给端口 =================
+   *
+   * 判据走 linkableArgKey（engine/ops），不在卡片上另写一份：
+   * 参数连线只有端口 key 一个坐标，运行时按它平铺写 data[key]，
+   * 而 edit.path 那批格子的值在别处（rules[i].value / entries[i].kind）。
+   * 给它们画端口的结果是"能连、连了不生效"，更糟的是触发器那种
+   * key 恰好是 data.kind 的 —— 连上去会把节点本身的分发种类改掉。
+   * 理由与取舍写在 ops.ts 的 linkableArgKey 上，两处各写一份必然漂移。
    */
-  const handle = part.key ? (
+  const portKey = linkableArgKey(part);
+  const handle = portKey ? (
     <Handle
       type="target"
       position={Position.Left}
-      id={argHandleId(part.key)}
+      id={argHandleId(portKey)}
       className="node-arg-handle"
     />
   ) : null;
 
-  const cls = `${className}${edit ? ' is-editable' : ''}${part.key ? ' node-arg-port' : ''}`;
+  const cls = `${className}${edit ? ' is-editable' : ''}${portKey ? ' node-arg-port' : ''}`;
 
   /* ---------------- 下拉：运算符 / 模式 ---------------- */
 
