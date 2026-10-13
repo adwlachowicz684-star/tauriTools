@@ -423,7 +423,21 @@ export interface CaptureResult {
 
 export interface WatchEvent {
   path: string;
-  kind: 'added' | 'removed' | 'changed';
+  /**
+   * 四种，不是三种。
+   *
+   * `overflow` 由 Rust 侧真实发出：`src-tauri/src/fpx/watch.rs` 的 `pull()`
+   * 在队列曾溢出时，末尾补一条 `kind: "overflow"` 的提示事件（#177）。
+   *
+   * 【为什么这一条不能从联合类型里删掉】
+   * 少了它，`App.tsx` 里 `ev.kind === 'overflow'` 就变成 TS2367
+   * 「两边没有交集」——看着像一段永远不会进的死分支。而它**不是**死的：
+   * 运行时 Rust 照样发，界面照样显示「部分记录已截断」。
+   * 谁照着 TS 的提示去"清理死代码"把它删了，丢掉的是一条**正在生效**的
+   * 告警 —— 比不显示更糟：用户会据此以为自己看清了全部改动。
+   * 类型必须说真话，否则它就在给删代码的人发错误信号。
+   */
+  kind: 'added' | 'removed' | 'changed' | 'overflow';
   at: string;
 }
 
