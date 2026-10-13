@@ -23,6 +23,15 @@ import { EMPTY_NODE_TEXT, inlineText, flattenBreaks } from './formats.js';
 const SHEET_MARK = /^##\s*画布[:：]\s*(.*)$/;
 
 /**
+ * 中心主题的默认文案。
+ *
+ * 常量化是因为 BUG 146 之后它有了第三个使用处（导入时插的虚拟根）：
+ * 三处各写一份 '中心主题' 的话，改一处不改另一处就会出现「导入出来的
+ * 中心主题和新建画布的不一样」这种看不出原因的偏差。
+ */
+export const ROOT_TEXT = '中心主题';
+
+/**
  * Markdown 能表达的层级上限（ATX 标题最多 6 个 `#`）。
  *
  * CommonMark 规定 7 个及以上 `#` **不是标题**（`####### x` 是普通段落），
@@ -39,15 +48,15 @@ export function newSheetId() {
 }
 
 /** 空画布内容：仅一个根节点（kityminder importJson 可直接吃） */
-export function emptyContent(rootText = '中心主题') {
+export function emptyContent(rootText = ROOT_TEXT) {
   return JSON.stringify({
-    root: { data: { text: rootText || '中心主题' }, children: [] },
+    root: { data: { text: rootText || ROOT_TEXT }, children: [] },
     template: DEFAULT_LAYOUT,
     theme: DEFAULT_THEME,
   });
 }
 
-export function newSheet(title = '画布 1', rootText = '中心主题') {
+export function newSheet(title = '画布 1', rootText = ROOT_TEXT) {
   return {
     id: newSheetId(),
     title,
@@ -442,6 +451,31 @@ export function mdOutlineRows(md) {
 export function markdownToSheet(md) {
   const rows = mdOutlineRows(md);
   if (!rows.length) return emptyContent();
+
+  /*
+   * ★ 顶层同级条目不能再被串成父子链（BUG 146）。
+   *
+   * 脑图只有一个中心主题，而 Markdown 的顶层条目可以有任意多个 ——
+   * 早先的做法是「第一行当根、后面的同级行挂到它下面」，于是**同级变成
+   * 父子**，层级被静默改掉，且不报错、不计入任何提示：
+   *
+   *   '- 项目启动\n  - 需求评审\n  - 排期\n- 项目收尾'
+   *     修复前 → 项目启动 >（需求评审、排期、项目收尾）
+   *              ← 「项目收尾」从顶层掉成了「项目启动」的子节点
+   *     修复后 → 中心主题 >（项目启动 >（需求评审、排期）、项目收尾）
+   *
+   * 纯列表大纲（幕布 / Notion / Typora 的常见产物）和「多个 `#` 一级标题」
+   * 的文档都会撞上。修法是**顶层同级 ≥ 2 条时插一个虚拟中心主题** ——
+   * 与 OPML 多顶层条目插虚拟根（BUG 111）同一口径。
+   *
+   * ⓘ 只能插在**这里**、不能插进 mdOutlineRows()：后者也被导入闸门
+   *   markdownRowCount() 调用，而它是按**整份文件**算的（多画布文件里每个
+   *   块各有一个顶层条目），在那里插会凭空多出一个不属于任何块的行。
+   */
+  const minDepth = rows.reduce((m, r) => Math.min(m, r.depth), rows[0].depth);
+  if (rows.filter((r) => r.depth === minDepth).length >= 2) {
+    rows.unshift({ depth: minDepth - 1, text: ROOT_TEXT });
+  }
 
   const root = { data: { text: rows[0].text }, children: [] };
   const stack = [{ depth: rows[0].depth, node: root }];

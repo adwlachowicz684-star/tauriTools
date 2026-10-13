@@ -5700,8 +5700,15 @@ group('BUG 103 · 分块标记行不得算作大纲行（闸门不许被它骗�
   {
     const s103 = wb103.markdownToWorkbook('## 画布：项目A\n- 一些笔记\n- 另一条\n');
     const r103 = JSON.parse(s103[0].content).root;
-    eq(r103.data.text, '一些笔记', '★ 块内列表的第一项成为根（不再是空的「中心主题」）');
-    eq((r103.children || []).length, 1, '第二项挂在它下面');
+    /*
+     * ⓘ BUG 146 之后这两条期望变了：两条列表项是**同级**，所以顶层同级 ≥2
+     *   时插一个虚拟中心主题，它们并列挂在下面 —— 不再是"第一项当根、
+     *   第二项挂到它下面"。想守的事没变：**列表真的被导进来了**
+     *   （不是放行后拿到一张空画布），只是层级不再被串成父子。
+     */
+    eq(r103.data.text, '中心主题', '★ 顶层同级 ≥2 条时插虚拟中心主题（BUG 146）');
+    eq((r103.children || []).map((c) => c.data.text).join('|'), '一些笔记|另一条',
+      '★ 两条列表项并列在它下面（不是父子链）');
   }
 
   // ② 块里真有标题时不受影响（该放行的照样放行）
@@ -19463,6 +19470,99 @@ group('BUG 143 · XMind 概要（summary）必须原样保留并写回，不能�
     ok(/if \(summaries\.length\) topic\.summaries = summaries;/.test(src),
       '★ 写侧必须同时写 topic.summaries（概要的第二处）');
     ok(/function clampSummaryRange\(/.test(src), '范围必须夹紧（防止越界括注）');
+  }
+}
+
+group('BUG 146 · 导入别人的 .md：顶层同级条目不能再被串成父子链');
+
+{
+  const wb146 = await import('./workbook.js');
+  const flatC146 = (content) => {
+    let root;
+    try { root = (typeof content === 'string' ? JSON.parse(content) : content)?.root; } catch { return null; }
+    if (!root) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(root, 0);
+    return JSON.stringify(out);
+  };
+  const flat146 = (md) => flatC146(wb146.markdownToSheet(md));
+  const J = (x) => JSON.stringify(x);
+
+  /*
+   * ① ★ 纯列表大纲（幕布 / Notion / Typora 导出的常见形态）。
+   *
+   * 脑图只有一个中心主题，而 Markdown 的顶层条目可以有任意多个。早先的
+   * 做法是「第一行当根、后面的同级行挂到它下面」，于是**同级变成父子**：
+   * 「项目收尾」本来和「项目启动」并列，导入后掉成了它的子节点 ——
+   * 层级被静默改掉，不报错、也不计入任何提示。
+   */
+  eq(flat146('- 项目启动\n  - 需求评审\n  - 排期\n- 项目收尾'),
+    J([['中心主题', 0], ['项目启动', 1], ['需求评审', 2], ['排期', 2], ['项目收尾', 1]]),
+    '★ 顶层两个列表项并列在虚拟中心主题下（早先「项目收尾」掉成「项目启动」的子节点）');
+  eq(flat146('- A\n- B'), J([['中心主题', 0], ['A', 1], ['B', 1]]),
+    '★ 两条同级列表项不再是父子链');
+  eq(flat146('1. A\n2. B'), J([['中心主题', 0], ['A', 1], ['B', 1]]),
+    '★ 有序列表两条同样并列');
+
+  // ② ★ 只有一个顶层条目时**不能**插（一刀切会破坏最理想的那种结构）
+  eq(flat146('- 项目\n  - 设计\n  - 开发'), J([['项目', 0], ['设计', 1], ['开发', 1]]),
+    '★ 单个顶层列表：首项仍是中心主题（不能一刀切插虚拟根）');
+  eq(flat146('# A\n## B\n## C'), J([['A', 0], ['B', 1], ['C', 1]]),
+    '★ 单个 H1 的普通文档不受影响');
+
+  // ③ 标题同样适用：按**最小深度**算，不是只数 depth 0
+  eq(flat146('# A\n# B'), J([['中心主题', 0], ['A', 1], ['B', 1]]),
+    '★ 两个一级标题并列（早先 B 变成 A 的子节点）');
+  eq(flat146('## A\n## B'), J([['中心主题', 0], ['A', 1], ['B', 1]]),
+    '★ 没有 H1 时两个 H2 并列（按最小深度算）');
+  eq(flat146('### A\n### B'), J([['中心主题', 0], ['A', 1], ['B', 1]]),
+    '★ 三个井号同样按最小深度算');
+
+  // ④ 标题 + 列表 + 另一个 H1：`附录` 不再被吞成 `项目` 的子节点
+  eq(flat146('# 项目\n- 设计\n- 开发\n# 附录'),
+    J([['中心主题', 0], ['项目', 1], ['设计', 2], ['开发', 2], ['附录', 1]]),
+    '★ 另一个 H1 不再被吞成子节点');
+
+  // ⑤ ★ 多画布分块：每块各一个顶层条目 → 不能凭空多出虚拟根
+  {
+    const wb = wb146.markdownToWorkbook('## 画布：甲\n# R1\n## X\n\n## 画布：乙\n# R2\n');
+    eq(wb.length, 2, '两块 → 两张画布');
+    eq(flatC146(wb[0].content), J([['R1', 0], ['X', 1]]), '★ 第一块不受影响（每块只有一个顶层条目）');
+    eq(flatC146(wb[1].content), J([['R2', 0]]), '★ 第二块不受影响');
+  }
+
+  // ⑥ ★ 闸门（rowCount）口径不变：虚拟根不进计数
+  eq(wb146.markdownRowCount('- A\n- B'), 2, '★ rowCount 仍是内容行的条数（虚拟根不算）');
+  eq(wb146.markdownRowCount('## 画布：A\n- 笔记\n\n## 画布：B\n- 笔记2\n'), 2,
+    '★ 多画布 rowCount 不变（BUG 103 口径）');
+  ok(wb146.markdownRowCount('- A\n- B') > 0, '★ 纯列表文件仍被放行（不是"放行 + 全空"）');
+
+  // ⑦ 一个节点都不能丢（只改挂法，不删内容）
+  {
+    const n = JSON.parse(wb146.markdownToSheet('- A\n- B\n  - B1\n- C')).root;
+    let cnt = 0;
+    (function w(x) { cnt++; (x.children || []).forEach(w); })(n);
+    eq(cnt, 5, '★ 4 条列表项 + 虚拟根 = 5 个节点，一个都不能丢');
+    eq(n.data.text, '中心主题', '虚拟根是中心主题');
+  }
+
+  // ⑧ 源码层（先剥注释：这些写法本身就写在注释里，不剥会命中注释而永远绿）
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+    ok(/rows\.unshift\(\{ depth: minDepth - 1, text: ROOT_TEXT \}\)/.test(src),
+      '★ 虚拟根用 ROOT_TEXT（不能另写一份中心主题文案）');
+    const iFrom = src.indexOf('export function mdOutlineRows(');
+    const iTo = src.indexOf('export function markdownToSheet(');
+    ok(iFrom > 0 && iTo > iFrom, '能定位 mdOutlineRows 段');
+    /*
+     * ★ 虚拟根必须插在 markdownToSheet（按块解析），不能插进 mdOutlineRows。
+     *   后者也被导入闸门调用，而它是**按整份文件**算的 —— 多画布文件里每个
+     *   块各有一个顶层条目，在那里插会凭空多出一个不属于任何块的行。
+     */
+    ok(!/unshift/.test(src.slice(iFrom, iTo)),
+      '★ 虚拟根不能插进 mdOutlineRows（多画布会凭空多一行）');
+    eq((src.match(/export const ROOT_TEXT/g) || []).length, 1, '★ 中心主题文案只有一个出处');
+    eq((src.match(/'中心主题'/g) || []).length, 1, '★ 剥注释后字面量只剩 ROOT_TEXT 那一处');
   }
 }
 
