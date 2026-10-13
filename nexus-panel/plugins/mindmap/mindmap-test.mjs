@@ -673,6 +673,110 @@ group('外框（boundary）往返：range 只能表达连续区间，非连续�
   }
 }
 
+group('BUG 140 · 外框组号必须整份文件递增（不同分支的框不能并成一个）');
+
+/*
+ * 内核按 **gid 全局**分组（editor/index.html 里 `var _groupNodes = new Map()`
+ * 的键就是 gid，不区分父节点）。而导回侧早先在每个父话题里各自 `let seq = 0`
+ * 重发序号 —— 于是每个父话题的第一个外框都叫 `bg1`：
+ *
+ *     分支A 的 A一 / A二 → bg1「甲组」
+ *     分支B 的 B一 / B二 → bg1「乙组」  ← 同一个号
+ *
+ * 两组被并成**一个**大框：四个节点被同一个矩形圈住，标签取先找到的那个，
+ * 「乙组」这个框凭空消失。导入别人的 .xmind 就足以触发（本工具自己导出时会
+ * 重新编号，往返看不出来）。
+ *
+ * 而且**两个档位必须一起改**：只改 zen 不改老档的话，XMind 8 的文件照样撞号。
+ * 下面 ② 就是专门盯老档的 —— 少了它，"改一半"不会被发现。
+ */
+{
+  const X = await import('./xmind.js');
+
+  /** zen 档往返：写 → 只留 content.json（剥掉本工具的无损快照）→ 读回 */
+  const roundTripZen = async (kids) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根' }, children: kids } }) }];
+    const blob = await X.writeXMind(sheets, 'sh1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await X.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(entries.get('content.json')));
+    const zenBuf = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X.readXMind(new Uint8Array(zenBuf));
+    return JSON.parse(r.sheets[0].content).root.children || [];
+  };
+
+  const g = (id, text, grp, label) =>
+    ({ data: { id, text, ...(grp ? { boundaryGroup: grp, boundaryLabel: label || '' } : {}) }, children: [] });
+
+  // ① zen 档：两个分支各带一组外框 —— 组号必须不同
+  {
+    const branches = await roundTripZen([
+      { data: { id: 'nA', text: 'A' }, children: [g('nA1', 'A一', 'bg1', '甲组'), g('nA2', 'A二', 'bg1', '甲组')] },
+      { data: { id: 'nB', text: 'B' }, children: [g('nB1', 'B一', 'bg1', '乙组'), g('nB2', 'B二', 'bg1', '乙组')] },
+    ]);
+    const gA = branches[0].children.map((n) => n.data.boundaryGroup);
+    const gB = branches[1].children.map((n) => n.data.boundaryGroup);
+    ok(gA[0] && gA[0] === gA[1], '分支A 的两个成员仍是同一组', JSON.stringify(gA));
+    ok(gB[0] && gB[0] === gB[1], '分支B 的两个成员仍是同一组', JSON.stringify(gB));
+    ok(gA[0] !== gB[0], '★ 两个分支的组号**不能相同**（相同会被内核并成一个大框，另一个框消失）',
+      JSON.stringify([gA[0], gB[0]]));
+    eq(branches[0].children[0].data.boundaryLabel, '甲组', '分支A 的框标题还是「甲组」');
+    eq(branches[1].children[0].data.boundaryLabel, '乙组', '★ 分支B 的框标题还是「乙组」（并框时它会被吃掉）');
+  }
+
+  // ② 老档（content.xml）：同一条规矩，漏了它就等于只修一半
+  {
+    const xml = `<xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" version="2.0">
+<sheet id="s1"><topic id="R"><title>根</title>
+  <children><topics type="attached">
+    <topic id="A"><title>A</title>
+      <children><topics type="attached">
+        <topic id="A1"><title>A一</title></topic><topic id="A2"><title>A二</title></topic>
+      </topics></children>
+      <boundaries><boundary><title>甲组</title><topic-range>A1 A2</topic-range></boundary></boundaries>
+    </topic>
+    <topic id="B"><title>B</title>
+      <children><topics type="attached">
+        <topic id="B1"><title>B一</title></topic><topic id="B2"><title>B二</title></topic>
+      </topics></children>
+      <boundaries><boundary><title>乙组</title><topic-range>B1 B2</topic-range></boundary></boundaries>
+    </topic>
+  </topics></children>
+</topic></sheet></xmap-content>`;
+    // 包 try/catch：被检查的东西坏掉时必须**报失败**，不能把整个测试进程崩掉
+    let br = [];
+    let err = null;
+    try {
+      const zb = await X.zipWrite([{ name: 'content.xml', data: new TextEncoder().encode(xml) }]);
+      const r = await X.readXMind(new Uint8Array(zb));
+      br = JSON.parse(r.sheets[0].content).root.children || [];
+    } catch (e) { err = String(e?.message || e); }
+    ok(!err, '老档能正常解析（探针自身没写坏）', err || '');
+    const gA = br[0]?.children?.map((n) => n.data.boundaryGroup) || [];
+    const gB = br[1]?.children?.map((n) => n.data.boundaryGroup) || [];
+    ok(gA[0] && gB[0] && gA[0] !== gB[0],
+      '★ 老档两个分支的组号也不能相同（只改 zen 不改老档，XMind 8 的文件照样撞号）',
+      JSON.stringify([gA, gB]));
+  }
+
+  // ③ 组号形态必须仍是 `bg<数字>`：内核 rebuildGroups 靠 /^bg(\d+)$/ 解析已有组号、
+  //    把 _boundarySeq 抬到最大值之上，否则用户之后新建的外框会重号
+  {
+    const branches = await roundTripZen([
+      { data: { id: 'nA', text: 'A' }, children: [g('nA1', 'A一', 'bg1', '甲'), g('nA2', 'A二', 'bg1', '甲')] },
+      { data: { id: 'nB', text: 'B' }, children: [g('nB1', 'B一', 'bg1', '乙'), g('nB2', 'B二', 'bg1', '乙')] },
+    ]);
+    const all = [].concat(
+      ...branches.map((b) => (b.children || []).map((n) => n.data.boundaryGroup)),
+    );
+    ok(all.every((v) => /^bg\d+$/.test(v || '')),
+      '组号保持 `bg<数字>` 形态（内核靠它抬序号基线，换随机串会让新建的框重号）',
+      JSON.stringify(all));
+  }
+}
+
 group('导出 content.json：下划线与「打包失败的附件」');
 
 /*

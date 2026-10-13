@@ -1242,14 +1242,38 @@ function buildKmNode(topic, depth = 0, counter = null) {
     }
   }
 
-  applyBoundaries(pairs, topic.boundaries);
+  applyBoundaries(pairs, topic.boundaries, counter);
   return { data, children };
 }
 
-/** 父节点上的 XMind boundary 区间 → 子节点的 boundaryGroup/boundaryLabel */
-function applyBoundaries(pairs, boundaries) {
+/**
+ * 父节点上的 XMind boundary 区间 → 子节点的 boundaryGroup/boundaryLabel
+ *
+ * @param {object} [counter] **整份文件共用**的序号盒（见下面 BUG 140）
+ */
+function applyBoundaries(pairs, boundaries, counter = null) {
   if (!Array.isArray(boundaries) || !boundaries.length || !pairs.length) return;
-  let seq = 0;
+  /*
+   * BUG 140：组号必须**全文件递增**，不能每个父话题各自从 1 重发。
+   *
+   * 早先这里写的是 `let seq = 0;`（函数局部变量，每次调用都重置），
+   * 于是每个父话题的第一个外框都叫 `bg1`。实测（两个分支各带一组外框）：
+   *     分支A 的 A一 / A二 → bg1「甲组」
+   *     分支B 的 B一 / B二 → bg1「乙组」  ← 同一个号
+   *
+   * 而内核是按 **gid 全局**分组的（editor/index.html 里
+   * `var _groupNodes = new Map()` 键就是 gid，不区分父节点）——
+   * 于是这两组会被并成**一个**大框：A一、A二、B一、B二 六个节点
+   * 被同一个矩形圈住，标签取先找到的那个（「甲组」），
+   * 「乙组」这个框**凭空消失**。导入别人的 .xmind 就足以触发。
+   *
+   * ⓘ 组号仍保持 `bg<数字>` 形态，不能换成随机串：内核的 rebuildGroups
+   *   靠 `/^bg(\d+)$/` 解析已有组号、把 _boundarySeq 抬到最大值之上，
+   *   否则用户之后新建的外框会重号（那一处是另一个已修的 bug）。
+   *   现在整份文件递增，最大值就是组数，抬基线依然成立。
+   */
+  const box = counter || {};
+  const nextSeq = () => { box.bgSeq = (Number(box.bgSeq) || 0) + 1; return box.bgSeq; };
   for (const b of boundaries) {
     if (!b) continue;
     const range = str(b.range);
@@ -1264,7 +1288,7 @@ function applyBoundaries(pairs, boundaries) {
 
     const from = Math.min(...indices);
     const to = Math.max(...indices);
-    const gid = 'bg' + ++seq;
+    const gid = 'bg' + nextSeq();
     const label = str(b.title) ?? '';
     for (let i = from; i <= to && i < pairs.length; i++) {
       const d = pairs[i].km.data;
@@ -1410,11 +1434,17 @@ function parseLegacy(xml, stylesXml = null) {
   const styles = parseLegacyStyles(stylesXml);
   const sheets = [];
   let index = 0;
+  /*
+   * BUG 140：外框组号必须**整份文件共用**同一个序号盒，老档同样如此。
+   * 只修 zen 档不修老档的话，从 XMind 8 导入的文件里两个分支的外框
+   * 仍然会撞成同一个号（各自从 1 重发），被内核并成一个大框。
+   */
+  const counter = { bgSeq: 0 };
   for (const sheetEl of descendantsNamed(doc.documentElement, 'sheet')) {
     const topicEls = childrenOf(sheetEl, 'topic');
     if (!topicEls.length) continue;
     index++;
-    const kmRoot = buildKmFromXmlTopic(topicEls[0], 0, styles);
+    const kmRoot = buildKmFromXmlTopic(topicEls[0], 0, styles, counter);
     if (!kmRoot) continue;   // 根节点就超深 —— 异常文件，跳过这张画布
     const titleEl = childrenOf(sheetEl, 'title')[0];
     const title = titleEl?.textContent?.trim();
@@ -1519,7 +1549,7 @@ function resolveLegacyStyle(map, id) {
   return Object.keys(out).length ? out : null;
 }
 
-function buildKmFromXmlTopic(t, depth = 0, styles = null) {
+function buildKmFromXmlTopic(t, depth = 0, styles = null, counter = null) {
   if (depth > MAX_DEPTH) return null;   // 超深直接截断，不再下钻
   const data = {
     id: t.getAttribute('id') || newNodeId(),
@@ -1614,7 +1644,7 @@ function buildKmFromXmlTopic(t, depth = 0, styles = null) {
   if (topicsEl) {
     for (const topics of childrenOf(topicsEl, 'topics')) {
       for (const child of childrenOf(topics, 'topic')) {
-        const kmChild = buildKmFromXmlTopic(child, depth + 1, styles);
+        const kmChild = buildKmFromXmlTopic(child, depth + 1, styles, counter);
         if (!kmChild) continue;   // 超深被截断
         children.push(kmChild);
         pairs.push({ xid: child.getAttribute('id') || '', km: kmChild });
@@ -1622,14 +1652,20 @@ function buildKmFromXmlTopic(t, depth = 0, styles = null) {
     }
   }
 
-  applyXmlBoundaries(pairs, childrenOf(t, 'boundaries')[0]);
+  applyXmlBoundaries(pairs, childrenOf(t, 'boundaries')[0], counter);
   return { data, children };
 }
 
 /** 老版 boundary 结构各家写法不一，做宽容解析：任意后代的 idref/ref/id 属性或文本里的 id 都收 */
-function applyXmlBoundaries(pairs, boundariesEl) {
+function applyXmlBoundaries(pairs, boundariesEl, counter = null) {
   if (!boundariesEl || !pairs.length) return;
-  let seq = 0;
+  /*
+   * BUG 140：与 zen 档同一条规矩 —— 组号必须**整份文件递增**（见 applyBoundaries
+   * 注释里的实测）。早先这里也是 `let seq = 0;`（函数局部变量），老档每个父话题
+   * 的第一个外框都叫 `bg1`，两个分支的框会被内核并成一个。
+   */
+  const box = counter || {};
+  const nextSeq = () => { box.bgSeq = (Number(box.bgSeq) || 0) + 1; return box.bgSeq; };
   for (const b of childrenOf(boundariesEl, 'boundary')) {
     const ids = [];
     const walk = (n) => {
@@ -1655,7 +1691,7 @@ function applyXmlBoundaries(pairs, boundariesEl) {
       .filter((i) => i >= 0);
     if (!indices.length) continue;
 
-    const gid = 'bg' + ++seq;
+    const gid = 'bg' + nextSeq();
     const label = childrenOf(b, 'title')[0]?.textContent ?? '';
     for (let i = Math.min(...indices); i <= Math.max(...indices) && i < pairs.length; i++) {
       const d = pairs[i].km.data;
