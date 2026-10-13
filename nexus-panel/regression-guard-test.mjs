@@ -1231,12 +1231,13 @@ console.log('\n=== 13. 外链用途判定同源 ===');
 
   const shellCode = code('js/shell.js');
   const appCode = code('src/App.tsx');
-  t('原生壳走共用实现（不是自己那份）',
-    !!shellCode && /kindOfDirective\s*\(/.test(shellCode) && !/function\s+kindOf\s*\(/.test(shellCode),
-    '');
-  t('React 壳走共用实现（不是自己那份）',
-    !!appCode && /kindOfDirective/.test(appCode) && !/function\s+kindOfDirective\s*\(/.test(appCode),
-    '');
+  /*
+   * 两个壳现在都不直接用 kindOfDirective —— 那一环收进了 handleViolation。
+   * 所以这里钉的是"没有自己的定义"，而"两个壳都走 handleViolation"
+   * 由第 15 节钉。
+   */
+  t('原生壳没有自己的那份', !!shellCode && !/function\s+kindOf\s*\(/.test(shellCode), '');
+  t('React 壳没有自己的那份', !!appCode && !/function\s+kindOfDirective\s*\(/.test(appCode), '');
   t('两个壳都 import 了 external-policy（否则谈不上下游同源）',
     !!shellCode && /external-policy/.test(shellCode) && !!appCode && /external-policy/.test(appCode),
     '');
@@ -1299,6 +1300,64 @@ console.log('\n=== 14. 数值格式化只有一份 ===');
   t('内联抄一份照样被抓（判据没失明）',
     SIG.test('const value = Number.isInteger(v) ? String(v) : String(Number(v.toFixed(10)));')
     && !SIG.test('const value = fmt(v);'));
+}
+
+/* ============================================================
+ * 15. CSP 违规处理：两个壳必须走同一份，且两种上报形状都要认
+ * ------------------------------------------------------------
+ * 这段逻辑一度在两个壳里各写一遍（原生壳 onPluginCspViolation /
+ * React 壳 handleCspViolation），结构完全一致。它们**真的漂了**：
+ *
+ *   违规上报有**两种形状**
+ *     · 宿主转发插件 iframe 内的 → 带 blockedURI
+ *     · watchViolations 自己捕获的 → 只有 host + sample
+ *   React 壳两种都兜，原生壳**只认 blockedURI**。
+ *   而两个壳用的是同一个 watchViolations 观测主文档自己的违规 ——
+ *   那条路给的是第二种形状 → hostOf(undefined) === null → 直接 return。
+ *
+ *   **原生壳把自己文档里每一次违规都静默丢了**：不登记、不提示、
+ *   设置页待决策列表里永远不出现该域名，且没有任何报错。
+ *   症状是"同一个插件在一个壳里会提醒、另一个壳里什么都不发生"。
+ *
+ * 已收敛到 external-policy 的 handleViolation()。
+ *
+ * 下面三条分别钉：定义只有一处 / 两个壳都走它 / **两种形状都要兜**。
+ * 第三条是这个 BUG 的直接守门员 —— 只认一种形状的代码照样能通过前两条。
+ * ============================================================ */
+console.log('\n=== 15. CSP 违规处理同源 ===');
+{
+  /* 特征：读策略 → 判决策，这条链是那段处理逻辑的形状 */
+  const SIG = /decideHost\(\s*host\s*,\s*policy\s*\)/;
+  const files = walk(HERE).filter((p) => /\.(js|mjs|ts|tsx)$/.test(p)
+    && !p.endsWith('.min.js') && !p.endsWith('.d.ts'));
+  const hits = [];
+  for (const p of files) {
+    const rel = relativeTo(p);
+    if (rel === 'regression-guard-test.mjs') continue;   // 下面的元断言里也有样例串
+    if (SIG.test(readFileSync(p, 'utf8'))) hits.push(rel);
+  }
+  const ONLY = 'js/external-policy.js';
+  t('违规处理只出现一次', hits.length === 1 && hits[0] === ONLY,
+    `实测 ${hits.length} 处：${hits.join('、')}`);
+
+  const shellCode = code('js/shell.js');
+  const appCode = code('src/App.tsx');
+  t('原生壳走共用实现', !!shellCode && /handleViolation\s*\(/.test(shellCode), '');
+  t('React 壳走共用实现', !!appCode && /handleViolation\s*\(/.test(appCode), '');
+
+  /* 直接守那个 BUG：三种来源都要兜。
+     用 indexOf 而不是正则 —— 那段里有 ${ } 和反引号，写成正则极易转义错，
+     而转义错的正则会**静默匹配不上**，于是断言永远绿。 */
+  const hv = code(ONLY) || '';
+  t('两种上报形状都要认（blockedURI / sample / host）',
+    hv.includes('d?.blockedURI') && hv.includes('d?.sample') && hv.includes('${d.host}'),
+    '只认一种形状 == 静默丢掉另一路上报');
+  t('d.ts 里也声明了它（TS 侧才用得上）',
+    /handleViolation/.test(read('js/external-policy.d.ts') || ''), '');
+  /* 元断言：判据失明比数字难看危险得多 */
+  t('只认 blockedURI 照样被抓（判据没失明）',
+    SIG.test('const decision = decideHost(host, policy);')
+    && !/sample/.test('const uri = d.blockedURI;'));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

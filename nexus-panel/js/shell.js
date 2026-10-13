@@ -129,36 +129,23 @@ function syncBadges() {
 
 /* ---------------------------- 外链 ---------------------------- */
 
-/** 记录一次被 CSP 拦下的外链；智能提醒模式下提示用户去决策 */
+/**
+ * 记录一次被 CSP 拦下的外链；智能提醒模式下提示用户去决策。
+ *
+ * 判据与提示文案都在 external-policy 的 handleViolation 里 ——
+ * 本文件此前有一份自己的实现，与 React 壳（src/App.tsx）那份是
+ * **同一段逻辑抄了两遍**，而且已经漂了：本文件只认 `blockedURI`，
+ * 而壳自己用 watchViolations 观测到的违规**没有这个字段**，
+ * 于是那些违规被整条丢掉（不登记、不提示、不报错）。
+ * 只把 toast 这一步留在这里 —— 两个壳的提示机制本来就不是同一个。
+ */
 function onPluginCspViolation(d, manifest) {
-  const host = extPolicy.hostOf(d.blockedURI);
-  if (!host || extPolicy.LOCAL_HOSTS.has(host)) return;
-
-  const policy = extPolicy.loadPolicy();
-  const decision = extPolicy.decideHost(host, policy);
-  if (decision === 'allow') return;               // 用户已信任（说明 CSP 还没配上）
-
-  extPolicy.recordHosts([{
-    host,
-    /*
-     * 用途统一走 external-policy 的 kindOfDirective ——
-     * 本文件此前有一份自己的 kindOf()，与 React 壳（src/App.tsx）那份
-     * 是**同一段逻辑抄了三遍**。漂了之后同一条外链在两个壳里会被标成
-     * 不同用途，而用户正是照着它决定"这个域名放不放行"。
-     * 两个壳都 import 了 external-policy，所以放那儿才谈得上同源。
-     * （原来的 `KIND_LABELS ? ... : 'unknown'` 是死判据：
-     *   KIND_LABELS 是模块级常量对象，恒为真。）
-     */
-    kind: extPolicy.kindOfDirective(d.directive),
-    sample: d.blockedURI,
-  }], manifest?.id);
-
-  if (decision === 'ask' && policy.mode === 'smart') {
-    toast(`插件「${manifest?.name || ''}」想访问 ${host}，已拦下 · 设置里可放行`, 'err');
-  } else if (decision === 'block') {
-    console.warn('[external] 已拦截', host);
-  }
-  refreshExternalUI?.();
+  const r = extPolicy.handleViolation(d, {
+    pluginId: manifest?.id,
+    pluginName: manifest?.name,
+    notify: (msg, kind) => toast(msg, kind),
+  });
+  if (r) refreshExternalUI?.();
 }
 
 /** 设置页可能开着，给它一个刷新的机会 */
