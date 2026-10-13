@@ -79,11 +79,42 @@ t('tsc 真的被执行了（拿得到退出码，不是 spawn 失败）',
 const out = `${r.stdout || ''}\n${r.stderr || ''}`;
 const errors = out.split('\n').filter((l) => /error TS\d+:/.test(l));
 
-t(`error TS 条数不超过基线（基线 ${BASELINE}，只减不增）`,
-  errors.length <= BASELINE,
-  errors.length <= BASELINE
-    ? `${errors.length} 条`
-    : `${errors.length} 条，超出 ${errors.length - BASELINE} 条：\n${errors.slice(0, 10).join('\n')}`);
+/* ------------------------------------------------------------------ *
+ * 第 1b 节：依赖不齐时，tsc 的结论整体不可信 —— 先把它挑出来
+ * ------------------------------------------------------------------ *
+ * 实测：环境被清过一次依赖后（只剩 14 个包），这里报 141 条、
+ * "超出基线 126 条"，而那 126 条**全是缺 @xyflow/react 引起的连锁噪声**
+ * （TS2307 找不到包 → 类型退化成 any → 一串 TS7006）。
+ *
+ * 这时最糟的不是红，而是**红的方向**：报告说是"你引入了 126 个新错误"，
+ * 而真因是"依赖没装齐"。照着这条去查，会去翻代码，而代码一点没变。
+ * —— 与本项目反复撞的「报错要指向真因」是同一条。
+ *
+ * 所以先判依赖齐不齐。判据只看 TS2307 的模块名：
+ *   · 裸包名（不以 `.` 开头）→ 外部依赖缺失，环境噪声
+ *   · 相对路径（./ ../）    → **真缺陷**：本地文件不存在或改名了，不能豁免
+ * 不能用"node_modules 里有没有这个包"来判：@tauri-apps/cli、jsdom 的
+ * 传递依赖（tough-cookie / ws 等）装齐了也会被报缺，噪声更大。
+ */
+const missingExternal = [...out.matchAll(/error TS2307:.*?Cannot find module '([^']+)'/g)]
+  .map((m) => m[1])
+  .filter((s) => !s.startsWith('.'));
+
+const envOk = missingExternal.length === 0;
+
+t('依赖齐：tsc 没报「找不到外部包」（缺包时结论含连锁噪声，下面的基线比较会跳过）',
+  envOk,
+  envOk ? '' : `缺 ${missingExternal.length} 处，如 ${[...new Set(missingExternal)].slice(0, 5).join(' / ')} —— 先按 package.json 装齐，否则本守卫的"超出 N 条"会把你引向代码`);
+
+if (envOk) {
+  t(`error TS 条数不超过基线（基线 ${BASELINE}，只减不增）`,
+    errors.length <= BASELINE,
+    errors.length <= BASELINE
+      ? `${errors.length} 条`
+      : `${errors.length} 条，超出 ${errors.length - BASELINE} 条：\n${errors.slice(0, 10).join('\n')}`);
+} else {
+  console.log('   ⚠️  跳过基线比较：依赖不齐，此时的条数里混着连锁噪声，比不出真问题');
+}
 
 /* ------------------------------------------------------------------ *
  * 第 2 节：判据没在空转
@@ -101,6 +132,28 @@ t('判据认得出合成样本里的 error TS（不是空转）',
 
 t('合成样本里判据不会误伤普通输出（不是"永远报错"）',
   parse(SAMPLE).every((l) => /error TS\d+:/.test(l)) && parse('').length === 0);
+
+/* 挑"缺外部包"的判据同样要成对验：
+ *   ① 认得出裸包名（否则缺依赖时照样去做基线比较，又回到 141 条的红）
+ *   ② 不误伤相对路径（相对路径的 TS2307 是真缺陷：本地文件没了）
+ * 少了 ②，判据写成"见 TS2307 就当环境噪声"也能过 —— 那会把
+ *「import 了一个已经改名的本地模块」整类真错误静默吞掉。 */
+const MISS_SAMPLE = [
+  "a.tsx(6,41): error TS2307: Cannot find module '@xyflow/react' or its corresponding type declarations.",
+  "b.tsx(2,3): error TS2307: Cannot find module './components/Foo' or its corresponding type declarations.",
+].join('\n');
+
+const pickMissing = (s) => [...s.matchAll(/error TS2307:.*?Cannot find module '([^']+)'/g)]
+  .map((m) => m[1])
+  .filter((x) => !x.startsWith('.'));
+
+t('缺包判据认得出裸包名（合成样本）',
+  pickMissing(MISS_SAMPLE).length === 1
+  && pickMissing(MISS_SAMPLE)[0] === '@xyflow/react',
+  JSON.stringify(pickMissing(MISS_SAMPLE)));
+
+t('缺包判据不误伤相对路径（那是真缺陷，不是环境噪声）',
+  !pickMissing(MISS_SAMPLE).includes('./components/Foo'));
 
 /* ------------------------------------------------------------------ *
  * 第 3 节：把这一轮修掉的两处钉住（各配"样本仍在"，成对才不作废）
