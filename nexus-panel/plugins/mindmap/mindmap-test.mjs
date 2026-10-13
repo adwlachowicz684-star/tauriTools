@@ -19074,6 +19074,141 @@ group('BUG 142 删主题回退：写盘失败不得说「已回退」（跨文�
 }
 
 
+/* ============================================================
+   BUG 143：导入别人的 .xmind —— 概要（summary）不能被当成普通分支
+
+   XMind 的概要是括在一批兄弟节点外面的**括注**，不是分支，而且是
+   **双写**的：话题放父话题的 children.summary，范围描述符放同一个
+   父话题的 summaries（零基闭区间 "(0,2)"）。少写任何一处，产出的是
+   「能在 XMind 里打开、但实际是坏的」文件。
+   ============================================================ */
+
+group('BUG 143 · XMind 概要（summary）必须原样保留并写回，不能变成普通分支');
+
+{
+  const X = await import('./xmind.js');
+
+  /** 喂一份 zen content.json，返回导入后的 root */
+  async function importZen(sheetObj) {
+    const zip = await X.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify([sheetObj])) }]);
+    const r = await X.readXMind(new Uint8Array(zip));
+    // 包 try/catch：被检查的东西坏掉时必须**报失败**，不能把整个测试进程崩掉
+    try { return JSON.parse(r.sheets[0].content).root; } catch (e) { ok(false, '探针：导入结果能解析', String(e)); return { data: {}, children: [] }; }
+  }
+
+  /** 导出成 zen，返回 rootTopic */
+  async function exportZen(root) {
+    const blob = await X.writeXMind([{ id: 's1', title: '画布1',
+      content: JSON.stringify({ root, theme: 'fresh-blue', layout: 'default' }) }], 's1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const ent = await X.zipRead(buf);
+    return JSON.parse(new TextDecoder().decode(ent.get('content.json')))[0].rootTopic;
+  }
+
+  const mkSheet = (summaries) => ({
+    id: 's1', class: 'sheet', title: '画布1',
+    rootTopic: {
+      id: 'R', title: '根',
+      children: {
+        attached: [{ id: 'A', title: 'A' }, { id: 'B', title: 'B' }, { id: 'C', title: 'C' }],
+        summary: [{ id: 'S1', title: 'A到C的概要' }],
+      },
+      ...(summaries ? { summaries } : {}),
+    },
+  });
+
+  // ① 带范围描述符：必须**双写**（话题进 children.summary + 父话题带 summaries）
+  {
+    const t = await exportZen(await importZen(mkSheet([{ id: 'sm1', range: '(0,2)', topicId: 'S1' }])));
+    eq((t.children?.attached || []).map((x) => x.title).join(','), 'A,B,C', '① attached 仍只有三个真分支');
+    eq((t.children?.summary || []).map((x) => x.title).join(','), 'A到C的概要',
+      '★ 概要话题必须写回 children.summary（修复前被塞进 attached，变成普通分支）');
+    eq(t.summaries?.length, 1, '★ 范围描述符必须同时写在父话题上（只写话题 = 没有范围绑定的孤立概要）');
+    eq(t.summaries?.[0]?.range, '(0,2)', '范围原样带回来（零基闭区间）');
+    eq(t.summaries?.[0]?.topicId, 'S1', '★ 描述符的 topicId 必须指向概要话题（指错就等于括错地方）');
+  }
+
+  // ② 没有范围描述符：宁可按普通分支写，也不写一个没有范围绑定的孤立概要
+  {
+    const t = await exportZen(await importZen(mkSheet(null)));
+    eq((t.children?.summary || []).length, 0, '★ 拿不到范围时不写 children.summary（孤立概要比分支更糟）');
+    eq(t.summaries, undefined, '★ 拿不到范围时不写 summaries');
+    eq((t.children?.attached || []).map((x) => x.title).join(','), 'A,B,C,A到C的概要',
+      '退回 attached：文字还在，看得见');
+  }
+
+  // ③ 范围越界（用户删过兄弟节点）：夹紧到实际可概括的范围，不能写越界的括注
+  {
+    const t = await exportZen(await importZen(mkSheet([{ id: 'sm1', range: '(0,9)', topicId: 'S1' }])));
+    eq(t.children?.summary?.[0]?.title, 'A到C的概要', '仍能写成概要');
+    eq(t.summaries?.[0]?.range, '(0,2)', '★ 越界范围必须夹紧到最后一个兄弟（静默错位比降级更糟）');
+  }
+
+  // ④ 三轮往返恒定：不能越导越走样
+  {
+    let root = await importZen(mkSheet([{ id: 'sm1', range: '(0,2)', topicId: 'S1' }]));
+    for (let i = 0; i < 3; i++) {
+      const rt = await exportZen(root);
+      root = await importZen({ id: 's1', class: 'sheet', title: '画布1', rootTopic: rt });
+    }
+    const t = await exportZen(root);
+    eq((t.children?.summary || []).map((x) => x.title).join(','), 'A到C的概要', '④ 三轮后仍是概要');
+    eq(t.summaries?.[0]?.range, '(0,2)', '④ 三轮后范围没变');
+  }
+
+  // ⑤ 没有概要的文件：不能凭空长出 summary / summaries（防"改了不该改的"）
+  {
+    const t = await exportZen(await importZen({ id: 's1', class: 'sheet', title: '画布1',
+      rootTopic: { id: 'R', title: '根', children: { attached: [{ id: 'A', title: 'A' }] } } }));
+    eq(t.children?.summary, undefined, '⑤ 没有概要时不得写出 children.summary');
+    eq(t.summaries, undefined, '⑤ 没有概要时不得写出 summaries');
+  }
+
+  // ⑥ 老档（content.xml）：<topics type="summary"> + <summaries>，同一条规矩
+  {
+    const xml = `<xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" version="2.0">
+<sheet id="s1"><topic id="R"><title>根</title>
+  <children><topics type="attached">
+    <topic id="A"><title>A</title></topic><topic id="B"><title>B</title></topic>
+  </topics>
+  <topics type="summary"><topic id="S1"><title>概要标题</title></topic></topics>
+  </children>
+  <summaries><summary id="sm1" topic-id="S1" range="(0,1)"/></summaries>
+</topic></sheet></xmap-content>`;
+    let t = null;
+    try {
+      const zip = await X.zipWrite([{ name: 'content.xml', data: new TextEncoder().encode(xml) }]);
+      const r = await X.readXMind(new Uint8Array(zip));
+      t = await exportZen(JSON.parse(r.sheets[0].content).root);
+    } catch (e) { ok(false, '⑥ 老档能正常解析（探针自身没写坏）', String(e?.message || e)); }
+    if (t) {
+      eq((t.children?.summary || []).map((x) => x.title).join(','), '概要标题',
+        '★ 老档的概要也必须写回 children.summary（只改 zen 不改老档 = 只修一半）');
+      eq(t.summaries?.[0]?.range, '(0,1)', '老档的范围同样带回来');
+    }
+  }
+
+  // ⑦ 源码契约：提示函数必须真的接进导入回执（光定义 = 没提示）
+  {
+    const idx = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    ok(/function unsupportedSummariesTip\(/.test(idx), '定义了 unsupportedSummariesTip');
+    // 只写函数名会命中**函数定义本身** —— 必须先摘掉定义行，再数剩下的调用点
+    const noDef = idx.replace(/function unsupportedSummariesTip\(sheets\)\s*\{/, '');
+    const calls = (noDef.match(/unsupportedSummariesTip\(sheets\)/g) || []).length;
+    eq(calls, 1, '★ unsupportedSummariesTip 必须真的接进导入回执（定义那行不算）');
+    ok(/个概要（summary）本工具显示为普通分支/.test(idx), '提示要说清是概要、且显示为普通分支');
+  }
+
+  // ⑧ 写侧必须双写：只写 children.summary 不写 summaries 是坏的
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    ok(/if \(summaries\.length\) topic\.summaries = summaries;/.test(src),
+      '★ 写侧必须同时写 topic.summaries（概要的第二处）');
+    ok(/function clampSummaryRange\(/.test(src), '范围必须夹紧（防止越界括注）');
+  }
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {

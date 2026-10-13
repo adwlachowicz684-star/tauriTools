@@ -2922,7 +2922,7 @@ async function gcOrphanAssets(quiet = false) {
     // 不说的话用户看到"关系线没了"会以为文件被改坏。
     const warns = [await warnForeignAssets(sheets), unsupportedMarkersTip(sheets),
       unsupportedRelationshipsTip(sheets), unsupportedFmExtrasTip(sheets),
-      unsupportedCalloutsTip(sheets)].filter(Boolean);
+      unsupportedCalloutsTip(sheets), unsupportedSummariesTip(sheets)].filter(Boolean);
     status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`
       + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容')
       + (warns.length ? ' ⚠ ' + warns.join('；') : ''), warns.length > 0);
@@ -3092,6 +3092,41 @@ async function gcOrphanAssets(quiet = false) {
    *          null=内容重复未创建（不是失败）。调用方据此决定**能不能**对外
    *          声称「已另存一份」（见 restoreBackup）。
    */
+  /**
+   * BUG 143：统计被保留下来的**概要**（XMind 的 summary，`children.summary`
+   * + 父话题上的 `summaries` 范围描述符）。
+   *
+   * 概要是括在一批兄弟节点外面的括注，不是分支。本工具内核没有 summary
+   * 概念，画出来就是一个普通分支 —— 但已原样记在 `data.xsummary` 里、导出
+   * .xmind 时双写回。不说的话，用户导入别人的 .xmind 看到"多出一排分支"
+   * 会以为文件被改坏（措辞与 unsupportedCalloutsTip 对齐）。
+   *
+   * ⓘ 只统计**带回了范围**的那些：范围读不到时概要按普通分支写（不写没有
+   *   范围绑定的孤立概要），那时不该说"已原样保留"。
+   *
+   * @param {Array} sheets 画布数组
+   * @returns {string} 提示串；没有则 ''
+   */
+  function unsupportedSummariesTip(sheets) {
+    let total = 0;
+    let sheetsWith = 0;
+    const walk = (n, depth) => {
+      if (!n || depth > 200) return;
+      if (n?.data?.xsummary) total++;
+      for (const c of n.children || []) walk(c, depth + 1);
+    };
+    for (const sh of sheets || []) {
+      let root = null;
+      try { root = JSON.parse(sh?.content || '{}').root; } catch { /* 坏内容跳过 */ }
+      const before = total;
+      walk(root, 0);
+      if (total > before) sheetsWith++;
+    }
+    if (!total) return '';
+    return `${sheetsWith} 张画布上的 ${total} 个概要（summary）本工具显示为普通分支`
+      + '（已原样保留，导出 .xmind 时会写回）';
+  }
+
   async function backupNow(force = false) {
     capture();
     const fp = wb.fingerprintSheets(workbook.sheets);

@@ -916,6 +916,7 @@ function buildTopic(kmNode, packs) {
   if (Array.isArray(kmNode?.children) && kmNode.children.length) {
     const attached = [];
     const detached = [];
+    const pendSummary = [];
     const pairs = [];
     for (const c of kmNode.children) {
       if (!c) continue;
@@ -926,19 +927,64 @@ function buildTopic(kmNode, packs) {
        * range 引用的是 topic id，跨两个桶也能指到。
        */
       if (c.data && c.data.xcallout) detached.push(child);
+      else if (c.data && c.data.xsummary) pendSummary.push({ child, km: c });
       else attached.push(child);
       pairs.push({ xid: child.id, km: c });
     }
-    if (attached.length || detached.length) {
+    /*
+     * BUG 143：概要（summary）必须**双写** —— 话题放 `children.summary`，
+     * 同时在父话题上写 `summaries: [{ id, range, topicId }]`。
+     *
+     * 范围必须能落在**实际的 attached** 上：用户删过兄弟节点后，原来的
+     * "(0,4)" 可能已经越界，写出去就是指向错漏的括注（静默错位比降级更糟）。
+     * 所以这里夹紧到 attached 的数量；拿不到范围或没有 attached 可概括时
+     * **退回 attached**（按普通分支写）—— 至少文字看得见，不会变成一个
+     * 没有范围绑定的孤立概要。
+     */
+    const summaries = [];
+    const summaryTopics = [];
+    for (const item of pendSummary) {
+      const range = clampSummaryRange(item.km?.data?.xsummaryRange, attached.length);
+      if (!range) { attached.push(item.child); continue; }   // 退回普通分支
+      summaries.push({
+        id: safeId(item.km?.data?.xsummaryId) || shortId('sm'),
+        range,
+        topicId: item.child.id,
+      });
+      summaryTopics.push(item.child);
+    }
+    if (attached.length || detached.length || summaryTopics.length) {
       const ch = {};
       if (attached.length) ch.attached = attached;
       if (detached.length) ch.detached = detached;
+      if (summaryTopics.length) ch.summary = summaryTopics;
       topic.children = ch;
+      if (summaries.length) topic.summaries = summaries;
       const bounds = buildBoundaries(pairs);
       if (bounds) topic.boundaries = bounds;
     }
   }
   return topic;
+}
+
+/**
+ * 概要范围夹紧到实际可概括的兄弟数。
+ *
+ * `range` 是零基闭区间字符串（"(0,2)" = 第 0~2 个）。返回 null 表示
+ * **没法用**（格式不对 / 没有可概括的兄弟），调用方据此退回 attached。
+ */
+function clampSummaryRange(raw, n) {
+  if (n <= 0) return null;
+  const m = /^\(\s*(\d+)\s*,\s*(\d+)\s*\)$/.exec(String(raw ?? '').trim());
+  if (!m) return null;
+  const last = n - 1;
+  let s = Number(m[1]);
+  let e = Number(m[2]);
+  if (!Number.isFinite(s) || !Number.isFinite(e)) return null;
+  s = Math.min(s, last);
+  e = Math.min(e, last);
+  if (s > e) s = e;
+  return `(${s},${e})`;
 }
 
 function buildLabels(node) {
@@ -1236,6 +1282,28 @@ function buildKmNode(topic, depth = 0, counter = null) {
   // 软件若写了别的取值，不该被当成"已折叠"（宁可展开，不要静默改结构）。
   if (str(topic.branch) === 'folded') data.expandState = 'collapse';
 
+  /*
+   * BUG 143：XMind 的**概要**（summary）是「双写」的 —— 除了把概要话题放进
+   * 父话题的 `children.summary`，还要在**同一个父话题**上写一条范围描述符：
+   *
+   *     topic.summaries = [{ id, range: "(0,2)", topicId }]
+   *
+   * `range` 是**零基闭区间**："(0,2)" 表示概括第 0~2 个 attached 子话题。
+   * 两处少写任何一处，产出的是「能在 XMind 里打开、但实际是坏的」文件
+   * （概要话题变成没有范围绑定的孤立节点）。
+   *
+   * 所以这里按 topicId 把描述符收起来，等读到概要话题时配回去。
+   */
+  const summaryRanges = new Map();
+  if (Array.isArray(topic.summaries)) {
+    for (const s of topic.summaries) {
+      if (!s) continue;
+      const tid = safeId(s.topicId) || safeId(s.topicID);
+      if (!tid) continue;
+      summaryRanges.set(tid, { id: str(s.id), range: str(s.range) });
+    }
+  }
+
   const children = [];
   const pairs = [];
   if (topic.children && typeof topic.children === 'object') {
@@ -1246,6 +1314,29 @@ function buildKmNode(topic, depth = 0, counter = null) {
         if (!c) continue;
         const kmChild = buildKmNode(c, depth + 1, counter);
         if (!kmChild) continue;   // 超深/超量被截断
+        /*
+         * BUG 143：概要（summary）是挂在若干兄弟节点外面的**括注**，
+         * **不是分支**。早先 summary 桶与 attached 一视同仁，写侧又一律
+         * 写进 attached —— 于是「导入别人的 .xmind → 改一点 → 导出」之后，
+         * 所有概要都变成了普通分支：画面上凭空多出一排分支，原始文件的
+         * 结构被改掉，且不报错、也不计入任何丢失提示。
+         *
+         * 与标注（BUG 141）同一套取舍：本工具画不出括注，只**记住**它是
+         * 概要、并尽量带回范围，导出时原样写回 —— 不许把别人的文件改掉。
+         */
+        if (key === 'summary') {
+          const info = summaryRanges.get(safeId(c.id) || '');
+          /*
+           * 拿不到范围就**不标**。概要必须双写（话题 + 范围描述符），只写
+           * 话题不写范围产出的是「没有范围绑定的孤立概要」—— 比按普通分支
+           * 写更糟（文字在，但 XMind 里画不出来）。那时退回 attached。
+           */
+          if (info && info.range) {
+            kmChild.data.xsummary = true;
+            kmChild.data.xsummaryRange = info.range;
+            if (info.id) kmChild.data.xsummaryId = info.id;
+          }
+        }
         /*
          * BUG 141：XMind 的**标注**（callout）写在 `children.detached` 里 ——
          * 它是挂在节点旁边的小气泡，**不是分支**。早先三个桶一视同仁收进
@@ -1571,6 +1662,24 @@ function resolveLegacyStyle(map, id) {
   return Object.keys(out).length ? out : null;
 }
 
+/**
+ * 老档 topic 上的概要范围描述符：`<summaries><summary topic-id range/></summaries>`
+ *
+ * 返回 Map<topicId, {id, range}>。读不到就是空 Map —— 那时概要退回 attached
+ * （写侧只写 zen 档，没有范围可依时不硬写，见 buildTopic）。
+ */
+function xmlSummaryRanges(topicEl) {
+  const out = new Map();
+  const wrap = childrenOf(topicEl, 'summaries')[0];
+  if (!wrap) return out;
+  for (const s of childrenOf(wrap, 'summary')) {
+    const tid = s.getAttribute?.('topic-id') || s.getAttribute?.('topicId') || s.getAttribute?.('idref');
+    if (!tid) continue;
+    out.set(tid, { id: str(s.getAttribute?.('id')), range: str(s.getAttribute?.('range')) });
+  }
+  return out;
+}
+
 function buildKmFromXmlTopic(t, depth = 0, styles = null, counter = null) {
   if (depth > MAX_DEPTH) return null;   // 超深直接截断，不再下钻
   const data = {
@@ -1663,14 +1772,30 @@ function buildKmFromXmlTopic(t, depth = 0, styles = null, counter = null) {
   const children = [];
   const pairs = [];
   const topicsEl = childrenOf(t, 'children')[0];
+  /*
+   * BUG 143：老档（content.xml）的概要同样要读范围描述符，读不到就退回
+   * attached（写侧只写 zen 档，没有范围可依时宁可按分支写，也不写一个
+   * 没有范围绑定的孤立概要 —— 见 buildTopic 的说明）。
+   */
+  const sumRanges = xmlSummaryRanges(t);
   if (topicsEl) {
     for (const topics of childrenOf(topicsEl, 'topics')) {
       // BUG 141：老档的标注同样写在 `<topics type="detached">` 里，与 zen 档同理
       const isDetached = str(topics.getAttribute?.('type')) === 'detached';
+      // BUG 143：老档的概要写在 `<topics type="summary">` 里
+      const isSummary = str(topics.getAttribute?.('type')) === 'summary';
       for (const child of childrenOf(topics, 'topic')) {
         const kmChild = buildKmFromXmlTopic(child, depth + 1, styles, counter);
         if (!kmChild) continue;   // 超深被截断
         if (isDetached) kmChild.data.xcallout = true;
+        else if (isSummary) {
+          const info = sumRanges.get(child.getAttribute('id') || '');
+          if (info && info.range) {   // 拿不到范围就不标（同上：不写孤立概要）
+            kmChild.data.xsummary = true;
+            kmChild.data.xsummaryRange = info.range;
+            if (info.id) kmChild.data.xsummaryId = info.id;
+          }
+        }
         children.push(kmChild);
         pairs.push({ xid: child.getAttribute('id') || '', km: kmChild });
       }
