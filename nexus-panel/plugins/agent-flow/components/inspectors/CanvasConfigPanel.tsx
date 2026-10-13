@@ -5,6 +5,8 @@ import {
   mcpEntryDrifted, syncMcpFromLibrary, type McpLibraryEntry,
 } from '../../engine/canvasConfig';
 import { EXPORT_FORMATS } from '../../engine/scriptExport';
+/* looksAbsolute 以前只在测试里出现 —— 注释写着"给用户即时提示"，却没人用 */
+import { looksAbsolute } from '../../engine/exportDir';
 import {
   migrateEnvVars, newParamId, paramKeyOf, type CanvasParamType, type CanvasParam,
 } from '../../engine/canvasParams';
@@ -488,7 +490,17 @@ function CanvasConfigPanel({
               <p className="cfg-hint">
                 {canExportToFile
                   ? (exportDir
-                    ? '导出时直接写到这里，日志会显示完整路径。'
+                    ? (looksAbsolute(exportDir)
+                      ? '导出时直接写到这里，日志会显示完整路径。'
+                      /*
+                       * 相对目录**能写，但落在哪取决于程序启动时的工作目录** ——
+                       * 而用户填的时候想的是"相对于我这个项目"。
+                       * 于是日志报「✅ 已导出 → out/flow-x.sh」、文件确实写了，
+                       * 用户却在自己以为的地方找不到它。
+                       *
+                       * 不拦（填相对路径不是错），但必须说清，否则这是"成功但找不到"。
+                       */
+                      : '这是相对路径 —— 实际位置取决于程序启动时的工作目录，日志里的路径未必是你以为的那个地方。建议填绝对路径，或用「浏览」选一个。')
                     : '没设的话，每次导出会弹目录选择器让你选。')
                   : '当前是浏览器模式，写不了磁盘 —— 导出会走浏览器下载，文件名只有名字、路径不受控。'}
               </p>

@@ -4,6 +4,7 @@ import {
   loadExportDir, saveExportDir, safeFilePart, joinPath,
   exportFileName, resolveExportTarget, parentOf, looksAbsolute, withinRoots,
 } from '../engine/exportDir';
+import { readSrc } from './srcScan';
 
 /** 内存版 KV —— 引擎模块不依赖真实 localStorage */
 function memKV() {
@@ -205,4 +206,90 @@ test('空路径不算', () => {
 test('列表里有空串也不炸', () => {
   assert.equal(withinRoots('/out/a.md', ['', '/out']), true);
   assert.equal(withinRoots('/out/a.md', ['']), false);
+});
+
+/* ==================================================================
+ * 根目录 / 相对路径 / 越权提示
+ *
+ * 这几条的共同点：**都不是安全洞**（Rust 侧 canonicalize + starts_with
+ * 才是真正的边界），而是"成功但位置不对"或"失败但说不清原因" ——
+ * 用户无从下手，只能猜。
+ * ================================================================== */
+
+/**
+ * 默认导出目录设成 '/' 时，以前 joinPath 把它去尾斜杠成空串，
+ * 于是返回裸文件名 'flow-x.sh' —— 而 source 仍标着 'setting'，
+ * 于是走 fs_op 分支去给一个**相对路径**申请授权，
+ * 报「授权目录失败」，而用户填的是一个真实存在的目录。
+ */
+test('根目录不能拼成裸文件名（否则去给相对路径申请授权）', () => {
+  assert.equal(joinPath('/', 'flow-c.sh'), '/flow-c.sh');
+  assert.equal(joinPath('//', 'flow-c.sh'), '/flow-c.sh');
+  const r = resolveExportTarget('/', null, 'c', 'sh');
+  assert.equal(r.path, '/flow-c.sh', '根目录设上去，导出就该落到根下');
+  assert.equal(r.source, 'setting');
+});
+
+test('Windows 盘符根不受影响', () => {
+  assert.equal(joinPath('C:\\', 'flow-c.sh'), 'C:/flow-c.sh');
+});
+
+/** joinPath 原有的行为不能被动 */
+test('joinPath 原有语义保持', () => {
+  assert.equal(joinPath('', 'a.md'), 'a.md', '没有目录时原样返回文件名');
+  assert.equal(joinPath('/tmp', ''), '/tmp', '没有文件名时原样返回目录');
+});
+
+/** 父目录要在授权范围内才不用申请授权 —— 取对了才问得对 */
+/**
+ * 文件挂在根上时，父目录是根 —— 以前 parentOf 用 `i > 0` 把 i === 0 漏掉了，
+ * 于是返回**文件路径本身**，拿去申请授权时报的是「目录 flow-c.sh 还没授权」。
+ */
+test('根目录设上去后，取到的父目录就是根（不是文件路径本身）', () => {
+  assert.equal(parentOf('/flow-c.sh'), '/');
+  assert.equal(parentOf(resolveExportTarget('/', null, 'c', 'sh').path), '/');
+  /* 没有分隔符的仍然原样返回 —— 这条不能被动 */
+  assert.equal(parentOf('flow-c.sh'), 'flow-c.sh');
+});
+
+/*
+ * withinRoots 对含 `..` 的路径**保守判否**。
+ *
+ * 前缀比较看不出 `..`：'/data/work/../work-evil' 对 root '/data/work' 判 true，
+ * 于是前端结论是"已授权，直接写"，而 Rust canonicalize 后落在
+ * '/data/work-evil' 会被拒 —— 用户看到的是「目标目录不可写」，
+ * 于是去查磁盘权限，而真正原因是越出了授权范围。
+ *
+ * 判否就会走申请授权那条路，用户看到的是明确的原因。
+ */
+test('withinRoots：含 .. 的路径判为不在范围内（提示才不会误导）', () => {
+  assert.equal(withinRoots('/data/work/../work-evil', ['/data/work']), false);
+  assert.equal(withinRoots('/data/work/./a', ['/data/work']), false);
+  assert.equal(withinRoots('/data/work/a/../b', ['/data/work']), false);
+});
+
+/** 保守不能过头：正常路径照旧 */
+test('withinRoots：正常路径不受保守判据影响', () => {
+  assert.equal(withinRoots('/data/work', ['/data/work']), true, '自身');
+  assert.equal(withinRoots('/data/work/a', ['/data/work']), true, '子目录');
+  assert.equal(withinRoots('/data/workspace-evil', ['/data/work']), false, '兄弟目录仍要判否');
+  assert.equal(withinRoots('/DATA/WORK/a', ['/data/work']), true, '大小写');
+});
+
+/*
+ * looksAbsolute 以前**只有测试在用** —— 注释写着"用于给用户即时提示"，
+ * 却没有任何界面引用它。于是填相对目录（'out'）时不会有任何提醒：
+ * 日志报「✅ 已导出 → out/flow-c.sh」、文件确实写了，
+ * 而实际位置取决于进程启动时的工作目录，用户在自己以为的地方找不到。
+ */
+test('源码守卫：looksAbsolute 真的被界面用上（不是死函数）', () => {
+  const src = readSrc('components/inspectors/CanvasConfigPanel.tsx');
+  assert.ok(
+    /from '\.\.\/\.\.\/engine\/exportDir'/.test(src),
+    '界面必须从 engine/exportDir 引入 —— 不引入就用不上',
+  );
+  assert.ok(
+    /looksAbsolute\(exportDir\)/.test(src),
+    '相对目录必须给提示 —— 否则是"成功但找不到文件"',
+  );
 });

@@ -67,10 +67,19 @@ export function safeFilePart(name: string, fallback = 'canvas'): string {
  * 而前端拼 `\` 要处理转义，容易写出错的串。
  */
 export function joinPath(dir: string, file: string): string {
-  const d = String(dir ?? '').trim().replace(/[\\/]+$/, '');
+  const raw = String(dir ?? '').trim();
   const f = String(file ?? '').trim().replace(/^[\\/]+/, '');
-  if (!d) return f;
-  if (!f) return d;
+  if (!f) return raw;
+  const d = raw.replace(/[\\/]+$/, '');
+  /*
+   * 根目录（'/' 或 '//'）去尾斜杠后会变成**空串** ——
+   * 以前于是直接返回裸文件名：默认导出目录设成 '/' 时，
+   * 导出路径退化成相对文件名 'flow-x.sh'，而 source 仍标着 'setting'
+   * （不是 download）。于是走 fs_op 那条路去给一个相对路径申请授权，
+   * 失败信息是「授权目录失败」，而用户填的明明是一个真实存在的目录 ——
+   * 无从下手。
+   */
+  if (!d) return /[\\/]/.test(raw) ? `/${f}` : f;
   return `${d}/${f}`;
 }
 
@@ -108,7 +117,15 @@ export function resolveExportTarget(
 export function parentOf(path: string): string {
   const s = String(path ?? '').replace(/[\\/]+$/, '');
   const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
-  return i > 0 ? s.slice(0, i) : s;
+  /*
+   * i === 0 表示文件就挂在根上（'/flow-c.sh'）——
+   * 以前 `i > 0` 把它漏成了"没有父目录"，于是原样返回**文件路径本身**。
+   * 拿一个文件路径去 withinRoots 判断、乃至去申请授权，
+   * 报出来的是「目录 flow-c.sh 还没授权」—— 用户看到的是个文件名。
+   */
+  if (i > 0) return s.slice(0, i);
+  if (i === 0) return '/';
+  return s;
 }
 
 /** 路径看着像不像绝对路径（用于给用户即时提示，不是安全校验） */
@@ -142,6 +159,24 @@ function norm(p: string): string {
 export function withinRoots(path: string, roots: string[]): boolean {
   const p = norm(path);
   if (!p) return false;
+  /*
+   * 含 `.` / `..` 段的路径**一律判为不在范围内**（保守）。
+   *
+   * 以前 `/data/work/../work-evil/a` 对 root `/data/work` 判 true ——
+   * 前缀比较看不出 `..`，于是前端结论是"已经授权过了，直接写"。
+   * 而 Rust 侧 canonicalize 后它落在 `/data/work-evil`，会被拒绝。
+   *
+   * 后果不是越权（Rust 那道拦得住），而是**提示误导**：
+   * 用户看到的是「✗ 导出失败：目标目录不可写」，
+   * 于是去查磁盘权限，而真正原因是路径越出了授权范围。
+   *
+   * 判 false 就会走"先申请授权"那条路，用户看到的是明确的
+   * 「目录还没授权，正在申请」或失败时的具体原因。
+   *
+   * 不在这里解析 `..`：解析需要知道是不是符号链接，
+   * 那只有 Rust 的 canonicalize 能确定；前端猜出来的结果不可靠。
+   */
+  if (p.split('/').some((seg) => seg === '.' || seg === '..')) return false;
   return (roots ?? []).some((r) => {
     const rr = norm(r);
     if (!rr) return false;
