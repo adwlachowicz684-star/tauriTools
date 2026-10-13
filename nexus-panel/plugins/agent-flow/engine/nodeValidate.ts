@@ -10,8 +10,9 @@ import type {
 } from '../types';
 import {
   targetsOf, UPDATE_SOURCE_META, needsFeedUrl,
-  constsOf, constItemLabel, constIssues,
+  constsOf, constItemLabel, constIssues, FS_OP_META,
 } from '../types';
+import { fsNeedsTarget } from './files';
 import { triggerEntriesOf, entryEnabled, mergeConfig } from './triggerEntries';
 import { tokenRe } from './template';
 import { argTypeIssues, type ArgTypeIssue } from './argTypes';
@@ -199,12 +200,18 @@ function vLoop(d: LoopNodeData): V {
   return ok();
 }
 
-const NEEDS_TARGET = new Set(['copy', 'move', 'rename']);
-
+/*
+ * 需不需要「目标路径」 —— 判据取自 FS_OP_META（经 engine/files 的 fsNeedsTarget）。
+ *
+ * 以前这里手写了一份 `new Set(['copy','move','rename'])`，与 FS_OP_META.needsTarget
+ * 是**两张表**。代价不在今天（两者此刻一致），而在将来加一个需目标的操作：
+ * 面板会出现目标输入框、这里的校验却不说它必填，于是红点不亮、跑起来才失败。
+ * （那份手写表里还有个 'rename' —— FsOp 里根本没有这个取值，纯死项。）
+ */
 function vFs(d: FsNodeData): V {
   if (blank(d.path)) return error('没填路径');
-  if (NEEDS_TARGET.has(d.op) && blank(d.target)) {
-    return error(`${d.op} 需要目标路径`);
+  if (fsNeedsTarget(d.op) && blank(d.target)) {
+    return error(`${FS_OP_META[d.op]?.label ?? d.op} 需要目标路径`);
   }
   return ok();
 }

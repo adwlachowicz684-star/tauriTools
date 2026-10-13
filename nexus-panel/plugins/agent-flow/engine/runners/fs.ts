@@ -6,13 +6,16 @@ import type {
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret } from '../credentials';
 
-import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
+import {
+  extractFileRefs, parseManualPaths, buildFileFields, fsRenderIssue, type FileRef,
+} from '../files';
 import {
   resolveConfig, buildHeaders, parseResponse, extractContent,
   buildTranslateSystem, TARGET_LANGS, isUsableImageUrl,
   type ChatMessage, type ContentPart,
 } from '../llm';
 import { resolveParams } from '../params';
+import { tokenRe } from '../template';
 import { evaluateCondition } from '../condition';
 import { resolveParallel, effectiveConcurrency, MAX_CONCURRENCY } from '../parallel';
 import { resolveLoopItems, makeLoopCtx, type LoopResolve } from '../loop';
@@ -40,6 +43,24 @@ export async function runFs(ctx: RunContext): Promise<void> {
     emit({ type: 'node-start', id, rendered: `${d.op} ${p}` });
     let out = '';
     try {
+      /*
+       * 渲染**之后**再校验一遍路径。
+       *
+       * 编辑期的校验（nodeValidate 的 vFs）只看填了没填，而路径支持模板：
+       * `{{n1.output}}` 在编辑期是合法的非空值、圆点是绿的；
+       * n1 没产出时模板原样保留，于是 fs_op 收到字面量 `{{n1.output}}` ——
+       * 磁盘上真的会多出一个叫这名字的东西，且不报错、日志干净。
+       *
+       * 校验放在调用执行器**之前**：抛出去走的是同一条失败路径，
+       * 节点变红并带上原因，而不是让 Rust 去碰一个不该碰的路径。
+       */
+      const issue = fsRenderIssue(
+        d.op, p, t,
+        /* 与模板层同一套字符集定义，不在这里另写一份 */
+        (s) => tokenRe().test(s),
+      );
+      if (issue) throw new NodeFailError(issue);
+
       out = await opts.fsExecutor!(node, { path: p, target: t, content: c });
     } catch (err) {
       throw new NodeFailError(err instanceof Error ? err.message : String(err));

@@ -1,4 +1,6 @@
-import { defaultFileOutput, type TaskNodeData } from '../types';
+import {
+  defaultFileOutput, FS_OP_META, FS_FORBIDDEN, type FsOp, type TaskNodeData,
+} from '../types';
 
 /**
  * 从 CLI 输出文本里提取"被修改/创建的文件路径"，供下游节点引用。
@@ -318,4 +320,123 @@ export function resolveFileRefs(d: TaskNodeData, output: string): FileRef[] {
   if (!cfg.enabled) return [];
   if (cfg.mode === 'manual') return parseManualPaths(cfg.manualPaths, d.workdir);
   return extractFileRefs(output, d.workdir);
+}
+
+/* ------------------------------------------------------------------ */
+/* 文件操作节点的路径校验                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 这个操作需不需要「目标路径」。
+ *
+ * 判据取自 types.ts 的 FS_OP_META，**不在这里另写一份** ——
+ * 以前 nodeValidate 里手写了一份 `new Set(['copy','move','rename'])`，
+ * 与 FS_OP_META.needsTarget 是两张表。后果不是"现在错了"，而是
+ * **将来加一个需目标的操作时只有一处会跟上**：面板会出现目标输入框、
+ * 校验却不说它必填，于是红点不亮、跑起来才失败。
+ * （那份手写表里还有个 'rename' —— FsOp 里根本没有这个取值。）
+ */
+export function fsNeedsTarget(op: string): boolean {
+  return Boolean(FS_OP_META[op as FsOp]?.needsTarget);
+}
+
+/** 会不会改动磁盘 */
+export function fsDestructive(op: string): boolean {
+  return Boolean(FS_OP_META[op as FsOp]?.destructive);
+}
+
+/** 统一成 `/` + 小写，好与 FS_FORBIDDEN 比对（Windows 路径不区分大小写） */
+function cmpPath(p: string): string {
+  const s = normalizePath(String(p ?? '').trim()).replace(/\\/g, '/').toLowerCase();
+  /* 尾部斜杠去掉：'/data/' 与 '/data' 是同一个目录 */
+  return s.length > 1 ? s.replace(/\/+$/, '') : s;
+}
+
+/**
+ * 路径是不是落在「绝不允许改动」的名单里。
+ *
+ * ================= 为什么要有这道 =================
+ *
+ * FS_FORBIDDEN 在 types.ts 里定义了很久，注释写着
+ * 「这些路径绝不允许被删除 —— 误删根目录或系统目录代价太大」，
+ * 而**全仓没有任何一处消费它** —— 那句注释从未生效。
+ *
+ * 是不是冗余？Rust 侧只接受授权根目录内的路径，默认范围仅应用数据目录，
+ * 所以 `/etc` 平时确实会被拒。**但用户可以自己授权任意目录**
+ * （fsAllowRoot）—— 图省事把 `/` 加进去是很常见的做法，
+ * 那一刻这道防线就变成了唯一的一道。
+ *
+ * 更实际的理由是**报错文案**：没有它时用户看到的是 Rust 的 IO 错误
+ * 或"目标目录不可写"，于是去查磁盘权限；而真正原因是"这个路径不该动"。
+ *
+ * ================= 为什么只对改动磁盘的操作生效 =================
+ *
+ * 只读操作（read / list / exists / stat）读 `/etc` 是正常需求 ——
+ * 判掉它属于误报，而误报比漏报更糟：用户会去改一个本来能跑的节点。
+ */
+export function fsForbidden(path: string, op: string): boolean {
+  if (!fsDestructive(op)) return false;
+  const p = cmpPath(path);
+  if (!p) return false;
+  /*
+   * 只比"完全相等"是不够的 —— `/etc/passwd` 不等于 `/etc`，
+   * 于是覆盖系统配置文件这道防线形同虚设，只挡住了删整个目录
+   * （而那本来就是极少见的用法）。所以禁用位置**及其下面的全部**都拦。
+   *
+   * 形状与 exportDir 的 withinRoots 一致（相等 或 前缀 + 分隔符）。
+   * '/' 这一项只匹配根本身：`'/' + '/'` 是 '//'，任何规范化后的路径
+   * 都不会以它开头 —— 所以删 `/data` 不受影响，只有 '/' 自己被拦。
+   */
+  return FS_FORBIDDEN.some((f) => {
+    const ff = cmpPath(f);
+    if (!ff) return false;
+    return p === ff || p.startsWith(ff + '/');
+  });
+}
+
+/**
+ * 渲染之后的路径能不能用。返回空串表示没问题。
+ *
+ * ================= 为什么运行时还要再校验一遍 =================
+ *
+ * 编辑期的校验（nodeValidate 的 vFs）只看**填了没填**，
+ * 而路径支持模板 —— `{{n1.output}}` 在编辑期是一个合法的非空值，
+ * 圆点是绿的。运行时 n1 没产出，模板**原样保留**（见 engine/template），
+ * 于是 fs_op 收到的是字面量 `{{n1.output}}`：
+ *
+ *   · write / mkdir → 磁盘上真的多出一个叫 `{{n1.output}}` 的东西
+ *   · delete        → 去删一个叫这名字的路径
+ *
+ * 不报错、日志干净，而结果完全不是用户要的。
+ * 这类"跑了但结果是错的"比直接失败难查得多。
+ *
+ * ================= 为什么不校验内容 =================
+ *
+ * write / append 的 content 空着是合法的（建空文件、追加空串），
+ * 判它缺参会让用户去填一个本来就该空着的值。
+ */
+export function fsRenderIssue(
+  op: string, path: string, target: string, hasUnresolved: (s: string) => boolean,
+): string {
+  if (!String(path ?? '').trim()) {
+    return '路径是空的 —— 上游没产出，模板变量没渲染出值';
+  }
+  if (hasUnresolved(path)) {
+    return '路径里有没渲染出来的模板变量 —— 会拿字面量当路径用，去检查上游有没有产出';
+  }
+  if (fsNeedsTarget(op)) {
+    if (!String(target ?? '').trim()) {
+      return '这个操作需要目标路径，而它是空的';
+    }
+    if (hasUnresolved(target)) {
+      return '目标路径里有没渲染出来的模板变量 —— 会拿字面量当路径用';
+    }
+    if (fsForbidden(target, op)) {
+      return `目标路径 ${target} 属于不允许改动的位置`;
+    }
+  }
+  if (fsForbidden(path, op)) {
+    return `${path} 属于不允许改动的位置 —— 换一个路径`;
+  }
+  return '';
 }
