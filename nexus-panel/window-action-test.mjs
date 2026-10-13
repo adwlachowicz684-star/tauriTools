@@ -43,7 +43,20 @@ t('host.js 有 setCloseAction', /export function setCloseAction\(/.test(hostSrc)
 t('host.js 有变更订阅', /export function onCloseActionChange\(/.test(hostSrc));
 /* 外壳是在**点击时**取值的，所以必须挂到 createHost 返回的对象上，
    否则 shell.js 里 host.getCloseAction() 是 undefined。 */
-t('挂到了 createHost 返回对象', /    getCloseAction,\n    setCloseAction,\n    onCloseActionChange,/.test(hostSrc));
+/*
+ * 钉**意图**而不是三行连在一起的写法：新增 saveCloseAction 之后那三行不再相邻，
+ * 照原样钉就会假红 —— 而它守的东西（三个都挂上了）一直是对的。
+ * 判据：createHost 的 return 对象里同时有这三个名字，顺序与相邻与否都不管。
+ */
+const hostRets = (hostSrc.match(/\n  return \{[\s\S]*?\n  \};/g) || []).join('\n');
+t(
+  '挂到了 createHost 返回对象',
+  /\n    getCloseAction,/.test(hostRets)
+  && /\n    setCloseAction,/.test(hostRets)
+  && /\n    onCloseActionChange,/.test(hostRets),
+  `return 块里缺 ${['getCloseAction', 'setCloseAction', 'onCloseActionChange']
+    .filter((n) => !new RegExp('\\n    ' + n + ',').test(hostRets)).join('/') || '（都在）'}`,
+);
 
 console.log('\n=== 2. 默认是「藏到托盘」===');
 /* 装了托盘之后 ✕ 还杀进程，就与托盘的存在相矛盾。
@@ -108,10 +121,17 @@ console.log('\n=== 7. 设置页：走桥接而非直接写 localStorage ===');
    不可用 —— 直接写会落空。与主题/适配策略同一类问题。 */
 t('宿主暴露 window 命名空间', /: ns === 'window' \? windowApi/.test(hostSrc));
 t('sdk 有 ctx.shell.window', /      window: \{[\s\S]{0,200}getCloseAction/.test(sdkSrc));
-t('原生设置页调 setCloseAction', /ctx\.shell\.window\.setCloseAction/.test(setJs));
+/* 落盘版必须一路通到 sdk：设置页调得到、而 sdk 没转发的话，桥接仍是断的 */
+t('sdk 转发落盘版 saveCloseAction', /saveCloseAction/.test(sdkSrc));
+/* 必须是**落盘版** saveCloseAction：setCloseAction 只回新值、不报有没有存下，
+   于是"界面画成选中、磁盘上没变"全程无提示 —— 这正是本条要守的。 */
+t('原生设置页调落盘版 saveCloseAction（不是只回新值的 setCloseAction）',
+  /ctx\.shell\.window\.saveCloseAction/.test(setJs)
+  && !/ctx\.shell\.window\.setCloseAction/.test(setJs));
 t('原生设置页初值走桥接读', /ctx\.shell\.window\.getCloseAction\(\)/.test(setJs));
 t('React 设置页同样走桥接',
-  /\(ctx as any\)\?\.shell\?\.window/.test(winCard) && /sh\?\.setCloseAction/.test(winCard));
+  /\(ctx as any\)\?\.shell\?\.window/.test(winCard)
+  && /sh\.saveCloseAction/.test(winCard));
 t('两个设置页都没直接写 localStorage 存这个值',
   !/localStorage\.setItem\('nexus:close-action'/.test(setJs)
   && !/localStorage\.setItem\('nexus:close-action'/.test(winCard));

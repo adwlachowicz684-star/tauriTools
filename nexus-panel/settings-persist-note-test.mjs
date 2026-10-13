@@ -26,6 +26,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+/* 剥注释判据只留 test-scan-utils.mjs 一份：各测试内联一份会各改各的，
+   一边认得出、一边认不出，体检单上就只有一半可信。 */
+import { stripComments } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const UPDCARD = path.join(HERE, 'plugins/settings/UpdateCard.tsx');
@@ -75,10 +78,6 @@ const stripTs = (s) => s
   .replace(/: Record<string, any>/g, '')
   .replace(/: any\[\]/g, '');
 
-/** 剥掉注释再判 —— 注释里写着"必须说出来"不代表代码真说了。 */
-const stripComments = (s) => s
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 const read = (p) => fs.readFileSync(p, 'utf8');
 
