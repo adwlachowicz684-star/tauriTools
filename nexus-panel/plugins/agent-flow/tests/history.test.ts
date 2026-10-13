@@ -8,6 +8,9 @@ import {
   MAX_NODE_OUTPUT, MAX_LOGS_PER_ENTRY, MAX_NODES_PER_ENTRY,
   type HistoryEntry,
 } from '../engine/history';
+import { readSrc, AF_SRC } from './srcScan';
+import { readdirSync, existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { makeTask, applyEvent, finishTask, type TaskRecord } from '../engine/tasks';
 
 const T0 = new Date(2026, 8, 14, 12, 0, 0).getTime();
@@ -387,4 +390,80 @@ test('筛选: 条件组合', () => {
 test('日期: 格式化为 M月D日 HH:MM', () => {
   const r = formatDateTime(new Date(2026, 8, 14, 9, 5).getTime());
   assert.equal(r, '9月14日 09:05');
+});
+
+/* ==================================================================
+ * 历史归档：不做脱敏，但这件事必须被说出来
+ *
+ * 归档的是**原始运行结果**（节点输出与日志），不挖里面的"疑似令牌"。
+ *
+ * ============ 为什么不去挖 ============
+ * 输出是任意文本。按密钥判据挖必然误伤 ——
+ * 一段讲 apiKey 用法的文档、一句 "token 已刷新" 的日志都会被挖空。
+ * 而误伤是"能看但内容缺了一块"，比明文躺着**更难发现**：
+ * 用户只会以为这次运行就是这样。
+ *
+ * 节点侧是刻意不剥 output 文本的（canvasStore 那条
+ * 「output 里带 llm 字样不会被误伤」盯着），历史与它同一口径。
+ *
+ * ============ 那代价谁承担 ============
+ * 输出里被 echo 出令牌时（脚本里 echo $TOKEN、接口把凭据回显了），
+ * 它会明文躺在 localStorage 里，且跨会话保留。
+ * 所以界面上必须明说，并保留清空入口 —— 否则用户会以为这里
+ * 和节点配置一样是挖过密钥的。
+ * ================================================================== */
+
+test('归档：输出里的令牌按原样保留（不误伤文本）', () => {
+  const t = makeTask({ canvasId: 'c', canvasName: 'n', now: T0 });
+  t.nodes.n1 = { id: 'n1', status: 'success', output: '文档：设置 apiKey 后即可调用，token 会过期' };
+  t.order = ['n1'];
+  const raw = serializeHistory(addToHistory(emptyHistory(), t).file);
+  assert.ok(
+    raw.includes('设置 apiKey 后即可调用'),
+    '讲 apiKey 用法的文档不能被挖空 —— 挖了就是"能看但缺了一块"',
+  );
+  assert.ok(raw.includes('token 会过期'), '普通句子里的 token 字样也不能被挖');
+});
+
+test('源码守卫：历史面板明说"原始输出不做脱敏"', () => {
+  const src = readSrc('components/HistoryPanel.tsx');
+  assert.ok(
+    /原始输出.*不做脱敏|不做脱敏/.test(src),
+    '归档不脱敏，界面上必须说出来 —— 否则用户以为这里和节点配置一样挖过密钥',
+  );
+});
+
+/*
+ * 历史目前**没有导出入口**（只有清空）。一旦有人加导出，就是"交给别人"的动作，
+ * 必须先脱敏 —— 与 exportCustomPresets / exportVariables 同一条理由。
+ *
+ * 现在没有导出，所以这条守卫钉的是"别顺手加一个裸的导出"。
+ */
+test('源码守卫：没有绕过脱敏的历史导出入口', () => {
+  /* readSrc 只接文件 —— 传目录会 EISDIR。这里自己遍历 */
+  const roots = ['App.tsx', 'components', 'engine', 'hooks'];
+  const src = (function walk(): string {
+    const parts: string[] = [];
+    const go = (rel: string): void => {
+      const abs = join(AF_SRC, rel);
+      if (!existsSync(abs)) return;
+      if (!statSync(abs).isDirectory()) {
+        if (/\.tsx?$/.test(rel)) parts.push(readSrc(rel));
+        return;
+      }
+      for (const f of readdirSync(abs)) go(join(rel, f));
+    };
+    for (const r of roots) go(r);
+    return parts.join('\n');
+  })();
+  assert.equal(
+    /exportHistory|downloadHistory|saveHistoryFile/.test(src),
+    false,
+    '历史导出必须先脱敏 —— 归档的是原始输出，裸导出就把回显的令牌交出去了',
+  );
+});
+
+test('归档：清空入口存在（明文躺着的代价要可消除）', () => {
+  const src = readSrc('components/HistoryPanel.tsx');
+  assert.ok(/清空全部/.test(src), '不脱敏就要能彻底清掉');
 });
