@@ -831,7 +831,19 @@ export default function App() {
     toggleMcp: () => void toggleMcp(),
     toggleSidebar: () => setRailCollapsed((v) => !v),
     openMarkdown,
-    readMarkdown,
+    /*
+     * `readMarkdown` 刻意**不**放进这张表。
+     *
+     * 它只挂在内容区那个「阅读」按钮上（onClick），不是快捷键：
+     * `HotkeyId` 里没有 readMarkdown，`useCardHotkeys` 也没有
+     * `run('readMarkdown', …)` —— 放进这里没有任何人去调它。
+     *
+     * 此前它在这里，于是 tsc 报 TS2353「对象字面量只能指定已知属性」：
+     * 表里有、类型里没有。**朝哪边改，结果完全相反** ——
+     * 给 HotkeyActions 补一条 readMarkdown 能让报错消失，却在暗示
+     * "阅读"是个可绑键位的动作，而实际上绑了也不会触发。
+     * 所以是把它从表里拿掉：让"能按什么键"这张表只写真正会响的那些。
+     */
     // 有弹窗打开时整组让路：否则在对话框里按 Delete 会改到看不见的卡片
     // （开关类的三条不受此限，见 useCardHotkeys 的 ALWAYS_ON）
   }, !!boot && dialog.type === 'none' && !help && !confirmLink, boot?.config.hotkeys);
