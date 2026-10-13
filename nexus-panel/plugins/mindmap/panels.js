@@ -1369,7 +1369,8 @@ export function buildSide(app, opts = {}) {
       let srcBytes = 0; let outBytes = 0;
       const failed = [];
       for (const i of idx) {
-        const r = await io.shrinkDataUrl(list[i]);
+        // 带上序号：失败提示里要指得清是哪一张（早先一律叫 inline.jpg）
+        const r = await io.shrinkDataUrl(list[i], { name: `第 ${i + 1} 张` });
         if (!r.url) { failed.push(r.error || `第 ${i + 1} 张`); continue; }
         srcBytes += String(list[i]).length;
         outBytes += r.url.length;
