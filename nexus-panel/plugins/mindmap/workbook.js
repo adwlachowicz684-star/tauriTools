@@ -473,7 +473,33 @@ export function markdownToSheet(md) {
    *   块各有一个顶层条目），在那里插会凭空多出一个不属于任何块的行。
    */
   const minDepth = rows.reduce((m, r) => Math.min(m, r.depth), rows[0].depth);
-  if (rows.filter((r) => r.depth === minDepth).length >= 2) {
+  /*
+   * ★ 更浅的标题不能再被挂到更深的标题下面（BUG 147）。
+   *
+   * 下面的建树把 `rows[0]` 当中心主题，之后每行挂到「最近一个比它浅的行」
+   * 身上。这条只在 **`rows[0]` 严格浅于其余所有行**时才成立 ——
+   * 一旦有更浅的行出现在后面，栈会被一路弹空、最终挂到 `rows[0]` 身上，
+   * 于是**层级被整个倒过来**：
+   *
+   *   '## 引言\n# 正文'
+   *     修复前 → 引言 > 正文   ← 一级标题成了二级标题的子节点
+   *     修复后 → 中心主题 >（引言、正文）
+   *
+   *   '## A\n## B\n# C'
+   *     修复前 → A >（B、C）   ← C 从顶层掉成 A 的子节点
+   *     修复后 → 中心主题 >（A、B、C）
+   *
+   * BAD CASE 是「文档先写二级、后写一级」—— 小节标题写在 H1 前面的文件
+   * 并不罕见（README 的「## 安装」在前、「# 项目名」在后就是这样）。
+   * 同样是**层级被静默改掉**，与 BUG 146 同一类。
+   *
+   * 判据是「插不插虚拟根」的统一不变量：**插完之后 rows[0] 必须严格浅于
+   * 其余所有行**。两个条件缺一不可 ——
+   *   · minDepth < rows[0].depth：首行后面还有更浅的行（本次）
+   *   · 顶层同级 ≥ 2 条：并列的首层需要有共同父亲（BUG 146）
+   * 只写第二条的话，上面两个用例仍然倒挂。
+   */
+  if (minDepth < rows[0].depth || rows.filter((r) => r.depth === minDepth).length >= 2) {
     rows.unshift({ depth: minDepth - 1, text: ROOT_TEXT });
   }
 

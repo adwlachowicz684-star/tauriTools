@@ -19566,6 +19566,84 @@ group('BUG 146 · 导入别人的 .md：顶层同级条目不能再被串成父�
   }
 }
 
+
+group('BUG 147 · 导入别人的 .md：更浅的标题不能再被挂到更深的标题下面');
+
+{
+  const wb147 = await import('./workbook.js');
+  const flatC147 = (content) => {
+    let root;
+    try { root = (typeof content === 'string' ? JSON.parse(content) : content)?.root; } catch { return null; }
+    if (!root) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(root, 0);
+    return JSON.stringify(out);
+  };
+  const flat147 = (md) => flatC147(wb147.markdownToSheet(md));
+  const J = (x) => JSON.stringify(x);
+
+  /*
+   * ① ★ 文档先写二级、后写一级（README 的常见形态：「## 安装」在前、
+   * 「# 项目名」在后）。早先建树把 rows[0] 当中心主题，栈被一路弹空后
+   * 那行更浅的标题最终挂到 rows[0] 身上 —— **层级整个倒过来**：
+   * 一级标题「正文」成了二级标题「引言」的子节点，且不报错、不计入提示。
+   */
+  eq(flat147('## 引言\n# 正文'),
+    J([['中心主题', 0], ['引言', 1], ['正文', 1]]),
+    '★ 更浅的 H1 不再是更深的 H2 的子节点（早先「引言 > 正文」倒挂）');
+  eq(flat147('## A\n## B\n# C'),
+    J([['中心主题', 0], ['A', 1], ['B', 1], ['C', 1]]),
+    '★ 后出现的 H1 与前面两个 H2 并列（早先 A >（B、C））');
+
+  // ② ★ 倒挂行之后的子树仍要挂回它自己身上（只改挂法，不乱树形）
+  eq(flat147('## 引言\n# 正文\n## 方法'),
+    J([['中心主题', 0], ['引言', 1], ['正文', 1], ['方法', 2]]),
+    '★ 倒挂行后面的 H2 仍挂在它下面（不是被抬到根层）');
+  eq(flat147('## 引言\n### 子\n# 正文'),
+    J([['中心主题', 0], ['引言', 1], ['子', 2], ['正文', 1]]),
+    '★ 更浅行出现前的子树不受影响（「子」仍在「引言」下）');
+  eq(flat147('### A\n### B\n## C'),
+    J([['中心主题', 0], ['A', 1], ['B', 1], ['C', 1]]),
+    '★ 没有 H1 时同样按最小深度算');
+
+  // ③ ★ 正常文档（首行就是最深/最浅）绝不能因为这次改动多出一层
+  eq(flat147('# R\n## A\n## B'), J([['R', 0], ['A', 1], ['B', 1]]),
+    '★ 普通单层 H1 文档完全不受影响');
+  eq(flat147('# A\n## B\n## C'), J([['A', 0], ['B', 1], ['C', 1]]), '★ BUG 146 用例⑤ 不变');
+  eq(flat147('- A\n  - B\n- C'), J([['中心主题', 0], ['A', 1], ['B', 2], ['C', 1]]),
+    '★ BUG 146 用例① 不变（列表并列 + 嵌套仍正确）');
+
+  // ④ 一个节点都不能丢（只改挂法，不删内容）
+  {
+    const n = JSON.parse(wb147.markdownToSheet('## A\n## B\n# C\n## C1')).root;
+    let cnt = 0;
+    (function w(x) { cnt++; (x.children || []).forEach(w); })(n);
+    eq(cnt, 5, '★ 4 条大纲行 + 虚拟根 = 5 个节点，一个都不能丢');
+    eq(n.data.text, '中心主题', '虚拟根是中心主题');
+  }
+
+  // ⑤ ★ 多画布分块：倒挂只在块内修，不能影响其它块
+  {
+    const wb = wb147.markdownToWorkbook('## 画布：甲\n## 引言\n# 正文\n\n## 画布：乙\n# R2\n');
+    eq(wb.length, 2, '两块 → 两张画布');
+    eq(flatC147(wb[0].content), J([['中心主题', 0], ['引言', 1], ['正文', 1]]), '★ 第一块倒挂已修');
+    eq(flatC147(wb[1].content), J([['R2', 0]]), '★ 第二块不受影响');
+  }
+
+  // ⑥ 源码层：两个条件缺一不可（先剥注释——写法本身就写在注释里）
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+    ok(/minDepth < rows\[0\]\.depth/.test(src),
+      '★ 判据必须含「首行后面还有更浅的行」这一条（只数顶层同级条数会漏掉倒挂）');
+    ok(/rows\.filter\(\(r\) => r\.depth === minDepth\)\.length >= 2/.test(src),
+      '★ BUG 146 的「顶层同级 ≥2 条」判据不能被顶掉');
+    const iFrom = src.indexOf('export function markdownToSheet(');
+    const iTo = src.indexOf('export function workbookToMarkdown(');
+    ok(iFrom > 0 && iTo > iFrom, '能定位 markdownToSheet 段');
+    ok(/\|\|/.test(src.slice(iFrom, iTo)), '★ 两个条件是「或」的关系（缺一即漏）');
+  }
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
