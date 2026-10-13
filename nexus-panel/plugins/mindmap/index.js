@@ -2915,7 +2915,8 @@ async function gcOrphanAssets(quiet = false) {
     // BUG 122：关系线本工具不显示，但已原样保留、导出 .xmind 时会写回 ——
     // 不说的话用户看到"关系线没了"会以为文件被改坏。
     const warns = [await warnForeignAssets(sheets), unsupportedMarkersTip(sheets),
-      unsupportedRelationshipsTip(sheets), unsupportedFmExtrasTip(sheets)].filter(Boolean);
+      unsupportedRelationshipsTip(sheets), unsupportedFmExtrasTip(sheets),
+      unsupportedCalloutsTip(sheets)].filter(Boolean);
     status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`
       + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容')
       + (warns.length ? ' ⚠ ' + warns.join('；') : ''), warns.length > 0);
@@ -3039,6 +3040,37 @@ async function gcOrphanAssets(quiet = false) {
     if (!total) return '';
     return `${sheetsWith} 张画布上的 ${total} 条关系线本工具不显示`
       + '（已原样保留，导出 .xmind / .mm 时会写回）';
+  }
+
+  /**
+   * BUG 141：统计被保留下来的**标注**（XMind 的 callout，`children.detached`）。
+   *
+   * 标注是挂在节点旁边的小气泡，不是分支。本工具内核没有 callout 概念，
+   * 画出来就是一个普通分支 —— 但已原样记在 `data.xcallout` 里、导出 .xmind
+   * 时写回 `detached`。不说的话，用户导入别人的 .xmind 看到"多出一排分支"
+   * 会以为文件被改坏（措辞与 unsupportedMarkersTip 对齐）。
+   *
+   * @param {Array} sheets 画布数组
+   * @returns {string} 提示串；没有则 ''
+   */
+  function unsupportedCalloutsTip(sheets) {
+    let total = 0;
+    let sheetsWith = 0;
+    const walk = (n, depth) => {
+      if (!n || depth > 200) return;
+      if (n?.data?.xcallout) total++;
+      for (const c of n.children || []) walk(c, depth + 1);
+    };
+    for (const sh of sheets || []) {
+      let root = null;
+      try { root = JSON.parse(sh?.content || '{}').root; } catch { /* 坏内容跳过 */ }
+      const before = total;
+      walk(root, 0);
+      if (total > before) sheetsWith++;
+    }
+    if (!total) return '';
+    return `${sheetsWith} 张画布上的 ${total} 个标注（callout）本工具显示为普通分支`
+      + '（已原样保留，导出 .xmind 时会写回）';
   }
 
   /**

@@ -915,15 +915,25 @@ function buildTopic(kmNode, packs) {
 
   if (Array.isArray(kmNode?.children) && kmNode.children.length) {
     const attached = [];
+    const detached = [];
     const pairs = [];
     for (const c of kmNode.children) {
       if (!c) continue;
       const child = buildTopic(c, packs);
-      attached.push(child);
+      /*
+       * BUG 141：标注写回 `children.detached`，不能一律塞进 attached
+       * （见 buildKmNode 里的实测）。pairs 仍收**全部**子节点：外框的
+       * range 引用的是 topic id，跨两个桶也能指到。
+       */
+      if (c.data && c.data.xcallout) detached.push(child);
+      else attached.push(child);
       pairs.push({ xid: child.id, km: c });
     }
-    if (attached.length) {
-      topic.children = { attached };
+    if (attached.length || detached.length) {
+      const ch = {};
+      if (attached.length) ch.attached = attached;
+      if (detached.length) ch.detached = detached;
+      topic.children = ch;
       const bounds = buildBoundaries(pairs);
       if (bounds) topic.boundaries = bounds;
     }
@@ -1236,6 +1246,18 @@ function buildKmNode(topic, depth = 0, counter = null) {
         if (!c) continue;
         const kmChild = buildKmNode(c, depth + 1, counter);
         if (!kmChild) continue;   // 超深/超量被截断
+        /*
+         * BUG 141：XMind 的**标注**（callout）写在 `children.detached` 里 ——
+         * 它是挂在节点旁边的小气泡，**不是分支**。早先三个桶一视同仁收进
+         * children、写侧又一律写进 `attached`，于是「导入别人的 .xmind →
+         * 改一点 → 导出」之后，所有标注都变成了普通分支：画面上凭空多出一排
+         * 分支，原始文件的结构被改掉，且不报错、也不计入任何丢失提示。
+         *
+         * 内核没有 callout 这个概念（没法真的画成气泡），所以这里只**记住**
+         * 它是标注，导出时写回 `detached` —— 与 xmarkers（BUG 110）、
+         * 关系线（BUG 122）同一套取舍：本工具不显示，但不许把别人的文件改掉。
+         */
+        if (key === 'detached') kmChild.data.xcallout = true;
         children.push(kmChild);
         pairs.push({ xid: safeId(c.id) || '', km: kmChild });
       }
@@ -1643,9 +1665,12 @@ function buildKmFromXmlTopic(t, depth = 0, styles = null, counter = null) {
   const topicsEl = childrenOf(t, 'children')[0];
   if (topicsEl) {
     for (const topics of childrenOf(topicsEl, 'topics')) {
+      // BUG 141：老档的标注同样写在 `<topics type="detached">` 里，与 zen 档同理
+      const isDetached = str(topics.getAttribute?.('type')) === 'detached';
       for (const child of childrenOf(topics, 'topic')) {
         const kmChild = buildKmFromXmlTopic(child, depth + 1, styles, counter);
         if (!kmChild) continue;   // 超深被截断
+        if (isDetached) kmChild.data.xcallout = true;
         children.push(kmChild);
         pairs.push({ xid: child.getAttribute('id') || '', km: kmChild });
       }

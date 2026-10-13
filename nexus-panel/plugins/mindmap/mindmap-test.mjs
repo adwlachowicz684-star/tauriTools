@@ -18827,6 +18827,141 @@ group('BUG 139 · content.json 坏了必须回落到 content.xml，不能整份�
     '★ 记下的原因必须真的抛出去（只记不抛等于把有用的报错吞了）');
 }
 
+
+/* ------------------------------------------------------------------
+   BUG 141：导入别人的 .xmind，标注（callout）被当成普通分支 ——
+   再导出时写进 attached，别人的文件结构被改掉，且不报错
+
+   XMind 的**标注**写在 `children.detached` 里：它是挂在节点旁边的小气泡，
+   **不是分支**。早先读侧三个桶（attached / detached / summary）一视同仁
+   收进 children、写侧又一律写进 attached，于是「导入别人的 .xmind → 改一点
+   → 导出」之后，所有标注都变成了普通分支：画面上凭空多出一排分支，
+   原始文件的结构被改掉，不报错、也不计入任何丢失提示。
+
+   内核没有 callout 这个概念（没法真的画成气泡），所以这里只**记住**它是
+   标注，导出时写回 `detached` —— 与 xmarkers（BUG 110）、关系线（BUG 122）
+   同一套取舍：本工具不显示，但不许把别人的文件改掉。
+   ------------------------------------------------------------------ */
+group('BUG 141 · 标注（callout）必须原样保留并写回，不能变成普通分支');
+
+{
+  const X = await import('./xmind.js');
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  const NS = 'xmlns="urn:xmind:xmap:xmlns:content:2.0"';
+
+  const ZEN = JSON.stringify([{ id: 'sh1', class: 'sheet', title: '画布',
+    rootTopic: { id: 'R', class: 'topic', title: '根', children: {
+      attached: [{ id: 'A', class: 'topic', title: '普通分支' }],
+      detached: [{ id: 'C', class: 'topic', title: '我是标注' }],
+    } } }]);
+
+  const readZen = async (json) => {
+    const zb = await X.zipWrite([{ name: 'content.json', data: enc.encode(json) }]);
+    return X.readXMind(new Uint8Array(zb));
+  };
+  const exportOf = async (sheets) => {
+    const blob = await X.writeXMind(sheets, sheets[0].id);
+    const en = await X.zipRead(new Uint8Array(await new Blob([blob]).arrayBuffer()));
+    return JSON.parse(dec.decode(en.get('content.json')));
+  };
+
+  // ① 导入：标注要留下「这是标注」的痕迹
+  {
+    const r = await readZen(ZEN);
+    const root = JSON.parse(r?.sheets?.[0]?.content || '{}')?.root;
+    eq(root?.children?.map((n) => n.data.text).join(','), '普通分支,我是标注',
+      '标注仍是子节点（本工具显示为普通分支）');
+    eq(root?.children?.filter((n) => n.data.xcallout).length, 1,
+      '★ 标注被记住了（读侧必须标 data.xcallout）');
+    eq(root?.children?.find((n) => n.data.xcallout)?.data?.text, '我是标注',
+      '★ 标的是标注那一个');
+    eq(!!root?.children?.find((n) => n.data.text === '普通分支')?.data?.xcallout, false,
+      '普通分支不能被误标成标注');
+  }
+
+  // ② 再导出：detached 必须还在，且不能混进 attached
+  {
+    const r = await readZen(ZEN);
+    const cj = await exportOf(r.sheets);
+    const ch = cj?.[0]?.rootTopic?.children;
+    eq(Object.keys(ch || {}).sort().join(','), 'attached,detached', '★ 两个桶都在');
+    eq((ch?.detached || []).map((t) => t.title).join(','), '我是标注',
+      '★ 标注写回 detached（写回 attached 就等于把别人的文件改掉）');
+    eq((ch?.attached || []).map((t) => t.title).join(','), '普通分支', '普通分支仍在 attached');
+  }
+
+  // ③ 三轮往返恒定：不能越导越走样
+  {
+    let sheets = (await readZen(ZEN)).sheets;
+    const seen = [];
+    for (let i = 0; i < 3; i++) {
+      const cj = await exportOf(sheets);
+      seen.push(JSON.stringify(cj?.[0]?.rootTopic?.children?.detached?.map((t) => t.title)));
+      const zb = await X.zipWrite([{ name: 'content.json',
+        data: enc.encode(JSON.stringify(cj)) }]);
+      sheets = (await X.readXMind(new Uint8Array(zb))).sheets;
+    }
+    eq(seen.join(' | '), '["我是标注"] | ["我是标注"] | ["我是标注"]',
+      '★ 三轮往返后标注仍是标注');
+  }
+
+  // ④ 没有标注时不能凭空长出 detached
+  {
+    const plain = JSON.stringify([{ id: 'sh1', class: 'sheet', title: '画布',
+      rootTopic: { id: 'R', class: 'topic', title: '根', children: {
+        attached: [{ id: 'A', class: 'topic', title: 'A' }] } } }]);
+    const r = await readZen(plain);
+    eq(JSON.parse(r?.sheets?.[0]?.content || '{}')?.root?.children
+      ?.filter((n) => n.data.xcallout).length, 0, '没有标注时不标');
+    const cj = await exportOf(r.sheets);
+    eq(Object.keys(cj?.[0]?.rootTopic?.children || {}).join(','), 'attached',
+      '★ 没有标注时不能凭空长出 detached');
+  }
+
+  // ⑤ 老档 `<topics type="detached">` 同理 —— 只改 zen 档等于换种方式漏
+  {
+    const legacyXml = `<?xml version="1.0" encoding="UTF-8"?>
+<xmap-content ${NS} version="2.0"><sheet id="sh1">
+<topic id="r" structure-class="org.xmind.ui.logic.right"><title>中心主题</title>
+<children>
+<topics type="attached"><topic id="a"><title>A</title></topic></topics>
+<topics type="detached"><topic id="c"><title>我是标注</title></topic></topics>
+</children></topic><title>画布一</title></sheet></xmap-content>`;
+    const zb = await X.zipWrite([{ name: 'content.xml', data: enc.encode(legacyXml) }]);
+    const r = await X.readXMind(new Uint8Array(zb));
+    const root = JSON.parse(r?.sheets?.[0]?.content || '{}')?.root;
+    eq(root?.children?.find((n) => n.data.xcallout)?.data?.text, '我是标注',
+      '★ 老档的标注同样要记住');
+    const cj = await exportOf(r.sheets);
+    eq((cj?.[0]?.rootTopic?.children?.detached || []).map((t) => t.title).join(','), '我是标注',
+      '★ 老档的标注导出时同样写回 detached');
+  }
+
+  // ⑥ 导入回执要说清楚（不然用户看到「多出一排分支」会以为文件被改坏）
+  {
+    const idx = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    /* ⓘ 锚 `unsupportedCalloutsTip(` 会命中函数定义本身，所以锚的是
+       **调用形状**：它必须真的接进 warns 里。 */
+    ok(/unsupportedRelationshipsTip\(sheets\),\s*unsupportedFmExtrasTip\(sheets\),\s*unsupportedCalloutsTip\(sheets\)/.test(idx),
+      '★ 标注提示必须接进导入回执（光有函数、没接进去等于没提示）');
+    const calls = (idx.match(/unsupportedCalloutsTip\(sheets\)/g) || []).length;
+    eq(calls, 2, '★ 定义 1 处 + 调用 1 处（少一处说明有地方没接上）');
+  }
+
+  // ⑦ 源码契约：写侧必须按 xcallout 分桶（一律塞 attached 就是本 BUG 本身）
+  {
+    const xm = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    ok(/if \(c\.data && c\.data\.xcallout\) detached\.push\(child\);/.test(xm),
+      '★ 写侧必须按 data.xcallout 分桶');
+    ok(/if \(key === 'detached'\) kmChild\.data\.xcallout = true;/.test(xm),
+      '★ zen 档读侧必须标 detached');
+    ok(/const isDetached = str\(topics\.getAttribute\?\.\('type'\)\) === 'detached';/.test(xm),
+      '★ 老档读侧必须判 <topics type="detached">');
+  }
+}
+
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
