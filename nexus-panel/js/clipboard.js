@@ -34,8 +34,35 @@ export async function copyText(ctx, text) {
   }
 
   try {
-    await navigator.clipboard.writeText(text);
-    return true;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* 落到下面走 execCommand 兜底。
+       不在这里 return false：navigator.clipboard 有两个会踩的前提
+       —— 需要安全上下文、且文档处于焦点（js/host.js 里记过：
+       弹窗刚渲染时焦点未必满足）。任一不满足都会 reject，
+       而 execCommand 在这两种情况下**仍然可用**，
+       直接判死会把本来能复制的场景变成"点了没反应"。 */
+  }
+
+  /* 最后一档兜底：execCommand 是老 API，但它是唯一在
+     非安全上下文（比如 file:// 打开）与无焦点文档里还能用的。
+     本文件原本缺这一档，于是"后端不可用 + navigator 被拒"时
+     直接返回 false，调用方提示复制失败 —— 而同样的场景里
+     js/host.js 与 plugins/project-group/utils/clipboard.ts
+     都靠这一档成功了。三份实现里只有这份漏了，故补齐对齐。 */
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // 不能 display:none —— 那样选不中。挪到视口外即可
+    ta.style.cssText = 'position:fixed;top:-1000px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
   } catch {
     return false;
   }
