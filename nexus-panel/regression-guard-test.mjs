@@ -300,6 +300,13 @@ console.log('\n=== 1.9 不许写死开发机绝对路径 ===');
      单字母占位符是刻意的假数据，当成真路径会误伤一堆 fixture。 */
   const BAD = [/\/data\/workspace/, /\/home\/[A-Za-z]{3,}\//, /\/Users\/[A-Za-z]{3,}\//, /[A-Za-z]:\\(?:Users|workspace)\\/i];
   const SKIPEXT = /\.(md|txt|json|lock|svg|png|jpg|ico)$/i;
+  /* 只在"真去碰文件系统"的上下文里才算数。
+     为什么加这一条：单测里把 /data/workspace-evil 当成**兄弟目录用例**
+     传给被测函数（plugins/agent-flow/tests/exportDir.test.ts 里验
+     `withinRoots('/data/workspace-evil', ['/data/work']) === false`），
+     那是刻意构造的**假数据**，不是要去读写它 —— 无条件命中会误伤。
+     而真出过事的那三处都贴着 fs / 进程动词（输出目录、兜底加载路径）。 */
+  const FS_CTX = /\b(?:mkdir|mkdirSync|writeFile|writeFileSync|appendFile|appendFileSync|readFile|readFileSync|readdir|readdirSync|existsSync|statSync|accessSync|mkdtemp|mkdtempSync|cpSync|rmSync|renameSync|createWriteStream|createReadStream|realpathSync|join|resolve|dirname|process\.cwd|chdir|require\.resolve)\s*\(|import\s*\(/;
   const hits = [];
   for (const abs of walk(HERE)) {
     const rel = relativeTo(abs);
@@ -314,13 +321,27 @@ console.log('\n=== 1.9 不许写死开发机绝对路径 ===');
        .sh 必须先单独剥掉 # 行，否则整段说明都被当成代码。 */
     let code = stripJs(txt);
     if (rel.endsWith('.sh')) code = code.replace(/^\s*#[^\n]*/gm, '').replace(/[^\\s]#[^\n]*/g, '');
-    for (const re of BAD) if (re.test(code)) { hits.push(rel); break; }
+    for (const re of BAD) {
+      const g = new RegExp(re.source, 'g');
+      let hit = false;
+      for (const m of code.matchAll(g)) {
+        /* 取命中所在的那一整行，看它是不是真在碰文件系统 */
+        const ls = code.lastIndexOf('\n', m.index) + 1;
+        let le = code.indexOf('\n', m.index);
+        if (le < 0) le = code.length;
+        if (FS_CTX.test(code.slice(ls, le))) { hit = true; break; }
+      }
+      if (hit) { hits.push(rel); break; }
+    }
   }
   t('源码里没有写死的开发机绝对路径', hits.length === 0,
     hits.length ? `${hits.length} 个文件：${hits.slice(0, 5).join('、')}` : '');
   t('1.9 判据本身有效（注释里的路径不算）',
     BAD.some((re) => re.test('/data/workspace/x'))
     && !BAD.some((re) => re.test(stripJs('/* 旧路径 /data/workspace */ const a=1;'))));
+  t('1.9 不误伤单测里的假数据（兄弟目录用例）',
+    !FS_CTX.test("assert.equal(withinRoots('/data/workspace-evil', ['/data/work']), false);")
+    && FS_CTX.test("mkdirSync('/data/workspace/.tool_output', { recursive: true });"));
 }
 
 /* ============================================================
@@ -1081,6 +1102,85 @@ console.log('\n=== 11. 拖拽内核两套实现等价 ===');
         .sort().join(',') === 'deadZone,edgeScrollSpeed');
     t('完全一致的不算坏（不能误伤）', mismatches(modA, modA, 1).length === 0);
   }
+}
+
+/* ============================================================
+ * 12. 复制文本：每份实现都必须有 execCommand 兜底
+ * ------------------------------------------------------------
+ * "把文本放进剪贴板"这件事全仓有**三份**实现，各自的降级链不同：
+ *
+ * | 文件 | 降级链 |
+ * |---|---|
+ * | js/host.js（2045 附近）              | navigator → execCommand |
+ * | js/clipboard.js（"全项目共用"那份）  | 后端 → navigator → execCommand（本轮补齐） |
+ * | plugins/project-group/utils/clipboard.ts | 后端 → navigator → execCommand |
+ *
+ * js/clipboard.js 原本**缺最后一档 execCommand**，本轮已补。
+ * 缺它的后果很具体，而触发条件在仓库里**被自己记录过**：
+ *   js/host.js 的注释写着 navigator.clipboard 有两个前提
+ *     —— 需要安全上下文（file:// 打开时不成立）
+ *     —— 需要文档处于焦点（弹窗刚渲染时未必满足）
+ *   任一不满足都会 reject。此时若后端也不可用（浏览器调试模式没有
+ *   Tauri），共用那份就直接 `return false`，调用方提示"复制失败"；
+ *   而同样的场景里，另外两份靠 execCommand **是能成功的**。
+ *
+ * 为什么**不合掉这三份**（看起来更彻底）：
+ *   · host.js 跑在主文档，插件 import 它会把整个宿主运行时拖进来；
+ *   · project-group 是插件，import 外壳的 js/ 违背插件自包含；
+ *   · js/clipboard.js 自己就写着"抽到 js/ 是为了设置页和 md 共用"。
+ *   所以物理上确实会有多份 —— 那就把**共同的最后一档**钉住：
+ *   谁删掉 execCommand，这里立刻报红。
+ *
+ * 判据取"函数体里有 execCommand"，而不是钉降级顺序：
+ *   三份的第一档本来就不同（后端 / navigator），钉顺序会立刻误伤。
+ *   而 execCommand 是唯一在非安全上下文和无焦点文档里仍可用的那档，
+ *   它是三份的**公共底线**。
+ * ============================================================ */
+console.log('\n=== 12. 复制文本实现的兜底链 ===');
+{
+  /** 取函数体：从 `function copyText` 起，括号配平到闭合大括号 */
+  const copyBody = (src) => {
+    const re = /function\s+copyText\s*\(/g;
+    const out = [];
+    for (let m; (m = re.exec(src));) {
+      const st = src.indexOf('{', m.index + m[0].length);
+      if (st < 0) continue;
+      let d = 0;
+      for (let i = st; i < src.length; i++) {
+        if (src[i] === '{') d++;
+        else if (src[i] === '}') { d--; if (d === 0) { out.push(src.slice(st, i + 1)); break; } }
+      }
+    }
+    return out;
+  };
+  /* 排除测试文件：守卫自己（以及别的测试）会在元断言里写
+     `function copyText(...)` 的**样例字符串**，那是待检查的样本。 */
+  const files = walk(HERE).filter((p) => /\.(ts|tsx|js|jsx|mjs)$/.test(p)
+    && !p.endsWith('.min.js') && !p.endsWith('.d.ts')
+    && !p.endsWith('-test.mjs') && !p.endsWith('.test.ts')
+    && !p.split('/').includes('tests'));
+  const impls = [];
+  for (const p of files) {
+    for (const b of copyBody(readFileSync(p, 'utf8'))) {
+      impls.push({ rel: relativeTo(p), hasExec: /execCommand\s*\(\s*['"]copy['"]\s*\)/.test(b) });
+    }
+  }
+  const bad = impls.filter((x) => !x.hasExec);
+
+  t('找得到 copyText 的实现（判据不能空转）', impls.length >= 3,
+    `实测 ${impls.length} 份：${impls.map((x) => x.rel).join('、')}`);
+  t('每一份都有 execCommand 兜底（非安全上下文 / 无焦点时唯一可用的那档）',
+    bad.length === 0,
+    bad.length ? `缺兜底：${bad.map((x) => x.rel).join('、')}` : `${impls.length} 份全部具备`);
+  /* 元断言：判据失明比数字难看危险得多 */
+  t('删掉 execCommand 照样被抓（判据没失明）',
+    copyBody('export async function copyText(t){ try{ await navigator.clipboard.writeText(t); return true;}catch{return false;} }')
+      .every((b) => !/execCommand\s*\(\s*['"]copy['"]\s*\)/.test(b))
+    && copyBody('export async function copyText(t){ try{await navigator.clipboard.writeText(t);return true;}catch{} try{return document.execCommand("copy");}catch{return false;} }')
+      .every((b) => /execCommand\s*\(\s*['"]copy['"]\s*\)/.test(b)));
+  t('一个文件里有多份时逐份都要判（不能只看第一份）',
+    copyBody('function copyText(a){return document.execCommand("copy");}\nfunction copyText(b){return false;}')
+      .map((b) => /execCommand/.test(b)).join(',') === 'true,false');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
