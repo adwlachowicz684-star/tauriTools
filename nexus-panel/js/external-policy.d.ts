@@ -31,6 +31,12 @@ export function pendingHosts(): HostEntry[];
 export function scanText(text: string, baseUrl?: string): { host: string; kind: string; sample: string }[];
 export function scanEntry(entry: string, pluginId?: string): Promise<{ ok: boolean; hosts: { host: string; kind: string; sample: string }[]; externalEntry?: boolean; error?: string }>;
 export function watchViolations(fn: (v: { host: string; directive: string; sample: string; kind: string }) => void): () => void;
+/**
+ * 从 CSP 指令反推外链用途。**全仓唯一一份** ——
+ * js/shell.js（原生壳）与 src/App.tsx（React 壳）都改用本函数，
+ * 不要在任何一侧再抄一份（抄了就会漂成"同一条外链两个壳标不同用途"）。
+ */
+export function kindOfDirective(d?: string): 'script' | 'frame' | 'media' | 'image' | 'style' | 'fetch' | 'unknown';
 export function suggestCsp(policy?: Policy): string;
 export const LOCAL_HOSTS: Set<string>;
 

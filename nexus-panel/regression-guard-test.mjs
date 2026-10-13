@@ -1183,5 +1183,70 @@ console.log('\n=== 12. 复制文本实现的兜底链 ===');
       .map((b) => /execCommand/.test(b)).join(',') === 'true,false');
 }
 
+/* ============================================================
+ * 13. 外链用途判定：两个壳必须同源
+ * ------------------------------------------------------------
+ * "从 CSP 指令反推外链用途"（img-src → 图片 / connect-src → 数据请求）
+ * 一度有**三份**实现：
+ *   · js/external-policy.js  私有的 kindFromDirective()
+ *   · js/shell.js            kindOf()          —— 原生壳
+ *   · src/App.tsx            kindOfDirective() —— React 壳，注释写着
+ *                            "与 js/shell.js 的 kindOf() 保持一致"
+ *
+ * 第三份那句注释本身就是证据：**靠人记得同步，等于必然会漂**。
+ *
+ * 漂了之后不是报错，而是**同一条外链在两个壳里被标成不同用途** ——
+ * 用户在原生壳里看到"图片"、在 React 壳里看到"数据请求"，
+ * 而他要照着这个标签决定"这个域名放不放行"。判断依据自相矛盾，
+ * 且两个壳各自的测试都会全绿（谁也不看对面）。
+ *
+ * 已收敛到 external-policy.js 的 kindOfDirective()：
+ * 两个壳**本来就都 import 这个模块**，所以它是唯一两边都够得着的地方。
+ *
+ * 【为什么钉的是这一处，而不是做一个"全仓不许有重复函数体"的通用守卫】
+ * 插件自包含是本项目的**既定设计**（插件不 import 外壳的 js/），
+ * 所以跨插件出现相同函数体有时是刻意的。通用守卫会把那些正当情况
+ * 一律判成问题，逼人往白名单里塞 —— 而白名单越长，守卫越瞎。
+ * 这里只钉"两个壳必须对用户看到的东西达成一致"，那是**没有例外**的。
+ * ============================================================ */
+console.log('\n=== 13. 外链用途判定同源 ===');
+{
+  /* 特征串：这个映射的判据链里 `connect → fetch` 是最独特的一环 */
+  const SIGNATURE = /includes\(\s*['"]connect['"]\s*\)[\s\S]{0,120}?return\s+['"]fetch['"]/;
+  const files = walk(HERE).filter((p) => /\.(js|mjs|ts|tsx)$/.test(p)
+    && !p.endsWith('.min.js') && !p.endsWith('.d.ts') && !/kity\.min/.test(p));
+  const defs = [];
+  for (const p of files) {
+    const rel = relativeTo(p);
+    /* 跳过本文件：下面的元断言要在**代码里**写一段带该特征的样例串，
+       那段是待检查的样本不是实现（和 1.9 跳自己是同一个道理）。 */
+    if (rel === 'regression-guard-test.mjs') continue;
+    const src = readFileSync(p, 'utf8');
+    /* 剥注释：被测文件会在注释里引用这段判据做说明 */
+    if (SIGNATURE.test(stripJs(src))) defs.push(rel);
+  }
+  const ONLY = 'js/external-policy.js';
+  t('外链用途映射只有一份定义', defs.length === 1 && defs[0] === ONLY,
+    `实测 ${defs.length} 处：${defs.join('、')}`);
+
+  const shellCode = code('js/shell.js');
+  const appCode = code('src/App.tsx');
+  t('原生壳走共用实现（不是自己那份）',
+    !!shellCode && /kindOfDirective\s*\(/.test(shellCode) && !/function\s+kindOf\s*\(/.test(shellCode),
+    '');
+  t('React 壳走共用实现（不是自己那份）',
+    !!appCode && /kindOfDirective/.test(appCode) && !/function\s+kindOfDirective\s*\(/.test(appCode),
+    '');
+  t('两个壳都 import 了 external-policy（否则谈不上下游同源）',
+    !!shellCode && /external-policy/.test(shellCode) && !!appCode && /external-policy/.test(appCode),
+    '');
+  t('d.ts 里也声明了它（TS 侧才用得上）',
+    /kindOfDirective/.test(read('js/external-policy.d.ts') || ''), '');
+  /* 元断言：判据失明比数字难看危险得多 */
+  t('壳里另起一份照样被抓（判据没失明）',
+    SIGNATURE.test("function kindOf(d){const s=String(d||'').toLowerCase();if(s.includes('connect'))return 'fetch';return 'unknown';}")
+    && !SIGNATURE.test("const a = 1;"));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

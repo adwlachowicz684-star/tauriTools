@@ -329,14 +329,32 @@ export function watchViolations(onViolation) {
       host,
       directive: e.violatedDirective || '',
       sample: uri.slice(0, 160),
-      kind: kindFromDirective(e.violatedDirective),
+      kind: kindOfDirective(e.violatedDirective),
     });
   };
   globalThis.addEventListener?.('securitypolicyviolation', handler);
   return () => globalThis.removeEventListener?.('securitypolicyviolation', handler);
 }
 
-function kindFromDirective(d) {
+/**
+ * 从 CSP 指令反推外链用途（'script' / 'image' / 'fetch' …）。
+ *
+ * 【为什么必须是全仓唯一一份 —— 且就放在本文件】
+ * 这个映射一度有**三份**实现，散在三个文件里：
+ *   · js/external-policy.js 本处（原为私有的 kindFromDirective）
+ *   · js/shell.js           kindOf()
+ *   · src/App.tsx           kindOfDirective()，注释还写着"与 shell.js 保持一致"
+ * 两份壳（原生壳 shell.js / React 壳 App.tsx）**都 import 本模块**，
+ * 所以本文件是唯一两边都够得着的地方 —— 放这里才谈得上同源。
+ *
+ * 漂了的后果不是报错，而是**同一条外链在两个壳里被标成不同用途**：
+ * 用户在原生壳里看到"图片"、在 React 壳里看到"数据请求"，
+ * 而他要据此决定"这个域名该不该放行"。判断依据自相矛盾。
+ *
+ * @param {string} [d] CSP 指令名（如 'img-src'）
+ * @returns {'script'|'frame'|'media'|'image'|'style'|'fetch'|'unknown'}
+ */
+export function kindOfDirective(d) {
   const s = String(d || '').toLowerCase();
   if (s.includes('script')) return 'script';
   if (s.includes('frame')) return 'frame';
