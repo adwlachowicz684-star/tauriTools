@@ -380,9 +380,18 @@ console.log('\n=== 1.8 Rust 命令登记 ===');
  * ============================================================ */
 console.log('\n=== 1.10 .d.ts 与实现对齐 ===');
 {
+  /*
+   * ⚠️ 这里曾经是 existsSync('js/...') —— 裸相对路径，结论由"从哪个目录
+   *    敲 node"决定：换目录后 5 对全部解析不到，pairs 变 0，本节**红的**
+   *    是"成对存在"这条，而紧随其后的"没有幽灵导出"会因为 pairs 为空
+   *    **恒真**——真有幽灵导出也照样绿。是运行时守卫（cwd-invariant）
+   *    实测 76/0 与 75/1 的差才把它逼出来，静态守卫看不见：
+   *    字面量先收集进数组、再传给 fs，离 fs 调用隔着一层，第 5 节第二层
+   *    只认"fs 紧跟字面量"，整批漏网。
+   */
   const pairs = ['plugin-sdk', 'host', 'tauri-core', 'plugin-config', 'external-policy']
     .map((n) => [`js/${n}.d.ts`, `js/${n}.js`])
-    .filter(([d, j]) => existsSync(d) && existsSync(j));
+    .filter(([d, j]) => existsSync(join(HERE, d)) && existsSync(join(HERE, j)));
   t('成对存在的 d.ts / js', pairs.length >= 5, `实测 ${pairs.length} 对`);
 
   const ghost = [];

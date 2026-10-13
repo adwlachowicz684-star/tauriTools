@@ -25,7 +25,7 @@ export function setPluginConfig(id: string, patch: Partial<PluginSandboxConfig>)
  */
 export function savePluginConfig(
   id: string,
-  patch: Partial<PluginSandboxConfig>,
+  patch: Partial<PluginSandboxConfig>
 ): { config: PluginSandboxConfig; saved: boolean };
 export function onPluginConfigChange(fn: (id: string, config: PluginSandboxConfig) => void): () => void;
 export function isIsolated(id: string): boolean;

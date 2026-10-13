@@ -178,14 +178,43 @@ const pairs = await runPool(JOBS, entries.map(([name, cmd], idx) => async () => 
   return { name, rel, a, b };
 }));
 pairs.sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+
+/*
+ * ⚠️ 一次性差异不能直接判红：并发跑（JOBS>1）时机器负载会让个别脚本
+ *    偶发多一条/少一条，实测出现过一次 —— command-consistency 在基线目录
+ *    报 116/1、空目录报 117/0，单独重跑 6 次、并发 6 次却全绿。
+ *    也就是说那次红是**负载噪声**，不是"换目录就变结论"。
+ *
+ *    但也不能直接丢掉：一个结果不稳定的测试本身就是问题，只是它不属于
+ *    "依赖 cwd"这一类。所以**串行复跑 2 次**再定性：
+ *      · 复现     → ❌ 真的依赖 cwd（或真的不稳定到能被复现）
+ *      · 不复现   → ⚠️ 告知：该脚本结论不稳定，与 cwd 无关，但值得知道
+ *    两条路都有声音，不会像"直接忽略"那样把真问题也一起吞掉。
+ */
+const RETRY = 2;
 const diffs = [];
+const flakes = [];
 for (const { name, rel, a, b } of pairs) {
   if (same(a, b)) { console.log(`  · ${name}：一致（${show(a)}）`); continue; }
-  diffs.push(`  ❌ ${name}（${rel}）\n     基线 cwd：${show(a)}\n     空目录 cwd：${show(b)}`);
+  const first = `     基线 cwd：${show(a)}\n     空目录 cwd：${show(b)}`;
+  const script = resolve(ROOT, rel);
+  let again = null;
+  for (let t = 0; t < RETRY; t++) {
+    const cwdB = join(EMPTY, `retry${t}-${rel.replace(/[^\w]/g, '_')}`);
+    mkdirSync(cwdB, { recursive: true });
+    // 串行复跑：排除并发负载这个变量，否则复跑本身也在噪声里
+    const a2 = await runOnceAsync(script, ROOT);
+    const b2 = await runOnceAsync(script, cwdB);
+    if (!same(a2, b2)) { again = `     复跑第 ${t + 1} 次仍不一致：基线 ${show(a2)}；空目录 ${show(b2)}`; break; }
+  }
+  if (again) diffs.push(`  ❌ ${name}（${rel}）\n${first}\n${again}`);
+  else flakes.push(`  ⚠️ ${name}（${rel}）\n${first}\n     串行复跑 ${RETRY} 次均一致 → 属偶发噪声，非 cwd 依赖`);
 }
+for (const f of flakes) console.log(f);
 diffs.length === 0
   ? ok(`${entries.length} 个脚本在两个 cwd 下结论完全一致`)
   : bad(`${entries.length} 个脚本里有 ${diffs.length} 个换目录就变结论：\n${diffs.join('\n')}`);
+if (flakes.length) console.log(`\n告知 ${flakes.length} 条（结论偶发不一致，复跑未复现）`);
 
 rmSync(EMPTY, { recursive: true, force: true });
 
