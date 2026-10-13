@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   makeCanvas, nextCanvasName, renameCanvas, removeCanvas, nextActiveId,
@@ -9,6 +9,7 @@ import {
   redactEnv, redactParams,
   saveToStorage, loadFromStorage, STORAGE_KEYS,
 } from '../engine/canvasStore';
+import { AF_SRC } from './srcScan';
 
 const C = (id: string, name: string, nodes: number = 0, updatedAt: number = 0) => ({
   ...makeCanvas(name, { id, nodes: new Array(nodes).fill({}), updatedAt }),
@@ -738,4 +739,103 @@ test('脱敏: 参数卡里名字像密钥的要挖空', () => {
   assert.equal(r[0].value, '', '参数卡里的密钥必须挖空');
   assert.equal(r[1].value, '/tmp', '普通参数要保留');
   assert.equal(r[0].name, 'apiKey', '只挖值，名字要留着（界面还要显示）');
+});
+
+/* ==================================================================
+ * 源码守卫：画布存档只有一条写路径，且那条路默认脱敏
+ *
+ * 模块 / 变量 / 预设三处都出过同一个 bug：写入口不止一个，
+ * 于是"某条路记得脱敏、另一条路忘了"。画布这块目前是干净的
+ * （serialize 里默认调 redactSecrets，唯一写入口是 saveToStorage），
+ * 但**没有东西拦着第二条路长出来**。
+ *
+ * 扫源码的守卫接不住"新增一个调用点但忘了脱敏"那类退化 ——
+ * 那行代码本身没毛病。这里钉的是更靠前的一层：
+ * 不允许出现**绕过 serialize 直接写画布存档**的地方。
+ * ================================================================== */
+
+/** 遍历若干根，收集全部 .ts/.tsx（不含 tests 与编译产物） */
+function walkSources(): { rel: string; src: string }[] {
+  const roots = ['App.tsx', 'components', 'engine', 'hooks', 'lib'];
+  const out: { rel: string; src: string }[] = [];
+  const walk = (rel: string): void => {
+    const abs = join(AF_SRC, rel);
+    if (!existsSync(abs)) return;
+    if (statSync(abs).isFile()) {
+      if (/\.tsx?$/.test(rel)) out.push({ rel, src: readFileSync(abs, 'utf-8') });
+      return;
+    }
+    for (const f of readdirSync(abs)) {
+      if (f === 'tests' || f === 'node_modules') continue;
+      walk(join(rel, f));
+    }
+  };
+  for (const r of roots) walk(r);
+  return out;
+}
+
+/*
+ * 画布存档的 key 字面量。'agent-flow.canvases.v1' 与 STORAGE_KEYS.canvases
+ * 都要认 —— 只认字面量的话，将来有人改用 STORAGE_KEYS.canvases 就绕过去了。
+ */
+const CANVAS_KEY_PAT = /agent-flow\.canvases\.v\d|STORAGE_KEYS\.canvases/;
+
+test('源码守卫：不存在绕过 serialize 直接写画布存档的路径', () => {
+  const bad: string[] = [];
+  for (const { rel, src } of walkSources()) {
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    /*
+     * engine/kv.ts 的 defaultKV 是通用 KV 后端 —— 它不认识具体 key，
+     * 写什么是调用方决定的。它出现 setItem 不算"第二条写画布的路"。
+     */
+    if (rel === join('engine', 'kv.ts')) continue;
+    for (const m of code.matchAll(/localStorage\s*\.\s*setItem\s*\(([^;]{0,200})/g)) {
+      if (CANVAS_KEY_PAT.test(m[1])) bad.push(`${rel}: ${m[0].slice(0, 120)}`);
+    }
+  }
+  assert.deepEqual(
+    bad,
+    [],
+    '写画布存档只能走 saveToStorage（它内部走 serialize 脱敏） —— '
+    + '直接 setItem 就是第二条路，迟早有一处忘了脱敏',
+  );
+});
+
+/* serialize 必须自己调 redactSecrets，不能只靠调用方记得 */
+test('源码守卫：serialize 默认脱敏（不依赖调用方自觉）', () => {
+  const src = readFileSync(join(AF_SRC, 'engine', 'canvasStore.ts'), 'utf-8');
+  const at = src.indexOf('export function serialize');
+  assert.ok(at >= 0, '源码里要有 serialize');
+  const body = src.slice(at, at + 400);
+  assert.ok(
+    /redactSecrets\s*\(/.test(body),
+    'serialize 必须调 redactSecrets —— 默认脱敏，不该依赖调用方记得',
+  );
+});
+
+/* canvasStore 不该知道存储后端 —— 认识了 localStorage 就绕不过去了 */
+test('源码守卫：canvasStore 不直接碰 localStorage（存储后端是注入的）', () => {
+  const src = readFileSync(join(AF_SRC, 'engine', 'canvasStore.ts'), 'utf-8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.equal(
+    /localStorage/.test(code),
+    false,
+    'canvasStore 的 get/set 是注入的 —— 直接碰 localStorage 就等于又开一条写路径',
+  );
+});
+
+/* 行为上也钉一遍：走 saveToStorage 落盘的东西是脱过敏的 */
+test('存画布：saveToStorage 落盘的内容不含明文密钥', () => {
+  const written: Record<string, string> = {};
+  const c = {
+    ...makeCanvas('带密钥', { id: 'a' }),
+    nodes: [llmNode('n1', 'sk-leak-plain')],
+  };
+  saveToStorage((k, v) => { written[k] = v; }, { canvases: [c as never], activeId: 'a' });
+
+  const raw = written[STORAGE_KEYS.canvases] ?? '';
+  assert.ok(raw.length > 0, '要真的写了画布');
+  assert.equal(raw.includes('sk-leak-plain'), false, '落盘内容必须脱敏');
+  /* 顺带确认 activeId 是单独一个 key，不是混在画布里 */
+  assert.ok(written[STORAGE_KEYS.active] === 'a', 'activeId 单独存');
 });
