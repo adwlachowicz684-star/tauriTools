@@ -1248,5 +1248,58 @@ console.log('\n=== 13. 外链用途判定同源 ===');
     && !SIGNATURE.test("const a = 1;"));
 }
 
+/* ============================================================
+ * 14. 数值格式化：agent-flow 里只能有一份
+ * ------------------------------------------------------------
+ * "把一个算出来的数变成流向下游的文本"这段判据一度有**三份**：
+ *   · engine/ops.ts            fmt()
+ *   · engine/expr.ts           fmtNum()（给表格求值用）
+ *   · engine/runners/table.ts  汇总节点里**内联**写了一遍
+ *
+ * 第三份是内联的 —— 不在任何函数里，所以"比对函数体"的扫法
+ * **根本扫不到它**。它是靠单独特征串（`toFixed(10)`）抓出来的。
+ *
+ * 漂移的后果是被测代码**自己注释里警告过**的那件事：
+ * ops.ts 写着"整数不显示小数点（显示成 2.0 会让下游比较节点
+ * 按文本比对时匹配不上）"。三份都产流向下游的文本，任一份改了
+ * 小数位或去掉整数特判，同一个数就会因"它是哪个节点算出来的"
+ * 而显示成 `2` 或 `2.0` —— 比较节点匹配不上，流程**静默走错分支**。
+ *
+ * 已收敛到 ops.ts 的 fmt()：expr.ts 转出 fmtNum、runners/table.ts
+ * 直接 import。本文件是叶子模块，两个方向都不会成环。
+ *
+ * 【为什么不做一个"全仓不许重复函数体"的通用守卫】
+ * 见第 13 节 —— 插件自包含是既定设计，跨插件相同函数体有时是刻意的，
+ * 通用守卫只会逼人往白名单里塞，白名单越长守卫越瞎。
+ * ============================================================ */
+console.log('\n=== 14. 数值格式化只有一份 ===');
+{
+  const SIG = /toFixed\(\s*10\s*\)/;
+  const files = walk(HERE).filter((p) => /\.(js|mjs|ts|tsx)$/.test(p)
+    && !p.endsWith('.min.js') && !p.endsWith('.d.ts'));
+  const hits = [];
+  for (const p of files) {
+    const rel = relativeTo(p);
+    /* 跳过本文件：下面的元断言要在**代码里**写带该特征的样例串 */
+    if (rel === 'regression-guard-test.mjs') continue;
+    if (SIG.test(readFileSync(p, 'utf8'))) hits.push(rel);
+  }
+  const ONLY = 'plugins/agent-flow/engine/ops.ts';
+  t('数值格式化只出现一次', hits.length === 1 && hits[0] === ONLY,
+    `实测 ${hits.length} 处：${hits.join('、')}`);
+
+  const exprCode = code('plugins/agent-flow/engine/expr.ts');
+  const runCode = code('plugins/agent-flow/engine/runners/table.ts');
+  t('expr.ts 只是转出，不再自己定义',
+    !!exprCode && /export\s*\{\s*fmt\s+as\s+fmtNum\s*\}\s*from\s*['"]\.\/ops['"]/.test(exprCode)
+    && !/function\s+fmtNum\s*\(/.test(exprCode), '');
+  t('runners/table.ts 不再内联，改为调 fmt',
+    !!runCode && /from\s*['"]\.\.\/ops['"]/.test(runCode) && !SIG.test(runCode), '');
+  /* 元断言：判据失明比数字难看危险得多 */
+  t('内联抄一份照样被抓（判据没失明）',
+    SIG.test('const value = Number.isInteger(v) ? String(v) : String(Number(v.toFixed(10)));')
+    && !SIG.test('const value = fmt(v);'));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

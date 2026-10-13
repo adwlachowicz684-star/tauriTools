@@ -364,9 +364,12 @@ function describe(t: Tok): string {
  *
  * 整数不显示小数点（显示成 2.0 会让下游按文本比对时匹配不上），
  * 小数最多 10 位，避免 0.1+0.2 的浮点尾巴。
+ *
+ * **实现在 ./ops 的 fmt()，这里只换个名字转出**：
+ * 本文件此前自己抄了一份，与 ops.ts、runners/table.ts 那份（内联的）
+ * 共三份。三者都产"流向下游的文本"，任一份漂了就会让同一个数
+ * 因"它是哪个节点算出来的"而显示成 `2` 或 `2.0`，
+ * 比较节点按文本比对时匹配不上 —— 流程静默走错分支。
+ * （本文件是叶子模块，import ops 不会成环。）
  */
-export function fmtNum(n: number): string {
-  if (!Number.isFinite(n)) return '0';
-  if (Number.isInteger(n)) return String(n);
-  return String(Number(n.toFixed(10)));
-}
+export { fmt as fmtNum } from './ops';
