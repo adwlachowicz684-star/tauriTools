@@ -90,8 +90,31 @@ export function loadModules(kv: KV = defaultKV()): ModuleDef[] {
   return loadList(kv, MODULES_KEY, 'modules', isDef) as ModuleDef[];
 }
 
+/**
+ * 唯一的写入口 —— 脱敏收在这一层，而不是各调用点各写一份。
+ *
+ * ================= 为什么收在这里 =================
+ *
+ * 以前是"谁要存谁自己记得脱敏"，结果就是**漏一条**：
+ *   · addModule（从选区打包）—— 记得了，走 redactNodes
+ *   · App 的 exitModuleEdit（编辑模块库里的模块再保存）—— 忘了，
+ *     只调了 stripRuntimeNodes，于是节点上内联填的 token 明文落进
+ *     localStorage，而同一个节点"存在画布里是空串、存到模块里是明文"。
+ *
+ * 这种不一致**不报错**：导出时 exportModules 还会再脱一层，所以表面上看
+ * 不出问题，明文只是静静躺在本地。但"本地明文"本身就与"密钥一律不落盘"
+ * 的契约冲突，而且整条链上只要有一处忘了脱，明文就出去了。
+ *
+ * 放在各调用点各写一份，正是这次漏一条的成因 —— 所以这里统一兜住。
+ * 幂等：addModule / importModules 存前已经脱过，再脱一次结果不变。
+ */
 export function saveModules(list: ModuleDef[], kv: KV = defaultKV()): void {
-  saveWrapped(kv, MODULES_KEY, FORMAT_VERSION, 'modules', list);
+  const safe = (list ?? []).map((m) => (
+    m && Array.isArray(m.nodes)
+      ? { ...m, nodes: redactNodes(m.nodes) as Record<string, unknown>[] }
+      : m
+  ));
+  saveWrapped(kv, MODULES_KEY, FORMAT_VERSION, 'modules', safe);
 }
 
 function newId(): string {

@@ -791,3 +791,65 @@ test('源码守卫：模块的三个出口都调用 redactNodes（不各写一�
     assert.ok(/redactNodes\s*\(/.test(body), `${fn} 必须调用 redactNodes（共用一份判定）`);
   }
 });
+
+/*
+ * 脱敏收在 saveModules（唯一写入口），而不是各调用点各写一份。
+ *
+ * 以前是"谁要存谁自己记得脱敏"，结果漏了一条：
+ *   · addModule（从选区打包）—— 记得了
+ *   · App 的 exitModuleEdit（编辑模块库里的模块再保存）—— 忘了，
+ *     只调了 stripRuntimeNodes。于是同一个节点"存在画布里是空串、
+ *     存到模块里是明文"，且不报错：导出时 exportModules 还会再脱一层，
+ *     所以表面看不出问题，明文只是静静躺在本地。
+ *
+ * 各调用点各写一份，正是漏一条的成因 —— 所以收在写入口统一兜住。
+ * 这条是**行为**测试：扫源码的守卫会漏掉"新增一个调用点但忘了脱敏"
+ * （那行代码本身没毛病），只有跑一遍才看得出。
+ */
+test('存模块：任何写入路径都脱敏（编辑模块库再保存也算）', () => {
+  const kv = memKV();
+  const dirty = [{
+    id: 'n1',
+    data: { kind: 'genericHttp', url: 'https://x/api', token: 'ghp_PLAIN', headersText: 'Authorization: Bearer sk-live-x' },
+  }];
+
+  /* 模拟 App 的 exitModuleEdit：绕过 addModule，直接 saveModules */
+  saveModules(
+    [{ id: 'm1', name: 'x', color: '#fff', nodes: dirty, edges: [], createdAt: 0, paramRefs: [] }] as unknown as ModuleDef[],
+    kv,
+  );
+
+  const back = loadModules(kv)[0].nodes[0].data as Record<string, unknown>;
+  assert.equal(back.token, '', 'token 必须挖空 —— 明文落在 localStorage 与"密钥一律不落盘"冲突');
+  assert.equal(back.headersText, 'Authorization:', '请求头里的 Bearer 也要挖掉（值里的凭据）');
+});
+
+test('存模块：只挖密钥，业务字段要留着（挖过了就是"存完配置没了"）', () => {
+  const kv = memKV();
+  saveModules(
+    [{
+      id: 'm1', name: 'x', color: '#fff', createdAt: 0, paramRefs: [],
+      nodes: [{ id: 'n1', data: { kind: 'genericHttp', url: 'https://x/api', method: 'POST', token: 'ghp_x' } }],
+      edges: [],
+    }] as unknown as ModuleDef[],
+    kv,
+  );
+  const back = loadModules(kv)[0].nodes[0].data as Record<string, unknown>;
+  assert.equal(back.url, 'https://x/api', '普通配置要保留');
+  assert.equal(back.method, 'POST', '普通配置要保留');
+  assert.equal(back.token, '', '密钥要挖空');
+});
+
+/*
+ * 不为脱敏把整条写坏。
+ *
+ * 断言只写"不抛"是刻意的：没有 nodes 的条目本来就过不了 isDef，
+ * loadModules 会把它滤掉 —— 那是**既有的**读取行为，与本轮无关。
+ * 若断言成"读回来还有一条"，测的就不是脱敏，而是去改了校验口径。
+ */
+test('存模块：条目没有 nodes 数组时不炸（不能为了脱敏把整条写坏）', () => {
+  const kv = memKV();
+  assert.doesNotThrow(() => {
+    saveModules([{ id: 'm1', name: 'x' }] as unknown as ModuleDef[], kv);
+  }, '没有 nodes 的条目不能让写入崩掉');
+});
