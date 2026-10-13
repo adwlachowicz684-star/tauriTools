@@ -438,6 +438,14 @@ if (args.includes('--check')) {
     console.log(`依赖盘点：npm ${manifest.summary.npm} + crate ${manifest.summary.crates}（depsDir=${manifest.depsDir}）`);
     console.log(`  缺失 ${manifest.summary.missing} / 版本不符 ${manifest.summary.mismatch} / 未声明 ${manifest.summary.undeclared} / 未被引用 ${manifest.summary.unused} / 未判定 ${manifest.summary.unknown}`);
     for (const d of bad) console.log(`  [${d.status}] ${d.name} 声明=${d.declared ?? '-'} 实装=${d.installed ?? '-'} 用于=${d.usedBy.join(',')}`);
+    /*
+     * 标准汇总行 —— 体检（sweep-tests.mjs）靠它判断"这个脚本跑完没有"。
+     * 本脚本此前只以 `deps:check` 存在（不以 test: 开头），从未进过体检：
+     * 依赖被环境清掉时它本该立刻红，却因为没人跑而一直没人知道。
+     * 补 test:deps-scan 入口后，少了这行会被判成「退出码 0 但无结论 → 可疑」。
+     */
+    const total = manifest.summary.npm + manifest.summary.crates;
+    console.log(`通过 ${total} 项，失败 ${bad.length} 项`);
   }
   process.exit(bad.length ? 1 : 0);
 }

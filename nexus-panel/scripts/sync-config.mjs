@@ -34,9 +34,10 @@ const writeJson = (p, obj) => fs.writeFileSync(p, JSON.stringify(obj, null, 2) +
 
 let changed = 0;
 let failed = 0;
+let passed = 0;
 
 function report(status, target, detail) {
-  if (status === 'ok') console.log(`✅ ${target} · ${detail}`);
+  if (status === 'ok') { passed++; console.log(`✅ ${target} · ${detail}`); }
   else if (status === 'fixed') { changed++; console.log(`🔧 ${target} · ${detail}`); }
   else { failed++; console.log(`❌ ${target} · ${detail}`); }
 }
@@ -211,6 +212,15 @@ checkViteUsesShared();
 checkTauriScripts();
 
 if (CHECK_ONLY) {
+  /*
+   * 标准汇总行 —— 体检（sweep-tests.mjs）靠它判断"这个脚本到底跑完没有"。
+   * ⚠️ 补 test:config-sync 入口时漏了这行：体检单上它一直是
+   *    「⚠️ 可疑：退出码 0 但无汇总行」，跟没进体检没有区别。
+   *    同一批补的三个入口里，invoke-scan 也漏了（见 scan-invoke.mjs 末尾），
+   *    只有 admit-scan 自带汇总行 —— **加了入口 ≠ 真在跑**。
+   * 顺序有讲究：必须先打印再 exit(1)，否则失败时结论行不会出现。
+   */
+  console.log(`通过 ${passed} 项，失败 ${failed} 项`);
   if (failed) {
     console.log(`\n✗ ${failed} 处与共享源不一致，跑 npm run config:sync 修复`);
     process.exit(1);
