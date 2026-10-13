@@ -2373,6 +2373,12 @@ async function gcOrphanAssets(quiet = false) {
     // 显示名而不是 id：侧栏高亮写的是「清新蓝」，状态栏回「fresh-blue」会对不上
     status('主题：' + themeLabelOf(name, customThemes)
       + (ok ? '' : '（未能保存：重载后会回到上一个主题）'));
+    /*
+     * 回话（BUG 142）：删除主题那条路径要靠它判断"当前画布到底存没存上"。
+     * 它自己那句 status 会被调用方紧接着的「已删除…」盖掉（status 是覆盖式的），
+     * 所以光喊不够，必须把结果交出去。
+     */
+    return ok;
   }
 
   async function applyLayout(name) {
@@ -3204,17 +3210,30 @@ async function gcOrphanAssets(quiet = false) {
      * @returns {Promise<number>} 被回退的画布数
      */
     reassignTheme: guard('回退主题引用', async (fromId) => {
-      if (!fromId) return 0;
+      if (!fromId) return { n: 0, ok: true };
       let n = 0;
       for (const s of workbook.sheets) {
         if (s.theme === fromId) { s.theme = DEFAULT_THEME; n++; }
       }
-      if (!n) return 0;
+      if (!n) return { n: 0, ok: true };
       // 当前画布也在其中时，编辑器侧要跟着切（否则画布与数据不一致）
       if (sheet()?.theme === DEFAULT_THEME) bridge?.setTheme(DEFAULT_THEME);
-      await persist();
+      /*
+       * 写盘结果必须**回话**（BUG 142）。
+       *
+       * 早先这里只 `await persist();` 然后 `return n` —— 调用方（主题页删除主题）
+       * 拿到 n 就照常说「另有 N 张画布已回退到内置主题」。而 sheet 内容与自定义
+       * 主题列表是两个**各自独立**的存储：saveThemes 成功、persist 失败是完全可
+       * 能的组合。那时磁盘上那几张画布的 sheet.theme 仍指向刚删掉的主题 id，
+       * 重载后就注册不到 —— 画布停在错误配色、主题页一个高亮都没有、当前主题名
+       * 显示成裸 id，正是上面那段注释点名要防的事故，而界面刚说过「已回退」。
+       *
+       * 这里不能自己 status()：调用方紧接着那句「已删除…」会把它盖掉
+       * （status 是覆盖式的），说了等于没说，只能回话。
+       */
+      const ok = await persist();
       refreshSideNow();
-      return n;
+      return { n, ok };
     }),
     applyTheme: guard('应用主题', applyTheme),
     applyLayout: guard('应用布局', applyLayout),

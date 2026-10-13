@@ -3705,7 +3705,13 @@ group('P0 主题与备份');
   // ---- A62 删除回退 ----
   const delSeg = src.slice(src.indexOf("safe('删除主题'"), src.indexOf('title: \'删除\','));
   ok(/const isCurrent = cur === t\.id;/.test(delSeg), 'A62 判断是否删的是当前主题');
-  ok(/if \(isCurrent\) await app\.api\.applyTheme\(DEFAULT_THEME\);/.test(delSeg),
+  /*
+   * 注意写法：早先是 `if (isCurrent) await app.api.applyTheme(DEFAULT_THEME);`
+   * —— 不接返回值，写盘失败时那句「已删除并回退到内置主题」照样说（BUG 142）。
+   * 现在接住结果存进 applyOk，所以这里判的是「if (isCurrent) + 同一行内
+   * 调用 applyTheme(DEFAULT_THEME)」，不把整行写死（写死会随改动画风就红）。
+   */
+  ok(/if \(isCurrent\)[^\n]*await app\.api\.applyTheme\(DEFAULT_THEME\)/.test(delSeg),
     'A62 删当前主题时先切回内置并落盘（否则 sheet.theme 指向已注销 id）');
   // 关键：只在 isCurrent 时回退 —— 与 WPF 的无条件回退不同。
   // 注意不能只搜「有没有 applyTheme(DEFAULT_THEME)」：有 if 包裹和无 if 包裹
@@ -18959,6 +18965,112 @@ group('BUG 141 · 标注（callout）必须原样保留并写回，不能变成�
     ok(/const isDetached = str\(topics\.getAttribute\?\.\('type'\)\) === 'detached';/.test(xm),
       '★ 老档读侧必须判 <topics type="detached">');
   }
+}
+
+
+/* ============================================================
+   BUG 142：删除自定义主题 —— 别的画布回退后写盘失败，
+            界面仍说「另有 N 张画布已回退到内置主题」
+   ============================================================ */
+
+group('BUG 142 删主题回退：写盘失败不得说「已回退」（跨文件：回话 + 文案）');
+
+{
+  const idx = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+
+  /**
+   * 把 reassignTheme 那段**箭头函数源码**切出来真跑一遍。
+   *
+   * 只做源码契约是不够的：这次的洞是"回话没回"，契约能守住"写了 return ok"，
+   * 守不住"返回值的形状被改回一个裸数字"（调用方 `|| 0` 会再次静默吞掉）。
+   * 所以这里注入假的 workbook / persist，直接测返回值。
+   */
+  const marker = "reassignTheme: guard('回退主题引用', async (fromId) => {";
+  const mStart = idx.indexOf(marker);
+  ok(mStart > 0, '★ 找得到 reassignTheme 的定义');
+  const aStart = idx.indexOf('async (fromId) =>', mStart);
+  let depth = 0, end = -1;
+  for (let i = idx.indexOf('{', aStart); i < idx.length; i++) {
+    if (idx[i] === '{') depth++;
+    else if (idx[i] === '}') { depth--; if (!depth) { end = i; break; } }
+  }
+  ok(end > 0, '★ reassignTheme 的函数体能按大括号配平切出来');
+  const arrowSrc = idx.slice(aStart, end + 1);
+  const run = new Function(
+    'workbook', 'sheet', 'bridge', 'persist', 'refreshSideNow', 'DEFAULT_THEME',
+    'return (' + arrowSrc + ');',
+  );
+
+  const makeWb = () => ({ sheets: [{ id: 'a', theme: 't1' }, { id: 'b', theme: 't1' }, { id: 'c', theme: 'fresh-blue' }], activeId: 'a' });
+  const call = async (persistRet, wbArg = makeWb()) => {
+    let calls = 0;
+    const r = await run(makeWb(), () => ({ theme: 'fresh-blue' }), { setTheme() {} },
+      async () => { calls++; return persistRet; }, () => {}, 'fresh-blue')('t1');
+    void wbArg;
+    return { r, calls };
+  };
+
+  // ① 写盘失败必须**回话**：早先这里只 return n，调用方照常说「已回退」
+  {
+    const { r, calls } = await call(false);
+    eq(calls, 1, '★ 有画布被回退时必须落盘（1 次）');
+    eq(r && r.n, 2, '★ 回退的画布数要说出来');
+    eq(r && r.ok, false, '★ 写盘失败时 ok 必须是 false（旧写法只回一个裸数字，调用方看不出来）');
+  }
+  // ② 写盘成功时 ok 为 true —— 不能一刀切成 false，否则永远在喊"未能保存"
+  {
+    const { r } = await call(true);
+    eq(r && r.ok, true, '★ 写盘成功时 ok 必须是 true');
+    eq(r && r.n, 2, '★ 写盘成功时同样要回报数量');
+  }
+  // ③ 没有画布用到这个主题：不动数据、不落盘、不算失败
+  {
+    let calls = 0;
+    const r = await run({ sheets: [{ id: 'a', theme: 'fresh-blue' }], activeId: 'a' }, () => ({}), null,
+      async () => { calls++; return false; }, () => {}, 'fresh-blue')('t1');
+    eq(calls, 0, '★ 没有画布被回退时不必落盘');
+    eq(r && r.ok, true, '★ 没有画布被回退时不算写盘失败（否则会平白喊「未能保存」）');
+  }
+  // ④ 空 id：直接返回，不落盘
+  {
+    let calls = 0;
+    const r = await run(makeWb(), () => ({}), null, async () => { calls++; return false; }, () => {}, 'fresh-blue')('');
+    eq(calls, 0, '★ fromId 为空时不落盘');
+    eq(r && r.n, 0, '★ fromId 为空时回报 0 张');
+  }
+
+  // ⑤ applyTheme 必须回话（它自己那句 state 会被调用方的「已删除…」盖掉）
+  {
+    const fn = idx.slice(idx.indexOf('async function applyTheme'), idx.indexOf('async function applyLayout'));
+    ok(/const ok = await persist\(\);/.test(fn), '★ applyTheme 接住 persist 的返回值');
+    ok(/return ok;\s*\}/.test(fn.replace(/\s+$/, '')), '★ applyTheme 末尾必须 return ok（否则删除主题那条路径无从判断）');
+  }
+
+  // ⑥ 源码契约：reassignTheme 里必须是 `const ok = await persist();`（不能又不接）
+  ok(/const ok = await persist\(\);\s*\n\s*refreshSideNow\(\);\s*\n\s*return \{ n, ok \};/.test(idx),
+    '★ reassignTheme 必须接住 persist 结果并随 n 一起返回');
+}
+
+{
+  const pn = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8'));
+  const seg = pn.slice(pn.indexOf("safe('删除主题'"), pn.indexOf("title: '删除',"));
+  ok(seg.length > 0, '★ 取得到删除主题那一段');
+
+  // ① 必须接住 applyTheme 的结果 —— 不接的话写失败照样说「已回退到内置主题」
+  ok(/applyOk = await app\.api\.applyTheme\(DEFAULT_THEME\) !== false/.test(seg),
+    '★ 删当前主题时必须接住 applyTheme 的写盘结果');
+  // ② 必须接住 reassignTheme 的 { n, ok }，不能退化成 `|| 0`（那又把 ok 吞掉了）
+  ok(/const rr = await app\.api\.reassignTheme\?\.\(t\.id\) \|\| \{ n: 0, ok: true \};/.test(seg),
+    '★ reassignTheme 的返回值必须按 { n, ok } 接住');
+  ok(/const nFixed = rr\.n \|\| 0;/.test(seg), '★ 画布数取自 rr.n');
+  // ③ 两处写盘结果都要算进去（只算一处 = 同一条约束只修半边）
+  ok(/const savedOk = applyOk && rr\.ok;/.test(seg), '★ 两处写盘结果必须一起判断');
+  // ④ 失败时要把**后果**说进文案，不能只是不说话
+  ok(/重载后这些画布会停在已删除的主题上/.test(seg), '★ 未保存时必须说出重载后的后果');
+  // ⑤ 关键：warn 必须真的拼进那句 status —— 光定义变量、不拼进去等于没提示
+  ok(/\+ other \+ warn\)/.test(seg), '★ warn 必须拼进最终那句 status');
+  // ⑥ 成功时不能平白带上 warn
+  ok(/const warn = savedOk \? '' :/.test(seg), '★ 写盘成功时不带 warn');
 }
 
 

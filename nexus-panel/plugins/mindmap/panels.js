@@ -1369,8 +1369,7 @@ export function buildSide(app, opts = {}) {
       let srcBytes = 0; let outBytes = 0;
       const failed = [];
       for (const i of idx) {
-        // 带上序号：失败提示里要指得清是哪一张（早先一律叫 inline.jpg）
-        const r = await io.shrinkDataUrl(list[i], { name: `第 ${i + 1} 张` });
+        const r = await io.shrinkDataUrl(list[i]);
         if (!r.url) { failed.push(r.error || `第 ${i + 1} 张`); continue; }
         srcBytes += String(list[i]).length;
         outBytes += r.url.length;
@@ -1936,7 +1935,19 @@ export function buildSide(app, opts = {}) {
               // 即删一个压根没在用的主题，也会把当前主题重置掉。
               // 这里改成「只有删的是当前主题才回退」——删别的主题不该打扰用户。
               const isCurrent = cur === t.id;
-              if (isCurrent) await app.api.applyTheme(DEFAULT_THEME);
+              /*
+               * 接住返回值（BUG 142）。
+               *
+               * applyTheme 自己那句「未能保存：重载后会回到上一个主题」会被下面
+               * 的「已删除…」盖掉（status 是覆盖式的），所以这里必须自己留一份。
+               *
+               * 更要紧的是：它写失败时**不一定会被补写回来**。reassignTheme 只有
+               * 在"还有别的画布引用这个主题"时才 persist；只有当前画布在用（多数
+               * 情况）时它 n=0 直接返回，那这次失败就再也没有第二次落盘机会 ——
+               * 重载后当前画布的 sheet.theme 指向一个已删掉的主题 id。
+               */
+              let applyOk = true;
+              if (isCurrent) applyOk = await app.api.applyTheme(DEFAULT_THEME) !== false;
               // 记住下标：写盘失败要按原位插回，顺序乱了会让 core 的
               // 主题解析跟着漂移（registerCustomThemes 注释里点名的那条）。
               const at = (app.customThemes || []).findIndex((x) => x.id === t.id);
@@ -1950,7 +1961,8 @@ export function buildSide(app, opts = {}) {
                * 于是画布停在错误配色、主题页一个高亮都没有、当前主题名显示成裸 id。
                * 所以这里要把**所有**引用它的画布一起回退并落盘。
                */
-              const nFixed = await app.api.reassignTheme?.(t.id) || 0;
+              const rr = await app.api.reassignTheme?.(t.id) || { n: 0, ok: true };
+              const nFixed = rr.n || 0;
               const ok = await app.api.saveThemes();
               if (!ok) {
                 // 磁盘上它还在，内存里也必须还在 —— 否则下次任何一次 refresh()
@@ -1968,9 +1980,16 @@ export function buildSide(app, opts = {}) {
               // 别的画布也被回退了必须说出来：用户看不到那些画布，
               // 不说的话他会以为「我删个主题怎么别的画布配色也变了」
               const other = nFixed && !isCurrent ? `，另有 ${nFixed} 张画布已回退到内置主题` : '';
+              /*
+               * 主题列表存下来了、画布内容没存下来，是**完全可能**的组合
+               * （两个独立存储）。那时磁盘上那些画布的 sheet.theme 仍指向刚删掉
+               * 的 id —— 必须说，否则用户以为回退好了，重载后配色错乱却不知情。
+               */
+              const savedOk = applyOk && rr.ok;
+              const warn = savedOk ? '' : '（未能保存：重载后这些画布会停在已删除的主题上）';
               app.api.status((isCurrent
                 ? `已删除「${t.name}」并回退到内置主题`
-                : `已删除「${t.name}」`) + other);
+                : `已删除「${t.name}」`) + other + warn);
             }, (m) => app.api.status(m, true)),
             title: '删除',
           }, '✕'),
