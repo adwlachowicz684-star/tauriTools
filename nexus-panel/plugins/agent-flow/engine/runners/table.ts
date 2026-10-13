@@ -5,6 +5,10 @@ import {
   parseCsv, toCsv, deriveColumn, filterRows, aggregate, tableBrief,
   type Table,
 } from '../table';
+/* 数值格式化走 ops 的 fmt（全插件唯一一份）。
+   这里原本内联抄了一遍 —— 三份之一，漂了会让同一个数因"它是哪个节点
+   算出来的"而显示成 `2` 或 `2.0`，比较节点按文本比对时匹配不上。 */
+import { fmt } from '../ops';
 
 /**
  * 表格节点执行器。
@@ -120,7 +124,7 @@ export async function runAgg(ctx: RunContext): Promise<void> {
 
     const r = aggregate(t, col, op);
     if (!r.ok) throw new NodeFailError(r.error);
-    const value = Number.isInteger(r.value) ? String(r.value) : String(Number(r.value.toFixed(10)));
+    const value = fmt(r.value);
     return {
       output: value,
       fields: { 列名: col, 方式: op, 结果: value },
