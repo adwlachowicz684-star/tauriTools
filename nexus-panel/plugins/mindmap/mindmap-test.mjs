@@ -5682,11 +5682,27 @@ group('BUG 103 · 分块标记行不得算作大纲行（闸门不许被它骗�
 
   // ① 标记行本身不计数
   eq(wb103.markdownRowCount('## 画布：项目A\n'), 0, '★ 只有标记：0 条（标记是分隔符不是节点）');
-  eq(wb103.markdownRowCount('## 画布：项目A\n- 一些笔记\n- 另一条\n'), 0,
-    '★ 标记 + 列表：0 条（早先算 1 条 → 放行 → 空画布顶掉全部）');
-  eq(wb103.markdownRowCount('## 画布：A\n- 笔记\n\n## 画布：B\n- 笔记2\n'), 0,
-    '★ 多个标记 + 列表：0 条（早先算 2 条）');
+  /*
+   * BUG 145 之后列表项也算大纲行，所以这两条从 0 变成「列表的条数」。
+   *
+   * ⓘ 这不是把 BUG 103 的修复推翻了 —— BUG 103 修的是「标记行被当成节点」，
+   *   标记行**仍然不计数**（上面那条 0 就是证明）。变的是块里的列表：
+   *   以前它被解析器丢掉、于是"放行 + 几乎全空"；现在它真的会被导入，
+   *   所以放行是对的。契约 ④ 仍是同一条底线：放行就不能全空。
+   */
+  eq(wb103.markdownRowCount('## 画布：项目A\n- 一些笔记\n- 另一条\n'), 2,
+    '★ 标记行仍不算，块内的列表照常算 2 条（BUG 145 起列表会被导入）');
+  eq(wb103.markdownRowCount('## 画布：A\n- 笔记\n\n## 画布：B\n- 笔记2\n'), 2,
+    '★ 两个标记都不算，两块各 1 条列表');
   eq(wb103.markdownRowCount('## 画布：\n'), 0, '空标题的标记行同样不算');
+
+  // ①b 列表被导入后**真的是节点**（不然又变成"放行 + 全空"）
+  {
+    const s103 = wb103.markdownToWorkbook('## 画布：项目A\n- 一些笔记\n- 另一条\n');
+    const r103 = JSON.parse(s103[0].content).root;
+    eq(r103.data.text, '一些笔记', '★ 块内列表的第一项成为根（不再是空的「中心主题」）');
+    eq((r103.children || []).length, 1, '第二项挂在它下面');
+  }
 
   // ② 块里真有标题时不受影响（该放行的照样放行）
   eq(wb103.markdownRowCount('## 画布：项目A\n# 根\n## 子\n'), 2, '★ 块内有标题：照常计数（不误杀）');
@@ -5737,15 +5753,25 @@ group('BUG 103 · 分块标记行不得算作大纲行（闸门不许被它骗�
     }
   }
 
-  // ⑤ 源码层：rowCount 必须显式跳过标记行（不许只靠正则碰巧不命中）
+  /*
+   * ⑤ 源码层：必须显式跳过标记行（不许只靠正则碰巧不命中）。
+   *
+   * BUG 145 之后这段判定从 markdownRowCount 移到了共用的 `mdOutlineRows()`
+   * —— 跳过标记行是**解析器**的职责，闸门只是复用它。所以断言跟着移到
+   * mdOutlineRows 的函数体里查。
+   */
   {
     const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
-    const i = wsrc.indexOf('export function markdownRowCount');
-    ok(i > 0, '能定位 markdownRowCount');
-    const body = wsrc.slice(i, i + 1600);
-    ok(/SHEET_MARK\.test\(raw\)/.test(body), '★ rowCount 显式跳过分块标记行');
-    ok(/SHEET_MARK\.test\(raw\)\s*\)\s*continue;|if \(SHEET_MARK\.test\(raw\)\) continue;/.test(body),
+    const i = wsrc.indexOf('export function mdOutlineRows');
+    ok(i > 0, '能定位 mdOutlineRows');
+    const body = wsrc.slice(i, i + 2600);
+    ok(/SHEET_MARK\.test\(raw\)/.test(body), '★ 解析时显式跳过分块标记行');
+    ok(/if \(SHEET_MARK\.test\(raw\)\)\s*\{/.test(body),
       '跳过用 continue（不是把计数反过来写）');
+    // 只写 `SHEET_MARK.test` 会命中注释吗？已 stripComments，不会。
+    // 但"有判据"不等于"在正确位置"—— 必须排在标题判定之前
+    ok(body.indexOf('SHEET_MARK.test(raw)') < body.indexOf('const m = raw.match'),
+      '★ 跳过标记行必须排在标题判定之前（否则先被数成标题）');
   }
 }
 
@@ -6206,6 +6232,153 @@ group('BUG 144 · 导入别人的 .puml：节点文字正好是语法标记（�
   }
 }
 
+group('BUG 145 · 导入别人的 .md：列表项不能再被整片丢掉（标题留在、内容没了）');
+
+{
+  const wb145 = await import('./workbook.js');
+  const flat145 = (content) => {
+    const root = (typeof content === 'string' ? JSON.parse(content) : content)?.root;
+    if (!root) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(root, 0);
+    return JSON.stringify(out);
+  };
+  const rows145 = (md) => JSON.stringify(wb145.mdOutlineRows(md).map((r) => [r.text, r.depth]));
+
+  /*
+   * ① ★ 标题 + 缩进列表：这是 Obsidian / Typora / 幕布 / Notion 导出
+   *    Markdown 最常见的写法。早先只认 `#`，于是列表项整片消失 ——
+   *    而 rowCount 看见 `# 项目` 说「有大纲」→ 放行导入 → 导回的画布
+   *    几乎全空 → 整体替换顶掉用户全部画布（导入不可撤销）。
+   */
+  eq(rows145('# 项目\n- 设计\n  - UI\n  - 交互\n- 开发'),
+    JSON.stringify([['项目', 0], ['设计', 1], ['UI', 2], ['交互', 2], ['开发', 1]]),
+    '★ `#` + 缩进列表：列表全在、层级正确（早先只剩「项目」）');
+  eq(flat145(wb145.markdownToSheet('# 项目\n- 设计\n  - UI\n  - 交互\n- 开发')),
+    JSON.stringify([['项目', 0], ['设计', 1], ['UI', 2], ['交互', 2], ['开发', 1]]),
+    '★ 建树结果同样是这个层级');
+
+  // ② 无序列表三种标记、有序列表都要认
+  for (const [mark, name] of [['-', '减号'], ['*', '星号'], ['+', '加号']]) {
+    eq(rows145('# R\n' + mark + ' A\n' + mark + ' B'), JSON.stringify([['R', 0], ['A', 1], ['B', 1]]),
+      '★ ' + name + '列表同样解析（早先丢掉）');
+  }
+  eq(rows145('# R\n1. 第一步\n2. 第二步'),
+    JSON.stringify([['R', 0], ['第一步', 1], ['第二步', 1]]), '★ 有序列表同样解析');
+
+  /*
+   * ③ ★ 缩进比例不写死：2 空格和 4 空格都极常见，用栈算相对层级。
+   *    写死「每 N 空格一层」必然错层。
+   */
+  eq(rows145('- A\n  - B\n    - C'), JSON.stringify([['A', 0], ['B', 1], ['C', 2]]),
+    '★ 2 空格缩进 → 每层 +1');
+  eq(rows145('- A\n    - B\n        - C'), JSON.stringify([['A', 0], ['B', 1], ['C', 2]]),
+    '★ 4 空格缩进同样 → 每层 +1（不能写死比例）');
+  eq(rows145('- A\n\t- B'), JSON.stringify([['A', 0], ['B', 1]]),
+    '★ 制表符缩进也能分层（按 2 空格展开）');
+  /*
+   * ★ 整段缩进的列表（列表整体写在引用/嵌套块里）不算子层。
+   *   栈底必须是「本段第一项的缩进」，写死 0 的话整段都多一层。
+   */
+  eq(rows145('  - A\n  - B\n    - C'), JSON.stringify([['A', 0], ['B', 0], ['C', 1]]),
+    '★ 整段缩进的列表：首项仍是第 0 层（栈底以首项缩进为基准）');
+
+  /*
+   * ④ ★ 围栏代码块里的列表 / 标题不是大纲。
+   *    不分这个的话，README 之类文档里的示例代码会变成一整排节点。
+   */
+  eq(rows145('# 项目\n```\n- 代码里的列表\n- 第二条\n```\n- 真节点'),
+    JSON.stringify([['项目', 0], ['真节点', 1]]),
+    '★ 围栏代码块内的列表不算节点');
+  eq(rows145('# 项目\n~~~\n# 代码里的标题\n~~~\n## 真标题'),
+    JSON.stringify([['项目', 0], ['真标题', 1]]), '★ ~~~ 围栏同样（且闭合后恢复正常）');
+
+  /*
+   * ⑤ ★ 水平线不是列表项。YAML front matter 的 `---`、章节分隔的
+   *    `***` / `- - -` 都得跳过 —— 不然会凭空多出一排节点。
+   */
+  eq(rows145('# 项目\n---\n- 设计'), JSON.stringify([['项目', 0], ['设计', 1]]),
+    '★ `---` 不是列表项');
+  eq(rows145('# 项目\n***\n- 设计'), JSON.stringify([['项目', 0], ['设计', 1]]), '★ `***` 不是列表项');
+  eq(rows145('# 项目\n- - -\n- 设计'), JSON.stringify([['项目', 0], ['设计', 1]]),
+    '★ `- - -` 同样跳过（它会命中列表正则，必须靠内容判掉）');
+  eq(rows145('---\ntitle: X\n---\n# 项目\n- 设计'),
+    JSON.stringify([['项目', 0], ['设计', 1]]), '★ YAML front matter 整段不产生节点');
+
+  // ⑥ 既有口径不许被带坏：四格/制表符缩进的**标题**仍不算（CommonMark 是代码块）
+  eq(wb145.markdownRowCount('    # 甲'), 0, '★ 四格缩进的标题仍不算（BUG 101 口径不变）');
+  eq(wb145.markdownRowCount('\t# 甲'), 0, '★ 制表符缩进的标题仍不算');
+  eq(wb145.markdownRowCount('  # 甲'), 1, '三格缩进仍算');
+  eq(wb145.markdownRowCount('## '), 1, '★ 空标题仍算一条（BUG 99 口径不变）');
+  eq(rows145('# R\n## \n### A1\n### A2\n## B'),
+    JSON.stringify([['R', 0], ['未命名', 1], ['A1', 2], ['A2', 2], ['B', 1]]),
+    '★ 空标题仍补占位、子树不抬层（BUG 99 回归）');
+
+  // ⑦ 本工具自己的往返不受影响：导出只用 `#`，不写裸列表行
+  {
+    const N145 = (t, ch) => ({ data: { text: t }, children: ch || [] });
+    const sheets = [{ id: 's1', title: '画布', content: { root: N145('中心主题', [N145('- 设计'), N145('1. 第一步')]) }, theme: null }];
+    const md = wb145.workbookToMarkdown(sheets);
+    ok(!/^[-*+]\s/m.test(md), '★ 导出的 md 里没有裸列表行（文字里的 `-` 前头有 `#`）');
+    const back = wb145.markdownToWorkbook(md);
+    eq(flat145(back[0].content),
+      JSON.stringify([['中心主题', 0], ['- 设计', 1], ['1. 第一步', 1]]),
+      '★ 文字以 `- ` / `1. ` 开头的节点往返一字不改');
+  }
+
+  /*
+   * ⑧ ★ 闸门与解析必须逐条一致（BUG 90 / 101 / 102 的老教训）。
+   *    纯列表以前被拦下（安全但导不进来），标题+列表以前被放行却几乎全空（事故）。
+   *    现在两边共用 mdOutlineRows，这个循环就是那条底线。
+   */
+  {
+    const isEmpty = (s) => {
+      try {
+        const r = JSON.parse(s.content).root;
+        return r.data.text === '中心主题' && !(r.children || []).length;
+      } catch { return false; }
+    };
+    for (const md of [
+      '- 纯列表\n- 第二条',
+      '# 项目\n- A\n  - B',
+      '## 画布：A\n- 笔记',
+      '# R\n## \n### A1',
+      '   # 缩进标题',
+      '    # 四格（代码块）',
+      '普通一句话',
+    ]) {
+      const n = wb145.markdownRowCount(md);
+      const sheets = wb145.markdownToWorkbook(md);
+      ok(!(n > 0 && sheets.every(isEmpty)),
+        '★ rowCount>0 时不得全空：' + JSON.stringify(md) + '（rowCount=' + n + '）');
+      eq(n, wb145.mdOutlineRows(md).length, 'rowCount 与解析结果逐条一致：' + JSON.stringify(md));
+    }
+  }
+
+  /*
+   * ⑧b ★ 列表项**不**解前导反斜杠（与标题那条分支不同）。
+   *
+   * 前导反斜杠是 sheetToMarkdown 加的转义，而它只加在**标题行**上 ——
+   * 本工具导出从不写裸列表行。所以列表项里的 `\` 一律是文字本身，
+   * 解掉就是静默改别人的内容。
+   */
+  eq(rows145('# R\n- \\画布：X'), JSON.stringify([['R', 0], ['\\画布：X', 1]]),
+    '★ 列表项以 `\\` 开头时原样保留（导出侧只对标题加转义）');
+  eq(rows145('# R\n- \\普通'), JSON.stringify([['R', 0], ['\\普通', 1]]),
+    '★ 列表项不做通用去反斜杠');
+
+  // ⑨ 源码层：闸门必须复用同一份解析（不许自己再抄一份正则）
+  {
+    const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+    const noDef = wsrc.replace(/export function mdOutlineRows\(md\)\s*\{/, '');
+    const iRC = noDef.indexOf('export function markdownRowCount');
+    ok(iRC > 0, '能定位 markdownRowCount');
+    ok(/mdOutlineRows\(md\)\.length/.test(noDef.slice(iRC, iRC + 400)),
+      '★ markdownRowCount 复用 mdOutlineRows（摘掉定义行才算数）');
+    ok(/\^ \{0,3\}\(`\{3,\}|~\{3,\}\)/.test(wsrc), '★ 行解析必须判围栏代码块');
+  }
+}
+
 group('格式识别 detectFormat（内容优先于扩展名）');
 
 {
@@ -6343,17 +6516,37 @@ group('BUG 90 · 判「有没有大纲」与「解析大纲」必须同一套口
   // 制表符缩进：CommonMark 里是**代码块**不是标题，两边都该当没有大纲
   eq(wb9.markdownRowCount('\t# 项目'), 0, '制表符缩进不算标题（与解析器一致，避免误放行）');
 
-  // 源码侧：两个正则必须逐字对齐（只认空格、最多三格、井号后要空白）
+  /*
+   * 源码侧：解析器的正则要允许 0~3 个前导空格（只认空格、井号后要空白）。
+   *
+   * BUG 145 之后两边**不再是两份正则**，而是共用 `mdOutlineRows()`：
+   * 早先"两边逐字对齐"靠人肉维护，出过三次事故（BUG 90 / 101 / 102），
+   * 现在改成结构性保证 —— 所以这里断言的是"闸门真的复用了同一份解析"。
+   */
   const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
   ok(/raw\.match\(\/\^ \{0,3\}\(#\{1,6\}\)\\s\+\(\.\*\)\$\/\)/.test(wsrc),
-    'markdownToSheet 允许 0~3 个前导空格');
+    'mdOutlineRows 允许 0~3 个前导空格');
   /*
-   * BUG 99 之后空标题会补成占位节点，所以 rowCount 的口径从「井号后有非空白内容」
-   * 放宽成「井号后有内容 **或** 只有空白」—— 与解析器逐字对齐。
-   * 只认 `\s+\S` 的话，「那边解析出占位节点、这里说没有大纲」又对不上了。
+   * ★「闸门复用同一份解析」的判据必须**排除函数定义自己**：
+   * 只写 `mdOutlineRows(` 的话，`export function mdOutlineRows(md) {` 那一行
+   * 本身就命中 —— 删掉 markdownRowCount 里的调用点照样绿。
    */
-  ok(/\/\^ \{0,3\}#\{1,6\}\(\\s\+\\S\|\\s\+\$\)\//.test(wsrc),
-    'markdownRowCount 用同一套前导空格规则（含空标题，与解析器一致）');
+  {
+    const noDef = wsrc.replace(/export function mdOutlineRows\(md\)\s*\{/, '');
+    const iRC = noDef.indexOf('export function markdownRowCount');
+    ok(iRC > 0, '能定位 markdownRowCount');
+    ok(/mdOutlineRows\(md\)\.length/.test(noDef.slice(iRC, iRC + 400)),
+      '★ markdownRowCount 必须真的复用 mdOutlineRows（不再自己抄一份正则）');
+  }
+  /*
+   * 行为侧再加一道：两边对同一批输入必须给出一致结论。
+   * 只查源码的话，"复用了但复用错地方"看不出来。
+   */
+  for (const md of ['  # 甲\n', '    # 甲\n', '\t# 甲\n', '## \n', '- 列表\n', '# R\n- A\n']) {
+    const rows = wb9.mdOutlineRows(md);
+    eq(wb9.markdownRowCount(md), rows.length,
+      `rowCount 与解析结果逐条一致：${JSON.stringify(md)}`);
+  }
   ok(!/\\s\{0,3\}#\{1,6\}/.test(wsrc), '不得再出现 \\s{0,3}（含制表符，与解析器不一致）');
 }
 
@@ -6411,15 +6604,19 @@ group('BUG 91 · 「画布：」转义必须成对（E/D）');
   const E = String.raw`/^\\/.test(text) || /^画布[:：]/.test(text)`;
   const D = String.raw`/^\\(画布[:：]|\\)/.test(text)`;
   const iSheet = wsrc.indexOf('export function sheetToMarkdown(');
-  const iFrom = wsrc.indexOf('export function markdownToSheet(');
+  /*
+   * BUG 145：行解析从 markdownToSheet 抽到了共用的 `mdOutlineRows()`，
+   * 所以「解转义」这段也随之搬了家 —— 断言的锚点跟着改，否则恒假。
+   */
+  const iFrom = wsrc.indexOf('export function mdOutlineRows(');
   const iE = wsrc.indexOf(E);
   const iD = wsrc.indexOf(D);
   ok(iSheet >= 0 && iE > iSheet && iE - iSheet < 2500,
     'E 的条件在 sheetToMarkdown 里（以反斜杠开头、或撞分块标记才转义）',
     `sheet@${iSheet} E@${iE}`);
-  ok(iFrom >= 0 && iD > iFrom && iD - iFrom < 2500,
-    'D 的条件在 markdownToSheet 里（只解紧跟「画布：」或又一个反斜杠的那一个）',
-    `from@${iFrom} D@${iD}`);
+  ok(iFrom >= 0 && iD > iFrom && iD - iFrom < 3500,
+    'D 的条件在 mdOutlineRows 里（只解紧跟「画布：」或又一个反斜杠的那一个）',
+    `rows@${iFrom} D@${iD}`);
   ok(!wsrc.includes('text.replace(/\\'), 'D 不得做通用去反斜杠（会改掉别处导入的文字）');
 }
 

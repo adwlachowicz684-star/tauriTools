@@ -267,14 +267,26 @@ export function deepNodeCount(sheets, max = MARKDOWN_MAX_LEVEL) {
 }
 
 /**
- * Markdown → kityminder JSON 文本。
- * 只认 ATX 标题行（'#' 开头），其余行忽略（原 C# 版同样只处理标题层级）。
+ * Markdown 文本 → 大纲行 `[{ depth, text }]`。
+ *
+ * 这是 `markdownToSheet()`（真的建树）与 `markdownRowCount()`（导入闸门）
+ * **共用的唯一一份行解析**。
+ *
+ * 为什么必须共用一份：两边各写一份正则，历史上出过三次事故 ——
+ *   BUG 90  · 一边 `\s{0,3}` 一边顶格 → 闸门说「有大纲」、解析出来是空的
+ *             → 一张空画布顶掉用户全部内容
+ *   BUG 101 · 带 CR 的行一边认一边不认 → 同一个文件两种判断
+ *   BUG 102 · 分块标记行被闸门当成节点 → 只有标记的块也放行
+ * 抽成一份之后，「两边口径不一致」在结构上就不可能再发生。
  */
-export function markdownToSheet(md) {
+export function mdOutlineRows(md) {
   const rows = [];
+  let fence = null;      // 围栏代码块的标记字符（` 或 ~ 或更多），闭合前一律跳过
+  let base = -1;         // 最近一个标题的深度；一个标题都没有时 -1（列表首项成为根）
+  const indents = [null]; // 列表缩进栈：相对缩进定层级，2 / 4 空格混用都成立
   for (const rawLine of String(md || '').split(/\r?\n/)) {
     /*
-     * BUG 101：先把行里的换行终止符摊平成空格，再判"是不是标题行"。
+     * BUG 101：先把行里的换行终止符摊平成空格，再判"是不是大纲行"。
      *
      * 不摊平的话，`# 含\r回车` 里的 \r 让 `(.*)$` 无法匹配 —— `.` 不匹配
      * 行终止符 —— 整行被跳过，节点静默消失、子树抬层（详见 sheetToMarkdown
@@ -285,6 +297,30 @@ export function markdownToSheet(md) {
      * 导出侧规范化，只能在这里拦。
      */
     const raw = flattenBreaks(rawLine);
+    /*
+     * ★ 分块标记行不是节点行（BUG 102）。
+     * `## 画布：项目A` 自己就命中标题正则，数它等于把「有 N 张画布」误当成
+     * 「有 N 个节点」（详见 markdownRowCount 那段注释）。
+     */
+    if (SHEET_MARK.test(raw)) {
+      base = -1;
+      indents.length = 0;
+      indents.push(null);
+      continue;
+    }
+    /*
+     * **围栏代码块**：里面的 `- item` / `# x` 都不是大纲（BUG 145）。
+     * 不分这个的话，README 之类文档里的示例代码会被当成一整排节点。
+     */
+    const fm = raw.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fm) {
+      const mark = fm[1][0];
+      if (!fence) fence = mark;
+      else if (fence === mark) fence = null;
+      continue;
+    }
+    if (fence) continue;
+
     /*
      * **井号前面允许 0~3 个空格**（CommonMark：ATX 标题最多缩进三格）。
      *
@@ -303,37 +339,108 @@ export function markdownToSheet(md) {
      * 制表符缩进在 CommonMark 里是代码块，不是标题）。
      */
     const m = raw.match(/^ {0,3}(#{1,6})\s+(.*)$/);
-    if (!m) continue;
-    const depth = m[1].length - 1;              // '#' → 0（中心主题）
-    let text = m[2].trim();
+    if (m) {
+      const depth = m[1].length - 1;              // '#' → 0（中心主题）
+      let text = m[2].trim();
+      /*
+       * 解掉 sheetToMarkdown 加的前导反斜杠（见那里的注释，E/D 必须成对）。
+       *
+       * **只**解「`\` 后面跟 `画布：`」或「`\` 后面又是一个 `\`」这两种形态，
+       * 不做通用去反斜杠 —— 否则从别处导入的 Markdown 里以 `\` 开头的
+       * 节点文字（如 `\普通文字`）会被改掉。
+       */
+      if (/^\\(画布[:：]|\\)/.test(text)) text = text.slice(1);
+      /*
+       * **空标题不能丢行**（BUG 99）。
+       *
+       * 早先这里是一句 `if (!text) continue;`，看着像"跳过没内容的行"，
+       * 实际做的是：丢掉这一行，把它的子树**整层抬到祖父身上** ——
+       * 层级静默错位，且不报错。与 formats.rowsToKm 那个 bug 是同一类，
+       * 只是这条路径自己又抄了一份重建逻辑，所以上一次没被一起修掉。
+       *
+       * 实测：
+       *   '# R\n## \n### A1\n### A2\n## B'
+       *     修复前 → R / A1 / A2 / B   ← A1、A2 从三级被抬成二级
+       *     修复后 → R / 未命名 /（A1、A2）/ B
+       *
+       * 触发它的是真实文件：从 Typora / Obsidian / 幕布 之类工具导出的
+       * Markdown 里，空标题行（有 # 但没写标题）并不罕见；
+       * 本工具自己导出的文件在节点文字为空白时也会写出 `## `（见 sheetToMarkdown）。
+       */
+      if (!text) text = EMPTY_NODE_TEXT;
+      rows.push({ depth, text });
+      base = depth;
+      indents.length = 0;
+      indents.push(null);
+      continue;
+    }
+
     /*
-     * 解掉 sheetToMarkdown 加的前导反斜杠（见那里的注释，E/D 必须成对）。
+     * **列表项**（BUG 145）。
      *
-     * **只**解「`\` 后面跟 `画布：`」或「`\` 后面又是一个 `\`」这两种形态，
-     * 不做通用去反斜杠 —— 否则从别处导入的 Markdown 里以 `\` 开头的
-     * 节点文字（如 `\普通文字`）会被改掉。
+     * 早先只认 `#` 标题，其余行一律丢掉。而 Obsidian / Typora / 幕布 / Notion
+     * 导出的 Markdown **大量用列表表示层级**，于是导入后只剩标题那几行、
+     * 列表内容全部消失，且不报错、不计入任何提示：
+     *
+     *   '# 项目\n- 设计\n  - UI\n  - 交互\n- 开发'
+     *     修复前 → 只有「项目」一个节点
+     *     修复后 → 项目 / 设计（UI、交互）/ 开发
+     *
+     * 危险的是**放行与解析不一致**：`markdownRowCount` 看见 `# 项目` 说
+     * 「有大纲」→ 放行导入 → 解析出的画布几乎是空的 → 整体替换顶掉用户
+     * 全部画布（导入不可撤销）。这正是 BUG 36 / 90 / 103 点名要防的事故。
+     *
+     * ⓘ 支持列表是**只读侧的兼容**：本工具导出 Markdown 只用 `#`（见
+     *   sheetToMarkdown），所以自己的往返不受影响。
      */
-    if (/^\\(画布[:：]|\\)/.test(text)) text = text.slice(1);
+    const li = raw.match(/^([ \t]*)(?:[-*+]|\d{1,9}[.)])([ \t]+)(.*)$/);
+    if (!li) continue;
+    let text = li[3].trim();
     /*
-     * **空标题不能丢行**（BUG 99）。
-     *
-     * 早先这里是一句 `if (!text) continue;`，看着像"跳过没内容的行"，
-     * 实际做的是：丢掉这一行，把它的子树**整层抬到祖父身上** ——
-     * 层级静默错位，且不报错。与 formats.rowsToKm 那个 bug 是同一类，
-     * 只是这条路径自己又抄了一份重建逻辑，所以上一次没被一起修掉。
-     *
-     * 实测：
-     *   '# R\n## \n### A1\n### A2\n## B'
-     *     修复前 → R / A1 / A2 / B   ← A1、A2 从三级被抬成二级
-     *     修复后 → R / 未命名 /（A1、A2）/ B
-     *
-     * 触发它的是真实文件：从 Typora / Obsidian / 幕布 之类工具导出的
-     * Markdown 里，空标题行（有 # 但没写标题）并不罕见；
-     * 本工具自己导出的文件在节点文字为空白时也会写出 `## `（见 sheetToMarkdown）。
+     * **水平线不是列表项**：`---` / `***` / `- - -` / `___` 都该跳过。
+     * 不判的话 YAML front matter 的分隔线和章节分隔线会变成一排节点。
+     * （`---` 本身不匹配上面的正则 —— 标记后必须跟空白 —— 但 `- - -` 匹配。）
      */
-    if (!text) text = EMPTY_NODE_TEXT;
-    rows.push({ depth, text });
+    if (!text || /^[-*_=~\s]+$/.test(text)) continue;
+    /*
+     * ⓘ 这里**不解** `\画布：` 的前导反斜杠 —— 与标题那条分支不同。
+     *
+     * 前导反斜杠是 `sheetToMarkdown` 加的**转义**（防止节点文字撞上分块
+     * 标记 `## 画布：`），而它只加在**标题行**上：本工具导出 Markdown 从不
+     * 写裸列表行（下面注释里有说明），所以列表项里的 `\` 一律是**文字本身**。
+     *
+     * 早先这里顺手也解了一次，于是从别处导入的 `- \画布：X` 会被改成
+     * `画布：X` —— 静默改了别人的内容。变异验证也证明这条分支**没有任何
+     * 用例能观测到**（删掉它全套测试照样绿），属于"看着在把关、其实没把关"。
+     */
+    /*
+     * 层级按**相对缩进的栈**算，不是"每 N 空格一层"。
+     *
+     * 列表缩进 2 空格和 4 空格都极常见，写死一个比例必然错层；用栈就能同时
+     * 成立：缩进变大 → 进一层；变小 → 退到对应层；相等 → 同级。
+     * 行首制表符按 2 空格展开（CommonMark 是 4，但"一个 tab 一层"的文件
+     * 更常见；关键是层级单调、不丢内容）。
+     */
+    const indent = li[1].replace(/\t/g, '  ').length;
+    if (indents[indents.length - 1] === null) {
+      // 本段列表的第一项：以它的缩进为基准（整段缩进的列表不该被当成子层）
+      indents[indents.length - 1] = indent;
+    } else {
+      while (indents.length > 1 && indents[indents.length - 1] > indent) indents.pop();
+      if (indents[indents.length - 1] < indent) indents.push(indent);
+    }
+    // 列表挂在最近那个标题下面（base = -1 时首项自己就是根）
+    rows.push({ depth: base + 1 + (indents.length - 1), text });
   }
+  return rows;
+}
+
+/**
+ * Markdown → kityminder JSON 文本。
+ * 认 ATX 标题行（'#' 开头）与列表项（BUG 145），其余行忽略。
+ */
+export function markdownToSheet(md) {
+  const rows = mdOutlineRows(md);
   if (!rows.length) return emptyContent();
 
   const root = { data: { text: rows[0].text }, children: [] };
@@ -378,55 +485,26 @@ export function workbookToMarkdown(sheets) {
 }
 
 /**
- * 这段文本里有几条 ATX 标题行（即能当大纲用的行数）。
+ * 这段文本里有几条能当大纲用的行（标题行 + 列表项）。
  *
  * 为什么需要它：`markdownToSheet()` 对**任何**输入都会给出一棵树 ——
- * 一条标题都没有时返回 `emptyContent()`，也就是一张空的「中心主题」画布。
+ * 一条大纲行都没有时返回 `emptyContent()`，也就是一张空的「中心主题」画布。
  * 于是「导入一个根本不是大纲的文件」不会报错，而是**静默地**拿一张空画布
  * 把用户现有的全部画布顶掉（导入是整体替换、且不可撤销），状态栏还写
  * 「已保存」。导入方必须先问一句「这里到底有没有大纲」，没有就别替换。
  *
- * 只数**能解析成节点**的行，与 markdownToSheet 的正则口径保持一致 ——
- * 否则两边判断会不一致：这里说有、那边解析出来是空的。
+ * ★ 直接复用 `mdOutlineRows()`（BUG 145）。
  *
- * 「能解析成节点」包括**空标题**（`## `）：BUG 99 之后空标题会补成占位节点，
- * 不再被丢掉，所以这里也必须算一条，否则又变成"那边有节点、这里说没有"。
+ * 早先这里是**自己抄了一份正则**，只数 `#` 标题。抄两份的代价历史上付过
+ * 三次（BUG 90 口径不一致 / BUG 101 CR / BUG 102 分块标记），而 BUG 145
+ * 之后又多一条：解析器认列表、闸门不认 → 纯列表文件被拦下（还好），
+ * 而「标题 + 列表」的文件**放行却几乎全空**（事故）。
+ *
+ * 现在两边是同一个函数，"这里说有、那边解析出来是空的"在结构上不可能发生。
+ * 分块标记行在 mdOutlineRows 里跳过（BUG 102）；空标题补占位（BUG 99）。
  */
 export function markdownRowCount(md) {
-  let n = 0;
-  for (const rawLine of String(md || '').split(/\r?\n/)) {
-    // 与 markdownToSheet 逐字同一套：先摊平换行终止符，再判（BUG 101）。
-    // 不摊平就会重演 BUG 90 —— 这里说"有大纲"、那边解析出空画布。
-    const raw = flattenBreaks(rawLine);
-    /*
-     * ★ 分块标记行不是节点行（BUG 102）。
-     *
-     * `## 画布：项目A` 自己就命中 `/^ {0,3}#{1,6}(\s+\S|\s+$)/` —— 于是
-     * 「只有标记、块内没有一行标题」的文件也会数出 ≥1 条，闸门放行导入：
-     *
-     *   `## 画布：项目A\n- 一些笔记\n`   rowCount = 1 → 放行
-     *   → markdownToWorkbook 给出 1 张画布，块内无标题行 → emptyContent()
-     *   → 一张空的「中心主题」顶掉用户全部画布（导入是整体替换、不可撤销）
-     *
-     * 这正是 BUG 36 / 90 点名要防的事故，只是这次是从分块标记这条缝漏进来的：
-     * 标记行在 markdownToWorkbook 里是**分隔符**，不是内容，数它等于把
-     * "有 N 张画布"误当成"有 N 个节点"。
-     *
-     * 块里真有标题时不受影响：那些行照常数，闸门照样放行。
-     */
-    if (SHEET_MARK.test(raw)) continue;
-    /*
-     * 口径必须与 markdownToSheet() 逐字一致（见那里的注释）：
-     * 早先这里是 `\s{0,3}`（含制表符）、那边是顶格，于是「这里说有大纲、
-     * 那边解析出空画布」，导入变成静默清空。
-     *
-     * `(\s+\S|\s+$)`：井号后跟内容算一条；**光有井号和空格**也算一条 ——
-     * 空标题现在会补成占位节点（BUG 99），不数就又对不上。
-     * 井号后什么都没有（`##`）不在此列：解析器要求 `\s+`，那边同样不认。
-     */
-    if (/^ {0,3}#{1,6}(\s+\S|\s+$)/.test(raw)) n++;
-  }
-  return n;
+  return mdOutlineRows(md).length;
 }
 
 /** Markdown → 画布数组（识别 '## 画布：' 分块；无分块时视作单画布） */
