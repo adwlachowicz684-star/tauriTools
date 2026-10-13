@@ -368,11 +368,18 @@ test('元信息: 三种来源都有说明', () => {
  * 磁盘上真的会多出一个叫这名字的东西，且不报错、日志干净。
  * ================================================================== */
 
-/** 模板层唯一的字符集定义 —— 判据与运行时同一套 */
-const unresolved = (s: string): boolean => tokenRe().test(s);
+/*
+ * 模拟 render 交出来的结论：文本里还是 {{}} 形状，就是这次没取到值。
+ *
+ * 真实的 missing 由 renderTemplate 算（见 engine/template），
+ * 这里只是把"文本 → 结论"这一步在测试里近似出来 —— **判据本身不在这里**，
+ * fsRenderIssue 只收结论，不做判断。
+ */
+const miss = (s: string): string[] =>
+  (String(s ?? '').match(tokenRe()) ?? []).map((m) => m.slice(2, -2).trim());
 
 const issue = (op: string, path: string, target = ''): string =>
-  fsRenderIssue(op, path, target, unresolved);
+  fsRenderIssue(op, path, target, miss(path), miss(target));
 
 test('空路径必须拦住（上游没产出时最常见）', () => {
   assert.match(issue('read', ''), /路径是空的/);

@@ -777,14 +777,27 @@ test('B4: 循环结束后 loop 变量不再可用（不残留）', async () => {
       edge('l', 'after', { loopRole: 'done' }),
     ],
   };
-  let seen = '';
+  /*
+   * 关键不是"渲染成什么样"，而是**不能拿上一轮的值、也不能拿字面量去执行**。
+   *
+   * 这两条以前是同一个断言（prompt 保留 `{{loop.item}}`）—— 而 prompt 保留
+   * 字面量意味着命令真的带着 `{{loop.item}}` 跑，副作用已经发生。
+   * 现在命令行节点未渲染即失败（见 engine/runners/task.ts），
+   * 所以这里断言的是：after **没被执行**，且失败原因说清了是没渲染出来。
+   */
+  let ran = false;
+  const events: RunEvent[] = [];
   await runGraph(graph, {
     concurrency: 1,
-    executor: async (node, prompt) => {
-      if (node.id === 'after') seen = prompt;
+    executor: async (node) => {
+      if (node.id === 'after') ran = true;
       return 'ok';
     },
-    onEvent: () => {},
+    onEvent: (e) => { events.push(e); },
   });
-  assert.equal(seen, 'X={{loop.item}}', '循环外应是未解析状态，而不是残留上一轮的值');
+  assert.equal(ran, false, '循环外引用 loop 变量不该执行（否则带着字面量跑）');
+  const done = events.filter((e) => e.type === 'node-done' && (e as { id?: string }).id === 'after');
+  const last = done[done.length - 1] as { ok?: boolean; error?: string } | undefined;
+  assert.equal(last?.ok, false, '要判失败，不能让节点绿着');
+  assert.match(String(last?.error ?? ''), /没渲染出来的模板变量/);
 });

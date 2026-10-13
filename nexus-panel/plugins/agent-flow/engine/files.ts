@@ -1,6 +1,7 @@
 import {
   defaultFileOutput, FS_OP_META, FS_FORBIDDEN, type FsOp, type TaskNodeData,
 } from '../types';
+import { unresolvedIssue } from './template';
 
 /**
  * 从 CLI 输出文本里提取"被修改/创建的文件路径"，供下游节点引用。
@@ -414,22 +415,36 @@ export function fsForbidden(path: string, op: string): boolean {
  *
  * write / append 的 content 空着是合法的（建空文件、追加空串），
  * 判它缺参会让用户去填一个本来就该空着的值。
+ *
+ * ================= 为什么收 missing 而不是收一个判定函数 =================
+ *
+ * 以前第四个参数是 `hasUnresolved: (s) => boolean`，调用方拿 tokenRe()
+ * 对着渲染后的文本**再扫一遍** —— 而"哪些变量没解析"renderTemplate
+ * 早就算出来并记在 missing 里了（tpl 只是没往外传，见 runner.ts）。
+ *
+ * 重扫是同一件事的第二份实现，而且更粗糙：它认的是"文本里还有 {{}}
+ * 形状"，而真正的判据是"这次渲染确实没取到值"。正文里本来就带 {{}} 的
+ * 节点（比如写文档的节点）会被误判。
+ *
+ * 现在 ctx.render 把 missing 交出来了，这里直接用真实结论 ——
+ * 未渲染的判定全仓只剩 renderTemplate 一处。
  */
 export function fsRenderIssue(
-  op: string, path: string, target: string, hasUnresolved: (s: string) => boolean,
+  op: string, path: string, target: string,
+  pathMissing: string[], targetMissing: string[],
 ): string {
   if (!String(path ?? '').trim()) {
     return '路径是空的 —— 上游没产出，模板变量没渲染出值';
   }
-  if (hasUnresolved(path)) {
-    return '路径里有没渲染出来的模板变量 —— 会拿字面量当路径用，去检查上游有没有产出';
+  if (pathMissing.length > 0) {
+    return unresolvedIssue('路径', pathMissing, '会拿字面量当路径用，去检查上游有没有产出');
   }
   if (fsNeedsTarget(op)) {
     if (!String(target ?? '').trim()) {
       return '这个操作需要目标路径，而它是空的';
     }
-    if (hasUnresolved(target)) {
-      return '目标路径里有没渲染出来的模板变量 —— 会拿字面量当路径用';
+    if (targetMissing.length > 0) {
+      return unresolvedIssue('目标路径', targetMissing, '会拿字面量当路径用');
     }
     if (fsForbidden(target, op)) {
       return `目标路径 ${target} 属于不允许改动的位置`;

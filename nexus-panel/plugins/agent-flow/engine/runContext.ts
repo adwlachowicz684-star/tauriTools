@@ -109,6 +109,26 @@ export type RunContext = {
    */
   tpl: (text: string) => string;
 
+  /**
+   * 渲染并**带回**没解析出来的变量。
+   *
+   * ================= 为什么不能拿 tpl 的结果再扫一遍正则 =================
+   *
+   * 底层 renderTemplate 本来就把没解析的变量记在 missing 里，
+   * 而 tpl 只返回 text —— 于是"哪些变量没解析"这个**已经算出来的结果**
+   * 被丢掉了，调用方只好拿 tokenRe() 对着渲染后的文本再扫一遍。
+   *
+   * 那是同一件事的第二份实现，而且更粗糙：
+   *
+   *   · 重扫是近似的 —— 它认的是"文本里还有 {{}} 形状"，
+   *     而真正判据是"这次渲染确实没取到值"。正文里本来就带 {{}}
+   *     时会被误判（比如写文档的节点）。
+   *   · renderTemplate 将来放宽/收紧字符集，重扫那处不会跟着变。
+   *
+   * 所以这里把 missing 一并交出去：**未解析的判定只有一处**。
+   */
+  render: (text: string) => { text: string; missing: string[] };
+
   /* ---------- 结果收集器 ---------- */
   branches: BranchRecord[];
   parallels: ParallelRecord[];

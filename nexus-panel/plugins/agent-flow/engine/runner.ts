@@ -465,7 +465,32 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
     node: GraphNode,
     scope: Scope,
     signal: AbortSignal,
-  ): RunContext => ({
+  ): RunContext => {
+    /*
+     * 渲染并带回 missing —— 整个运行期**只有这一处**调 renderTemplate。
+     *
+     * 抽出来的理由：tpl 与 render 必须共用同一次渲染的结果。
+     * 各写一份的话，"未解析"这个结论会被算两遍（而且第二遍只能靠
+     * 重扫文本近似得出，见 runContext 里 render 的注释）。
+     */
+    const renderTpl = (text: string): { text: string; missing: string[] } => {
+      const r = renderTemplate(text, {
+        outputs, input: opts.input, loop: currentLoop(), fields: nodeFields, vars,
+        params: opts.params,
+        /*
+         * 嵌合带来的 {{input}} / {{chain.output}}。
+         * 没有嵌合关系时两者都不传 —— {{input}} 回落到全局输入，
+         * {{chain.output}} 视为未解析（保留原样提示）。
+         */
+        stackInput: stackOf(id)?.directOutput,
+        chainOutput: stackOf(id)?.chainOutput,
+      });
+      if (r.missing.length > 0) {
+        console.warn(`[${id}] 未解析的变量: ${r.missing.join(', ')}`);
+      }
+      return r;
+    };
+    return {
     id, node, graph, opts, scope, runStartedAt,
     emit, setStatus,
     /*
@@ -522,28 +547,14 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       if (!opts.askHuman) return null;
       return opts.askHuman(promptText, defaultValue);
     },
-    tpl: (text) => {
-      const r = renderTemplate(text, {
-        outputs, input: opts.input, loop: currentLoop(), fields: nodeFields, vars,
-        params: opts.params,
-        /*
-         * 嵌合带来的 {{input}} / {{chain.output}}。
-         * 没有嵌合关系时两者都不传 —— {{input}} 回落到全局输入，
-         * {{chain.output}} 视为未解析（保留原样提示）。
-         */
-        stackInput: stackOf(id)?.directOutput,
-        chainOutput: stackOf(id)?.chainOutput,
-      });
-      if (r.missing.length > 0) {
-        console.warn(`[${id}] 未解析的变量: ${r.missing.join(', ')}`);
-      }
-      return r.text;
-    },
+    render: renderTpl,
+    tpl: (text) => renderTpl(text).text,
     branches, parallels, loops,
     byId, bodyNodeSet, loopBodies, orderByLayers, inheritConcurrency,
     setConcurrency: (i, v) => concOf.set(i, v),
     runNode, runScope, loopStack,
-  });
+    };
+  };
 
   /**
    * 取节点数据，**把参数连线的值填进去**。

@@ -15,7 +15,6 @@ import {
   type ChatMessage, type ContentPart,
 } from '../llm';
 import { resolveParams } from '../params';
-import { tokenRe } from '../template';
 import { evaluateCondition } from '../condition';
 import { resolveParallel, effectiveConcurrency, MAX_CONCURRENCY } from '../parallel';
 import { resolveLoopItems, makeLoopCtx, type LoopResolve } from '../loop';
@@ -35,9 +34,12 @@ export async function runFs(ctx: RunContext): Promise<void> {
   const d = node.data as FsNodeData;
 
   await withNodeRun(ctx, async () => {
-    const p = ctx.tpl(d.path);
-    const t = ctx.tpl(d.target);
-    const c = ctx.tpl(d.content);
+    const rp = ctx.render(d.path);
+    const rt = ctx.render(d.target);
+    const rc = ctx.render(d.content);
+    const p = rp.text;
+    const t = rt.text;
+    const c = rc.text;
 
 
     emit({ type: 'node-start', id, rendered: `${d.op} ${p}` });
@@ -56,8 +58,8 @@ export async function runFs(ctx: RunContext): Promise<void> {
        */
       const issue = fsRenderIssue(
         d.op, p, t,
-        /* 与模板层同一套字符集定义，不在这里另写一份 */
-        (s) => tokenRe().test(s),
+        /* 渲染时算出来的结论，不在这里另扫一遍 */
+        rp.missing, rt.missing,
       );
       if (issue) throw new NodeFailError(issue);
 

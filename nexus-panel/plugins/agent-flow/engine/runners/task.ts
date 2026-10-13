@@ -26,6 +26,7 @@ import {
 import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
 import { isAbortError } from '../sleep';
+import { unresolvedIssue } from '../template';
 
 export async function runTask(ctx: RunContext): Promise<void> {
     const {
@@ -43,12 +44,29 @@ export async function runTask(ctx: RunContext): Promise<void> {
    */
   const pane = findPane(graph?.nodes ?? [], td.paneId);
   const eff = resolveTaskPane(td, pane);
+  const rp = ctx.render(td.prompt);
   const rendered = eff.shareContext
-    ? withPaneContext(ctx.tpl(td.prompt), panePrevOutputs(graph, id, td.paneId, outputs), true)
-    : ctx.tpl(td.prompt);
+    ? withPaneContext(rp.text, panePrevOutputs(graph, id, td.paneId, outputs), true)
+    : rp.text;
 
   await withNodeRun(ctx, async () => {
     emit({ type: 'node-start', id, rendered });
+
+    /*
+     * 未渲染就判失败，**不交给命令行**。
+     *
+     * 命令里引用了上游、上游没产出时模板原样保留，于是执行的会是
+     * `移动 data 到 {{dest}}` —— 命令真的跑完、副作用真的发生，
+     * 而日志干净、节点是绿的。这是最难排查的一类："没报错，但东西没了"。
+     *
+     * 判据用 render 算出来的 missing（全仓只有 renderTemplate 一处判），
+     * 不在这里对着文本重扫 —— 重扫会把正文里本来就带 {{}} 的命令误判。
+     */
+    if (rp.missing.length > 0) {
+      throw new NodeFailError(unresolvedIssue(
+        '命令', rp.missing, '会真的执行一条带字面量的命令，去检查上游有没有产出',
+      ));
+    }
 
     let acc = '';
     try {

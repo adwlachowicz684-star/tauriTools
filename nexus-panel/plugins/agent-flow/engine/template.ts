@@ -191,3 +191,26 @@ export function renderTemplate(tpl: string, ctx: RenderCtx): RenderResult {
  *
  * 现在只有一处：canvasParams.scanParamRefs，且它从 tokenRe() 取分词。
  */
+
+/**
+ * 「有没渲染出来的变量」这件事的失败文案 —— 全仓唯一一处。
+ *
+ * ================= 为什么要收在这里 =================
+ *
+ * 未渲染的后果取决于它落在哪个参数上：
+ *
+ *   路径   → 磁盘上多出一个叫 `{{x}}` 的东西
+ *   命令   → 真的执行了一条带字面量的命令
+ *   推送   → 字面量被提交到远端仓库
+ *
+ * 三者后果不同，所以 consequence 由调用方给；但"怎么措辞、列出哪些变量"
+ * 只有一份 —— 各写一份的话，出现第四处时又会漏，而且措辞会漂成四种说法。
+ *
+ * ================= 为什么断言里要带上变量名 =================
+ *
+ * 只说"有变量没渲染"用户还得去找是哪一处；把名字列出来，
+ * 一眼就能看出是引用了哪个节点。
+ */
+export function unresolvedIssue(what: string, missing: string[], consequence: string): string {
+  return `${what}里有没渲染出来的模板变量（${missing.join('、')}）—— ${consequence}`;
+}
