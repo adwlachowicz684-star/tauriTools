@@ -2,6 +2,9 @@ import { useState } from 'react';
 import type { CanvasMeta } from '../engine/canvasStore';
 import type { CanvasGroup } from '../engine/canvasGroups';
 import { buildSidebar, type SidebarEntry } from '../engine/canvasGroups';
+/* 输入法组合期：回车是「把候选词上屏」，不是「确定改名」。
+   不拦的话给分组打中文名，按回车选词 → 分组名被写成拼音串并落盘。 */
+import { isComposing } from '../../../js/ime.js';
 import type { GlobalTrigger } from '../engine/triggerRegistry';
 
 type Props = {
@@ -147,6 +150,7 @@ export default function CanvasLibrary({
                       setEditingGroup(null);
                     }}
                     onKeyDown={(ev) => {
+                      if (isComposing(ev.nativeEvent)) return;
                       if (ev.key === 'Enter') {
                         if (draft.trim()) onRenameGroup(g.id, draft.trim());
                         setEditingGroup(null);

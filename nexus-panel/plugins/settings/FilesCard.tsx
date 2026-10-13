@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
+/* 输入法组合期：回车是「把候选词上屏」，不是这个按钮的「添加」动作。
+   中文路径打到一半按回车 → 加进去的是拼音路径，授权范围静默加错。
+   （注释里别写按钮上的那四个字：settings-cards 的断言按它取窗定位。） */
+import { isComposing } from '../../js/ime.js';
 
 /**
  * 文件访问授权
@@ -132,7 +136,7 @@ export default function FilesCard() {
           style={{ flex: 1, fontSize: 'var(--fs-12, 12px)', padding: '0 10px', minWidth: 0 }}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+          onKeyDown={(e) => { if (isComposing(e.nativeEvent)) return; if (e.key === 'Enter') add(); }}
         />
         <button
           className="p-btn primary"

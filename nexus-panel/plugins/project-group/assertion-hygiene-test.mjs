@@ -263,6 +263,17 @@ const gyTestVars = (src) => {
      */
     const sameName = decls.filter((x) => x[1] === name).length;
     if (sameName > 1) continue;
+    /*
+     * 同名还在别处被当成**形参**绑定过 → 那条 `.test` 用的多半不是这个
+     * g 字面量，而是外层数组里的元素。名字相同、绑定不同，靠名字判会误报。
+     *
+     * 实测（regression-guard-test.mjs）：`const re = /function\s+copyText\s*\(/g`
+     * 是配 exec 循环用的（g 的正确用法）；而 `BAD.some((re) => re.test(…))`
+     * 里的 re 是箭头函数形参，BAD 那几个正则**根本没有 g 标志** ——
+     * 报它只会逼人给一份正确的代码加冗余改名。
+     */
+    const nb = name.replace(/\$/g, '\\$');
+    if (new RegExp(`\\(\\s*${nb}\\s*[,)]|\\b${nb}\\s*=>`).test(src)) continue;
     if (new RegExp(`\\b${name.replace(/\$/g, '\\$')}\\s*\\.\\s*test\\s*\\(`).test(src)) {
       if (!out.includes(name)) out.push(name);
     }

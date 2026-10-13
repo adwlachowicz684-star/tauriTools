@@ -40,6 +40,10 @@ import {
    而这个页签的全部价值就在于"两栏摆在一起对照"。 */
 import { DEPS_MANIFEST, DEP_STATUS } from '../../js/deps-manifest.js';
 import { copyText } from '../../js/clipboard.js';
+/* 输入法组合期：回车是「把候选词上屏」。这里的输入框收的是**目录路径**，
+   中文路径（D:\我的项目）打到一半按回车 → 加进去的是拼音路径，
+   授权范围静默多一个不存在的目录，等到真去读写才撞「路径越权」。 */
+import { isComposing } from '../../js/ime.js';
 import {
   blockReasonOf, canInstall, consumerNoteOf,
   installRuntimeDep, listRuntimeDeps, loadRuntimeDep,
@@ -932,7 +936,7 @@ export default definePlugin({
         style: {
           flex: '1', height: '30px', fontSize: '12px', padding: '0 10px', minWidth: '0',
         },
-        onkeydown: (e) => { if (e.key === 'Enter') add(); },
+        onkeydown: (e) => { if (isComposing(e)) return; if (e.key === 'Enter') add(); },
         // 空输入时把「添加目录」置灰：按钮能点却什么都不做，只会让人以为坏了
         oninput: () => { addBtn.disabled = !(input.value || '').trim(); },
       });
@@ -1239,7 +1243,10 @@ export default definePlugin({
         }
       };
 
-      draftInput.onkeydown = (e) => { if (e.key === 'Enter') add(draftInput.value); };
+      draftInput.onkeydown = (e) => {
+        if (isComposing(e)) return;
+        if (e.key === 'Enter') add(draftInput.value);
+      };
 
       pages.favdirs.appendChild(
         h('div.p-card', {},

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import McpServersPanel from './McpServersPanel';
 import type { GlobalMcpServer } from '../engine/mcpServers';
 import { prompt } from '../../../js/dialog.js';
+/* 输入法组合期：回车是「把候选词上屏」，不是「解锁」 */
+import { isComposing } from '../../../js/ime.js';
 import {
   type Credential, type CredentialKind, type Capability, isSecretlessKind,
   makeCredential, missingCapabilities, NODE_NEEDS, detectGithubCapabilities,
@@ -283,6 +285,7 @@ export function CredentialPanel({
                 value={unlockPass}
                 onChange={(e) => setUnlockPass(e.target.value)}
                 onKeyDown={(e) => {
+                  if (isComposing(e.nativeEvent)) return;
                   if (e.key === 'Enter' && unlockPass && onUnlock) onUnlock(unlockPass);
                 }}
                 placeholder="解锁口令"

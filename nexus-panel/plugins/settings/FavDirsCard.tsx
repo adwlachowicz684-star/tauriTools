@@ -3,6 +3,9 @@ import { useNexus } from '../../src/nexus-react';
 import {
   favLabel, normPath, favIndexOf, FAV_MAX, favAddBlocker, FAV_NOT_LOADED, normalizeFavs,
 } from '../../js/fav-dirs.js';
+/* 输入法组合期：回车是「把候选词上屏」、Esc 是「取消候选词」，
+   都不是这里的「保存 / 取消」。收藏名与路径都可能是中文。 */
+import { isComposing } from '../../js/ime.js';
 
 /**
  * 工具常用文件夹
@@ -172,6 +175,7 @@ export default function FavDirsCard() {
                 value={nameDraft}
                 onChange={(e) => setNameDraft(e.target.value)}
                 onKeyDown={(e) => {
+                  if (isComposing(e.nativeEvent)) return;
                   if (e.key === 'Enter') commitName();
                   if (e.key === 'Escape') { setEditing(null); }
                 }}
@@ -236,7 +240,7 @@ export default function FavDirsCard() {
           style={{ flex: 1, fontSize: 'var(--fs-12, 12px)', padding: '0 10px', minWidth: 0 }}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') add(draft); }}
+          onKeyDown={(e) => { if (isComposing(e.nativeEvent)) return; if (e.key === 'Enter') add(draft); }}
         />
         <button
           className="p-btn"

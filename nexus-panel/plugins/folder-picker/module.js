@@ -53,6 +53,10 @@ import {
   FAV_MAX, normPath, normalizeFavs, favLabel, isFav, favIndexOf, crumbsOf,
   favAddBlocker, FAV_NOT_LOADED,
 } from '../../js/fav-dirs.js';
+/* 输入法组合期：回车是「把候选词上屏」，不是「前往 / 确定」。
+   这里的三处里最重的是 createChild —— 拼音上屏的那一下会真去建一个
+   叫拼音的目录，而用户以为自己在选词。 */
+import { isComposing } from '../../js/ime.js';
 
 export { FAV_MAX, normPath, normalizeFavs, favLabel, isFav, crumbsOf, favAddBlocker };
 
@@ -210,13 +214,18 @@ function createPanel(ctx) {
   );
 
   inputEl.addEventListener('keydown', (e) => {
+    if (isComposing(e)) return;
     if (e.key === 'Enter') go(inputEl.value.trim());
   });
   nameInput.addEventListener('keydown', (e) => {
+    // Esc 在组合期是「取消候选词」，同样不归这个输入框
+    if (isComposing(e)) return;
     if (e.key === 'Enter') { commitName(nameInput.value); }
     if (e.key === 'Escape') { naming = false; render(); }
   });
+  /* 新建子目录：这一下回车若归输入法，建出来的是拼音名目录（真落盘） */
   newNameEl.addEventListener('keydown', (e) => {
+    if (isComposing(e)) return;
     if (e.key === 'Enter') createChild(newNameEl.value);
   });
 

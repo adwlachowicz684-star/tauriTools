@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNexus } from '../../../src/nexus-react';
 import { listDirs, listQuickRoots, listFsRoots, type DirEntryLite } from '../lib/tauri';
 import { withinRoots } from '../engine/exportDir';
+/* 输入法组合期：回车是「把候选词上屏」。中文路径打到一半按回车
+   → 拿拼音去打开目录，报「打不开」而用户刚看到的明明是自己选的词。 */
+import { isComposing } from '../../../js/ime.js';
 
 /**
  * 应用内目录选择器。
@@ -181,7 +184,7 @@ export default function DirPicker({
           <input
             value={cwd}
             onChange={(e) => setCwd(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void load(cwd); }}
+            onKeyDown={(e) => { if (isComposing(e.nativeEvent)) return; if (e.key === 'Enter') void load(cwd); }}
             placeholder="也可以直接粘贴路径后回车"
           />
           <button className="mini" onClick={() => void load(cwd)} disabled={busy}>

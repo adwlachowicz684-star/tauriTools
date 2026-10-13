@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CanvasMeta } from '../engine/canvasStore';
 import { confirm } from '../../../js/dialog.js';
+/* 输入法组合期：回车是「把候选词上屏」、Esc 是「取消候选词」。
+   不拦的话给画布打中文名，按回车选词 → 画布被改名成拼音串并落盘。 */
+import { isComposing } from '../../../js/ime.js';
 
 type Props = {
   canvases: CanvasMeta[];
@@ -62,6 +65,7 @@ export default function CanvasTabs({
                 onChange={(e) => setDraft(e.target.value)}
                 onBlur={commit}
                 onKeyDown={(e) => {
+                  if (isComposing(e.nativeEvent)) return;
                   if (e.key === 'Enter') commit();
                   if (e.key === 'Escape') setEditingId(null);
                 }}
