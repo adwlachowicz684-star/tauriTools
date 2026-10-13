@@ -582,8 +582,29 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
    * 取后者：**只有来源确实产出了东西才覆盖**。
    * 来源跑到了但产出空串，那是真的产出了空，照常覆盖 ——
    * 否则"上游明确输出空"会被当成"上游没跑"，两种情形就分不开了。
+   *
+   * ================= "失败"不等于"产出空" =================
+   *
+   * 上面那条取舍里漏了一种情形：**来源跑了，但失败了**。
+   *
+   * 失败时 withNodeRun 仍然会写 `outputs[id] = ''`（占位，好让
+   * `{{id.output}}` 与汇合这类读取有个值）。于是 hasOwnProperty 成立、
+   * outValueOf 返回 '' 而不是 null —— 参数就被覆盖成空串了。
+   *
+   * 实测（tests/paramLinkRuntime.test.ts）：
+   *
+   *   闸门失败 → 「比较」的 b 从手填的「果」变成 '' → 算出 'true'
+   *   （'苹果'.startsWith('') 恒真），而用户填的「果」算出来是 'false'
+   *
+   *   更糟的是目标节点**照常执行**：参数连线不是流程边，
+   *   失败不会沿着它传播，所以它不会因为"喂我值的那个节点失败了"而跳过。
+   *   结果是拿着一个被悄悄清空的参数算出结果，整条流程往下走，
+   *   而日志里只有来源那个节点是红的。
+   *
+   * 失败写入的那个 '' 是**占位**，不是产出。所以按"没产出"处理：
+   * 保留手填值，与"来源被跳过 / 具名输出不存在"同一口径。
    */
-  function paramNodeOf(id: string): GraphNode {
+  function paramNodeOf(id: string, scope: Scope): GraphNode {
     const base = byId.get(id)!;
     const links = linksInto(paramLinks, id);
     if (links.length === 0) return base;
@@ -593,6 +614,14 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
       // hasOwnProperty 而不是 `outputs[x] ?? ''`：
       // 后者分不开"没跑到"与"产出空串"，见上面的取舍
       if (!Object.prototype.hasOwnProperty.call(outputs, l.source)) continue;
+      /*
+       * 来源失败了：那次写入的 '' 是占位，不是产出（见上面）。
+       *
+       * 只靠 hasOwnProperty 分不出来 —— 两者都是 outputs[来源] === ''，
+       * 唯一的差别在失败集合里。不查它的话，"来源失败"与"来源输出空"
+       * 两种情形会在这一行合并成同一种行为，而它们的含义正好相反。
+       */
+      if (scope.failedSet.has(l.source)) continue;
       /*
        * 按这一根线取的是**哪个输出**取值。
        *
@@ -634,7 +663,7 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
    * 「等待 10 分钟」的节点会一直挂在事件循环里，进程都退不掉。
    */
   async function runNodeTimed(id: string, scope: Scope): Promise<void> {
-    const node = paramNodeOf(id);
+    const node = paramNodeOf(id, scope);
     const limitMs = nodeTimeoutMsOf(
       node.data as Record<string, unknown> | undefined,
       opts.nodeTimeoutSec,
