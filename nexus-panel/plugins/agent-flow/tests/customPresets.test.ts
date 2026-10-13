@@ -775,3 +775,78 @@ test('导入：createdAt 是正常数字时原样保留', () => {
   importCustomPresets(json, { isKnownType: () => true }, kv);
   assert.equal(loadCustomPresets(kv)[0].createdAt, 12345);
 });
+
+/*
+ * 脱敏收在 saveCustomPresets（唯一写入口），而不是各调用点各写一份。
+ *
+ * 与模块、变量同源：以前"谁要存谁自己记得脱敏"，漏掉的是**任何整表写回**的路 ——
+ * 最实际的一条是 Sidebar 改颜色：loadCustomPresets() 读出来 → 改 color →
+ * saveCustomPresets(list) 整表写回。这条路上读到的是存储里本来的样子，
+ * 脱敏机制存在之前存下的老预设带着明文，改个颜色就被**续期**了。
+ *
+ * 不报错，而且表面看不出来：exportCustomPresets 还会再脱一层，导出的文件
+ * 是干净的，明文只是静静躺在 localStorage。
+ *
+ * 扫源码的守卫接不住（整表写回那行代码本身没毛病，就是少一次调用），
+ * 所以钉的是**行为**。
+ */
+test('存预设：任何写入路径都脱敏（整表写回也算）', () => {
+  const kv = memKV();
+  saveCustomPresets(
+    [{
+      id: 'c1', name: 'p', baseType: 'genericHttp', createdAt: 0,
+      data: {
+        kind: 'genericHttp', url: 'https://x/api',
+        token: 'ghp_PLAIN', headersText: 'Authorization: Bearer sk-live-x',
+        status: 'success', output: '上次的结果',
+      },
+    }] as never,
+    kv,
+  );
+  const back = loadCustomPresets(kv)[0].data as Record<string, unknown>;
+  assert.equal(back.token, '', 'token 必须挖空');
+  assert.equal(back.headersText, 'Authorization:', '请求头里的 Bearer 也要挖掉');
+  assert.equal(back.status, undefined, '整表写回也要剥运行时');
+  assert.equal(back.output, undefined, '整表写回也要剥运行时');
+});
+
+/* 模拟 Sidebar 改色那条真实路径：读出来 → 改 color → 写回 */
+test('存预设：改个颜色再写回，不会把老明文续期', () => {
+  const kv = memKV();
+  saveCustomPresets(
+    [{
+      id: 'c1', name: 'p', baseType: 'genericHttp', createdAt: 0,
+      data: { kind: 'genericHttp', token: 'ghp_OLD_PLAIN' },
+    }] as never,
+    kv,
+  );
+  const list = loadCustomPresets(kv);
+  list[0].color = '#ff0000';
+  saveCustomPresets(list, kv);
+
+  const back = loadCustomPresets(kv)[0];
+  assert.equal((back.data as Record<string, unknown>).token, '', '改色写回不能把明文续期');
+  assert.equal(back.color, '#ff0000', '但颜色本身要留住 —— 脱敏不能把改动吃掉');
+});
+
+test('存预设：只挖密钥与运行时，业务字段要留着（挖过了就是"存完配置没了"）', () => {
+  const kv = memKV();
+  saveCustomPresets(
+    [{
+      id: 'c1', name: 'p', baseType: 'genericHttp', createdAt: 0,
+      data: { kind: 'genericHttp', url: 'https://x/api', method: 'POST', token: 'ghp_x' },
+    }] as never,
+    kv,
+  );
+  const back = loadCustomPresets(kv)[0].data as Record<string, unknown>;
+  assert.equal(back.url, 'https://x/api', '普通配置要保留');
+  assert.equal(back.method, 'POST', '普通配置要保留');
+  assert.equal(back.token, '', '密钥要挖空');
+});
+
+test('存预设：条目没有 data 时不炸（不能为了脱敏把整条写坏）', () => {
+  const kv = memKV();
+  assert.doesNotThrow(() => {
+    saveCustomPresets([{ id: 'c1', name: 'p', baseType: 'x' }] as never, kv);
+  }, '没有 data 的条目不能让写入崩掉');
+});

@@ -136,8 +136,34 @@ export function loadCustomPresets(kv: KV = defaultKV()): CustomPreset[] {
   return loadList(kv, STORAGE_KEY, 'presets', isPreset) as CustomPreset[];
 }
 
+/**
+ * 唯一的写入口 —— 脱敏收在这一层，而不是各调用点各写一份。
+ *
+ * ================= 为什么收在这里 =================
+ *
+ * 与模块（saveModules）、变量（saveVariables）同源：以前是
+ * "谁要存谁自己记得脱敏"，于是漏掉的是**任何整表写回的路径**：
+ *
+ *   · addCustomPreset —— 记得了，走 sanitizeForPreset
+ *   · Sidebar 改完颜色整表写回（load → 改 color → save）—— 没脱。
+ *     而这条路上读到的是**存储里本来的样子**：脱敏机制存在之前存下的
+ *     老预设带着明文，读出来、改个颜色、再写回去，明文就被**续期**了。
+ *
+ * 这种不一致不报错，而且表面看不出来：exportCustomPresets 还会再脱一层，
+ * 所以导出的文件是干净的，明文只是静静躺在 localStorage。
+ * 但"本地明文"本身就与"密钥一律不落盘"的契约冲突 ——
+ * 整条链上只要有一处忘了脱，明文就出去了。
+ *
+ * 各调用点各写一份，正是漏一条的成因 —— 所以这里统一兜住。
+ * 幂等：addCustomPreset / importCustomPresets 存前已脱过，再脱一次结果不变。
+ */
 export function saveCustomPresets(list: CustomPreset[], kv: KV = defaultKV()): void {
-  saveWrapped(kv, STORAGE_KEY, FORMAT_VERSION, 'presets', list);
+  const safe = (list ?? []).map((p) => (
+    p && typeof p.data === 'object' && p.data !== null && !Array.isArray(p.data)
+      ? { ...p, data: sanitizeForPreset(p.data) }
+      : p
+  ));
+  saveWrapped(kv, STORAGE_KEY, FORMAT_VERSION, 'presets', safe);
 }
 
 /* ------------------------------------------------------------------ */
