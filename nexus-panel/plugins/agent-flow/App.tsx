@@ -1897,11 +1897,25 @@ function reportSkipped(
      * 存档（localStorage）**不剥**：那是本人本机的，刷新后还想看得见
      * 上次跑的结果 —— 与"要交出去的文件"是两回事。
      */
+    /*
+     * 顶层**不再带 triggers**。它曾经是独立存储的遗留，现在是纯冗余 ——
+     * 与 nodes 里那份完全重复，而导入侧根本不读它（见下面 importJson），
+     * 只读 nodes。
+     *
+     * 冗余副本正是这里出过事的根因：同一份 webhook 校验令牌在两处，
+     * nodes 那份走了 redactNodes 被挖空，triggers 这份是裸的 ——
+     * 于是导出的文件里明文躺着令牌，而用户看 nodes 是空的，以为剥干净了。
+     *
+     * 留着它的代价不是这一次，而是"将来 Trigger 再加字段，还得记得剥第二次"。
+     * 所以删掉，而不是补一次脱敏。
+     *
+     * 另：triggers 派生自 canvases（保存后的快照），而 nodes 是正在编辑的
+     * 当前状态 —— 两者还可能不同步，导出去的是过期的触发器。又一条删的理由。
+     */
     const text = JSON.stringify(
       {
         nodes: stripRuntimeNodes(redactNodes(nodes) as Record<string, unknown>[]),
         edges,
-        triggers,
         config: redactCanvasConfig(canvasConfigOf(activeCanvas)),
       },
       null,

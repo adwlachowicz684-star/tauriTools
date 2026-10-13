@@ -839,3 +839,72 @@ test('存画布：saveToStorage 落盘的内容不含明文密钥', () => {
   /* 顺带确认 activeId 是单独一个 key，不是混在画布里 */
   assert.ok(written[STORAGE_KEYS.active] === 'a', 'activeId 单独存');
 });
+
+/* ==================================================================
+ * 导出文件里**不许再带 triggers**
+ *
+ * 顶层 triggers 是"触发器曾独立存储"留下的冗余副本：
+ *   · 与 nodes 里那份完全重复（同一张画布的触发器）
+ *   · 导入侧根本不读它（importJson 只读 nodes）
+ *
+ * 冗余的代价是实的：同一份 webhook 校验令牌在两处，
+ * nodes 那份走 redactNodes 被挖空，顶层这份是裸的 ——
+ * 于是导出的文件里明文躺着令牌，而看 nodes 是空的，以为剥干净了。
+ *
+ * 而且它不是"这一次"的问题：留着就等于"将来 Trigger 再加字段，
+ * 还得记得剥第二次"。所以删字段，而不是补一次脱敏。
+ * ================================================================== */
+
+test('守卫: 导出不带顶层 triggers（冗余副本会漏脱敏）', () => {
+  const src = readFileSync(join(pluginRoot(), 'App.tsx'), 'utf8');
+  const noComment = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const m = noComment.match(/const text = JSON\.stringify\(([\s\S]*?)\n\s*\);/);
+  assert.ok(m, '没找到导出那句 JSON.stringify');
+  assert.equal(
+    /\btriggers\b/.test(m![1]),
+    false,
+    '导出不许带顶层 triggers —— 它与 nodes 冗余，且是漏脱敏的入口',
+  );
+});
+
+/*
+ * 比"不带 triggers"更通用的一层：
+ * 导出的**每个字段**都必须经过脱敏（edges 是连线，无凭据，除外）。
+ *
+ * 只盯 triggers 的话，将来有人加一个新字段（比如把任务历史塞进去），
+ * 测试照样全绿 —— 而那个字段是裸的。
+ */
+test('守卫: 导出对象里除 edges 外每个字段都过脱敏', () => {
+  const src = readFileSync(join(pluginRoot(), 'App.tsx'), 'utf8');
+  const noComment = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  /*
+   * 必须截到**对象字面量内部**（\{ ... \}）——
+   * 截到 `);` 的话会把 JSON.stringify 的第三四个参数（null, 2）
+   * 也当成导出字段，于是守卫对着 'null' / '2' 报红：
+   * 报红了，但报的是错的理由，人照着它改就会去动字段解析。
+   */
+  const m = noComment.match(/const text = JSON\.stringify\(\s*(\{[\s\S]*?\n\s*\})/);
+  assert.ok(m, '没找到导出那句 JSON.stringify');
+
+  const fields: { key: string; val: string }[] = [];
+  for (const line of m![1].split('\n')) {
+    const t = line.trim();
+    if (!t || t === '{' || t === '}') continue;
+    /* 简写：edges, */
+    const short = t.match(/^(\w+)\s*,\s*$/);
+    if (short) { fields.push({ key: short[1], val: '' }); continue; }
+    /* 完整：key: value, —— 值可能跨行，这里取到行尾（当前写法都是单行） */
+    const full = t.match(/^(\w+)\s*:\s*(.*?),?$/);
+    if (full) fields.push({ key: full[1], val: full[2] });
+  }
+
+  assert.ok(fields.length >= 3, `至少要认出 nodes/edges/config，实际 ${fields.length}`);
+  const bad = fields.filter(
+    (f) => f.key !== 'edges' && !/redact|stripRuntime|stripSecrets/.test(f.val),
+  );
+  assert.deepEqual(
+    bad.map((f) => f.key),
+    [],
+    '导出是"交给别人"的动作 —— 除 edges（连线无凭据）外每个字段都必须过脱敏',
+  );
+});
