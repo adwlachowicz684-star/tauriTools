@@ -1418,5 +1418,68 @@ console.log('\n=== 16. execCommand 兜底色板的定位 ===');
     && OFF.test("ta.style.cssText = 'position:fixed;top:-1000px;opacity:0;';"));
 }
 
+
+/* ============================================================
+ * 17. 跨语言常量：Rust 与 TS 同名常量必须数值相等
+ * ------------------------------------------------------------
+ * 这批常量是**两边各夹一次**的：前端在界面上限制输入范围，
+ * Rust 在存盘/读盘时再夹一次（见 fpx/model.rs 的 clamp）。
+ *
+ * 漂了的表现不是报错，而是"静默改写"：
+ *   界面让你填 3000（TS 的 MAX=3000）→ 存进去 → Rust 按自己的 MAX=2000
+ *   夹回 2000 → **重新打开面板是 2000，用户不知道自己那个值被改过**。
+ * 更糟的是 OS_KEYRING_SERVICE / ACCOUNT：两侧不一致的话，
+ * 凭据会**写进另一个 keyring 条目**，读的时候读不到 —— 表现为
+ * "保存成功，重开就没了"，且没有任何报错。
+ *
+ * 判据取**数值相等**而不是字符串相等：
+ * Rust 写 `4.0`（f64）、TS 写 `4` —— 字符串比对会把这对判成不一致。
+ * 这类假红很害人：它会让人以为自己修好了一个不存在的问题。
+ *
+ * 全仓扫（不写死清单）：新增同名常量自动纳入，改名/删掉也会报。
+ * ============================================================ */
+console.log('\n=== 17. 跨语言常量一致 ===');
+{
+  const NUM = '([0-9][0-9_]*)(?:\\.([0-9]+))?';
+  const RS_NUM = new RegExp('^\\s*(?:pub\\s+)?const\\s+([A-Z_][A-Z0-9_]*)\\s*:\\s*\\w+\\s*=\\s*' + NUM, 'gm');
+  const RS_STR = /^\s*(?:pub\s+)?const\s+([A-Z_][A-Z0-9_]*)\s*:\s*&\s*str\s*=\s*"([^"]+)"/gm;
+  const TS_NUM = new RegExp('^\\s*(?:export\\s+)?const\\s+([A-Z_][A-Z0-9_]*)\\s*(?::\\s*\\w+\\s*)?=\\s*' + NUM, 'gm');
+  const TS_STR = /^\s*(?:export\s+)?const\s+([A-Z_][A-Z0-9_]*)\s*(?::\s*\w+\s*)?=\s*'([^']+)'/gm;
+
+  const rs = new Map(), ts = new Map();
+  let rsN = 0;
+  for (const p of walk(HERE)) {
+    const rel = relativeTo(p);
+    if (rel === 'regression-guard-test.mjs') continue;   // 下面元断言里有样例
+    let src;
+    try { src = readFileSync(p, 'utf8'); } catch { continue; }
+    if (p.endsWith('.rs')) {
+      rsN++;
+      for (const m of src.matchAll(RS_NUM)) rs.set(m[1], m[2] + (m[3] !== undefined ? '.' + m[3] : ''));
+      for (const m of src.matchAll(RS_STR)) rs.set(m[1], m[2]);
+    } else if (/\.(ts|tsx|js|mjs)$/.test(p) && !p.endsWith('.d.ts')) {
+      for (const m of src.matchAll(TS_NUM)) ts.set(m[1], m[2] + (m[3] !== undefined ? '.' + m[3] : ''));
+      for (const m of src.matchAll(TS_STR)) ts.set(m[1], m[2]);
+    }
+  }
+  t('扫到了 Rust 常量（判据没失明）', rsN > 5 && rs.size > 20, `Rust 文件 ${rsN} 个，常量 ${rs.size} 个`);
+
+  const both = [...rs.keys()].filter((k) => ts.has(k)).sort();
+  t('至少扫到 10 对同名常量（判据没失明）', both.length >= 10, `实测 ${both.length} 对`);
+
+  const bad = [];
+  for (const k of both) {
+    const a = rs.get(k), b = ts.get(k);
+    const na = Number(a), nb = Number(b);
+    /* 数值相等：4.0 与 4 是同一个值；字符串常量走字符串比对 */
+    const ok = (Number.isFinite(na) && Number.isFinite(nb)) ? na === nb : String(a) === String(b);
+    if (!ok) bad.push(`${k}: rust=${a} ts=${b}`);
+  }
+  t('两侧同名常量数值全部相等', bad.length === 0, bad.join('；'));
+  /* 元断言：判据两头都灵 */
+  t('rust 改 2001 / ts 保持 2000 照样被抓（判据没失明）',
+    Number('2001') !== Number('2000') && Number('4.0') === Number('4'));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
