@@ -117,6 +117,16 @@ failWrite = true;
 tm.resetStyleParam(tm.STYLE_PARAMS.glass[0].key);
 is('resetStyleParam 写不进去 → 取得到', tm.takePersistError() instanceof Error, 'resetStyleParam 没走统一判据');
 
+/* 偏移「归零」：与拖动滑块是同一组控件、同一个落盘键。
+   归零只是把值写成 0，写不进去的后果与拖滑块**完全一样** ——
+   重启后偏移原样回来，界面却说「已归零」。 */
+failWrite = true;
+tm.resetHueShift();
+is('resetHueShift 写不进去 → 取得到', tm.takePersistError() instanceof Error, 'resetHueShift 没走统一判据');
+failWrite = true;
+tm.resetLightShift();
+is('resetLightShift 写不进去 → 取得到', tm.takePersistError() instanceof Error, 'resetLightShift 没走统一判据');
+
 failWrite = true;
 tm.saveCustomColors('accent', ['#123456']);
 is('saveCustomColors 写不进去 → 取得到', tm.takePersistError() instanceof Error, 'saveCustomColors 没走统一判据');
@@ -159,6 +169,17 @@ is('导入了 takePersistError', /takePersistError/.test(appCode), '设置页没
 is('定义了 toastPersist', /const toastPersist\s*=/.test(appCode), '没有统一的成功/未记住说法');
 is('定义了 warnNotPersisted', /const warnNotPersisted\s*=/.test(appCode), '没有「只在没落盘时说一句」的入口');
 
+/* 光有这两个入口不够 —— 入口**里面**必须真去看落盘结果。
+   否则把它改成无条件 ctx.toast(okMsg,'ok')，13 处调用点会一起退回谎报，
+   而下面那几条"定义了"的检查照样全绿（这就是断言绿但没在把关）。 */
+const helperBody = (name) => (appCode.match(new RegExp(`const ${name}\\s*=\\s*\\([^)]*\\)\\s*=>\\s*\\{([\\s\\S]*?)\\n  \\};`)) || [])[1] || '';
+is('toastPersist 真在看落盘结果',
+  /takePersistError\(\)/.test(helperBody('toastPersist')),
+  'toastPersist 不调 takePersistError —— 所有走它的点都会无条件报成功');
+is('warnNotPersisted 真在看落盘结果',
+  /takePersistError\(\)/.test(helperBody('warnNotPersisted')),
+  'warnNotPersisted 不调 takePersistError —— 滑块/收藏色改了存不下也不吭声');
+
 const nToastPersist = (appCode.match(/\btoastPersist\s*\(/g) || []).length;
 const nWarn = (appCode.match(/\bwarnNotPersisted\s*\(/g) || []).length;
 is('会说话的入口都改了', nToastPersist >= 11, `toastPersist 只用了 ${nToastPersist} 处（应覆盖全部主题 toast 点）`);
@@ -174,6 +195,10 @@ const stillOk = [
   ['恢复风格参数', /resetStyleParam\(p\.key\);\s*ctx\.toast\(/],
   ['恢复背景', /resetBgImage\(\);\s*ctx\.toast\(/],
   ['背景图已应用', /ctx\.toast\('背景图已应用'/],
+  /* 偏移「归零」按钮：与上面的滑块是**同一组控件**，滑块改值已经说了，
+     归零那两条此前仍是裸 ctx.toast(…, 'ok') —— 写不进去时照样报「已归零」。 */
+  ['归零色相', /resetHueShift\(\);\s*ctx\.toast\(/],
+  ['归零明暗', /resetLightShift\(\);\s*ctx\.toast\(/],
 ];
 for (const [label, re] of stillOk) {
   is(`「${label}」不再无条件报成功`, !re.test(appCode), `${label} 仍在直接 ctx.toast(…，'ok')`);

@@ -1020,7 +1020,11 @@ export default function Settings() {
    * 说得理直气壮，重启后却悄悄回到原样，全程一句提示都没有。
    *
    * 用 warn 而不是 err：这次改动**确实生效了**，只有"记住"失败。
-   * 标红会让人以为刚才那下没生效而去再点一次 —— 而再点一次同样存不下。 */
+   * 标红会让人以为刚才那下没生效而去再点一次 —— 而再点一次同样存不下。
+   *
+   * 两条「归零」按钮（resetHueShift / resetLightShift）也必须走这里：
+   * 归零只是把偏移写成 0，写不进去的后果与拖滑块**完全一样**（重启后原样
+   * 回来），早先它们裸 toast('ok')，是这一组里唯一没接住的两处。 */
   const toastPersist = (okMsg: string) => {
     if (takePersistError()) ctx.toast(`${okMsg}，但没能记住（重启后会回到原来的设置）`, 'warn');
     else ctx.toast(okMsg, 'ok');
@@ -1501,7 +1505,7 @@ export default function Settings() {
             </span>
             <ResetDefaultBtn
               disabled={!getHueShift()}
-              onClick={() => { resetHueShift(); ctx.toast('色相已归零', 'ok'); rerender(); void syncThemeToShell(); }}
+              onClick={() => { resetHueShift(); toastPersist('色相已归零'); rerender(); void syncThemeToShell(); }}
               title="把色相偏移归零（明暗保留）"
             />
           </div>
@@ -1518,7 +1522,7 @@ export default function Settings() {
             </span>
             <ResetDefaultBtn
               disabled={!getLightShift()}
-              onClick={() => { resetLightShift(); ctx.toast('明暗已归零', 'ok'); rerender(); void syncThemeToShell(); }}
+              onClick={() => { resetLightShift(); toastPersist('明暗已归零'); rerender(); void syncThemeToShell(); }}
               title="把明暗偏移归零（色相保留）"
             />
           </div>
