@@ -84,7 +84,7 @@ import {
 import CanvasLibrary from './components/CanvasLibrary';
 import {
   expandModules, findModule, addModule, saveModules, loadModules,
-  stripRuntimeNodes, packSelection, type ModuleDef,
+  stripRuntimeNodes, packSelection, canPack, type ModuleDef,
   moduleEdgesToFlow, flowEdgesToModule,
 } from './engine/modules';
 import {
@@ -1482,6 +1482,21 @@ function reportSkipped(
      * 第三参数传全图节点：嵌合的跨边界连接（父选中、子没选中）
      * 要靠它才算得出来。
      */
+    /*
+     * 打包前先过 canPack —— 它除了"选了没"之外还挡着一类静默失效
+     * （触发器进模块后不再被全局扫描）。
+     *
+     * 这个判据以前**根本没有被调用过**（全仓只有测试在用），
+     * 属于"对策写了但没接上"：canPack 里加了什么，界面一概不知道。
+     * 现在接上，并且失败时把原因原样打进日志 ——
+     * 拦下来不给理由，用户只会以为打包功能坏了。
+     */
+    const verdict = canPack(picked as never);
+    if (!verdict.ok) {
+      pushLog(`✗ ${verdict.reason ?? '这些节点不能打包成模块'}`);
+      return;
+    }
+
     const packed = packSelection(
       picked as never,
       edges.map((e) => ({

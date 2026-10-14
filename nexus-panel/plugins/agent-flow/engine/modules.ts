@@ -219,6 +219,7 @@ export function modulePorts(def: ModuleDef): ModulePorts {
 import { stripRuntimeNodes } from './runtimeKeys';
 import { stackEdges } from './stack';
 import { makeParamEdge, OUT_DEFAULT, isParamEdge } from './paramLinks';
+import { isTriggerNode } from './triggerRegistry';
 export { stripRuntimeNodes };
 
 /* ------------------------------------------------------------------ */
@@ -274,6 +275,17 @@ export function expandModules(
   graph: { nodes: AnyNode[]; edges: AnyEdge[] },
   resolve: (moduleId: string, data: Record<string, unknown>) => ModuleDef | null,
 ): { nodes: AnyNode[]; edges: AnyEdge[] } {
+  return expandWith(graph, resolve, []);
+}
+
+/**
+ * @param visiting 正在展开的模块 id 栈 —— 只用于环检测，见下面的说明。
+ */
+function expandWith(
+  graph: { nodes: AnyNode[]; edges: AnyEdge[] },
+  resolve: (moduleId: string, data: Record<string, unknown>) => ModuleDef | null,
+  visiting: string[],
+): { nodes: AnyNode[]; edges: AnyEdge[] } {
   const outNodes: AnyNode[] = [];
   const outEdges: AnyEdge[] = [];
   /** 模块实例 id → 它的入口/出口（展开后 id） */
@@ -293,6 +305,25 @@ export function expandModules(
      */
     const own = data.inner as { nodes?: unknown[]; edges?: unknown[] } | undefined;
     const moduleId = String(data.moduleId ?? '');
+    /* 脱钩副本没有 moduleId，用节点 id 当追踪键（它的内部结构是自己的） */
+    const trackId = moduleId || String(n.id ?? '');
+
+    /*
+     * 环检测：模块 A 里套着 A（或 A→B→A）时不能往下展开。
+     *
+     * 不挡住就是无限递归 —— 而"无限"表现在界面上是卡死或爆栈，
+     * 用户看不出是自己把模块套进了自己里面。
+     *
+     * 挡住之后留下一个带原因的占位节点，由 module 执行器把它报成失败
+     * （见 engine/runners/module.ts）—— 留着"绿着成功、什么都没做"更糟。
+     */
+    if (visiting.indexOf(trackId) >= 0) {
+      const path = [...visiting.slice(visiting.indexOf(trackId)), trackId].join(' → ');
+      outNodes.push({ ...n, data: { ...data, output: '', error: `模块循环引用（${path}）` } });
+      portMap.set(n.id, { entries: [], exits: [] });
+      continue;
+    }
+
     const def = own?.nodes ? ({
       id: moduleId || n.id,
       name: String(data.label ?? '模块'),
@@ -309,20 +340,52 @@ export function expandModules(
       continue;
     }
 
-    const ports = modulePorts(def);
+    /*
+     * 递归展开模块内部。
+     *
+     * 模块里可以套模块（选中一个模块实例再打包一次就有了），
+     * 而以前只展开一层：内层那个模块节点原样留在运行时图里，
+     * 它没有执行器（见 runnerRegistry 的白名单说明），于是**直通** ——
+     * 绿着 success、output 是空串、里面的活一件没干、整条流程 ok:true。
+     * 用户看到的是"流程跑通了"，而内层模块里的写文件 / 命令行 / 接口
+     * 一次都没执行。
+     *
+     * 展开要在**取端口之前**做：不展开的话 modulePorts 会把内层模块节点
+     * 当成入口/出口，而它展开后已经不存在了 —— 外部边就会连到一个
+     * 已经不存在的 id 上。
+     */
+    const body = expandWith(
+      { nodes: (def.nodes ?? []) as AnyNode[], edges: (def.edges ?? []) as AnyEdge[] },
+      resolve,
+      [...visiting, trackId],
+    );
+    const bodyNodes = body.nodes as unknown as Record<string, unknown>[];
+    const bodyEdges = body.edges as unknown as ModuleEdge[];
+
+    const ports = modulePorts({ ...def, nodes: bodyNodes, edges: bodyEdges } as ModuleDef);
     const idMap = new Map<string, string>();
-    for (const inner of def.nodes) {
+    for (const inner of bodyNodes) {
       const rawId = String(inner.id ?? '');
       if (rawId) idMap.set(rawId, innerId(n.id, rawId));
     }
 
-    for (const inner of def.nodes) {
+    for (const inner of bodyNodes) {
       const newId = idMap.get(String(inner.id)) ?? String(inner.id);
+      const innerData = ((inner as AnyNode).data ?? {}) as Record<string, unknown>;
       const data: Record<string, unknown> = {
-        ...(rewriteData((inner as AnyNode).data ?? {}, idMap) as Record<string, unknown>),
+        ...(rewriteData(innerData, idMap) as Record<string, unknown>),
         status: 'idle',
         output: '',
-        error: '',
+        /*
+         * 这里统一把 error 清成 ''，因为新展开出来的节点不该带着
+         * 上一次运行的错误。但**展开失败的占位节点要留下原因** ——
+         * 它的 error 不是"上一次跑错了"，而是"这个模块没能展开"
+         * （模块被删 / 循环引用）。清掉的话它又会变回
+         * "绿着成功、什么都没做"，而 runModule 报不出原因。
+         */
+        error: String(innerData.kind ?? '') === 'module'
+          ? String(innerData.error ?? '')
+          : '',
       };
       /*
        * 嵌合（stackParent）与窗格归属（paneId）存的是**节点 id 本身**，
@@ -364,7 +427,7 @@ export function expandModules(
      * 不还原的话参数连线会变成一条普通流程线：
      * 值不会填进参数，反而多出一条执行路径。
      */
-    for (const e of def.edges) {
+    for (const e of bodyEdges) {
       const source = idMap.get(e.source) ?? e.source;
       const target = idMap.get(e.target) ?? e.target;
       if (e.targetArg) {
@@ -598,6 +661,30 @@ export type CanPackResult = { ok: boolean; reason?: string };
 export function canPack(nodes: PackableNode[]): CanPackResult {
   const list = (nodes ?? []).filter((n) => String(n?.id ?? '') !== '');
   if (list.length === 0) return { ok: false, reason: '还没选节点' };
+
+  /*
+   * 触发器不能进模块。
+   *
+   * 全局触发器只扫**画布顶层**的节点（collectGlobalTriggers 遍历
+   * canvas.nodes），而模块内部那层它根本看不到 —— 打包之后，
+   * 触发器仍然静静躺在模块里、面板上照常显示着端口和启用开关，
+   * 而自动触发**永远不会发生**，也没有任何提示。
+   *
+   * 更迷惑的是手动运行**能跑**：展开后的运行时图里 kind 还是 'trigger'，
+   * runGraph 把它当入口。于是表现为"手动点运行有反应，配好的
+   * webhook / 定时一次都没触发"，是极难排查的那一种。
+   *
+   * 判据走 triggerRegistry 那一份（不在这里另写一个 kind === 'trigger'）：
+   * 两份判据必然漂移，而漂移的方向总是"一处认、一处不认"。
+   */
+  if (list.some((n) => isTriggerNode(n?.data))) {
+    return {
+      ok: false,
+      reason: '触发器不能打包进模块：模块内部不会被全局扫描，'
+        + '打包后自动触发（webhook / 定时）永远不会发生，也不报错。'
+        + '请把触发器留在画布上，只打包它后面的节点',
+    };
+  }
   return { ok: true };
 }
 
