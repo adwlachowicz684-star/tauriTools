@@ -130,6 +130,20 @@ export function stringifyKm(root, template, theme) {
 export const EMPTY_NODE_TEXT = '未命名';
 
 /**
+ * 中心主题的默认文案。
+ *
+ * 放在这里（而不是用得到它的 workbook.js）是因为**导入侧插虚拟根**是
+ * formats.js 里的能力（OPML 多顶层 / PlantUML 多根 / Markdown 多顶层），
+ * 而 workbook.js 反过来依赖 formats.js —— 常量只能住在依赖的下游。
+ *
+ * 常量化的理由（BUG 146 时记过一次）：它有多个使用处（新建画布、空画布、
+ * 导入时插的虚拟根、rowsToKm 的根兜底）。各写一份 '中心主题' 的话，
+ * 改一处不改另一处就会出现「导入出来的中心主题和新建画布的不一样」
+ * 这种看不出原因的偏差。
+ */
+export const ROOT_TEXT = '中心主题';
+
+/**
  * 换行类字符 → 单个空格（**不** trim）。
  *
  * 用于**整行文本**：Markdown 的 ATX 标题最多缩进三格，整行 trim 会把
@@ -190,6 +204,45 @@ export function walkKm(node, fn, depth = 0, parent = null) {
 }
 
 /**
+ * 顶层条目不止一个时，插一个虚拟中心主题把它们挂上去（纯函数，可测）。
+ *
+ * kityminder 必须有且只有一个 root，而这些格式的顶层条目可以有任意多个。
+ * 不插的话，rowsToKm 会把 `rows[0]` 当根、其余顶层行挂到它下面 ——
+ * **并列变成父子**，层级被静默改掉、不报错、不计入任何提示。
+ *
+ * 判据是统一的不变量：**插完之后 rows[0] 必须严格浅于其余所有行**，
+ * 两个条件缺一不可 ——
+ *   · minDepth < rows[0].depth：首行后面还有更浅的行
+ *   · 顶层同级 ≥ 2 条：并列的首层需要有共同父亲
+ *
+ * 各格式的来历（同一条约束，历史上分别修过，各写一份就会漏）：
+ *   BUG 146 · Markdown 顶层同级条目被串成父子链
+ *   BUG 147 · Markdown 更浅的标题被挂到更深的标题下面
+ *   BUG 148 · PlantUML 的 **Multiroot**（官方文档有这一节）被串成父子
+ *   · OPML 多顶层 outline（最早的一处，原本只判了「深度 0 且有两条」）
+ *
+ * ⓘ **Mermaid 不走这里**：官方文档写明「one root per diagram」，而 Mermaid
+ *   常见写法里 root 是**顶格**的（缩进 0），子节点同样缩进 0 —— 在那里按
+ *   「顶层同级 ≥ 2」插虚拟根，会把正常的 `root / A / B` 凭空加一层
+ *   （实测过，是回归）。多顶层 .mmd 本身就不合规范，保持原样。
+ *
+ * @param {Array<{depth:number,text:string}>} rows
+ * @param {string} [rootText] 虚拟根文案，默认 ROOT_TEXT
+ * @returns {Array} 新数组（不改动入参）
+ */
+export function rowsWithVirtualRoot(rows, rootText = ROOT_TEXT) {
+  const list = (rows || []).filter((r) => !!r);
+  if (!list.length) return list;
+  const minDepth = list.reduce((m, r) => Math.min(m, r.depth), list[0].depth);
+  let topCount = 0;
+  for (const r of list) if (r.depth === minDepth) topCount++;
+  if (minDepth < list[0].depth || topCount >= 2) {
+    return [{ depth: minDepth - 1, text: rootText }, ...list];
+  }
+  return list;
+}
+
+/**
  * 由 (depth, text) 序列重建 kityminder 树（纯函数，可测）。
  *
  * **空文字的行不能丢**（BUG 98）。
@@ -213,7 +266,7 @@ export function walkKm(node, fn, depth = 0, parent = null) {
  *
  * 所以补位成占位文案保留下来，与导出侧 nodeText 的 fallback 同一个常量。
  */
-export function rowsToKm(rows, rootFallback = '中心主题') {
+export function rowsToKm(rows, rootFallback = ROOT_TEXT) {
   const list = (rows || []).filter((r) => !!r);
   if (!list.length) {
     return { root: { data: { text: rootFallback }, children: [] } };
@@ -539,13 +592,9 @@ export function fromOpml(text) {
   const rows = readXmlNodes(text, 'outline', 'text', null, 'url');
   if (!rows) return null;
   if (!rows.length) return null;
-  const tops = rows.filter((r) => r.depth === 0);
-  let rows2 = rows;
-  if (tops.length > 1) {
-    // 整体下移一层，前面插入虚拟根
-    rows2 = [{ depth: 0, text: '中心主题' }]
-      .concat(rows.map((r) => ({ ...r, depth: r.depth + 1 })));
-  }
+  // ★ 走 rowsWithVirtualRoot（与 PlantUML / Markdown 同一份判据），不再自己
+  //   写一份「深度 0 且有两条」—— 抄一份就必然只修一处（BUG 148 的教训）。
+  const rows2 = rowsWithVirtualRoot(rows);
   const { root } = rowsToKm(rows2);
   // BUG 111：超链接回填（url 是 OPML 2.0 规范属性）。
   // 用 rows2 而不是 rows —— 多顶层 outline 时会插入虚拟根，索引必须对齐。
@@ -941,10 +990,56 @@ export function fromPlantUml(text) {
      * 空白节点写出 `* ` 空行，导回来就是上面两条后果。
      */
     if (!t) t = EMPTY_NODE_TEXT;
-    rows.push({ depth: m[1].length - 1, text: t });
+    rows.push({
+      prefixLen: m[1].length,
+      indent: (raw.match(/^[ \t]*/) || [''])[0].replace(/\t/g, '  ').length,
+      text: t,
+    });
   }
   if (!rows.length) return null;
-  const { root } = rowsToKm(rows);
+
+  /*
+   * ★ PlantUML 有**两套**判层级的语法，形态不同、必须分开认（BUG 148）：
+   *
+   *   ① OrgMode 式：层级 = 前缀个数（`*` / `**` / `***`），缩进无关。
+   *      官方的 Multiroot 示例就是这个形态：
+   *        `* Root 1 / ** Foo / ** Bar / * Root 2 / ** Lorem / ** Ipsum`
+   *      —— 顶层 `*` 可以有任意多个，各自是一棵独立的树。
+   *   ② Markdown 缩进式：所有行都只有**一个**前缀字符，层级靠**缩进**
+   *      （官方 "Markdown indented list" 一节，`* A /  * B /   * C`）。
+   *
+   * 只认形态 ① 的话，形态 ② 的 `* 项目 /  * 子一` 会被读成两个 depth 0
+   * 的并列行；只认形态 ② 的话，`** Foo` 的层级整个没了。
+   *
+   * 判据：**出现过多字符前缀 → 形态 ①**；全是单字符前缀**且有缩进**
+   * → 形态 ②。两者都不是（全是单字符、也都没缩进）就按形态 ① 处理 ——
+   * 那时所有行都在同一列，本来就是并列。
+   */
+  const orgMode = rows.some((r) => r.prefixLen >= 2) || !rows.some((r) => r.indent > 0);
+  if (orgMode) {
+    for (const r of rows) r.depth = r.prefixLen - 1;
+  } else {
+    /*
+     * 形态 ②：层级按**相对缩进的栈**算（与 Markdown 列表同一套算法）。
+     * 官方示例是一格一层，但两格的文件同样常见 —— 写死比例必然错层，
+     * 用栈则"缩进变大进一层、变小退回去"对两种都成立。
+     */
+    const indents = [rows[0].indent];
+    rows[0].depth = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const ind = rows[i].indent;
+      while (indents.length > 1 && indents[indents.length - 1] > ind) indents.pop();
+      if (indents[indents.length - 1] < ind) indents.push(ind);
+      rows[i].depth = indents.length - 1;
+    }
+  }
+
+  /*
+   * ★ Multiroot（形态 ① 下顶层 `*` 有多个）：不插虚拟根的话，`rows[0]`
+   *   当根、第二个根被挂成它的**子节点** —— 并列变成父子，层级静默改掉。
+   *   走 rowsWithVirtualRoot，与 OPML 多顶层、Markdown 同一份判据。
+   */
+  const { root } = rowsToKm(rowsWithVirtualRoot(rows));
   return stringifyKm(root);
 }
 

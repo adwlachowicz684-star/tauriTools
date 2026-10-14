@@ -5991,9 +5991,15 @@ group('PlantUML（.puml）');
   ok(/@endmindmap\n$/.test(pu), '以 @endmindmap 结尾');
 
   const back = JSON.parse(f.fromPlantUml(pu));
-  eq(back.root.data.text, '中心', 'PlantUML 回环：根');
-  eq(JSON.stringify(back.root.children.map((c) => c.data.text)), JSON.stringify(['A', 'B']), 'PlantUML 回环：一级');
-  eq(back.root.children[0].children[0].data.text, 'A1', 'PlantUML 回环：二级');
+  /*
+   * ⓘ 一律可空取值：层级一旦被改坏（这是这类 BUG 的典型症状），
+   *   `children[0].children[0]` 就是 undefined，裸取 .data 会抛
+   *   TypeError —— 整个测试进程当场挂掉，后面的断言一条都跑不到，
+   *   看着"抓到了"其实漏掉大半（BUG 138 / 140 都栽过）。
+   */
+  eq(back?.root?.data?.text, '中心', 'PlantUML 回环：根');
+  eq(JSON.stringify((back?.root?.children || []).map((c) => c.data.text)), JSON.stringify(['A', 'B']), 'PlantUML 回环：一级');
+  eq(back?.root?.children?.[0]?.children?.[0]?.data?.text, 'A1', 'PlantUML 回环：二级');
 
   // 无包裹标记的片段
   eq(JSON.parse(f.fromPlantUml('* a\n** b')).root.data.text, 'a', '无 @start 包裹也能解析');
@@ -6142,9 +6148,18 @@ group('BUG 131 · 导入别人的 .puml：无边框节点 `_`（boxless）');
   eq(J131(flat131(f131.fromPlantUml('* Linux\n**_Ubuntu\n'))),
     J131([['Linux', 0], ['Ubuntu', 1]]),
     '★ 紧贴写法 `**_Ubuntu` 同样剥');
+  /*
+   * ⓘ 单字符前缀的行是**另一个根**（层级 = 前缀个数，`-` = 第一层、左侧），
+   *   所以 `* R` + `-_ 左侧无框` 是 Multiroot —— 早先它俩 depth 都是 0，
+   *   rowsToKm 把后一条挂成前一条的子节点（并列变父子，BUG 148），
+   *   那条断言跟着错的挂法一起写死了期望值。现在两个根并列在虚拟根下。
+   */
   eq(J131(flat131(f131.fromPlantUml('* R\n-_ 左侧无框\n'))),
+    J131([['中心主题', 0], ['R', 1], ['左侧无框', 1]]),
+    '★ WBS 式的 `-_ 任务` 同样剥（WBS 官方示例就是 `-_ Task …`）；单 `-` 是另一个根');
+  eq(J131(flat131(f131.fromPlantUml('* R\n--_ 左侧无框\n'))),
     J131([['R', 0], ['左侧无框', 1]]),
-    '★ WBS 式的 `-_ 任务` 同样剥（WBS 官方示例就是 `-_ Task …`）');
+    '★ `--_`（第二层）挂在 R 下面，文字同样不带下划线');
 
   /*
    * ② ★ 中间有空格的不属于这个语法 —— 那时下划线是文字的一部分。
@@ -7945,10 +7960,16 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
     const opml = `<?xml version="1.0"?><opml version="2.0"><body>
 <outline text="A" url="https://a.x"/><outline text="B" url="https://b.x"/></body></opml>`;
     const r = JSON.parse(fmt.fromOpml(opml));
-    eq(r.root.data.text, '中心主题', '多顶层：造了虚拟根');
-    ok(!r.root.data.hyperlink, '★ 多顶层：虚拟根自己没有链接（不能抢走 A 的）');
-    eq(r.root.children[0].data.hyperlink, 'https://a.x', '★ 多顶层：A 的链接没被虚拟根挤掉');
-    eq(r.root.children[1].data.hyperlink, 'https://b.x', '多顶层：B 的链接正确');
+    /*
+     * ⓘ 一律可空取值：虚拟根一不造（这类 BUG 的典型症状），B 就不再是
+     *   children[1] 而是被挂成 A 的子节点，裸取 children[1].data 会抛
+     *   TypeError —— 整进程挂掉、后面的断言一条都跑不到，看着"抓到了"
+     *   其实漏掉大半（BUG 138 / 140 / 148 都栽过同一个坑）。
+     */
+    eq(r?.root?.data?.text, '中心主题', '多顶层：造了虚拟根');
+    ok(!r?.root?.data?.hyperlink, '★ 多顶层：虚拟根自己没有链接（不能抢走 A 的）');
+    eq(r?.root?.children?.[0]?.data?.hyperlink, 'https://a.x', '★ 多顶层：A 的链接没被虚拟根挤掉');
+    eq(r?.root?.children?.[1]?.data?.hyperlink, 'https://b.x', '多顶层：B 的链接正确');
   }
 
   // ⑤ 装不下的字段：按格式分别统计（统一一句会说错）
@@ -19549,8 +19570,13 @@ group('BUG 146 · 导入别人的 .md：顶层同级条目不能再被串成父�
   // ⑧ 源码层（先剥注释：这些写法本身就写在注释里，不剥会命中注释而永远绿）
   {
     const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
-    ok(/rows\.unshift\(\{ depth: minDepth - 1, text: ROOT_TEXT \}\)/.test(src),
-      '★ 虚拟根用 ROOT_TEXT（不能另写一份中心主题文案）');
+    /*
+     * ★ 判据本身搬到了 formats.rowsWithVirtualRoot（BUG 148 起 OPML /
+     *   PlantUML / Markdown 三处共用一份），这里只锁住「Markdown 这一路
+     *   确实调了它、且传的是 ROOT_TEXT」。
+     */
+    ok(/rowsWithVirtualRoot\(rows, ROOT_TEXT\)/.test(src),
+      '★ 虚拟根走 formats.rowsWithVirtualRoot，且用 ROOT_TEXT（不能另写一份中心主题文案）');
     const iFrom = src.indexOf('export function mdOutlineRows(');
     const iTo = src.indexOf('export function markdownToSheet(');
     ok(iFrom > 0 && iTo > iFrom, '能定位 mdOutlineRows 段');
@@ -19561,8 +19587,16 @@ group('BUG 146 · 导入别人的 .md：顶层同级条目不能再被串成父�
      */
     ok(!/unshift/.test(src.slice(iFrom, iTo)),
       '★ 虚拟根不能插进 mdOutlineRows（多画布会凭空多一行）');
-    eq((src.match(/export const ROOT_TEXT/g) || []).length, 1, '★ 中心主题文案只有一个出处');
-    eq((src.match(/'中心主题'/g) || []).length, 1, '★ 剥注释后字面量只剩 ROOT_TEXT 那一处');
+    /*
+     * ★ 常量本身住在 formats.js（BUG 148 起三处共用一份判据，那边要用、
+     *   而它不能反过来依赖 workbook.js），所以「只有一个出处」这条要查
+     *   formats.js —— 在 workbook.js 里查会恒为 0（那正是断言空转的样式）。
+     */
+    const fsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    eq((fsrc.match(/export const ROOT_TEXT/g) || []).length, 1, '★ 中心主题文案只有一个出处');
+    eq((fsrc.match(/'中心主题'/g) || []).length, 1, '★ 剥注释后字面量只剩 ROOT_TEXT 那一处');
+    ok(!/const ROOT_TEXT/.test(stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'))),
+      '★ workbook.js 不得再自己 define 一份（只从 formats.js 转出）');
   }
 }
 
@@ -19632,15 +19666,131 @@ group('BUG 147 · 导入别人的 .md：更浅的标题不能再被挂到更深�
 
   // ⑥ 源码层：两个条件缺一不可（先剥注释——写法本身就写在注释里）
   {
-    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
-    ok(/minDepth < rows\[0\]\.depth/.test(src),
+    /*
+     * ★ 判据搬到了 formats.rowsWithVirtualRoot（BUG 148 起 OPML / PlantUML /
+     *   Markdown 三处共用一份），所以查 formats.js —— 继续查 workbook.js 会
+     *   恒为假（那是「断言绿但没在把关」的典型样式：它其实是通过了才对）。
+     */
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/minDepth < list\[0\]\.depth/.test(src),
       '★ 判据必须含「首行后面还有更浅的行」这一条（只数顶层同级条数会漏掉倒挂）');
-    ok(/rows\.filter\(\(r\) => r\.depth === minDepth\)\.length >= 2/.test(src),
+    ok(/topCount >= 2/.test(src),
       '★ BUG 146 的「顶层同级 ≥2 条」判据不能被顶掉');
-    const iFrom = src.indexOf('export function markdownToSheet(');
-    const iTo = src.indexOf('export function workbookToMarkdown(');
-    ok(iFrom > 0 && iTo > iFrom, '能定位 markdownToSheet 段');
+    const iFrom = src.indexOf('export function rowsWithVirtualRoot(');
+    const iTo = src.indexOf('export function rowsToKm(');
+    ok(iFrom > 0 && iTo > iFrom, '能定位 rowsWithVirtualRoot 段');
     ok(/\|\|/.test(src.slice(iFrom, iTo)), '★ 两个条件是「或」的关系（缺一即漏）');
+  }
+}
+
+
+group('BUG 148 · 导入别人的 .puml：多根（Multiroot）不能再被串成父子');
+
+{
+  const f148 = await import('./formats.js');
+  const flatC148 = (content) => {
+    let root;
+    try { root = (typeof content === 'string' ? JSON.parse(content) : content)?.root; } catch { return null; }
+    if (!root) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data?.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(root, 0);
+    return JSON.stringify(out);
+  };
+  const J = (x) => JSON.stringify(x);
+  const PU = (body) => '@startmindmap\n' + body + '\n@endmindmap';
+  const P = (body) => flatC148(f148.fromPlantUml(PU(body)));
+
+  /*
+   * ① ★ 官方 Multiroot 示例（OrgMode 式：层级 = 前缀个数）。
+   *    官方文档有 Multiroot 一节，示例就是 `* Root 1 / ** Foo / ** Bar /
+   *    * Root 2 / ** Lorem / ** Ipsum` —— 顶层 `*` 可以有任意多个，各自是
+   *    一棵独立的树。早先 rows[0] 当根，第二个根被挂成它的**子节点**：
+   *      Root 1 >（Foo、Bar、Root 2 >（Lorem、Ipsum））
+   *    —— 并列变成父子，层级静默改掉、不报错、不计入任何提示。
+   */
+  eq(P('* Root 1\n** Foo\n** Bar\n* Root 2\n** Lorem\n** Ipsum'),
+    J([['中心主题', 0], ['Root 1', 1], ['Foo', 2], ['Bar', 2],
+      ['Root 2', 1], ['Lorem', 2], ['Ipsum', 2]]),
+    '★ 官方 Multiroot 示例：两棵树并列在中心主题下（早先 Root 2 掉成 Root 1 的子节点）');
+
+  // ② ★ `+` / `-` 各是一棵树的根（WBS 官方示例就是这种形态）
+  eq(P('+ 右根\n++ r1\n- 左根\n-- l1'),
+    J([['中心主题', 0], ['右根', 1], ['r1', 2], ['左根', 1], ['l1', 2]]),
+    '★ + / - 分别是两棵树的根，并列不串成父子');
+
+  // ③ ★ 更浅的行出现在后面（与 BUG 147 同一条不变量，换了个格式重演）
+  eq(P('** A\n* B'), J([['中心主题', 0], ['A', 1], ['B', 1]]),
+    '★ 更浅的行在后：A 与 B 并列（早先 A > B 倒挂）');
+
+  // ④ 单根文件完全不受影响（不许凭空多一层）
+  eq(P('* R\n** a\n** b'), J([['R', 0], ['a', 1], ['b', 1]]), '★ 单根不插虚拟根');
+
+  /*
+   * ⑤ ★ 形态②：官方 "Markdown indented list" —— 所有行都只有一个前缀
+   *    字符，层级靠缩进。只认形态①的话，这里所有行都是 depth 0 的并列行，
+   *    层级整个没了。
+   */
+  eq(P('* root node\n * some first level node\n  * second level node\n  * another second level node\n * another first level node'),
+    J([['root node', 0], ['some first level node', 1], ['second level node', 2],
+      ['another second level node', 2], ['another first level node', 1]]),
+    '★ 缩进式（官方示例）：三层嵌套层级正确，且不插虚拟根');
+
+  // ⑥ 缩进式两格一层同样成立（写死「每 N 空格一层」的比例必然错层）
+  eq(P('* A\n  * B\n    * C\n  * D'), J([['A', 0], ['B', 1], ['C', 2], ['D', 1]]),
+    '★ 缩进式两格一层同样成立（按相对缩进的栈算，不写死比例）');
+
+  // ⑦ 缩进式下的多根（单字符前缀 + 并列 → 顶层同级 ≥2）
+  eq(P('* A\n* B'), J([['中心主题', 0], ['A', 1], ['B', 1]]),
+    '★ 缩进式下两个并列根同样要插虚拟根');
+
+  // ⑧ ★ 自己的文件往返一字不变（导出侧只写 `*`，从不产生并列根）
+  {
+    const one = f148.stringifyKm(
+      { data: { text: 'R' }, children: [{ data: { text: 'a' } }, { data: { text: 'b' } }] },
+      'default', 'fresh-blue');
+    eq(flatC148(f148.fromPlantUml(f148.toPlantUml(one))), J([['R', 0], ['a', 1], ['b', 1]]),
+      '★ 自己的文件导出再导回一字不变');
+  }
+
+  /*
+   * ⑨ ★ Mermaid 不在这条路上 —— 官方文档写明「one root per diagram」，
+   *    而 .mmd 的常见写法里 root 是**顶格**的（缩进 0，与子节点同列）。
+   *    在那里按「顶层同级 ≥2」插虚拟根，会把正常的 `root / A / B` 凭空
+   *    加一层（实测过，是回归）。多顶层 .mmd 本身不合规范，保持原样。
+   */
+  eq(flatC148(f148.fromMermaid('mindmap\nroot((X))\nA\nB')), J([['X', 0], ['A', 1], ['B', 1]]),
+    '★ Mermaid root 顶格：不插虚拟根（插了就是把正常文件凭空加一层）');
+
+  // ⑩ OPML 单顶层同样不许插（对照，多顶层那条在 BUG 111 组里）
+  eq(flatC148(f148.fromOpml(
+    '<?xml version="1.0"?><opml version="2.0"><head><title>t</title></head>'
+    + '<body><outline text="R"><outline text="a"/></outline></body></opml>')),
+    J([['R', 0], ['a', 1]]), '★ OPML 单顶层不插虚拟根');
+
+  // ⑪ 源码层：三处共用一份判据 + 两套语法必须分开认
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    const iOpml = src.indexOf('export function fromOpml(');
+    const iMd = src.indexOf('export function toMermaid(');
+    const iFm = src.indexOf('export function fromMermaid(');
+    const iPumlTo = src.indexOf('export function toPlantUml(');
+    const iPuml = src.indexOf('export function fromPlantUml(');
+    ok(iOpml > 0 && iMd > iOpml && iFm > iMd && iPumlTo > iFm && iPuml > iPumlTo,
+      '能定位四个导入侧函数段');
+    ok(/rowsWithVirtualRoot\(rows/.test(src.slice(iOpml, iMd)),
+      '★ OPML 走共用判据（不再自己写一份「深度 0 且有两条」）');
+    ok(/rowsWithVirtualRoot\(rows/.test(src.slice(iPuml)),
+      '★ PlantUML 走共用判据');
+    ok(!/rowsWithVirtualRoot/.test(src.slice(iFm, iPumlTo)),
+      '★ Mermaid 不走（one root per diagram，插了就是回归）');
+    ok(!/tops\.length > 1/.test(src),
+      '★ OPML 那份旧的「深度 0 且有两条」判据不得复活');
+    ok(/const orgMode/.test(src),
+      '★ 必须分辨两套语法（OrgMode 式 = 前缀个数 / 缩进式 = 缩进栈）');
+    // Markdown 那一侧（workbook.js）也必须是同一份
+    ok(/rowsWithVirtualRoot\(rows, ROOT_TEXT\)/.test(
+      stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'))),
+      '★ Markdown 那一侧同样是共用判据');
   }
 }
 
