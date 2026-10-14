@@ -657,7 +657,14 @@ fn path_root(p: &str) -> String {
 }
 
 /// 把 HashMap 中等于 old_key 的键换成 new_path（其余键原样保留）。
-fn remap_keys(
+///
+/// 【只有这一份】cli.rs 的 `--migrate-hierarchy` 搬完目录后也要改同一批键，
+/// 那里原先抄了一份一模一样的 `remap()`。两份的差别将来只会是"漏了一个"：
+/// 新增一张按路径索引的表（比如某种新的按目录记录的颜色/图标），
+/// 只在这里补了、迁移那边没补 —— 用户跑一次迁移，
+/// 那张表里的键还指着**搬走之前**的旧路径，于是设置**静默消失**，
+/// 且不报错、config 里也看不出异常。
+pub(crate) fn remap_keys(
     map: std::collections::HashMap<String, String>,
     old_key: &str,
     new_path: &str,
