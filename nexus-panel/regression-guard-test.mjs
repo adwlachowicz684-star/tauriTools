@@ -1360,5 +1360,63 @@ console.log('\n=== 15. CSP 违规处理同源 ===');
     && !/sample/.test('const uri = d.blockedURI;'));
 }
 
+/* ============================================================
+ * 16. execCommand 兜底：textarea 必须挪出视口
+ * ------------------------------------------------------------
+ * 复制文本的最后一道兜底是"造一个临时 textarea → select → execCommand"。
+ * 全仓有三份（js/host.js、js/clipboard.js、project-group/utils/clipboard.ts），
+ * 插件自包含是既定设计，所以**不合并**，但关键细节必须一致。
+ *
+ * 已经漂过一次：project-group 那份只写了
+ *     position: fixed;  opacity: 0;
+ * 漏了 `top: -1000px`。而 `position:fixed` 且 top 留空时，元素停在
+ * **静态位置** —— 静态位置取决于 body 内容长度，**页面短它就落在视口内**。
+ * 于是瞬时出现一个约 150×50 的透明 textarea：
+ *   · opacity:0 **不影响命中测试**，它照样接收点击
+ *   · ta.select() 让它拿到焦点，浏览器可能因此滚动页面
+ * 表现为"复制一下页面抖一下 / 那一下点击没反应"，且只在**内容短的页面**上
+ * 复现 —— 最难查的那类。
+ *
+ * 另两份都写了 top:-1000px（host.js 还注明"不能 display:none，挪到视口外即可"）。
+ *
+ * 判据取"该函数块里有没有负偏移"，不钉具体写法（px/em/vh 都行）。
+ * ============================================================ */
+console.log('\n=== 16. execCommand 兜底色板的定位 ===');
+{
+  const CALL = "execCommand('copy')";
+  /* 挪出视口：负的 top / left（px、em、vh、% 都算），或 clip-path / visibility 之类 */
+  const OFF = /-\s*\d+(?:\.\d+)?\s*(?:px|em|rem|vh|vw|%)/;
+  const files = walk(HERE).filter((p) => /\.(js|mjs|ts|tsx)$/.test(p)
+    && !p.endsWith('.min.js') && !p.endsWith('.d.ts'));
+  const bad = [];
+  let hits = 0;
+  for (const p of files) {
+    const rel = relativeTo(p);
+    if (rel === 'regression-guard-test.mjs') continue;   // 下面元断言里有样例
+    const src = readFileSync(p, 'utf8');
+    /*
+     * 必须剥注释再扫：文件顶部的说明里就点名了 `execCommand('copy')`
+     * （"第 3 档兜底"），不剥的话会先命中注释、窗口落在文件开头，
+     * 于是永远判"缺偏移" —— 假红，且假红会掩盖真缺口。
+     */
+    const scan = p.endsWith('.css') ? stripBlock(src) : stripJs(src);
+    let i = scan.indexOf(CALL);
+    while (i >= 0) {
+      hits++;
+      /* 取调用点前后各 600 字符当"这个函数块"的近似 */
+      const ctx = scan.slice(Math.max(0, i - 600), i + 200);
+      if (!OFF.test(ctx)) { bad.push(rel); break; }
+      i = scan.indexOf(CALL, i + 1);
+    }
+  }
+  t('至少扫到三处兜底（判据没失明）', hits >= 3, `实测 ${hits} 处`);
+  t('每处都把 textarea 挪出了视口', bad.length === 0,
+    `缺少负偏移：${bad.join('、')}`);
+  /* 元断言：判据两头都灵 */
+  t('只写 position:fixed 不写偏移照样被抓（判据没失明）',
+    !OFF.test("ta.style.position = 'fixed'; ta.style.opacity = '0';")
+    && OFF.test("ta.style.cssText = 'position:fixed;top:-1000px;opacity:0;';"));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
