@@ -98,6 +98,15 @@ console.log('=== 0. 先确认产物是新的（否则后面全是误判）===');
  */
 if (!fs.existsSync(DIST) || !fs.existsSync(path.join(DIST, 'index.html'))) {
   console.log(`❌ ${path.relative(HERE, path.join(DIST, 'index.html'))} 不存在 —— dist 不完整，请先 npm run build`);
+  /*
+   * 这里原本只 `process.exit(1)`，**没有汇总行**。
+   *   体检（sweep）靠汇总行读结论，读不到就归进"可疑/崩在半路"——
+   *   于是"产物少了一个文件"这件有明确结论的事，
+   *   在体检单上表现为一行看不出方向的异常。
+   * 补上同格式的汇总行，让它和正常路径一样**带上数字退出**。
+   */
+  fail += 1;
+  console.log(`\n通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
   process.exit(1);
 }
 const distMtime = fs.statSync(path.join(DIST, 'index.html')).mtimeMs;

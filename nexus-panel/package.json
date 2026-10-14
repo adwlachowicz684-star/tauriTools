@@ -7,6 +7,8 @@
   "scripts": {
     "build": "vite build",
     "check:dist": "node dist-integrity-test.mjs",
+    "test:smoke": "node smoke-test.mjs",
+    "test:dist-integrity": "node dist-integrity-test.mjs",
     "config:check": "node scripts/sync-config.mjs --check",
     "config:sync": "node scripts/sync-config.mjs",
     "deps:scan": "node scripts/scan-deps.mjs",

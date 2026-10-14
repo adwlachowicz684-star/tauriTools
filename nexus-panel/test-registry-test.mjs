@@ -556,6 +556,78 @@ t('③e 判据必须真能命中逃生舱样本（判据被清空 = 防线被悄
   }
   t('断言里没有占位式的恒真 true（跳过/已知取舍要单列，不能冒充通过）',
     trueHits.length === 0, trueHits.join(' | ') || '干净');
+
+  /* ---- ③g 检查类 script 必须能被体检看见（入口不是 test: 前缀 = 整批漏网） ---- */
+  /*
+   * 起因（2026-10-14 全量体检 229 个脚本 0 可疑之后，回头核对覆盖范围）：
+   *   "test":          "node smoke-test.mjs"           ← 裸 `test`，不是 `test:` 前缀
+   *   "check:dist":    "node dist-integrity-test.mjs"
+   * 体检（sweep）只收 `test:` 前缀的 script，于是这两个**一个都进不了体检单**：
+   *   · smoke-test.mjs 的 10 条断言，从未在体检单上出现过 ——
+   *     而 `npm test` 恰恰是开发者最常敲的那一条；
+   *   · dist-integrity-test.mjs 更糟：它是**红的**（沙盒缺 dist/index.html），
+   *     而这条红藏在体检单外面，看体检单只会以为一切正常。
+   *
+   * 这和"typecheck 装了没人跑"是同一形状，只是这次连前缀都不是 test:。
+   * ① 那条守的是"有没有人点名"，这一条守的是"体检看不看得见"——
+   *   被点名 ≠ 被体检跑，两者漏掉的后果完全不同。
+   *
+   * 判据刻意不写死文件名：凡"跑的是 -test.mjs、或带 --check / --strict"的
+   * **非 test: 入口**，其文件必须也被某个 `test:` 前缀的 script 跑到。
+   * 不泛化成"任何 node xxx.mjs" —— 那会把 release:*（真的会发布）
+   * 和 config:sync（写文件用的）一起算进来，误报的下场是守卫被删。
+   */
+  const CHECK_FILE = /(?:^|\/)[A-Za-z0-9_.-]+-test\.mjs$/;
+  const CHECK_FLAG = /--(?:check|strict)\b/;
+  const norm = (p) => (p.startsWith('/') ? p : join(HERE, p));
+  /*
+   * 判据抽成函数，主断言与样本自检**走同一处**。
+   *
+   * 自检若另写一条正则、另抄一段循环，它验的是"这条手写判据对不对"，
+   * 跟主断言认不认得是**两回事** —— 主判据被清空时，自检照样绿。
+   * 这是本项目第四次撞上"拿被检查的东西检查它自己"（前三次：
+   * 顺序断言的自检另写正则、放行条件的两套写法、扫描器的自证）。
+   */
+  const hiddenChecks = (obj) => {
+    const seen = new Set();
+    for (const [k, v] of Object.entries(obj)) {
+      if (!k.startsWith('test:')) continue;
+      for (const m of String(v).matchAll(SCRIPT_FILE_RE)) seen.add(norm(m[0]));
+    }
+    const hidden = [];
+    let seenCount = 0;
+    for (const [k, v] of Object.entries(obj)) {
+      if (k.startsWith('test:')) continue;
+      const cmd = String(v);
+      for (const m of cmd.matchAll(SCRIPT_FILE_RE)) {
+        const f = m[0];
+        if (!CHECK_FILE.test(f) && !CHECK_FLAG.test(cmd)) continue;
+        seenCount++;
+        if (seen.has(norm(f))) continue;
+        hidden.push(`${k} → ${f}`);
+      }
+    }
+    return { hidden, seenCount };
+  };
+  const { hidden, seenCount } = hiddenChecks(scripts);
+  t('③g 检查类 script 都能被体检看见（入口不是 test: 前缀 = 整批漏网）',
+    hidden.length === 0, hidden.join(' | ') || '干净');
+
+  /* 样本：判据被清空或写歪，主断言照样绿 —— 只有这几条会喊 */
+  const SAMPLE = {
+    'check:orphan': 'node orphan-test.mjs',   // 检查类、没人点名 → 该报
+    'check:covered': 'node other-test.mjs',   // 已被 test:covered 点名 → 不该报
+    'test:covered': 'node other-test.mjs',    // 上面那条的点名者
+    'release:pub': 'node publish-update.mjs', // 发布类 → 不该吃进来
+  };
+  const smp = hiddenChecks(SAMPLE);
+  t('③g 判据确实会命中"没人点名的检查类 script"（失效 = 主断言恒绿）',
+    smp.hidden.length === 1 && smp.hidden[0] === 'check:orphan → orphan-test.mjs',
+    smp.hidden.join(' | ') || '一处都没命中 —— 防线已被撤');
+  t('③g 不吃发布类入口、也不误伤已被 test: 点名的（误报的下场是守卫被删）',
+    smp.seenCount === 2, `检查了 ${smp.seenCount} 条（应为 2）`);
+  t('③g 本节确实检查过条目（命中 0 条 = 解析失效，主断言会假绿）',
+    seenCount > 0, `检查了 ${seenCount} 条`);
 }
 
 /* ---- ④ 元守卫：本文件自己也得被引用 ---- */
