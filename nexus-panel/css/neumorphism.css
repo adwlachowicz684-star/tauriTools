@@ -1845,119 +1845,6 @@ html.theme-transition *:not(.spinner) {
    这一维的守卫仍待补；在此之前，别再引用不存在的那一节。 */
 
 /* ============================================================
-   folder-picker —— 统一的「选择文件夹」浮层
-   ------------------------------------------------------------
-   写在宿主主样式表，不写在 plugins/folder-picker/ 下。
-   服务虽然是 module（同页），但被弹成浮层显示；
-   插件自己的 style.css 在某些加载路径下根本不引入，
-   那时弹出来就是"只有文字"（demo-iframe 踩过的同款坑）。
-
-   颜色一律走变量、不写字面色板：
-   写死的话切换主题时正文变了、选择器没变，
-   而它恰恰是盖在整个界面之上的那块，最扎眼。
-   ============================================================ */
-.fp-panel {
-  display: flex; flex-direction: column;
-  width: 100%; max-width: 620px;
-  max-height: 100%;
-  padding: var(--sp-6, 12px);
-  border-radius: var(--r-md, 12px);
-  background: var(--surface);
-  box-shadow: var(--sh-out-md);
-  /* 浮层自己内滚：目录列表可以很长，
-     不设 min-height:0 的话 flex 子项不肯收缩，面板会被顶出屏幕。 */
-  min-height: 0;
-}
-.fp-title {
-  flex: 1; min-width: 0;
-  font-size: var(--fs-14, 14px); font-weight: 600; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.fp-x {
-  flex: none;
-  padding: 0 var(--sp-3, 6px);
-  border: none; background: none; cursor: pointer;
-  font-size: var(--fs-13, 13px); color: var(--text-mute);
-}
-.fp-x:hover { color: var(--text); }
-.fp-hint {
-  flex: none;
-  margin-top: var(--sp-3, 6px);
-  font-size: var(--fs-11, 11px); line-height: 1.7; color: var(--text-mute);
-}
-/* 常用文件夹 + 快速起点。
-   flex-wrap 而不是 overflow-x：横向滚动会把"还有更多"藏在看不见的地方，
-   而这一排的意义就是一眼看到全部入口。 */
-.fp-chips {
-  display: flex; flex-wrap: wrap; gap: var(--sp-3, 6px);
-  flex: none;
-  margin-top: var(--sp-4, 8px);
-}
-.fp-chip:hover { box-shadow: var(--sh-in-sm); }
-/* 快速起点是"兜底入口"，弱化一档，否则会跟真收藏抢注意力。 */
-.fp-chip-x {
-  border: none; background: none; cursor: pointer;
-  padding: 0; font-size: var(--fs-10, 10px); color: var(--text-mute);
-}
-.fp-bar {
-  display: flex; align-items: center; gap: var(--sp-3, 6px);
-  flex: none;
-  margin-top: var(--sp-4, 8px);
-}
-.fp-bar .p-input { flex: 1; min-width: 0; }
-.fp-crumbs {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2, 4px);
-  flex: none;
-  margin-top: var(--sp-4, 8px);
-  font-size: var(--fs-11, 11px);
-}
-.fp-namerow, .fp-newrow {
-  display: flex; align-items: center; gap: var(--sp-3, 6px);
-  flex: none;
-  margin-top: var(--sp-3, 6px);
-}
-.fp-namerow .p-input, .fp-newrow .p-input { flex: 1; min-width: 0; }
-.fp-err {
-  flex: none;
-  margin-top: var(--sp-3, 6px);
-  font-size: var(--fs-11, 11px); line-height: 1.7; color: var(--danger);
-}
-/* 目录列表：这是唯一会滚的区域。
-   min-height:0 必须写 —— flex 子项默认 min-height:auto，
-   不写的话列表按内容撑开，面板被顶出屏幕且不会报错。 */
-.fp-list {
-  flex: 1 1 auto; min-height: 0; overflow: auto;
-  margin-top: var(--sp-4, 8px);
-  padding: var(--sp-3, 6px);
-  border-radius: var(--r-sm);
-  background: var(--surface-sunk);
-  box-shadow: var(--sh-in-sm);
-}
-.fp-dirrow {
-  display: flex; align-items: center; gap: var(--sp-3, 6px);
-  padding: var(--sp-2, 4px) var(--sp-3, 6px);
-  border-radius: var(--r-xs);
-}
-.fp-dirrow:hover { background: var(--surface); }
-.fp-ok-tag {
-  flex: none;
-  padding: 0 var(--sp-2, 4px);
-  border-radius: var(--r-xs);
-  background: var(--accent-soft, transparent);
-  font-size: var(--fs-10, 10px); color: var(--accent);
-}
-.fp-foot {
-  display: flex; align-items: center; gap: var(--sp-3, 6px);
-  flex: none;
-  margin-top: var(--sp-5, 10px);
-}
-.fp-cur {
-  flex: 1; min-width: 0;
-  font-family: var(--font-mono, ui-monospace, Menlo, Consolas, monospace);
-  font-size: var(--fs-11, 11px); color: var(--text-mute);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* ============================================================
    md 插件（同页 module 插件）
    ------------------------------------------------------------
    写在 neumorphism.css 而不是 settings.css：
@@ -2395,7 +2282,13 @@ html.theme-transition *:not(.spinner) {
       写在这里则只要宿主样式在，浮层就一定有样子。
 
    module.js 里**一个内联 style 都没有**（0 处），
-   所以下面这些类就是它全部的观感来源 —— 少一条就是一处裸奔。
+   所以本段就是它观感的**主要**来源 —— 少一条就少一处样式。
+
+   ⚠️ 2026-10 前这里还写着"下面这些类就是它**全部**的观感来源"，是错的：
+      文件更靠前处另有同名的一套（旧版整段重写后没删），
+      两套**都生效**，实际观感是二者叠加（面板的 width / max-width /
+      max-height / min-height 当初就只写在旧的那份里）。
+      现已合并到本段，删掉旧的那份。改本段任一条都会真的改观感。
 
    全部走令牌：切主题（尤其玻璃）时跟着变，不写裸值。
 */
@@ -2414,6 +2307,11 @@ html.theme-transition *:not(.spinner) {
   /* 浮层必须自己滚：目录多时列表会顶出容器，
      没有 overflow 就顶到遮罩外面去，下半截点不到。 */
   overflow: hidden;
+
+  width: 100%;
+  max-width: 620px;
+  max-height: 100%;
+  min-height: 0;
 }
 
 .fp-head {
@@ -2433,6 +2331,8 @@ html.theme-transition *:not(.spinner) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+
+  color: var(--text);
 }
 
 .fp-x {
@@ -2446,15 +2346,21 @@ html.theme-transition *:not(.spinner) {
   font-family: inherit;
   font-size: var(--fs-body, 13px);
   cursor: pointer;
+
+  padding: 0 var(--sp-3, 6px);
 }
 
-.fp-x:hover { filter: brightness(var(--hover-bright, 1.06)); }
+.fp-x:hover { filter: brightness(var(--hover-bright, 1.06)); 
+  color: var(--text);
+}
 
 .fp-hint {
   flex: none;
   font-size: var(--fs-11, 11px);
   line-height: var(--lh-relaxed, 1.6);
   color: var(--text-dim, var(--text));
+
+  margin-top: var(--sp-3, 6px);
 }
 
 /* 常用文件夹：一排胶囊，多了换行而不是横向溢出 */
@@ -2465,6 +2371,8 @@ html.theme-transition *:not(.spinner) {
   gap: var(--sp-3, 6px);
   max-height: 72px;
   overflow-y: auto;
+
+  margin-top: var(--sp-4, 8px);
 }
 
 .fp-chip {
@@ -2483,7 +2391,9 @@ html.theme-transition *:not(.spinner) {
   cursor: pointer;
 }
 
-.fp-chip:hover { filter: brightness(var(--hover-bright, 1.06)); }
+.fp-chip:hover { filter: brightness(var(--hover-bright, 1.06)); 
+  box-shadow: var(--sh-in-sm);
+}
 
 /*
  * .plain = 快速起点（盘符 / 家目录这类兜底入口）。
@@ -2514,6 +2424,8 @@ html.theme-transition *:not(.spinner) {
   font-family: inherit;
   font-size: var(--fs-11, 11px);
   cursor: pointer;
+
+  padding: 0;
 }
 
 .fp-chip-x:hover { color: var(--danger); }
@@ -2523,10 +2435,14 @@ html.theme-transition *:not(.spinner) {
   display: flex;
   align-items: center;
   gap: var(--sp-3, 6px);
+
+  margin-top: var(--sp-4, 8px);
 }
 
 /* 路径输入框自己撑开 */
 .fp-bar > .p-input { flex: 1; min-width: 0; }
+/* 后代写法：上面那条是子选择器（>），只匹配直接子级；这条兜住更深一层的嵌套 */
+.fp-bar .p-input { flex: 1; min-width: 0; }
 
 .fp-crumbs {
   flex: none;
@@ -2535,6 +2451,8 @@ html.theme-transition *:not(.spinner) {
   align-items: center;
   gap: var(--sp-1, 2px);
   font-size: var(--fs-11, 11px);
+
+  margin-top: var(--sp-4, 8px);
 }
 
 .fp-crumb {
@@ -2551,7 +2469,15 @@ html.theme-transition *:not(.spinner) {
 
 .fp-crumb-sep { color: var(--text-mute, var(--text-dim)); }
 
-.fp-cur { color: var(--text-soft, var(--text)); }
+.fp-cur { color: var(--text-soft, var(--text)); 
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, Menlo, Consolas, monospace);
+  font-size: var(--fs-11, 11px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .fp-err {
   flex: none;
@@ -2561,6 +2487,8 @@ html.theme-transition *:not(.spinner) {
   color: var(--danger);
   font-size: var(--fs-11, 11px);
   line-height: var(--lh-relaxed, 1.6);
+
+  margin-top: var(--sp-3, 6px);
 }
 
 .fp-err:empty { display: none; }
@@ -2577,9 +2505,16 @@ html.theme-transition *:not(.spinner) {
   border-radius: var(--r-sm, 9px);
   background: var(--surface-sunk);
   box-shadow: var(--sh-in-sm);
+
+  overflow: auto;
+  margin-top: var(--sp-4, 8px);
 }
 
-.fp-dirrow { display: flex; align-items: center; gap: var(--sp-3, 6px); }
+.fp-dirrow { display: flex; align-items: center; gap: var(--sp-3, 6px); 
+  padding: var(--sp-2, 4px) var(--sp-3, 6px);
+  border-radius: var(--r-xs);
+}
+.fp-dirrow:hover { background: var(--surface); }
 
 /* 目录名按钮吃掉整行宽度：整行可点，不是只有文字那几个像素能点 */
 .fp-dirname {
@@ -2753,10 +2688,16 @@ html.theme-transition *:not(.spinner) {
   flex: none;
   display: flex;
   gap: var(--sp-3, 6px);
+
+  align-items: center;
+  margin-top: var(--sp-3, 6px);
 }
 
 .fp-namerow > .p-input,
 .fp-newrow > .p-input { flex: 1; min-width: 0; }
+/* 同上：子选择器之外的后代兜底 */
+.fp-namerow .p-input,
+.fp-newrow .p-input { flex: 1; min-width: 0; }
 
 .fp-foot {
   flex: none;
@@ -2764,9 +2705,17 @@ html.theme-transition *:not(.spinner) {
   align-items: center;
   justify-content: flex-end;
   gap: var(--sp-3, 6px);
+
+  margin-top: var(--sp-5, 10px);
 }
 
-.fp-ok-tag { color: var(--ok); }
+.fp-ok-tag { color: var(--ok); 
+  flex: none;
+  padding: 0 var(--sp-2, 4px);
+  border-radius: var(--r-xs);
+  background: var(--accent-soft, transparent);
+  font-size: var(--fs-10, 10px);
+}
 
 @media (prefers-reduced-motion: reduce) {
   .fp-panel { transition: none; }
