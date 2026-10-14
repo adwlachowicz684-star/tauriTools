@@ -95,7 +95,10 @@ export function unescXml(s) {
 export function parseKm(content) {
   if (!content) return null;
   let km = null;
-  try { km = typeof content === 'string' ? JSON.parse(content) : content; } catch { return null; }
+  // BUG 149：带 BOM 的 .json 快照 JSON.parse 直接抛错 → 整个文件导不进来
+  try {
+    km = typeof content === 'string' ? JSON.parse(stripBom(content)) : content;
+  } catch { return null; }
   if (!km || typeof km !== 'object' || !km.root) return null;
   return km;
 }
@@ -159,6 +162,26 @@ export const ROOT_TEXT = '中心主题';
  * （.mm / .opml 走 XML 属性规范化，天然把 \r 变空格，所以只有 JSON 系受影响）。
  */
 export const flattenBreaks = (v) => String(v ?? '').replace(/[\r\n\u2028\u2029]+/g, ' ');
+
+/**
+ * 去掉文件开头的 **BOM**（`\uFEFF`）。
+ *
+ * Windows 记事本保存 UTF-8 会**默认加 BOM**，Excel / 部分编辑器导出的
+ * CSV、XML 同样带 —— 用户把 .md / .json 拿去记事本改一笔再存回，文件里
+ * 就多出这一个字符。它不在任何一个格式的语法里，但足以让解析静默出错：
+ *
+ * - Markdown：首行 `\uFEFF# A` 不命中标题正则 → **第一个节点整条消失**
+ *   （且它若是分块标记 `## 画布：X`，那张画布的标题就变成默认「画布 1」）
+ * - 原生 .json 快照：`JSON.parse` 直接抛错 → parseKm / parseWorkbook
+ *   返回 null → **整个文件导不进来**（BUG 149）
+ *
+ * ⓘ 只剥**开头那一个**。正文里的 `\uFEFF`（零宽不换行空格）是用户真写着
+ *   的内容，剥掉等于改文字。
+ *
+ * ⓘ 剥 BOM 放在**解析这一侧**而不是读文件那一侧：读文件处没法单测，
+ *   而 Markdown / JSON 两条路各自的解析函数才是能被测到的地方。
+ */
+export const stripBom = (v) => String(v ?? '').replace(/^\uFEFF/, '');
 
 /**
  * 节点文字规范化：换行类字符及其前后空白 → 单个空格，并 trim。
@@ -1469,7 +1492,8 @@ export function detectFormat(text, name = '') {
 
   // 内容嗅探优先
   if (head.startsWith('{') || head.startsWith('[')) {
-    try { JSON.parse(src); return 'json'; } catch { /* 不是 JSON，继续 */ }
+    // BUG 149：BOM 会让 JSON.parse 抛错，于是带 BOM 的 .json 只能靠扩展名兜底
+    try { JSON.parse(stripBom(src)); return 'json'; } catch { /* 不是 JSON，继续 */ }
   }
   // 按**根元素**判断：只认「这个文件本身就是 opml / map 文档」
   const rootName = rootElementName(head);

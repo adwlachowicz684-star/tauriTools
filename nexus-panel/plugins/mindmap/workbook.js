@@ -18,7 +18,7 @@ import { decodeRefList } from './io.js';
  * 两处必须用同一个值：各写一份的话，改了一处不改另一处，
  * Markdown 往返就会凭空多出/少掉「未命名」。
  */
-import { EMPTY_NODE_TEXT, inlineText, flattenBreaks, ROOT_TEXT, rowsWithVirtualRoot } from './formats.js';
+import { EMPTY_NODE_TEXT, inlineText, flattenBreaks, ROOT_TEXT, rowsWithVirtualRoot, stripBom } from './formats.js';
 
 /*
  * 中心主题文案住在 formats.js（那边导入侧插虚拟根要用，而它不能反过来
@@ -290,7 +290,13 @@ export function mdOutlineRows(md) {
   let fence = null;      // 围栏代码块的标记字符（` 或 ~ 或更多），闭合前一律跳过
   let base = -1;         // 最近一个标题的深度；一个标题都没有时 -1（列表首项成为根）
   const indents = [null]; // 列表缩进栈：相对缩进定层级，2 / 4 空格混用都成立
-  for (const rawLine of String(md || '').split(/\r?\n/)) {
+  /*
+   * BUG 149：先剥掉文件开头的 BOM。
+   * 不剥的话首行是 `\uFEFF# A`，井号前多了一个字符 → 不命中标题正则 →
+   * **整行被跳过**；首行若正好是分块标记 `## 画布：X`，那张画布的标题就
+   * 静默变成默认「画布 1」。Windows 记事本存 UTF-8 默认带 BOM，很常见。
+   */
+  for (const rawLine of stripBom(md).split(/\r?\n/)) {
     /*
      * BUG 101：先把行里的换行终止符摊平成空格，再判"是不是大纲行"。
      *
@@ -529,7 +535,12 @@ export function markdownRowCount(md) {
 
 /** Markdown → 画布数组（识别 '## 画布：' 分块；无分块时视作单画布） */
 export function markdownToWorkbook(md) {
-  const text = String(md || '');
+  /*
+   * BUG 149：先剥 BOM。分块标记是**在这一层**认的（`## 画布：X`），
+   * 首行带 BOM 时不命中 SHEET_MARK → 这一块没有标题 → 导回后画布名叫
+   * 默认的「画布 1」，而用户文件里明明写着「画布：项目A」。
+   */
+  const text = stripBom(md);
   const lines = text.split(/\r?\n/);
   const chunks = [];
   let cur = { title: null, lines: [] };
@@ -642,7 +653,8 @@ export function serializeWorkbook(sheets, activeId) {
 export function parseWorkbook(text) {
   let obj;
   try {
-    obj = JSON.parse(text);
+    // BUG 149：带 BOM 的工作簿快照 JSON.parse 直接抛错 → 整个文件导不进来
+    obj = JSON.parse(stripBom(text));
   } catch {
     return null;
   }

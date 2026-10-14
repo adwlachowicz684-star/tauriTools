@@ -19794,6 +19794,86 @@ group('BUG 148 · 导入别人的 .puml：多根（Multiroot）不能再被串�
   }
 }
 
+group('BUG 149 · BOM（\uFEFF）不能让首行静默失效');
+
+{
+  const f = await import('./formats.js');
+  const wbk = await import('./workbook.js');
+  const BOM = '\uFEFF';
+
+  /* 一、stripBom 本身 */
+  eq(f.stripBom(BOM + '# A'), '# A', '剥开头 BOM');
+  eq(f.stripBom('# A'), '# A', '没有 BOM 时原样');
+  eq(f.stripBom(BOM + BOM + '# A'), BOM + '# A', '只剥一个（第二个是正文）');
+  eq(f.stripBom('a' + BOM + 'b'), 'a' + BOM + 'b',
+    '★ 正文中间的 BOM 不许动（那是用户真写着的内容）');
+  eq(f.stripBom(null), '', 'null → 空串（不抛）');
+
+  /* 二、Markdown：首行不能被整行跳过 */
+  eq(JSON.stringify(wbk.mdOutlineRows(BOM + '# A\n## B')),
+    JSON.stringify([{ depth: 0, text: 'A' }, { depth: 1, text: 'B' }]),
+    '★ 带 BOM 的 .md：首行标题不能消失（修复前 A 整条没了、B 被抬成根）');
+  eq(wbk.markdownRowCount(BOM + '# A\n## B'), 2, '闸门与解析器同口径（带 BOM 也数 2）');
+  {
+    const s = JSON.parse(wbk.markdownToSheet(BOM + '# A\n## B'));
+    eq(s.root.data.text, 'A', '★ markdownToSheet 带 BOM：根文字仍是 A');
+    eq(s.root.children.length, 1, '★ markdownToSheet 带 BOM：子节点没丢');
+  }
+
+  /* 三、多画布分块：首行是 `## 画布：X` 时，标题不能变默认「画布 1」 */
+  {
+    const sheets = [
+      { id: 's1', title: '项目A', content: JSON.stringify({ root: { data: { text: '根A' }, children: [{ data: { text: '子1' } }] } }) },
+      { id: 's2', title: '项目B', content: JSON.stringify({ root: { data: { text: '根B' }, children: [] } }) },
+    ];
+    const md = wbk.workbookToMarkdown(sheets);
+    const clean = wbk.markdownToWorkbook(md);
+    const bom = wbk.markdownToWorkbook(BOM + md);
+    eq(clean.length, 2, '无 BOM：两张画布');
+    eq(bom.length, 2, '带 BOM：同样是两张');
+    eq(bom[0].title, '项目A', '★ 带 BOM：第一张画布的标题不能变「画布 1」');
+    eq(bom[0].content, clean[0].content, '★ 带 BOM：第一张画布内容与无 BOM 完全一致');
+    eq(JSON.stringify(bom.map((x) => [x.title, x.content])),
+      JSON.stringify(clean.map((x) => [x.title, x.content])),
+      '★ 整本工作簿往返：带 BOM 与不带 BOM 结果一致');
+  }
+
+  /* 四、原生 .json 快照：带 BOM 不能整个导不进来 */
+  {
+    const km = '{"root":{"data":{"text":"根A"},"children":[{"data":{"text":"子1"}}]}}';
+    eq(f.parseKm(BOM + km)?.root?.data?.text, '根A', '★ parseKm 带 BOM 不再返回 null');
+    eq(f.parseKm('坏 JSON'), null, 'parseKm 坏 JSON 仍返回 null（没被顺手放宽）');
+    const wbTxt = wbk.serializeWorkbook(
+      [{ id: 's1', title: '甲', content: km }], 's1');
+    const p = wbk.parseWorkbook(BOM + wbTxt);
+    ok(p && (p.sheets || []).length === 1, '★ parseWorkbook 带 BOM 不再返回 null');
+    eq(f.detectFormat(BOM + wbTxt, ''), 'json', '★ 无扩展名 + 带 BOM 仍能嗅探出 json');
+  }
+
+  /* 五、源码契约：三条路各自都必须真的剥（光有函数不算） */
+  const segOf = (s, sig) => {
+    const i = s.indexOf(sig);
+    if (i < 0) return '';
+    const rest = s.slice(i + sig.length);
+    const m = rest.match(/\nexport /);
+    return s.slice(i, i + sig.length + (m ? m.index : rest.length));
+  };
+  const wsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+  const fsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+  ok(/stripBom\(md\)/.test(segOf(wsrc, 'export function mdOutlineRows(')),
+    '★ mdOutlineRows 必须剥 BOM（分块标记与首行标题都在这一层认）');
+  ok(/JSON\.parse\(stripBom\(text\)\)/.test(segOf(wsrc, 'export function parseWorkbook(')),
+    '★ parseWorkbook 必须剥 BOM');
+  ok(/const text = stripBom\(md\);/.test(segOf(wsrc, 'export function markdownToWorkbook(')),
+    '★ markdownToWorkbook 必须剥 BOM（分块标记在这一层认）');
+  ok(/JSON\.parse\(stripBom\(content\)\)/.test(fsrc),
+    '★ parseKm 必须剥 BOM');
+  ok(/JSON\.parse\(stripBom\(src\)\)/.test(fsrc),
+    '★ detectFormat 嗅探 JSON 时必须剥 BOM');
+  ok(/export const stripBom/.test(fsrc), 'stripBom 只有一处定义（formats.js）');
+  eq((fsrc.match(/export const stripBom/g) || []).length, 1, '★ stripBom 不得有第二份定义');
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
