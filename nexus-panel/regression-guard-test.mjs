@@ -1578,5 +1578,100 @@ console.log('\n=== 18. Rust 侧重复函数体 ===');
     `归一化长度 ${normRs(A).length}`);
 }
 
+/* ---------- 19. CSS 里不得有「同选择器、后被全量覆盖」的死规则 ----------
+ *
+ * 同一条选择器在一个文件里出现两次，且第一条的每个属性键都在最后一条里
+ * 也出现了 —— 那么第一条 **100% 不生效**。改它不会有任何反应：
+ * 想改窄一点改成更窄、想换个颜色换个颜色，界面纹丝不动，
+ * 而人只会以为是"缓存没清"，不会想到同一条规则在下面还有一份。
+ *
+ * 这类死规则是怎么来的：一段样式被整体重写（新版写在文件更靠后），
+ * 旧版那一整段没删。旧版里与新版选择器同名的就全成了死规则。
+ *
+ * 【只统计顶层】@media 里的规则只在特定条件下生效，不能和顶层的直接比 ——
+ *   同一个选择器在 @media 内外各一份是常态（响应式覆盖），不是死规则。
+ *   正则取 `[^{}]*` 天然跳过了 @media / @keyframes 这种带嵌套的块。
+ *
+ * 【!important 不参与】优先级不同，不能按"后出现者赢"判。
+ *
+ * 【不比较值，只比较键】值不同不代表死 —— 只说明有人改了其一。
+ *   真正判死的依据是"第一条的每个属性，最后一条都重新给了一遍"。
+ */
+{
+  /* CSS 只有块注释：stripJs 会把 url(https://…) 从两个斜杠起整行吞掉 */
+  const stripCss = (x) => stripBlock(x);
+
+  const declKeys = (body) => {
+    const out = new Set();
+    for (const part of body.split(';')) {
+      const i = part.indexOf(':');
+      if (i < 0) continue;
+      const k = part.slice(0, i).trim();
+      const v = part.slice(i + 1).trim();
+      if (k && v) out.add(k);
+    }
+    return out;
+  };
+
+  /** 返回该文件里"完全失效"的选择器，以及顶层规则条数 */
+  const deadIn = (src) => {
+    const bySel = new Map();
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m;
+    let top = 0;
+    while ((m = re.exec(src))) {
+      const before = src.slice(0, m.index);
+      const depth = (before.match(/\{/g) || []).length - (before.match(/\}/g) || []).length;
+      if (depth !== 0) continue;
+      const sel = m[1].trim().replace(/\s+/g, ' ');
+      if (!sel || sel.startsWith('@')) continue;
+      top++;
+      for (const one of sel.split(',')) {
+        const s = one.trim();
+        if (!s) continue;
+        if (!bySel.has(s)) bySel.set(s, []);
+        bySel.get(s).push(m[2]);
+      }
+    }
+    const out = [];
+    for (const [sel, bodies] of bySel) {
+      if (bodies.length < 2) continue;
+      const lastKeys = declKeys(bodies[bodies.length - 1]);
+      for (const b of bodies.slice(0, -1)) {
+        if (/!important/.test(b)) continue;
+        const ks = declKeys(b);
+        if (ks.size && [...ks].every((k) => lastKeys.has(k))) out.push(sel);
+      }
+    }
+    return { out, top };
+  };
+
+  const cssFiles = walk(HERE).filter((p) => p.endsWith('.css'));
+  const dead = [];
+  let topRules = 0;
+  for (const p of cssFiles) {
+    let src;
+    try { src = stripCss(readFileSync(p, 'utf8')); } catch { continue; }
+    const { out, top } = deadIn(src);
+    topRules += top;
+    for (const s of out) dead.push(relativeTo(p) + ' ' + s);
+  }
+
+  t('扫到了足够的顶层 CSS 规则（判据没失明）',
+    cssFiles.length >= 5 && topRules > 200,
+    `${cssFiles.length} 个 CSS，${topRules} 条顶层规则`);
+
+  t('CSS 里没有「同选择器、后被全量覆盖」的死规则', dead.length === 0,
+    dead.slice(0, 8).join('；'));
+
+  /* 元断言：两头都灵 —— 全量覆盖要判死，留一条独有属性就不能判 */
+  const mk = (a, b) => `.x { ${a} }\n.other { color: red }\n.x { ${b} }`;
+  const covered = deadIn(mk('color: red; padding: 1px', 'color: blue; padding: 2px; margin: 0')).out;
+  const partial = deadIn(mk('color: red; z-index: 3', 'color: blue; padding: 2px')).out;
+  t('19 判据本身有效（全量覆盖判死、有独有属性不判）',
+    covered.length === 1 && partial.length === 0,
+    `覆盖=${covered.length} 部分=${partial.length}`);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
