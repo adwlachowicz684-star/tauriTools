@@ -77,10 +77,26 @@ export default function McpServersPanel({
     setEditing({ ...newServer(''), command: tab === 'local' ? '' : undefined });
   };
 
+  /*
+   * 保存缺什么 —— 与按钮的 disabled 同一份判据，且与 engine 侧的
+   * isRunnable / transportOf 同源（都是"命令或地址至少填一个"）。
+   * 各写一份的话，按钮放行了、列表却按另一套判据把它划到别的页签，
+   * 就是"保存完凭空消失"。
+   */
+  const saveBlocker = !editing
+    ? ''
+    : !String(editing.name ?? '').trim()
+      ? '服务名称'
+      : !isRunnable(editing)
+        ? (tab === 'local' ? '启动命令' : '地址')
+        : '';
+
   const saveEdit = () => {
     if (!editing) return;
     const name = String(editing.name ?? '').trim();
     if (!name) return;
+    /* 与按钮同一判据：两个都空的服务存进去也起不来，还会在列表里失踪 */
+    if (!isRunnable(editing)) return;
     const next = servers.some((s) => s.id === editing.id)
       ? servers.map((s) => (s.id === editing.id ? editing : s))
       : [...servers, editing];
@@ -168,10 +184,27 @@ export default function McpServersPanel({
             导出时会脱敏，不会随画布带出去。
           </div>
           <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
+            {/*
+             * 置灰必须配一句说明：只置灰不说原因，用户知道点不动，
+             * 却不知道该填哪个。
+             *
+             * 为什么连"传输方式"也要拦（以前只拦名称）：
+             * 在「云端」页签只填名字保存 → 命令和地址都是空的 →
+             * transportOf 兜底判成 local → 这条服务**不在当前页签的列表里**，
+             * 保存完就凭空消失。用户只会以为没存上，然后一遍遍重新添加。
+             * 这样的服务存进去也起不来（isRunnable 为 false，列表里同样会
+             * 标"这个服务起不来"），不如当场拦住。
+             */}
+            {saveBlocker ? (
+              <span className="p-muted" style={{ fontSize: 'var(--fs-body, 12px)' }}>
+                还差：{saveBlocker}
+              </span>
+            ) : null}
             <button
               className="p-btn primary"
               onClick={saveEdit}
-              disabled={!String(editing.name ?? '').trim()}
+              disabled={!!saveBlocker}
+              title={saveBlocker ? `还差：${saveBlocker}` : undefined}
             >
               保存
             </button>
