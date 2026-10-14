@@ -52,7 +52,20 @@ export async function copyText(deps: ClipboardDeps, text: string): Promise<boole
   try {
     const ta = document.createElement('textarea');
     ta.value = text;
+    /*
+     * 必须挪到视口外，不能只靠 opacity:0 ——
+     * `position:fixed` 且 top 留空时，元素停在**静态位置**，
+     * 而静态位置取决于 body 内容的长度：页面短它就落在视口内。
+     * 那会瞬时出现一个 150×50 的透明 textarea：
+     *   · opacity:0 **不影响命中测试**，它照样接收点击
+     *   · ta.select() 让它拿到焦点，浏览器可能因此滚动页面
+     * 于是"复制一下页面抖一下 / 那一下点击没反应"。
+     *
+     * 另两份（js/host.js、js/clipboard.js）都写了 top:-1000px，
+     * 本文件此前漏了 —— 三份实现漂移的又一例。
+     */
     ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
     ta.style.opacity = '0';
     document.body.appendChild(ta);
     ta.select();

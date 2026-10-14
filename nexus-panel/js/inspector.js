@@ -239,7 +239,19 @@ async function copy(text) {
   try {
     const ta = document.createElement('textarea');
     ta.value = text;
+    /*
+     * 必须挪出视口，不能只靠 opacity:0 ——
+     * `position:fixed` 且 top 留空时元素停在**静态位置**，而静态位置
+     * 取决于 body 内容长度：页面短它就落在视口内，于是瞬时出现一个
+     * 约 150×50 的透明 textarea。opacity:0 **不影响命中测试**（照样接点击），
+     * ta.select() 又让它拿到焦点（浏览器可能因此滚动），表现为
+     * "复制一下页面抖一下 / 那一下点击没反应"，且只在内容短的页面上复现。
+     *
+     * 本文件此前漏了 top —— 全仓四份兜底（host.js、clipboard.js、
+     * project-group/utils/clipboard.ts、本文件）里第二份漏的。
+     */
     ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
     ta.style.opacity = '0';
     document.body.appendChild(ta);
     ta.select();
