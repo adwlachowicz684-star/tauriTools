@@ -85,6 +85,7 @@ import CanvasLibrary from './components/CanvasLibrary';
 import {
   expandModules, findModule, addModule, saveModules, loadModules,
   stripRuntimeNodes, packSelection, type ModuleDef,
+  moduleEdgesToFlow, flowEdgesToModule,
 } from './engine/modules';
 import {
   stackEdges, descendantsOf, chainTopOf, chainOf,
@@ -1314,6 +1315,29 @@ function reportSkipped(
   /** 拖拽开始时的位置快照，用于整体拖动与"拖开即解嵌"的判定 */
   const moduleBackup = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] } | null>(null);
 
+  /*
+   * 切换画布的唯一入口。
+   *
+   * 编辑模块内部时借用主画布，画布上此刻装的是**模块的内容**，
+   * 不是任何一张画布的内容。这时切换画布 = 用那张画布的内容覆盖
+   * 画布区，而模块编辑条还挂着 —— 再点「完成」，写回模块库的就是
+   * **另一张画布**，模块里原来的东西彻底没了，且没有任何提示。
+   *
+   * 上面那段注释（进入编辑必须锁住画布切换）说的就是这件事，
+   * 而此前只有模块库那一栏加了锁：顶部画布页签、左栏画布列表、
+   * 任务详情里的"跳到画布"三条路都开着。
+   *
+   * 锁在这一处而不是三个按钮上各写一遍 —— 各写一遍必然漏一条，
+   * 而现在就是漏了三条才有的这个洞。
+   */
+  const switchCanvas = useCallback((id: string) => {
+    if (editingModule) {
+      pushLog('✗ 正在编辑模块：先点「完成」或「放弃」，再切换画布（否则模块会被这张画布的内容覆盖）');
+      return;
+    }
+    setActiveId(id);
+  }, [editingModule, pushLog]);
+
   const enterModuleEdit = useCallback(
     (id: string) => {
       const m = findModule(id);
@@ -1322,7 +1346,17 @@ function reportSkipped(
       if (editingModule) return;
       moduleBackup.current = { nodes, edges };
       setNodes(m.nodes.map((n) => ({ ...n })) as unknown as FlowNode[]);
-      setEdges(m.edges.map((e) => ({ ...e })) as unknown as FlowEdge[]);
+      /*
+       * 走 moduleEdgesToFlow，不再 `{...e}` 原样搬。
+       *
+       * 模块边把 branch / loopRole / targetArg 存在**顶层**，
+       * 画布边存在 data 里。原样搬的结果：条件分支的「是/否」、
+       * 循环出口的「每轮/结束」、参数连线标记全部到了顶层，
+       * 画布上按 data 读，一律读到空 ——
+       * 表现为"打开模块编辑，里面的分支线和参数线都变成了普通流程线"，
+       * 而保存时又按 data 读回，这些字段就彻底丢了。
+       */
+      setEdges(moduleEdgesToFlow(m.edges) as unknown as FlowEdge[]);
       setSelectedId(null);
       setEditingModule(id);
       pushLog(`✎ 正在编辑模块「${m.name}」—— 改完点「完成」保存，所有实例跟着变`);
@@ -1344,7 +1378,7 @@ function reportSkipped(
       if (own?.nodes) {
         // 已脱钩：直接编辑自带副本
         setNodes(own.nodes.map((x) => ({ ...(x as object) })) as unknown as FlowNode[]);
-        setEdges((own.edges ?? []).map((x) => ({ ...(x as object) })) as unknown as FlowEdge[]);
+        setEdges(moduleEdgesToFlow((own.edges ?? []) as never) as unknown as FlowEdge[]);
       } else {
         const m = findModule(String(d.moduleId ?? ''));
         if (!m) {
@@ -1352,7 +1386,7 @@ function reportSkipped(
           return;
         }
         setNodes(m.nodes.map((x) => ({ ...x })) as unknown as FlowNode[]);
-        setEdges(m.edges.map((x) => ({ ...x })) as unknown as FlowEdge[]);
+        setEdges(moduleEdgesToFlow(m.edges) as unknown as FlowEdge[]);
       }
       setSelectedId(null);
       // 存一个特殊标记：退出时写回这个实例而不是模块库
@@ -1373,11 +1407,14 @@ function reportSkipped(
         const clean = stripRuntimeNodes(
           nodes.map((n) => ({ ...n })) as unknown as Record<string, unknown>[],
         );
-        const newEdges = edges.map((e) => ({
-          id: e.id, source: e.source, target: e.target,
-          branch: e.data?.branch,
-          loopRole: e.data?.loopRole,
-        }));
+        /*
+         * 走 flowEdgesToModule。
+         *
+         * 以前这里手写一份，只搬 branch / loopRole，
+         * 于是**参数连线（targetArg）在保存模块时被整条丢掉** ——
+         * 模块里"取个值"的线，编辑保存后消失，界面上只是少一根线。
+         */
+        const newEdges = flowEdgesToModule(edges);
 
         if (target.startsWith('@instance:')) {
           /*
@@ -1450,6 +1487,16 @@ function reportSkipped(
       edges.map((e) => ({
         id: e.id, source: e.source, target: e.target,
         branch: e.data?.branch, loopRole: e.data?.loopRole,
+        /*
+         * data 必须一起传。**参数连线的信息全在 data 里**
+         * （isParamEdge 判的是 data.kind，取哪个输出看 data.sourceArg）。
+         *
+         * 只搬 branch / loopRole 的话，参数连线会被当成普通流程边：
+         * 存进模块后 targetArg 没了，展开时那条线退化成一条执行路径 ——
+         * 本该"取个值"变成"目标节点多跑一次"，而界面上这根线看起来
+         * 和普通流程线一模一样，用户无从分辨。
+         */
+        data: e.data,
       })) as never,
       nodes as never,
     );
@@ -2963,11 +3010,11 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
       <CanvasTabs
         canvases={canvases.map(toMeta)}
         activeId={activeId}
-        onSelect={setActiveId}
+        onSelect={switchCanvas}
         onAdd={handleAddCanvas}
         onRename={handleRenameCanvas}
         onDelete={handleDeleteCanvas}
-        disabled={running}
+        disabled={running || editingModule !== null}
       />
       <div className="toolbar">
         <div className="view-switch">
@@ -3120,7 +3167,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                 groups={canvasGroups}
                 activeId={activeId}
                 triggers={allGlobalTriggers}
-                onSelect={setActiveId}
+                onSelect={switchCanvas}
                 onAdd={handleAddCanvas}
                 onAddGroup={handleAddGroup}
                 onRenameGroup={handleRenameGroup}
@@ -3128,7 +3175,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                 onDropToGroup={handleDropToGroup}
                 onRemoveFromGroup={handleRemoveFromGroup}
                 onToggleCollapse={handleToggleCollapse}
-                disabled={running}
+                disabled={running || editingModule !== null}
               />
             )}
           </div>
@@ -3157,7 +3204,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                 archived
                 onJumpToCanvas={(canvasId) => {
                   if (canvasId && canvases.some((c) => c.id === canvasId)) {
-                    setActiveId(canvasId);
+                    switchCanvas(canvasId);
                     setView('flow');
                   }
                 }}
@@ -3169,7 +3216,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                     locateNode(nodeId, nodes);
                     return;
                   }
-                  setActiveId(canvasId);
+                  switchCanvas(canvasId);
                   pendingLocate.current = { canvasId, nodeId };
                 }}
               />
@@ -3190,7 +3237,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                 }}
                 onJumpToCanvas={(canvasId) => {
                   if (canvasId && canvases.some((c) => c.id === canvasId)) {
-                    setActiveId(canvasId);
+                    switchCanvas(canvasId);
                     setView('flow');
                   }
                 }}
@@ -3202,7 +3249,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                     locateNode(nodeId, nodes);
                     return;
                   }
-                  setActiveId(canvasId);
+                  switchCanvas(canvasId);
                   pendingLocate.current = { canvasId, nodeId };
                 }}
               />

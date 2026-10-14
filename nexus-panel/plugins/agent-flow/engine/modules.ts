@@ -50,6 +50,16 @@ export type ModuleEdge = {
    * 而界面上只是线变了个颜色，没有任何提示。
    */
   targetArg?: string;
+  /**
+   * 参数连线：取上游的**哪个输出**。
+   *
+   * 只有 targetArg 的话，多输出节点（更新检测的「标题」这类副输出）
+   * 打包进模块再展开，会退回默认主输出 ——
+   * 值取错了，而界面上看不出这根线原本接的是哪个口子。
+   *
+   * 缺省（以及老存档没有这个字段）即主输出，与 OUT_DEFAULT 同义。
+   */
+  sourceArg?: string;
 };
 
 /** 模块定义。nodes / edges 是画布结构的子集（id/type/data/position + 边） */
@@ -208,7 +218,7 @@ export function modulePorts(def: ModuleDef): ModulePorts {
  */
 import { stripRuntimeNodes } from './runtimeKeys';
 import { stackEdges } from './stack';
-import { makeParamEdge } from './paramLinks';
+import { makeParamEdge, OUT_DEFAULT, isParamEdge } from './paramLinks';
 export { stripRuntimeNodes };
 
 /* ------------------------------------------------------------------ */
@@ -308,16 +318,41 @@ export function expandModules(
 
     for (const inner of def.nodes) {
       const newId = idMap.get(String(inner.id)) ?? String(inner.id);
-      outNodes.push({
-        ...(inner as AnyNode),
-        id: newId,
-        data: {
-          ...(rewriteData((inner as AnyNode).data ?? {}, idMap) as Record<string, unknown>),
-          status: 'idle',
-          output: '',
-          error: '',
-        },
-      });
+      const data: Record<string, unknown> = {
+        ...(rewriteData((inner as AnyNode).data ?? {}, idMap) as Record<string, unknown>),
+        status: 'idle',
+        output: '',
+        error: '',
+      };
+      /*
+       * 嵌合（stackParent）与窗格归属（paneId）存的是**节点 id 本身**，
+       * 而 rewriteData 只改 {{...}} 模板里的引用 —— 改不到这两个。
+       *
+       * 不重指向的话它们仍指向模块内的原始 id（'A'），
+       * 而展开后那个 id 已经不存在了（只有 'inst__A'）：
+       *   · stackEdges 的判据是"父在不在节点集合里"，找不到就**丢弃**
+       *     这条关系 —— 嵌合等价于一条隐式边，丢了就是"没连上"；
+       *   · paneId 指不到窗格，节点拿不到共享配置（工作目录 / 模型）。
+       *
+       * 两者都**不报错**：编辑模块时界面上是嵌好的、窗格也选好了，
+       * 保存成功、日志干净，跑起来才发现不是那么回事。
+       *
+       * 断开规则沿用 duplicate.ts 那一套（同一件事不写第二份口径）：
+       *   · stackParent：父不在模块内 → 断开（留着指向不存在的 id 更糟）
+       *   · paneId：窗格不在模块内 → 保留（多对一，指外面那份是对的）
+       */
+      const sp = data.stackParent;
+      if (typeof sp === 'string' && sp) {
+        const mapped = idMap.get(sp);
+        if (mapped) data.stackParent = mapped;
+        else delete data.stackParent;
+      }
+      const pane = data.paneId;
+      if (typeof pane === 'string' && pane) {
+        const mapped = idMap.get(pane);
+        if (mapped) data.paneId = mapped;
+      }
+      outNodes.push({ ...(inner as AnyNode), id: newId, data } as AnyNode);
     }
 
     /*
@@ -333,7 +368,7 @@ export function expandModules(
       const source = idMap.get(e.source) ?? e.source;
       const target = idMap.get(e.target) ?? e.target;
       if (e.targetArg) {
-        const pe = makeParamEdge(source, target, e.targetArg);
+        const pe = makeParamEdge(source, target, e.targetArg, e.sourceArg);
         outEdges.push({ ...pe, id: `${n.id}__${e.id}` } as never);
         continue;
       }
@@ -538,6 +573,8 @@ export type CrossingEdge = {
   loopRole?: 'body' | 'done' | undefined;
   /** 参数连线：填进目标节点的哪个参数（跨边界时不能丢，理由同 ModuleEdge） */
   targetArg?: string;
+  /** 参数连线：取上游的哪个输出（跨边界时不能丢，理由同 ModuleEdge） */
+  sourceArg?: string;
 };
 
 export function isPackableSelected(nodes: PackableNode[]): boolean {
@@ -562,6 +599,97 @@ export function canPack(nodes: PackableNode[]): CanPackResult {
   const list = (nodes ?? []).filter((n) => String(n?.id ?? '') !== '');
   if (list.length === 0) return { ok: false, reason: '还没选节点' };
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------ */
+/* 模块存档 ↔ 画布：边的来回转换                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 两边存的形状不一样，必须显式转换，不能 `{...e}` 直接搬：
+ *
+ *   · 画布边（FlowEdge）：branch / loopRole / kind / targetArg / sourceArg
+ *     都放在 **data** 里，另外还有 type / sourceHandle / targetHandle /
+ *     markerEnd 这些"画线用"的字段。
+ *   · 模块边（ModuleEdge）：branch / loopRole / targetArg / sourceArg
+ *     放在**顶层**，data 那套一概不存（省体积，也省得两处对不上）。
+ *
+ * 以前 App 里进/出模块编辑是两处各写一份内联映射，而它们**合起来是坏的**：
+ * 进去时把模块边原样当画布边（branch 落到了顶层，data 是空的），
+ * 出来时又去读 e.data?.branch —— 读到的是 undefined。
+ *
+ * 净结果：**进入模块编辑、什么都没改、点「完成」，模块内部的
+ * 条件分支（branch）、循环出口（loopRole）、参数连线（targetArg）
+ * 全部静默丢失**。用户什么都没做，模块就坏了，而且没有任何提示。
+ *
+ * 同一个形状转换写两遍，两边必然对不上 —— 所以收成这一对函数，
+ * 进和出都走它们，并由测试盯着"往返之后字段还在"。
+ */
+
+/** 模块存档里的边 → 画布上的边 */
+export function moduleEdgesToFlow(edges: ModuleEdge[]): Record<string, unknown>[] {
+  return (edges ?? []).map((e) => {
+    if (e.targetArg) {
+      /*
+       * 参数连线要还原成**完整的边形状**。
+       *
+       * 存档里只有一个 targetArg，而画布上 isParamEdge 看的是 data.kind、
+       * 画什么样的线看的是 type / sourceHandle / targetHandle。
+       * 只搬 targetArg 的话，参数连线会显示并运行成一条普通流程线 ——
+       * "我只是想取个值"变成"多一条执行路径"，目标节点多跑一次。
+       *
+       * id 要沿用模块里那条边的 id：编辑期间 React Flow 靠它认边，
+       * 换成 makeParamEdge 生成的 id 会让"删掉这根线"之类的操作认错边。
+       */
+      const pe = makeParamEdge(e.source, e.target, e.targetArg, e.sourceArg);
+      return { ...pe, id: e.id } as unknown as Record<string, unknown>;
+    }
+    const data: Record<string, unknown> = {};
+    if (e.branch) data.branch = e.branch;
+    if (e.loopRole) data.loopRole = e.loopRole;
+    const out: Record<string, unknown> = {
+      id: e.id, source: e.source, target: e.target,
+    };
+    if (e.label) out.label = e.label;
+    if (Object.keys(data).length > 0) out.data = data;
+    return out;
+  });
+}
+
+/** 画布上的边 → 模块存档里的边 */
+export function flowEdgesToModule(edges: readonly unknown[]): ModuleEdge[] {
+  return (edges ?? []).map((raw) => {
+    const e = raw as {
+      id?: unknown; source?: unknown; target?: unknown; label?: unknown;
+      data?: Record<string, unknown> | undefined;
+      branch?: unknown; loopRole?: unknown;
+    };
+    const d = e.data;
+    const out: ModuleEdge = {
+      id: String(e.id ?? ''),
+      source: String(e.source ?? ''),
+      target: String(e.target ?? ''),
+    };
+    if (typeof e.label === 'string' && e.label) out.label = e.label;
+
+    /*
+     * 参数连线：kind 在 data 里（isParamEdge 就是这么判的）。
+     * 顶层那份 branch / loopRole 也要认 —— 模块定义历史上存过顶层形状，
+     * 两种都能遇到，只认一种的话另一种会在保存时悄悄丢掉。
+     */
+    if (d && isParamEdge({ data: d } as never)) {
+      const a = d.targetArg;
+      if (typeof a === 'string' && a) out.targetArg = a;
+      const src = d.sourceArg;
+      if (typeof src === 'string' && src && src !== OUT_DEFAULT) out.sourceArg = src;
+      return out;
+    }
+    const branch = (d?.branch ?? e.branch) as string | undefined;
+    if (typeof branch === 'string' && branch) out.branch = branch;
+    const role = (d?.loopRole ?? e.loopRole) as 'body' | 'done' | undefined;
+    if (role === 'body' || role === 'done') out.loopRole = role;
+    return out;
+  });
 }
 
 /**
@@ -645,16 +773,25 @@ export function packSelection(
    * 两条都留的话同一对节点间会多出一条边，执行时表现为重复触发。
    */
   /*
-   * 取边上的"参数连线目标参数"。不是参数连线返回 undefined。
+   * 取边上的"参数连线参数"。不是参数连线返回 undefined。
    *
    * 判据走边的 data（isParamEdge 就是这么判的），不靠 handle ——
    * 打包时 handle 关系不在存档里，data 才是跟着边一起存的那个。
+   *
+   * sourceArg 也要一起取：只带 targetArg 的话，多输出节点的那根线
+   * 展开后会退回主输出，取到的是另一个输出的值，且不报错。
+   * 默认值（OUT_DEFAULT）不写进存档 —— 写了反而多一处要判空的地方。
    */
-  const paramArgOf = (e: unknown): string | undefined => {
+  const paramMetaOf = (e: unknown): { targetArg: string; sourceArg?: string } | undefined => {
     const d = (e as { data?: unknown } | undefined)?.data as Record<string, unknown> | undefined;
     if (d?.kind !== 'param') return undefined;
     const a = d.targetArg;
-    return typeof a === 'string' && a ? a : undefined;
+    if (typeof a !== 'string' || !a) return undefined;
+    const raw = d.sourceArg;
+    if (typeof raw === 'string' && raw && raw !== OUT_DEFAULT) {
+      return { targetArg: a, sourceArg: raw };
+    }
+    return { targetArg: a };
   };
 
   const linked = new Set<string>();
@@ -662,15 +799,15 @@ export function packSelection(
   const pushInner = (
     id: string, source: string, target: string,
     branch?: string, loopRole?: 'body' | 'done' | undefined,
-    targetArg?: string,
+    param?: { targetArg: string; sourceArg?: string },
   ) => {
     /*
      * targetArg 只在参数连线上有。undefined 时不要写进对象 ——
      * 写一个 targetArg: undefined 进存档，展开时判空会分不清
      * "没这个字段"和"字段是 undefined"，干净的存档更好排查。
      */
-    edges.push(targetArg
-      ? { id, source, target, branch, loopRole, targetArg }
+    edges.push(param
+      ? { id, source, target, branch, loopRole, ...param }
       : { id, source, target, branch, loopRole });
     linked.add(`${source}->${target}`);
   };
@@ -684,7 +821,7 @@ export function packSelection(
     if (inS && inT) {
       pushInner(
         String(e?.id ?? `${s}-${t}`), s, t, e?.branch, e?.loopRole,
-        paramArgOf(e),
+        paramMetaOf(e),
       );
       continue;
     }
@@ -692,14 +829,14 @@ export function packSelection(
     if (inS && !inT) {
       crossing.push({
         kind: 'out', outer: t, inner: s,
-        branch: e?.branch, loopRole: e?.loopRole, targetArg: paramArgOf(e),
+        branch: e?.branch, loopRole: e?.loopRole, ...(paramMetaOf(e) ?? {}),
       });
       continue;
     }
     if (!inS && inT) {
       crossing.push({
         kind: 'in', outer: s, inner: t,
-        branch: e?.branch, loopRole: e?.loopRole, targetArg: paramArgOf(e),
+        branch: e?.branch, loopRole: e?.loopRole, ...(paramMetaOf(e) ?? {}),
       });
     }
   }

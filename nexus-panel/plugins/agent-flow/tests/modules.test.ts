@@ -4,10 +4,12 @@ import {
   addModule, loadModules, saveModules, removeModule, renameModule, findModule,
   modulePorts, stripRuntimeNodes, expandModules, innerId,
   packSelection, rewireCrossing, canPack,
+  moduleEdgesToFlow, flowEdgesToModule,
   exportModules, importModules, MODULES_KEY,
   type ModuleDef, type ModuleEdge, type KV,
 } from '../engine/modules';
 import { readSrc } from './srcScan';
+import { stackEdges } from '../engine/stack';
 
 function memKV() {
   const map = new Map<string, string>();
@@ -852,4 +854,276 @@ test('存模块：条目没有 nodes 数组时不炸（不能为了脱敏把整�
   assert.doesNotThrow(() => {
     saveModules([{ id: 'm1', name: 'x' }] as unknown as ModuleDef[], kv);
   }, '没有 nodes 的条目不能让写入崩掉');
+});
+
+/* ------------------------------------------------------------------ */
+/* 模块编辑：边进出模块库                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 编辑模块内部时借用主画布，于是模块的边要"搬"到画布上、改完再搬回去。
+ *
+ * 而**两边存的形状不一样**：
+ *   · 模块边（ModuleEdge）：branch / loopRole / targetArg 在**顶层**
+ *   · 画布边（FlowEdge）：这些东西全在 **data** 里
+ *
+ * 以前 App 里进和出各写了一份内联映射，而它们合起来是坏的：
+ * 进去时 `{...e}` 原样搬（字段落到顶层），出来时读 `e.data?.branch`。
+ *
+ * 净结果：**进入模块编辑、什么都没改、点「完成」** ——
+ * 模块内部的条件分支（branch）、循环出口（loopRole）、
+ * 参数连线（targetArg）**全部静默丢失**。用户什么都没做，模块就坏了。
+ *
+ * 所以收成 moduleEdgesToFlow / flowEdgesToModule 这一对，
+ * 下面盯的是"往返之后一个字段都不少"。
+ */
+
+test('模块边 → 画布边：参数连线还原成完整边形状', () => {
+  const out = moduleEdgesToFlow([
+    { id: 'p1', source: 'src', target: 'dst', targetArg: 'a' },
+  ]) as { id?: string; type?: string; data?: Record<string, unknown> }[];
+  assert.equal(out.length, 1);
+  assert.equal(out[0].data?.kind, 'param', '没有 data.kind 就会被当成流程边');
+  assert.equal(out[0].data?.targetArg, 'a');
+  assert.equal(out[0].type, 'param', '不设 type 会画成普通流程线');
+  assert.equal(out[0].id, 'p1', 'id 要沿用，编辑期间靠它认边');
+});
+
+test('模块边 → 画布边：branch / loopRole 放进 data（画布就是这么读的）', () => {
+  const out = moduleEdgesToFlow([
+    { id: 'e1', source: 'c', target: 'y', branch: 'yes' },
+    { id: 'e2', source: 'lp', target: 'b', loopRole: 'body' },
+  ]) as { data?: Record<string, unknown> }[];
+  assert.equal(out[0].data?.branch, 'yes');
+  assert.equal(out[1].data?.loopRole, 'body');
+});
+
+test('编辑模块往返：什么都没改，字段也不许少', () => {
+  /*
+   * 这条是整个模块编辑路径的回归测试。
+   *
+   * 以前"进去再出来"就会把 branch / loopRole / targetArg 全抹掉，
+   * 而用户看到的只是"我打开看了一眼，模块好像坏了"。
+   */
+  const stored: ModuleEdge[] = [
+    { id: 'e1', source: 'c', target: 'y', branch: 'yes' },
+    { id: 'e2', source: 'c', target: 'n', branch: 'no' },
+    { id: 'e3', source: 'lp', target: 'b', loopRole: 'body' },
+    { id: 'e4', source: 'lp', target: 'd', loopRole: 'done' },
+    { id: 'p1', source: 'src', target: 'dst', targetArg: 'a', sourceArg: 'title' },
+  ];
+  const round = flowEdgesToModule(moduleEdgesToFlow(stored));
+  assert.deepEqual(round, stored, '往返之后必须与原来逐字段一致');
+});
+
+test('画布边 → 模块边：参数连线带住 targetArg（保存时不能丢）', () => {
+  /*
+   * 以前保存模块时只搬 branch / loopRole，targetArg 整条丢掉 ——
+   * 模块里"我只是想取个值"的线，编辑保存后消失，界面上只是少一根线。
+   */
+  const out = flowEdgesToModule([
+    { id: 'p1', source: 'src', target: 'dst', data: { kind: 'param', targetArg: 'a', sourceArg: 'title' } },
+  ]);
+  assert.equal(out[0].targetArg, 'a');
+  assert.equal(out[0].sourceArg, 'title', '副输出也要带住，否则展开后取到主输出');
+});
+
+/* ------------------------------------------------------------------ */
+/* 多输出节点：参数连线取的是哪个输出                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 参数连线不只是"谁连谁"，还有"取上游的哪个输出"。
+ *
+ * 更新检测这类节点有多个输出（「结论」和「标题」），
+ * 只存 targetArg 的话，打包进模块再展开会退回默认主输出 ——
+ * 取到的是另一个值，而界面上这根线看起来完全一样。
+ */
+
+const PE2 = (id: string, s: string, t: string, arg: string, srcArg: string) => ({
+  id, source: s, target: t,
+  data: { kind: 'param', targetArg: arg, sourceArg: srcArg },
+} as never);
+
+test('打包成模块时，参数连线取的是哪个输出也要存下来', () => {
+  const r = packSelection(
+    [PN('src', 0, 0), PN('dst', 100, 0)],
+    [PE2('p1', 'src', 'dst', 'a', 'title') as never],
+  );
+  assert.equal(
+    (r.edges[0] as { targetArg?: string; sourceArg?: string }).sourceArg, 'title',
+    '只存 targetArg 的话，展开后会退回主输出 —— 值取错了却不报错',
+  );
+});
+
+test('展开模块时按存下来的输出口还原（不是一律主输出）', () => {
+  /*
+   * nodes 必须非空：空模块的 expandModules 会走"占位"分支直接 continue，
+   * 一条边都不会展开 —— 那样这条测试永远红，而红的理由是
+   * "造的模块里没有节点"，不是"没还原输出口"。
+   */
+  const def: ModuleDef = {
+    id: 'md1', name: 'm', at: '',
+    nodes: [
+      { id: 'src', data: { kind: 'task' } },
+      { id: 'dst', data: { kind: 'task' } },
+    ],
+    edges: [{ id: 'e1', source: 'src', target: 'dst', targetArg: 'a', sourceArg: 'title' }],
+  } as unknown as ModuleDef;
+  const g = expandModules(
+    { nodes: [modNode('inst', 'md1')], edges: [] } as never,
+    () => def,
+  );
+  const e = (g.edges as { data?: Record<string, unknown> }[])[0];
+  assert.equal(e?.data?.sourceArg, 'title', '展开后要接回原来那个输出口');
+});
+
+/* ------------------------------------------------------------------ */
+/* 模块里的嵌合与窗格：存的是节点 id，展开时必须重指向                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * 打包时会把嵌合转成显式边、并剥掉 stackParent；
+ * 但**编辑模块再保存**那条路不剥，于是模块里可以带着 stackParent。
+ *
+ * 而展开时 rewriteData 只改 {{模板}}，改不到这个字段 ——
+ * 结果它仍指向模块内的原始 id，展开后那个 id 不存在，
+ * stackEdges 判"父不在集合里"就把这条关系丢了：
+ * 嵌合等价于一条隐式边，丢了就是"没连上"，且不报错。
+ */
+test('展开模块时，嵌合关系要重指向（否则静默丢失）', () => {
+  const def: ModuleDef = {
+    id: 'md1', name: 'm', at: '',
+    nodes: [
+      { id: 'A', data: { kind: 'task' } },
+      { id: 'B', data: { kind: 'task', stackParent: 'A' } },
+    ],
+    edges: [],
+  } as unknown as ModuleDef;
+  const g = expandModules(
+    { nodes: [modNode('inst', 'md1')], edges: [] } as never,
+    () => def,
+  );
+  const b = (g.nodes as { id: string; data: Record<string, unknown> }[])
+    .find((n) => n.id === 'inst__B');
+  assert.equal(
+    b?.data.stackParent, 'inst__A',
+    '要指向展开后的父 id —— 仍指向 A 的话 stackEdges 找不到父，嵌合等于没连',
+  );
+  assert.deepEqual(
+    stackEdges(g.nodes as never).map((e) => `${e.source}->${e.target}`),
+    ['inst__A->inst__B'],
+    '运行时要能算出这条隐式边',
+  );
+});
+
+test('展开模块时，嵌合的父不在模块内就断开（不留指向不存在的 id）', () => {
+  const def: ModuleDef = {
+    id: 'md1', name: 'm', at: '',
+    nodes: [{ id: 'B', data: { kind: 'task', stackParent: 'outer' } }],
+    edges: [],
+  } as unknown as ModuleDef;
+  const g = expandModules(
+    { nodes: [modNode('inst', 'md1')], edges: [] } as never,
+    () => def,
+  );
+  const b = (g.nodes as { id: string; data: Record<string, unknown> }[])
+    .find((n) => n.id === 'inst__B');
+  assert.equal(
+    b?.data.stackParent, undefined,
+    '父不在模块内：留着就是指向一个不存在的 id（与 duplicate 的断开规则一致）',
+  );
+});
+
+test('展开模块时，窗格归属要重指向（否则拿不到共享配置）', () => {
+  const def: ModuleDef = {
+    id: 'md1', name: 'm', at: '',
+    nodes: [
+      { id: 'P', data: { kind: 'taskPane' } },
+      { id: 'B', data: { kind: 'task', paneId: 'P' } },
+    ],
+    edges: [],
+  } as unknown as ModuleDef;
+  const g = expandModules(
+    { nodes: [modNode('inst', 'md1')], edges: [] } as never,
+    () => def,
+  );
+  const b = (g.nodes as { id: string; data: Record<string, unknown> }[])
+    .find((n) => n.id === 'inst__B');
+  assert.equal(b?.data.paneId, 'inst__P', '窗格 id 也要跟着重指向');
+});
+
+test('展开模块时，窗格不在模块内就保留（多对一，指外面那份是对的）', () => {
+  const def: ModuleDef = {
+    id: 'md1', name: 'm', at: '',
+    nodes: [{ id: 'B', data: { kind: 'task', paneId: 'outerPane' } }],
+    edges: [],
+  } as unknown as ModuleDef;
+  const g = expandModules(
+    { nodes: [modNode('inst', 'md1')], edges: [] } as never,
+    () => def,
+  );
+  const b = (g.nodes as { id: string; data: Record<string, unknown> }[])
+    .find((n) => n.id === 'inst__B');
+  assert.equal(
+    b?.data.paneId, 'outerPane',
+    '与 stackParent 相反：窗格是多对一，指外面那份才对（清掉会丢配置继承）',
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* 源码守卫：进出模块编辑必须走转换函数                                */
+/* ------------------------------------------------------------------ */
+
+test('源码守卫：模块编辑的进和出都走转换函数（不各写一份映射）', () => {
+  /*
+   * 形状转换写两遍，两边必然对不上 —— 这次就是对不上了：
+   * 进写顶层、出读 data，合起来把分支和参数连线全抹了。
+   *
+   * 所以盯的是"App 里有没有走 engine 那一对函数"。
+   */
+  const src = readSrc('App.tsx');
+  const calls = (name: string) => src.split(`${name}(`).length - 1;
+  assert.ok(calls('moduleEdgesToFlow') >= 3, '进入模块编辑的三条路都要转换');
+  assert.ok(calls('flowEdgesToModule') >= 1, '保存模块时要转换');
+
+  /*
+   * 打包那条路要连 data 一起传。
+   *
+   * 以前这里盯的是 `branch: e.data?.branch` 这个形状，
+   * 但它**也匹配运行图那段**完全正当的转换（runGraph 把画布边
+   * 拍平成引擎边，本来就该读 data）—— 于是守卫恒红，
+   * 而红的理由是"守卫写宽了"。照着它去改，会把刚接上的判定拆掉。
+   *
+   * 真正要防的是"传给 packSelection 的边里没有 data"：
+   * 参数连线的信息全在 data 上，缺了它就退化成普通流程线。
+   */
+  const packCall = src.match(/packSelection\(([\s\S]{0,600}?)\n\s*nodes as never/);
+  assert.ok(packCall, '找得到 packSelection 调用');
+  assert.ok(
+    /data:\s*e\.data/.test(packCall[1]),
+    '打包时要连 data 一起传 —— 参数连线的 targetArg / sourceArg 只在 data 里，只搬 branch / loopRole 会把它退化成普通流程线',
+  );
+});
+
+test('源码守卫：编辑模块期间，画布页签与画布列表都要锁住', () => {
+  /*
+   * 编辑模块时画布上装的是**模块的内容**。这时切换画布，
+   * 再点「完成」写回模块库的就是**另一张画布** ——
+   * 模块里原来的东西彻底没了，且没有任何提示。
+   *
+   * 上面那段"必须锁住画布切换"的注释早就写了，
+   * 但此前只有模块库那一栏加了锁，页签和列表都开着。
+   */
+  const src = readSrc('App.tsx');
+  for (const tag of ['<CanvasTabs', '<CanvasLibrary']) {
+    const at = src.indexOf(tag);
+    assert.ok(at >= 0, `源码里要有 ${tag}`);
+    const end = src.indexOf('/>', at);
+    const block = src.slice(at, end > 0 ? end : at + 800);
+    assert.ok(
+      /disabled=\{running \|\| editingModule !== null\}/.test(block),
+      `${tag} 必须在编辑模块时锁住（否则模块会被另一张画布覆盖）`,
+    );
+  }
 });
