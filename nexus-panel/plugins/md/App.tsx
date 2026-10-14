@@ -24,6 +24,7 @@ import {
   removeRecent,
   clearRecent,
   baseNameOf,
+  takeRecentWriteError,
 } from './recent';
 
 /**
@@ -202,6 +203,25 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
   /* 最近阅读列表。挂载时读一次，之后由打开动作维护。 */
   const [recent, setRecent] = useState<any[]>(() => readRecent());
   const [showRecent, setShowRecent] = useState(false);
+
+  /*
+   * 改最近列表的唯一入口。
+   *
+   * 为什么不把 addRecent 的结果直接塞给 setRecent：
+   *   写本地存储会失败（配额满、Vite 模式下设置页是隔离 iframe 拿不到
+   *   localStorage），而 addRecent 返回的是**列表**，失败塞不进返回值里
+   *   —— 界面当场就变了（列表多一条 / 少一条），所以看不出"其实没记住"，
+   *   要到下次启动才发现白点一次。
+   *
+   * 追加而不是替换：打开失败时提示栏里已经有"读取失败：…"，
+   * 覆盖掉就把更要紧的那条吞了。
+   */
+  const applyRecent = useCallback((next: any[]) => {
+    setRecent(next);
+    const why = takeRecentWriteError();
+    if (why) setHint((prev: string) => (prev ? `${prev}；${why}` : why));
+    return next;
+  }, []);
 
   /* 渲染区容器。TOC 与右键菜单都要它，见下面各自说明。 */
   const outRef = useRef<any>(null);
@@ -478,7 +498,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
       });
       if (typeof text !== 'string') {
         setHint('读取失败：返回内容不是文本');
-        setRecent(removeRecent(path));
+        applyRecent(removeRecent(path));
         return;
       }
       setSrc(text);
@@ -492,7 +512,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
        * 失败不记 —— 否则列表里会留一条**点了必然报错**的记录，
        * 而用户只会以为"列表坏了"，想不到是那个文件已经不在了。
        */
-      setRecent(addRecent(String(path), nm));
+      applyRecent(addRecent(String(path), nm));
     } catch (err) {
       setHint(`读取失败：${err?.message || err}`);
       /*
@@ -500,9 +520,9 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
        * 留着它只会让同一条错误反复出现。
        * 移除了要**说一声**，不然用户会以为列表自己吃了记录。
        */
-      setRecent(removeRecent(path));
+      applyRecent(removeRecent(path));
     }
-  }, [ctx]);
+  }, [ctx, applyRecent]);
 
   useEffect(() => {
     if (!ctx) return;
@@ -684,7 +704,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
               type="button"
               className="md-btn"
               disabled={!recent.length}
-              onClick={() => setRecent(clearRecent())}
+              onClick={() => applyRecent(clearRecent())}
               title="清空最近阅读列表"
             >
               清空
@@ -710,7 +730,7 @@ export default function MdApp({ ctx }: { ctx?: any } = {}) {
                     type="button"
                     className="md-recent-del"
                     title="从最近列表移除"
-                    onClick={() => setRecent(removeRecent(it.path))}
+                    onClick={() => applyRecent(removeRecent(it.path))}
                   >
                     ×
                   </button>

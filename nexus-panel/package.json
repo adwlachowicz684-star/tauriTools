@@ -79,6 +79,7 @@
     "test:md-pipeline": "node md-pipeline-test.mjs",
     "test:md-puml": "node md-puml-test.mjs",
     "test:md-recent": "node md-recent-test.mjs",
+  "test:md-recent-persist": "node md-recent-persist-test.mjs",
     "test:md-render": "node md-render-test.mjs",
     "test:md-service": "node md-service-test.mjs",
     "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",

@@ -237,15 +237,19 @@ t('App 引入了 recent 模块', /from '\.\/recent'/.test(srcApp));
  */
 const openPathBody = (() => {
   const i = srcApp.indexOf('const openPath = useCallback');
-  const j = srcApp.indexOf('}, [ctx]);', i);
-  return i >= 0 && j > i ? srcApp.slice(i, j) : '';
+  const m = /\}, \[ctx[^\]]*\]\);/.exec(srcApp.slice(i));
+  return i >= 0 && m ? srcApp.slice(i, i + m.index + m[0].length) : '';
 })();
 t('能定位到 openPath 函数体（断言的前提）', openPathBody.length > 200);
-t('打开成功写入最近列表', /setRecent\(addRecent\(/.test(openPathBody));
+/*
+ * 判据是"改列表走 applyRecent"，不是"写上 setRecent(addRecent(...))"：
+ * 直接 setRecent 会把写入失败吞掉（界面当场就变了，看不出没记住）。
+ */
+t('打开成功写入最近列表', /applyRecent\(addRecent\(/.test(openPathBody));
 t('打开失败移除该条（不留一条点了必然报错的记录）',
-  /catch \(err\) \{[\s\S]{0,500}?setRecent\(removeRecent\(path\)\)/.test(openPathBody));
+  /catch \(err\) \{[\s\S]{0,500}?applyRecent\(removeRecent\(path\)\)/.test(openPathBody));
 t('返回内容不是文本时也移除',
-  /返回内容不是文本[\s\S]{0,160}?setRecent\(removeRecent\(path\)\)/.test(openPathBody));
+  /返回内容不是文本[\s\S]{0,160}?applyRecent\(removeRecent\(path\)\)/.test(openPathBody));
 t('从最近列表打开**复用** openPath，不另写一份读文件逻辑',
   /const onOpenRecent[\s\S]{0,400}?openPath\(path\)/.test(srcApp));
 t('打开后收起列表（留着会盖住正文）',
@@ -257,7 +261,7 @@ t('移除是**真按钮**（键盘可达），不是只有右键',
 t('列表为空时按钮仍可点（点了没反应会被当成坏了）',
   /onClick=\{\(\) => setShowRecent\(\(v\) => !v\)\}/.test(srcApp));
 t('打开成功后清 hint',
-  /addRecent\(String\(path\), nm\)/.test(srcApp));
+  /applyRecent\(addRecent\(String\(path\), nm\)\)/.test(srcApp));
 
 console.log('\n=== 8. 样式 ===');
 

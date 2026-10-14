@@ -89,19 +89,50 @@ export function readRecent() {
   return out.slice(0, MAX_RECENT);
 }
 
-/** 写列表。写失败（配额满等）返回 false，调用方据此决定要不要提示。 */
+/*
+ * 上一次写入的失败原因（取一次就清掉）。
+ *
+ * 为什么要有它，光靠 writeRecent 返回 false 不够：
+ *   addRecent / removeRecent / clearRecent **返回的是列表**（界面要拿它重画），
+ *   于是返回值里没有地方放"存没存下"，调用方拿不到 false ——
+ *   上一版就是这样：注释写着"调用方据此决定要不要提示"，
+ *   而三个调用方全把返回值当列表用，一句提示都没有。
+ *
+ * 表现是：点「清空」→ 列表当场空了 → 重启后 12 条全回来；
+ * 打开一个文件 → 「最近阅读」当场多一条 → 重启后没有。
+ * 界面**立刻变化**，所以看不出"没记住"，只会以为这列表不听话。
+ */
+let lastWriteErr = '';
+
+/** 取走并清掉上次写入的失败原因；没失败返回 ''。 */
+export function takeRecentWriteError() {
+  const s = lastWriteErr;
+  lastWriteErr = '';
+  return s;
+}
+
+function noteWriteFail(why) {
+  lastWriteErr = `最近阅读没能记住（${why}），重启后会回到原来的样子`;
+}
+
+/** 写列表。写失败（配额满、存储不可用等）返回 false，并由 takeRecentWriteError 给出原因。 */
 export function writeRecent(list) {
   const ls = store();
-  if (!ls) return false;
+  if (!ls) {
+    noteWriteFail('本地存储不可用');
+    return false;
+  }
   try {
     ls.setItem(KEY, JSON.stringify(list));
+    lastWriteErr = '';
     return true;
   } catch (err) {
+    noteWriteFail(String(err?.message || err) || '写入本地存储失败');
     return false;
   }
 }
 
-/** 新增/提到最前。返回写入后的列表。 */
+/** 新增/提到最前。返回写入后的列表；是否真记住了看 takeRecentWriteError()。 */
 export function addRecent(path, title) {
   const p = String(path || '');
   if (!p) return readRecent();
@@ -113,7 +144,8 @@ export function addRecent(path, title) {
   return capped;
 }
 
-/** 移除单条。文件被删/移走后调用，避免留一条永远打不开的记录。 */
+/** 移除单条。文件被删/移走后调用，避免留一条永远打不开的记录。
+ *  返回移除后的列表；是否真记住了看 takeRecentWriteError()。 */
 export function removeRecent(path) {
   const p = String(path || '');
   const next = readRecent().filter((it) => it.path !== p);
@@ -121,7 +153,7 @@ export function removeRecent(path) {
   return next;
 }
 
-/** 清空。 */
+/** 清空。返回空列表；是否真记住了看 takeRecentWriteError()。 */
 export function clearRecent() {
   writeRecent([]);
   return [];
