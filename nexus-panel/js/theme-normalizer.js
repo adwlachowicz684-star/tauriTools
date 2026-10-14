@@ -15,6 +15,9 @@
  * ------------------------------------------------------------
  */
 
+/* 与 theme-manager 共用同一份落盘判据：「写不进去」这件事不能在这边报、那边吞 */
+import { writeLS, removeLS } from './theme-manager.js';
+
 /** 反转滤镜：白→黑、黑→白，色相旋转 180° 保持颜色"看起来还是那个颜色" */
 export const DARK_FILTER = 'invert(1) hue-rotate(180deg) saturate(1.08) contrast(1.02)';
 /** 二次反转，用于还原被误伤的图片 */
@@ -42,7 +45,7 @@ export function getPolicy() {
   try { return localStorage.getItem(GLOBAL_KEY) || 'auto'; } catch { return 'auto'; }
 }
 export function setPolicy(v) {
-  try { localStorage.setItem(GLOBAL_KEY, v); } catch {}
+  writeLS(GLOBAL_KEY, v);
 }
 export function getPluginOverride(id) {
   try { return localStorage.getItem(PLUGIN_KEY(id)); } catch { return null; }
@@ -50,7 +53,7 @@ export function getPluginOverride(id) {
 export function setPluginOverride(id, v) {
   /* 存不上（隐私模式 / 配额满）只能下次不生效，不能让"改主题"这个动作
      整个失败 —— 所以这里吞掉。getPluginOverride 读不到会回落到全局策略。 */
-  try { v ? localStorage.setItem(PLUGIN_KEY(id), v) : localStorage.removeItem(PLUGIN_KEY(id)); } catch {}
+  if (v) writeLS(PLUGIN_KEY(id), v); else removeLS(PLUGIN_KEY(id));
 }
 /** 单插件最终策略：插件级覆盖 > 全局策略 */
 export function resolvePolicy(id) {

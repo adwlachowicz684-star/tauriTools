@@ -38,6 +38,49 @@ const KEY_THEME = 'nexus:theme';
 const KEY_ACCENT = 'nexus:accent';
 // 环境色（原「主题色」）：与强调色并列的第二个可调主色
 const KEY_ENV = 'nexus:env-color';
+
+/* ------------------------------------------------------------------
+ * 唯一的落盘判据：**写不进去必须让调用方能知道**。
+ *
+ * 这个文件里此前有二十来处 `try { localStorage.setItem(...) } catch {}`
+ * —— 写不进去（配额、隐私模式、Vite 模式下设置页是隔离 iframe 拿不到
+ * 存储）时异常被吞掉，而调用方**紧接着就 toast「已保存 / 已应用」**。
+ *
+ * 后果不是少一条样式，而是**谎报**：界面当场确实变了（内存里已改、也
+ * 通知了监听者重绘），用户看到"强调色：#xxx"就以为稳了，重启后却悄悄
+ * 回到原来的配色 —— 全程一句提示都没有，只会以为这功能不记事儿。
+ *
+ * 同一个文件里 setBgImage 是**判了但判不准**的那一半：它返回的是
+ * resetOne() 的结果（恒为真），所以调用方 `if (!setBgImage(...))` 只能
+ * 判出"主题不支持背景图"，判不出"没落盘"。
+ *
+ * 所以这里不再各自 catch，而是统一记录，由调用方 takePersistError()
+ * 决定怎么说 —— 落盘失败不代表这次改动没生效，两者必须分开讲。
+ * ------------------------------------------------------------------ */
+let lastPersistError = null;
+
+export function writeLS(key, val) {
+  try { localStorage.setItem(key, val); lastPersistError = null; return true; }
+  catch (e) { lastPersistError = e; return false; }
+}
+
+export function removeLS(key) {
+  try { localStorage.removeItem(key); lastPersistError = null; return true; }
+  catch (e) { lastPersistError = e; return false; }
+}
+
+/**
+ * 取走**最近一次**写入的结果：null 表示落盘成功，否则是那次写入抛的异常。
+ * 写完立即取，不要跨操作取（那会读到别处的结果）。
+ *
+ * theme-normalizer.js 也用这两个 helper —— 判据只有一份，「写不进去」这件
+ * 事才不会在这边报、在那边吞。
+ */
+export function takePersistError() {
+  const e = lastPersistError;
+  lastPersistError = null;
+  return e;
+}
 /*
  * 自定义色的收藏夹：**强调色与环境色各存一份**。
  *
@@ -444,7 +487,7 @@ function readVarMap(themeId) {
 }
 
 function writeVarMap(themeId, map) {
-  try { localStorage.setItem(varMapKey(themeId), JSON.stringify(map)); } catch { /* 忽略 */ }
+  try { writeLS(varMapKey(themeId), JSON.stringify(map)); } catch { /* 忽略 */ }
 }
 
 /** @returns {string|null} 该变量在此主题下的用户覆盖值，未覆盖为 null */
@@ -516,8 +559,8 @@ export function getBaseOverride(themeId) {
 export function setBaseOverride(base, themeId) {
   const id = themeId || current?.id || getThemeId();
   try {
-    if (!base) localStorage.removeItem(KEY_BASE_OVR + ':' + id);
-    else localStorage.setItem(KEY_BASE_OVR + ':' + id, base);
+    if (!base) removeLS(KEY_BASE_OVR + ':' + id);
+    else writeLS(KEY_BASE_OVR + ':' + id, base);
   } catch { /* 忽略 */ }
   if (isCurrentTheme(themeId)) reapply('base-override');
 }
@@ -530,8 +573,8 @@ export function getStyleOverride(themeId) {
 export function setStyleOverride(style, themeId) {
   const id = themeId || current?.id || getThemeId();
   try {
-    if (!style) localStorage.removeItem(KEY_STYLE_OVR + ':' + id);
-    else localStorage.setItem(KEY_STYLE_OVR + ':' + id, style);
+    if (!style) removeLS(KEY_STYLE_OVR + ':' + id);
+    else writeLS(KEY_STYLE_OVR + ':' + id, style);
   } catch { /* 忽略 */ }
   if (isCurrentTheme(themeId)) reapply('style-override');
 }
@@ -667,7 +710,7 @@ export function getCustomThemes() {
   try { return JSON.parse(localStorage.getItem(KEY_CUSTOM) || '[]'); } catch { return []; }
 }
 function saveCustomThemes(list) {
-  localStorage.setItem(KEY_CUSTOM, JSON.stringify(list));
+  writeLS(KEY_CUSTOM, JSON.stringify(list));
 }
 export function saveCustomTheme(theme) {
   const list = getCustomThemes().filter((t) => t.id !== theme.id);
@@ -687,17 +730,17 @@ export function deleteCustomTheme(id) {
    * 不重算界面：删的是已不存在的主题，当前主题不受影响。
    */
   try {
-    localStorage.removeItem(varMapKey(id));
-    localStorage.removeItem(KEY_BASE_OVR + ':' + id);
-    localStorage.removeItem(KEY_STYLE_OVR + ':' + id);
+    removeLS(varMapKey(id));
+    removeLS(KEY_BASE_OVR + ':' + id);
+    removeLS(KEY_STYLE_OVR + ':' + id);
     for (const list of Object.values(STYLE_PARAMS)) {
-      for (const p of list) localStorage.removeItem(styleKey(p.key, id));
+      for (const p of list) removeLS(styleKey(p.key, id));
     }
     /* 色相 / 明暗偏移同样是**按主题 id** 分档的（shiftKey），
        此前漏了这两类 —— 与上面几类是同一个疏漏：
        只要存储键带主题 id，删主题时就都得清，漏一类就多一批孤儿键。 */
-    localStorage.removeItem(shiftKey(KEY_HUE, id));
-    localStorage.removeItem(shiftKey(KEY_LIGHT, id));
+    removeLS(shiftKey(KEY_HUE, id));
+    removeLS(shiftKey(KEY_LIGHT, id));
   } catch { /* 存储不可用时忽略 */ }
 }
 
@@ -785,7 +828,7 @@ export function saveCustomColors(slot, list) {
     /* 去重：色盘内按原样比较，同一色的大写与小写会各占一格 */
     .filter((c) => (seen.has(c) ? false : (seen.add(c), true)))
     .slice(0, CUSTOM_MAX);
-  try { localStorage.setItem(key, JSON.stringify(clean)); } catch {}
+  try { writeLS(key, JSON.stringify(clean)); } catch {}
   return clean;
 }
 
@@ -854,7 +897,7 @@ export function getStyleParam(paramKey, themeId) {
 /** 设置风格参数并立即重绘。改的不是当前主题时不重绘，等切过去自然读新值 */
 export function setStyleParam(paramKey, value, themeId) {
   const id = themeId || current?.id || getThemeId();
-  try { localStorage.setItem(styleKey(paramKey, id), String(Number(value))); } catch {}
+  try { writeLS(styleKey(paramKey, id), String(Number(value))); } catch {}
   if (id !== (current?.id || getThemeId())) return getCurrent();
   const theme = current || findTheme(getThemeId());
   const applied = applyTo(theme, getAccent(), getEnvColor());
@@ -867,7 +910,7 @@ export function setStyleParam(paramKey, value, themeId) {
 /** 复位某个风格参数到主题自带强度 */
 export function resetStyleParam(paramKey, themeId) {
   const id = themeId || current?.id || getThemeId();
-  try { localStorage.removeItem(styleKey(paramKey, id)); } catch {}
+  try { removeLS(styleKey(paramKey, id)); } catch {}
   if (id !== (current?.id || getThemeId())) return getCurrent();
   const theme = current || findTheme(getThemeId());
   const applied = applyTo(theme, getAccent(), getEnvColor());
@@ -1046,8 +1089,8 @@ export function setThemeShift(hue, light, themeId) {
    * 而界面照常提示"删除成功"。症状是"删了又出现"，排查时却没有任何报错。
    */
   try {
-    localStorage.setItem(shiftKey(KEY_HUE, id), String(h));
-    localStorage.setItem(shiftKey(KEY_LIGHT, id), String(l));
+    writeLS(shiftKey(KEY_HUE, id), String(h));
+    writeLS(shiftKey(KEY_LIGHT, id), String(l));
   } catch {}
   // 改的不是当前主题时不用重绘，等切过去自然会读新值
   if (id !== (current?.id || getThemeId())) return getCurrent();
@@ -1062,8 +1105,8 @@ export function setThemeShift(hue, light, themeId) {
 /** 清空某个主题的偏移（供「恢复主题自带配色」用，默认当前主题） */
 function clearShift(themeId) {
   try {
-    localStorage.removeItem(shiftKey(KEY_HUE, themeId));
-    localStorage.removeItem(shiftKey(KEY_LIGHT, themeId));
+    removeLS(shiftKey(KEY_HUE, themeId));
+    removeLS(shiftKey(KEY_LIGHT, themeId));
   } catch {}
 }
 export function getCurrent() {
@@ -1221,9 +1264,9 @@ function applyTo(rawTheme, accent, envColor) {
   /* 缓存底色与前景色，供首屏防闪脚本读取。
      这样新增主题时不必再回 index.html 同步一张硬编码表 —— 加主题只需改 themes.js。 */
   try {
-    if (vars['--bg']) localStorage.setItem(KEY_PRELOAD_BG, vars['--bg']);
-    if (vars['--text']) localStorage.setItem(KEY_PRELOAD_FG, vars['--text']);
-    localStorage.setItem(KEY_PRELOAD_BASE, theme.base);
+    if (vars['--bg']) writeLS(KEY_PRELOAD_BG, vars['--bg']);
+    if (vars['--text']) writeLS(KEY_PRELOAD_FG, vars['--text']);
+    writeLS(KEY_PRELOAD_BASE, theme.base);
   } catch { /* 存储不可用时忽略 */ }
   root.dataset.theme = theme.id;
   root.dataset.themeBase = theme.base;
@@ -1271,14 +1314,14 @@ export function applyTheme(id, accent, envColor, opts = {}) {
   const applied = applyTo(theme, a, e);
   current = theme;
   try {
-    localStorage.setItem(KEY_THEME, theme.id);
+    writeLS(KEY_THEME, theme.id);
     // 存的是适配后的值，保证下次切换仍在当前基调的正确档位上
-    if (a) localStorage.setItem(KEY_ACCENT, a);
-    else localStorage.removeItem(KEY_ACCENT);
-    if (e) localStorage.setItem(KEY_ENV, e);
-    else localStorage.removeItem(KEY_ENV);
+    if (a) writeLS(KEY_ACCENT, a);
+    else removeLS(KEY_ACCENT);
+    if (e) writeLS(KEY_ENV, e);
+    else removeLS(KEY_ENV);
     // 仅在用户主动选择时打标记，默认主题才能对「没选过的人」继续生效
-    if (opts.userInitiated !== false) localStorage.setItem(KEY_USERSET, '1');
+    if (opts.userInitiated !== false) writeLS(KEY_USERSET, '1');
   } catch { /* 忽略存储失败 */ }
   listeners.forEach((fn) => {
     try { fn(applied, 'theme'); } catch (er) { console.error('[theme]', er); }
@@ -1292,7 +1335,7 @@ export function setAccent(accent) {
   /* 同 applyTheme：必须按**实际**基调适配，不能用 theme.base 自带值 */
   const a = adaptSwatchToBase(accent, applyMetaOverride(theme).base);
   const applied = applyTo(theme, a, getEnvColor());
-  try { localStorage.setItem(KEY_ACCENT, a); } catch {}
+  try { writeLS(KEY_ACCENT, a); } catch {}
   listeners.forEach((fn) => {
     try { fn(applied, 'accent'); } catch (e) { console.error('[theme]', e); }
   });
@@ -1305,7 +1348,7 @@ export function setEnvColor(envColor) {
   /* 同 applyTheme：必须按**实际**基调适配，不能用 theme.base 自带值 */
   const e = adaptSwatchToBase(envColor, applyMetaOverride(theme).base);
   const applied = applyTo(theme, getAccent(), e);
-  try { localStorage.setItem(KEY_ENV, e); } catch {}
+  try { writeLS(KEY_ENV, e); } catch {}
   listeners.forEach((fn) => {
     try { fn(applied, 'env-color'); } catch (er) { console.error('[theme]', er); }
   });
@@ -1324,7 +1367,7 @@ export function setEnvColor(envColor) {
  * @param {string}   kind 通知给监听者的变更类型
  */
 function resetOne(keys, kind) {
-  try { keys.forEach((k) => localStorage.removeItem(k)); } catch { /* 忽略存储失败 */ }
+  try { keys.forEach((k) => removeLS(k)); } catch { /* 忽略存储失败 */ }
   const theme = current || findTheme(getThemeId());
   const applied = applyTo(theme, getAccent(), getEnvColor());
   listeners.forEach((fn) => {
@@ -1387,9 +1430,9 @@ export function getBgPreset() {
 export function setBgPreset(id) {
   if (!supportsBgImage()) return false;
   try {
-    if (id) localStorage.setItem(KEY_BG_PRESET, id);
-    else localStorage.removeItem(KEY_BG_PRESET);
-    if (id) localStorage.removeItem(KEY_BG_IMAGE);
+    if (id) writeLS(KEY_BG_PRESET, id);
+    else removeLS(KEY_BG_PRESET);
+    if (id) removeLS(KEY_BG_IMAGE);
   } catch { /* 存储失败时静默：背景丢了不影响主流程 */ }
   return resetOne([], 'bg-image');
 }
@@ -1409,8 +1452,8 @@ function escapeCssUrl(u) {
 export function setBgImage(url) {
   if (!supportsBgImage()) return false;
   try {
-    if (url) localStorage.setItem(KEY_BG_IMAGE, url);
-    else localStorage.removeItem(KEY_BG_IMAGE);
+    if (url) writeLS(KEY_BG_IMAGE, url);
+    else removeLS(KEY_BG_IMAGE);
   } catch { /* 超出配额时静默失败：背景图丢了不影响主流程 */ }
   /* 走 resetOne 的同一条通知链路（kind 用 'bg-image'）：
      它本就负责「用当前值重绘 + 通知监听者」，这里只是值为空。 */
@@ -1421,7 +1464,7 @@ export function setBgImage(url) {
 export function resetBgImage() {
   /* 预设也要一起清 —— 否则点"恢复默认"后底色变回来了，
      渐变还挂在上面，用户会以为按钮坏了。 */
-  try { localStorage.removeItem(KEY_BG_PRESET); } catch {}
+  try { removeLS(KEY_BG_PRESET); } catch {}
   return resetOne([KEY_BG_IMAGE], 'bg-image');
 }
 
@@ -1455,12 +1498,12 @@ export function resetLightShift() {
 export function resetColors() {
   const id = current?.id || getThemeId();
   try {
-    localStorage.removeItem(KEY_ACCENT);
-    localStorage.removeItem(KEY_ENV);
+    removeLS(KEY_ACCENT);
+    removeLS(KEY_ENV);
     // 偏移按主题存，这里只清当前这套；旧的全局键一并清掉，避免又被回落读到
     clearShift(id);
-    localStorage.removeItem(KEY_HUE);
-    localStorage.removeItem(KEY_LIGHT);
+    removeLS(KEY_HUE);
+    removeLS(KEY_LIGHT);
   } catch {}
   return applyTheme(getThemeId(), null, null, { userInitiated: true });
 }

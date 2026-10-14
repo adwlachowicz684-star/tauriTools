@@ -211,7 +211,9 @@ export interface PluginContext {
   /** 侧边栏角标，0/null 清除 */
   setBadge(n: number | null): void;
   /** 轻提示 */
-  toast(msg: string, type?: 'info' | 'ok' | 'err'): void;
+  /* warn＝这次改动**生效了但没能记住**（落盘失败，重启会回退）。
+   * 与 err 不同：err 表示没做成，warn 表示做成了、只是存不下。 */
+  toast(msg: string, type?: 'info' | 'ok' | 'err' | 'warn'): void;
   /** 重新加载本插件 */
   reload(): void;
   /** 跳转到另一个插件 */

@@ -53,6 +53,8 @@ import {
      **整个设置插件加载失败**。上面第 27 行已经导入过 getCurrent 了
      （色相/明暗改为按主题各记一份后，提示文案要显示当前主题名）。 */
   getCustomColors, saveCustomColors,
+  /* 落盘判据：见 theme-manager.js 里 writeLS 的说明 */
+  takePersistError,
   onChange as onThemeChange,
 } from '../../js/theme-manager.js';
 import { swatchFor, styleLabel, styleParams, BG_PRESETS } from '../../js/themes.js';
@@ -1009,6 +1011,27 @@ export default function Settings() {
 
   const rerender = () => force((n) => n + 1);
 
+  /* ---------------- 落盘结果的统一说法 ----------------
+   *
+   * 主题这一整条线的写入（强调色 / 环境色 / 风格参数 / 色相明暗偏移 /
+   * 背景图 / 预设背景 / 自定义主题）此前全是
+   * `try { localStorage.setItem(...) } catch {}` —— 写不进去时界面
+   * **当场照样变**（内存已改、也已通知监听者重绘），于是「已保存」
+   * 说得理直气壮，重启后却悄悄回到原样，全程一句提示都没有。
+   *
+   * 用 warn 而不是 err：这次改动**确实生效了**，只有"记住"失败。
+   * 标红会让人以为刚才那下没生效而去再点一次 —— 而再点一次同样存不下。 */
+  const toastPersist = (okMsg: string) => {
+    if (takePersistError()) ctx.toast(`${okMsg}，但没能记住（重启后会回到原来的设置）`, 'warn');
+    else ctx.toast(okMsg, 'ok');
+  };
+
+  /* 不弹成功提示的场景（拖滑块、右键删收藏色）：只在没落盘时说一句，
+     成功就不打扰 —— 每拖一格弹一次「已保存」谁都受不了。 */
+  const warnNotPersisted = (what: string) => {
+    if (takePersistError()) ctx.toast(`${what}没能保存（重启后会回到原来的设置）`, 'warn');
+  };
+
   /* ---------------- 自定义色（强调色 / 环境色共用一套） ----------------
    *
    * 预设色板只有固定 9 个色，用户想用自己的品牌色就只能走色盘。
@@ -1023,7 +1046,7 @@ export default function Settings() {
 
   const applyColor = (slot: 'accent' | 'env', hex: string) => {
     if (slot === 'env') setEnvColor(hex); else setAccent(hex);
-    ctx.toast(`${slot === 'env' ? '环境色' : '强调色'}：${hex}`, 'ok');
+    toastPersist(`${slot === 'env' ? '环境色' : '强调色'}：${hex}`);
     rerender();
     void syncThemeToShell();
   };
@@ -1061,6 +1084,7 @@ export default function Settings() {
       );
       /* 取消了也要存：用户可能刚收藏完就点取消 */
       saveCustomColors(slot, r?.custom);
+      warnNotPersisted('常用色');
       if (r?.hex) applyColor(slot, r.hex);
     } catch (e) {
       ctx.toast(`打开色盘失败：${String((e as Error)?.message || e)}`, 'err');
@@ -1127,6 +1151,7 @@ export default function Settings() {
             onContextMenu={(e) => {
               e.preventDefault();
               saveCustomColors(slot, getCustomColors(slot).filter((x) => x !== c));
+              warnNotPersisted('常用色');
               rerender();
             }}
             style={{
@@ -1314,7 +1339,7 @@ export default function Settings() {
                         key={t.id}
                         className={'theme-card' + (t.id === getThemeId() ? ' active' : '')}
                         title={t.desc || t.name}
-                        onClick={() => { applyTheme(t.id); ctx.toast(`已切换到「${t.name}」`, 'ok'); rerender(); void syncThemeToShell(); }}
+                        onClick={() => { applyTheme(t.id); toastPersist(`已切换到「${t.name}」`); rerender(); void syncThemeToShell(); }}
                       >
                         <div
                           className="theme-prev"
@@ -1379,7 +1404,7 @@ export default function Settings() {
                               deleteCustomTheme(t.id);
                               if (getThemeId() === t.id) applyTheme(listThemes()[0].id);
                               void syncThemeToShell();
-                              ctx.toast('已删除自定义主题', 'ok');
+                              toastPersist('已删除自定义主题');
                               rerender();
                             }}
                           >
@@ -1409,7 +1434,7 @@ export default function Settings() {
                     boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
                     opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.8',
                   }}
-                  onClick={() => { setAccent(c); ctx.toast('强调色：' + label, 'ok'); rerender(); void syncThemeToShell(); }}
+                  onClick={() => { setAccent(c); toastPersist('强调色：' + label); rerender(); void syncThemeToShell(); }}
                 >
                   ● {label}
                 </button>
@@ -1418,7 +1443,7 @@ export default function Settings() {
             {customColorButton('accent')}
             <ResetDefaultBtn
               disabled={!getAccent()}
-              onClick={() => { resetAccent(); ctx.toast('已恢复主题自带强调色', 'ok'); rerender(); void syncThemeToShell(); }}
+              onClick={() => { resetAccent(); toastPersist('已恢复主题自带强调色'); rerender(); void syncThemeToShell(); }}
               title="恢复为当前主题自带的强调色"
             />
           </div>
@@ -1442,7 +1467,7 @@ export default function Settings() {
                     boxShadow: '3px 3px 7px var(--sh-dark), -3px -3px 7px var(--sh-light)',
                     opacity: !cur || cur.toLowerCase() === c.toLowerCase() ? '1' : '.8',
                   }}
-                  onClick={() => { setEnvColor(c); ctx.toast('环境色：' + label, 'ok'); rerender(); void syncThemeToShell(); }}
+                  onClick={() => { setEnvColor(c); toastPersist('环境色：' + label); rerender(); void syncThemeToShell(); }}
                 >
                   ● {label}
                 </button>
@@ -1451,7 +1476,7 @@ export default function Settings() {
             {customColorButton('env')}
             <ResetDefaultBtn
               disabled={!getEnvColor()}
-              onClick={() => { resetEnvColor(); ctx.toast('已恢复主题自带环境色', 'ok'); rerender(); void syncThemeToShell(); }}
+              onClick={() => { resetEnvColor(); toastPersist('已恢复主题自带环境色'); rerender(); void syncThemeToShell(); }}
               title="恢复为当前主题自带的环境色"
             />
           </div>
@@ -1469,7 +1494,7 @@ export default function Settings() {
               className="p-range"
               type="range" min={-180} max={180} step={1}
               value={getHueShift()}
-              onChange={(e) => { setThemeShift(Number(e.target.value), getLightShift()); rerender(); void syncThemeToShell(); }}
+              onChange={(e) => { setThemeShift(Number(e.target.value), getLightShift()); warnNotPersisted('色相偏移'); rerender(); void syncThemeToShell(); }}
             />
             <span className="p-mono p-muted" style={{ width: 46, flex: 'none', textAlign: 'right' }}>
               {getHueShift() > 0 ? '+' : ''}{getHueShift()}°
@@ -1486,7 +1511,7 @@ export default function Settings() {
               className="p-range"
               type="range" min={-50} max={50} step={1}
               value={getLightShift()}
-              onChange={(e) => { setThemeShift(getHueShift(), Number(e.target.value)); rerender(); void syncThemeToShell(); }}
+              onChange={(e) => { setThemeShift(getHueShift(), Number(e.target.value)); warnNotPersisted('明暗偏移'); rerender(); void syncThemeToShell(); }}
             />
             <span className="p-mono p-muted" style={{ width: 46, flex: 'none', textAlign: 'right' }}>
               {getLightShift() > 0 ? '+' : ''}{getLightShift()}%
@@ -1534,6 +1559,7 @@ export default function Settings() {
                         title={p.desc}
                         onChange={(e) => {
                           setStyleParam(p.key, Number(e.target.value));
+                          warnNotPersisted(p.label);
                           rerender();
                           void syncThemeToShell();
                         }}
@@ -1543,7 +1569,7 @@ export default function Settings() {
                       </span>
                       <ResetDefaultBtn
                         disabled={raw == null}
-                        onClick={() => { resetStyleParam(p.key); ctx.toast(`${p.label}已恢复默认`, 'ok'); rerender(); void syncThemeToShell(); }}
+                        onClick={() => { resetStyleParam(p.key); toastPersist(`${p.label}已恢复默认`); rerender(); void syncThemeToShell(); }}
                         title={`恢复${p.label}为「${th.name}」自带强度`}
                       />
                     </div>
@@ -1618,7 +1644,10 @@ export default function Settings() {
                         ctx.toast('当前主题不支持背景图', 'err');
                         return;
                       }
-                      ctx.toast('背景图已应用', 'ok');
+                      /* setBgImage 返回的是 resetOne() 的结果（恒为真），
+                         所以 `if (!setBgImage(...))` 只判得出「主题不支持」，
+                         判不出「没落盘」—— 那一步要看 takePersistError。 */
+                      toastPersist('背景图已应用');
                       rerender();
                       void syncThemeToShell();
                     };
@@ -1628,7 +1657,7 @@ export default function Settings() {
                 />
                 <ResetDefaultBtn
                   disabled={!cur}
-                  onClick={() => { resetBgImage(); ctx.toast('已恢复主题自带背景', 'ok'); rerender(); void syncThemeToShell(); }}
+                  onClick={() => { resetBgImage(); toastPersist('已恢复主题自带背景'); rerender(); void syncThemeToShell(); }}
                   title="恢复为当前主题自带的背景"
                 />
               </div>
@@ -1661,7 +1690,7 @@ export default function Settings() {
                        而那个按钮在自定义图那一组里，用户找不到。 */
                     onClick={() => {
                       setBgPreset(on ? '' : p.id);
-                      ctx.toast(on ? '已取消预设背景' : `背景：${p.name}`, 'ok');
+                      toastPersist(on ? '已取消预设背景' : `背景：${p.name}`);
                       rerender();
                       void syncThemeToShell();
                     }}
@@ -1686,7 +1715,7 @@ export default function Settings() {
                 if (name === null) return;
                 const t = saveAsCustom(name.trim() || '我的主题');
                 applyTheme(t.id);
-                ctx.toast('已保存并应用：' + t.name, 'ok');
+                toastPersist('已保存并应用：' + t.name);
                 rerender();
                 void syncThemeToShell();
               }}

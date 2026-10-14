@@ -2,7 +2,8 @@ export interface ToastItem {
   /** nextId() 生成的唯一 ID（crypto.randomUUID 或降级串） */
   id: string;
   msg: string;
-  type: 'info' | 'ok' | 'err';
+  /** warn＝做成了但没能记住（落盘失败）；err＝没做成。两者不同色 */
+  type: 'info' | 'ok' | 'err' | 'warn';
 }
 
 export default function Toasts({ items }: { items: ToastItem[] }) {

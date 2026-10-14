@@ -120,6 +120,7 @@
     "test:theme-alpha-percent": "node theme-alpha-percent-test.mjs",
     "test:theme": "node theme-test.mjs",
     "test:theme-bridge": "node theme-bridge-test.mjs",
+    "test:theme-persist": "node theme-persist-test.mjs",
     "test:theme-picker": "node theme-picker-test.mjs",
     "test:theme-tokens": "node theme-tokens-test.mjs",
     "test:titlebar-drag": "node titlebar-drag-test.mjs",

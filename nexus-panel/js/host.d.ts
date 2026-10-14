@@ -44,7 +44,7 @@ export interface PluginManifest {
 }
 
 export interface HostHooks {
-  toast?: (msg: string, type?: 'info' | 'ok' | 'err') => void;
+  toast?: (msg: string, type?: 'info' | 'ok' | 'err' | 'warn') => void;
   onTitle?: (text: string) => void;
   onSubtitle?: (text: string) => void;
   onBadges?: (badges: Record<string, number>) => void;
