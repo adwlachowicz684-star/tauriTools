@@ -64,8 +64,28 @@ const t = (name, ok, info) => {
   else { fail++; console.log(`❌ ${name}${info ? ` → ${info}` : ''}`); }
 };
 
+/*
+ * 等条件成立再往下走，不睡固定时长。
+ *
+ * 原来这里是 4 处 `setTimeout(400/300/120/250)` —— 机器空闲时够用，
+ * 机器一忙（体检分片并发、CI 抢核）就不够：实测出现过一次
+ * "通过 9 项，失败 1 项"，而同样的代码重跑 4 次都是 10/0。
+ * 这种偶发红最费人：它会让人去翻界面逻辑，而真因只是这一轮慢了两百毫秒。
+ *
+ * 等不到仍会走到下面的断言并正常判红 —— 真缺陷不会被等成通过。
+ */
+const waitFor = async (fn, ms = 5000) => {
+  const t0 = Date.now();
+  for (;;) {
+    if (fn()) return true;
+    if (Date.now() - t0 > ms) return false;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
+
 await import('./js/shell.js');
-await new Promise((r) => setTimeout(r, 400));
+await waitFor(() => (globalThis.window.__NEXUS__?.getPlugins() || []).length > 0
+  && document.querySelectorAll('#plugin-list .nav-item').length > 0);
 
 const N = globalThis.window.__NEXUS__;
 const plugins = N?.getPlugins() || [];
@@ -81,13 +101,13 @@ t('标题栏有标题', !!document.querySelector('#bar-title')?.textContent?.tri
 
 // 切到示例同页插件，验证挂载 + 交互
 N.navigate('demo-module');
-await new Promise((r) => setTimeout(r, 300));
+await waitFor(() => document.querySelector('#stage-scroll')?.textContent.includes('计数器'));
 const stage = document.querySelector('#stage-scroll');
 t('demo-module 能挂载（舞台出现"计数器"）', stage.textContent.includes('计数器'));
 
 const btn = [...stage.querySelectorAll('button')].find((b) => b.textContent.includes('＋'));
 btn?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-await new Promise((r) => setTimeout(r, 120));
+await waitFor(() => !!document.querySelector('#stage-scroll .num')?.textContent);
 const after = stage.querySelector('.num')?.textContent;
 t('点击后计数器有变化（交互真的生效）', !!after, after || '(无)');
 t('计数写入了 localStorage（持久化生效）',
@@ -99,7 +119,7 @@ t('计数写入了 localStorage（持久化生效）',
 
 // 切到设置插件
 N.navigate('settings');
-await new Promise((r) => setTimeout(r, 250));
+await waitFor(() => document.querySelector('#stage-scroll')?.textContent.includes('插件管理'));
 t('settings 插件能挂载（出现"插件管理"）',
   document.querySelector('#stage-scroll').textContent.includes('插件管理'));
 
