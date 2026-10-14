@@ -1673,5 +1673,105 @@ console.log('\n=== 18. Rust 侧重复函数体 ===');
     `覆盖=${covered.length} 部分=${partial.length}`);
 }
 
+/* ---------- 20. 同一选择器的两份顶层规则，不得「各写一半」 ----------
+ *
+ * 第 19 节守的是"第一条 100% 失效"。这一节守的是更难发现的另一种：
+ * 两份规则**都生效**，实际观感是二者叠加 —— 于是谁也不知道某个属性
+ * 到底在哪一份里，改了一份没反应就去改另一份，很容易改错地方。
+ *
+ * 真实来历：目录选择器浮层（.fp-*）被整体重写过，新版写在文件更靠后处，
+ * 旧版那段没删。两套都生效，而新版的注释还写着"下面这些类就是它
+ * **全部**的观感来源" —— 照那句话删旧版，浮层的 width / max-width /
+ * max-height / min-height 会一并消失（它们只写在旧版里），面板铺满遮罩。
+ * 现已合并成一处。
+ *
+ * 【为什么判"两边都 ≥5 个属性"】一处只补一两个属性（主题边框、玻璃态
+ *   backdrop-filter、markdown 标题的字号）是正常的叠加，不是各写一半。
+ *   只有两边都是成规模的声明块、且**各有对方没有的属性**，才说明
+ *   同一段样式被拆成了两处。
+ */
+{
+  /* 与 19 节同一套取键口径：只认 `k: v` 成对出现的声明 */
+  const keysOf = (body) => {
+    const out = new Set();
+    for (const part of body.split(';')) {
+      const i = part.indexOf(':');
+      if (i < 0) continue;
+      const k = part.slice(0, i).trim();
+      const v = part.slice(i + 1).trim();
+      if (k && v) out.add(k);
+    }
+    return out;
+  };
+
+  /** 顶层规则按选择器归组（跳过 @media / @keyframes 这类带嵌套的块） */
+  const groupBySel = (src) => {
+    const bySel = new Map();
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m;
+    let rules = 0;
+    while ((m = re.exec(src))) {
+      const before = src.slice(0, m.index);
+      if ((before.match(/\{/g) || []).length - (before.match(/\}/g) || []).length !== 0) continue;
+      const sel = m[1].trim();
+      if (!sel || sel.startsWith('@')) continue;
+      rules++;
+      for (const one of sel.split(',')) {
+        const s = one.trim().replace(/\s+/g, ' ');
+        if (!s) continue;
+        if (!bySel.has(s)) bySel.set(s, []);
+        bySel.get(s).push(m[2]);
+      }
+    }
+    return { bySel, rules };
+  };
+
+  /** 「各写一半」：两边都成规模，且各有对方没有的属性 */
+  const halves = (bySel) => {
+    const out = [];
+    for (const [sel, bodies] of bySel) {
+      if (bodies.length < 2) continue;
+      const A = keysOf(bodies[0]);
+      const B = keysOf(bodies[bodies.length - 1]);
+      if (A.size < 5 || B.size < 5) continue;
+      if ([...A].some((k) => !B.has(k)) && [...B].some((k) => !A.has(k))) out.push(sel);
+    }
+    return out;
+  };
+
+  const cssFiles2 = walk(HERE).filter((p) => p.endsWith('.css'));
+  const split = [];
+  let dupSel = 0;
+  let ruleCount = 0;
+  for (const p of cssFiles2) {
+    let src;
+    try { src = stripBlock(readFileSync(p, 'utf8')); } catch { continue; }
+    const { bySel, rules } = groupBySel(src);
+    ruleCount += rules;
+    for (const [, bodies] of bySel) if (bodies.length >= 2) dupSel++;
+    for (const s of halves(bySel)) split.push(relativeTo(p) + ' ' + s);
+  }
+
+  t('扫到了足够的 CSS 规则（判据没失明）',
+    cssFiles2.length >= 5 && ruleCount > 500,
+    `${cssFiles2.length} 个 CSS，${ruleCount} 条顶层规则`);
+
+  t('扫到了多处定义的选择器（判据没失明）', dupSel > 5, `实测 ${dupSel} 个`);
+
+  t('没有「同一选择器分两处各写一半」的样式', split.length === 0,
+    split.slice(0, 6).join('；'));
+
+  /* 元断言：两端都灵 —— 各写一半算，全量覆盖 / 单条补充都不算 */
+  const pair = (a, b) => `.z { ${a} }\n.z { ${b} }`;
+  const half = groupBySel(pair('a:1; b:2; c:3; d:4; e:5', 'a:9; b:9; c:9; d:9; f:9'));
+  const full = groupBySel(pair('a:1; b:2; c:3; d:4; e:5', 'a:9; b:9; c:9; d:9; e:9'));
+  const oneKey = groupBySel(pair('a:1; b:2; c:3; d:4; e:5', 'z-index: 9'));
+  t('20 判据本身有效（各写一半算、全量覆盖与单条补充都不算）',
+    halves(half.bySel).length === 1
+    && halves(full.bySel).length === 0
+    && halves(oneKey.bySel).length === 0,
+    `半=${halves(half.bySel).length} 全=${halves(full.bySel).length} 单=${halves(oneKey.bySel).length}`);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
