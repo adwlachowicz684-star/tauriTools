@@ -637,7 +637,6 @@ body {
   inset: 18px;
   overflow: auto;
 }
-.plugin-root { min-height: 100%; position: relative; }
 
 /* ---------- 空状态 / 错误态 ---------- */
 /* 全屏大空态（原 .empty / .empty-mark）已移到 css/controls.css 的
@@ -1869,10 +1868,6 @@ html.theme-transition *:not(.spinner) {
      不设 min-height:0 的话 flex 子项不肯收缩，面板会被顶出屏幕。 */
   min-height: 0;
 }
-.fp-head {
-  display: flex; align-items: center; gap: var(--sp-4, 8px);
-  flex: none;
-}
 .fp-title {
   flex: 1; min-width: 0;
   font-size: var(--fs-14, 14px); font-weight: 600; color: var(--text);
@@ -1898,23 +1893,12 @@ html.theme-transition *:not(.spinner) {
   flex: none;
   margin-top: var(--sp-4, 8px);
 }
-.fp-chip {
-  display: inline-flex; align-items: center; gap: var(--sp-2, 4px);
-  max-width: 100%;
-  padding: var(--sp-2, 4px) var(--sp-4, 8px);
-  border: none; border-radius: var(--r-pill); cursor: pointer;
-  background: var(--surface-sunk);
-  box-shadow: var(--sh-in-xs);
-  font-size: var(--fs-11, 11px); color: var(--text);
-}
 .fp-chip:hover { box-shadow: var(--sh-in-sm); }
 /* 快速起点是"兜底入口"，弱化一档，否则会跟真收藏抢注意力。 */
-.fp-chip.plain { color: var(--text-mute); }
 .fp-chip-x {
   border: none; background: none; cursor: pointer;
   padding: 0; font-size: var(--fs-10, 10px); color: var(--text-mute);
 }
-.fp-chip-x:hover { color: var(--danger); }
 .fp-bar {
   display: flex; align-items: center; gap: var(--sp-3, 6px);
   flex: none;
@@ -1927,12 +1911,6 @@ html.theme-transition *:not(.spinner) {
   margin-top: var(--sp-4, 8px);
   font-size: var(--fs-11, 11px);
 }
-.fp-crumb {
-  padding: 0 var(--sp-2, 4px);
-  border: none; background: none; cursor: pointer;
-  font-size: var(--fs-11, 11px); color: var(--accent);
-}
-.fp-crumb-sep { color: var(--text-mute); }
 .fp-namerow, .fp-newrow {
   display: flex; align-items: center; gap: var(--sp-3, 6px);
   flex: none;
@@ -1961,13 +1939,6 @@ html.theme-transition *:not(.spinner) {
   border-radius: var(--r-xs);
 }
 .fp-dirrow:hover { background: var(--surface); }
-.fp-dirname {
-  flex: 1; min-width: 0;
-  padding: 0; border: none; background: none; cursor: pointer;
-  text-align: left;
-  font-size: var(--fs-12, 12px); color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .fp-ok-tag {
   flex: none;
   padding: 0 var(--sp-2, 4px);

@@ -847,7 +847,6 @@
 .fpx-log-line.err { color: var(--danger); }
 
 /* ---------- 表单 ---------- */
-.fpx-field { margin-bottom: 12px; }
 .fpx-field > label {
   display: block; margin-bottom: 6px; font-size: var(--title-3-fs); color: var(--text-dim);
   font-weight: var(--title-3-fw);}
@@ -903,11 +902,6 @@
 
 /* ---------- 图标 / 颜色 ---------- */
 .fpx-emoji-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.fpx-emoji {
-  width: 34px; height: 34px; font-size: var(--fs-15, 15px); cursor: pointer;
-  border: 1px solid var(--border); border-radius: var(--r-sm);
-  background: var(--surface-sunk);
-}
 .fpx-emoji.active { border-color: var(--accent); box-shadow: var(--glow-sm); }
 
 /* ---------- 色盘 ---------- */
@@ -1423,16 +1417,6 @@
  * 0×0、**完全不可见**。用户展开卡片看到一排链接，没有任何状态标识，
  * 只能逐个悬停看提示。
  */
-.fpx-link-dot {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.fpx-link-dot.valid { background: var(--accent); }
-.fpx-link-dot.broken { background: var(--text-mute); }
-.fpx-link-dot.conflict { background: var(--danger, #c8555a); }
 .fpx-badge .fpx-link-dot {
   width: 6px; height: 6px; border-radius: 50%; flex: none;
   display: inline-block;
@@ -1484,7 +1468,6 @@
  * 而一个项目可以连十几条（预设 agent 名就有 22 个），
  * 全展开会把单张卡片撑到几屏高，把别的卡片全挤出视野。
  */
-.fpx-links { max-height: 168px; overflow: auto; }
 
 .fpx-cards::-webkit-scrollbar,
 .fpx-log::-webkit-scrollbar,
@@ -1981,7 +1964,6 @@
  * 行必须是 flex —— 否则 `.fpx-link-state { margin-left: auto }` 不生效，
  * "失效 / 冲突"不会被推到最右，看上去像组名的一部分。
  */
-.fpx-link-row { display: flex; align-items: center; gap: 6px; }
 
 /*
  * 省略号三件套 + min-width: 0。
