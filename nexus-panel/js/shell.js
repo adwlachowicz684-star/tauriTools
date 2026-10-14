@@ -23,6 +23,7 @@ import {
   loadToolbarPlugins, mountToolbar, TOOLBAR_EVENT,
 } from './toolbar-plugin.js';
 import { loadModuleEntry } from './plugin-entries.js';
+import { isComposing } from './ime.js';
 
 import { confirm as askConfirm } from './dialog.js';
 const $ = (s) => document.querySelector(s);
@@ -748,6 +749,12 @@ async function initToolbar() {
   runShellShortcutRef = runShellShortcut;
 
   window.addEventListener('keydown', (e) => {
+    /*
+     * 组合中的 Esc 归输入法：抽屉里是插件自己的设置面板（有输入框），
+     * 中文选项填到一半按 Esc 想退掉候选词，整个抽屉却关了 ——
+     * 填的东西全丢，且不报错。
+     */
+    if (isComposing(e)) return;
     if (e.key === 'Escape' && $('#drawer-mask')) { e.preventDefault(); closePluginSettings(); return; }
     const meta = e.metaKey || e.ctrlKey;
     if (!meta) return;

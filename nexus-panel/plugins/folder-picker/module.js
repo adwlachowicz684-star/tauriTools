@@ -648,7 +648,12 @@ function createPanel(ctx) {
          * 没有它们，用户用这两种方式关掉浮层后 Promise 永远悬着 ——
          * 浮层消失了，调用方的 await 却再也不返回。
          */
-        const onEsc = (e) => { if (e.key === 'Escape') cancel(); };
+        /*
+         * 组合中的 Esc 归输入法：地址栏打中文路径（D:\我的项目）时按 Esc
+         * 只是取消候选词，整个选目录流程却被当成「用户取消了」——
+         * 浮层关掉、调用方 resolve 成 null，于是什么都不做、也不提示。
+         */
+        const onEsc = (e) => { if (!isComposing(e) && e.key === 'Escape') cancel(); };
         document.addEventListener('keydown', onEsc);
         const stopWatch = watchHidden(() => cancel());
         session.stop = () => {

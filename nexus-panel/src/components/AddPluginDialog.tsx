@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { PluginManifest } from '../../js/host.js';
+import { isComposing } from '../../js/ime.js';
 
 /**
  * 插件面板（插件商店）
@@ -82,9 +83,14 @@ export default function AddPluginDialog({
   const apps = plugins.filter((p) => p.kind !== 'service');
   const svcs = plugins.filter((p) => p.kind === 'service');
 
-  /* Esc 关闭：对话框是模态的，键盘用户没有别的退路。 */
+  /*
+   * Esc 关闭：对话框是模态的，键盘用户没有别的退路。
+   *
+   * 但组合中的那一帧不算：插件名称多半就是中文，打一半按 Esc 想退掉
+   * 候选词，整个对话框却关了 —— 前面填好的入口路径一起丢，且不报错。
+   */
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (!isComposing(e) && e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);

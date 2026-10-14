@@ -15,6 +15,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { isComposing } from '../../js/ime.js';
 import {
   confirm as _confirm, alert as _alert, prompt as _prompt, isOpen,
 } from '../../js/dialog.js';
@@ -64,6 +65,12 @@ export function Dialog({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      /*
+       * 组合中的 Esc 归输入法（取消这次候选词），不归界面。
+       * 不拦的话：<Dialog> 里填中文填到一半按 Esc 想退掉候选词，
+       * 整个弹窗连带填好的内容一起关掉 —— 不报错，只是东西没了。
+       */
+      if (isComposing(e)) return;
       if (e.key !== 'Escape') return;
       e.stopPropagation();
       if (dismissOnMask) onClose(undefined);

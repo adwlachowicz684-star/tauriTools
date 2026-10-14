@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PluginManifest } from '../../js/host.js';
+import { isComposing } from '../../js/ime.js';
 import SandboxSection from './SandboxSection';
 
 /**
@@ -59,7 +60,12 @@ export default function PluginSettingsDrawer({
   }, [manifest, mountSettings, hasPluginSettings]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    /*
+     * 组合中的 Esc 归输入法：抽屉里是插件自己的设置面板（有输入框），
+     * 中文选项填到一半按 Esc 想退掉候选词，整个抽屉却关了 ——
+     * 填的东西全丢，且不报错。
+     */
+    const onKey = (e: KeyboardEvent) => { if (!isComposing(e) && e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);

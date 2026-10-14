@@ -3,6 +3,7 @@ import { Handle, Position } from '@xyflow/react';
 import { getDef } from '../nodes/registry';
 import { argHandleId } from '../engine/paramLinks';
 import { linkableArgKey, type BriefPart } from '../engine/ops';
+import { isComposing } from '../../../js/ime.js';
 
 /**
  * 卡片上的**可编辑参数格**。
@@ -251,6 +252,12 @@ export function ArgCell({ nodeId, type, part, className, data }: ArgCellProps) {
        * 而那时焦点在输入框里，用户根本想不到自己在操作画布。
        */
       e.stopPropagation();
+      /*
+       * 组合中的 Esc / 回车都归输入法：中文提示词写到一半按 Esc 想退掉
+       * 候选词，这次编辑却被撤销（draft 清空）—— 写的东西没了，且不报错。
+       * 合成事件不转发 isComposing，必须传 nativeEvent。
+       */
+      if (isComposing(e.nativeEvent)) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         setDraft(null);
