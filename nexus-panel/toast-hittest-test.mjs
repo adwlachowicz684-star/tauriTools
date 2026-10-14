@@ -199,13 +199,20 @@ console.log('\n—— 4. React 组件真渲染 ——');
 
 console.log('\n—— 5. 全量守卫：全仓 CSS 不许有 toast 挡板 ——');
 {
+  /*
+   * `dist/` 是**构建产物**（由 css/ 生成，且 .gitignore 已排除）。
+   * 扫它会出一种特别费人的假红：源码改好之后，本地 dist 还是旧的，
+   * 于是守卫报「dist/assets/index-BP3R0Ce0.css → .nx-toasts>*」——
+   * 报错指向一个**手改了也没用**的文件，真因（没重新构建）一个字没提。
+   */
+  const isBuildOut = (name) => name === 'dist';
   /* 扫全仓而不是只扫 css/ —— 插件自己的 styles.css 里也可能补一条
      `#toasts > *`，那同样会把提示条变成挡板。 */
   const files = [];
   const walk = (d) => {
     if (!fs.existsSync(d)) return;
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      if (e.name === 'node_modules' || e.name.startsWith('.') || isBuildOut(e.name)) continue;
       const p = path.join(d, e.name);
       if (e.isDirectory()) walk(p);
       else if (e.name.endsWith('.css')) files.push(p);
@@ -226,6 +233,36 @@ console.log('\n—— 5. 全量守卫：全仓 CSS 不许有 toast 挡板 ——
   t('守卫确实扫到了文件（不是空跑）',
     files.length >= 5 && files.some((f) => f.endsWith(path.join('css', 'controls.css'))),
     `扫了 ${files.length} 个，含 controls.css：${files.some((f) => f.endsWith(path.join('css', 'controls.css')))}`);
+  /* 排除写宽了会把 css/ 一起排除 → 整节空跑而主断言照样绿，
+     所以这条钉住"只排除 dist，源码目录不排除"。 */
+  t('只排除构建产物，源码目录不排除',
+    isBuildOut('dist') && !isBuildOut('css') && !isBuildOut('plugins'));
+  /*
+   * 旧产物单独看一眼，**只提示不判失败**：dist 不在仓库里（.gitignore），
+   * 它是本地没重建的产物。判失败会让人去改一个手改无效的文件。
+   */
+  const stale = [];
+  const walkDist = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walkDist(p);
+      else if (e.name.endsWith('.css')) {
+        const src = stripComments(fs.readFileSync(p, 'utf8'));
+        for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+          const sel = m[1].replace(/\s+/g, ' ').trim();
+          if (/toast/i.test(sel) && /pointer-events:\s*auto/.test(m[2])) {
+            stale.push(`${path.relative(HERE, p)} → ${sel}`);
+          }
+        }
+      }
+    }
+  };
+  walkDist(path.join(HERE, 'dist'));
+  if (stale.length) {
+    console.log(`ℹ️  dist（本地构建产物，不在仓库里）仍有 ${stale.length} 处 → 重新构建即可，不影响源码判定`);
+    console.log(`     ${stale.slice(0, 3).join('；')}${stale.length > 3 ? ' …' : ''}`);
+  }
 }
 
 console.log(`\n${fail === 0 ? '🎉' : '⚠️'}  通过 ${pass} / 失败 ${fail}`);

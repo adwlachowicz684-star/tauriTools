@@ -43,13 +43,24 @@ const dry = cli.slice(cli.indexOf('if dry_run {'), cli.indexOf('let backup_note'
  * 早先是"为了让注释断言过"就把起点挪到注释上，结果整段代码断言
  * 都挂在一个注释字面量上 —— 注释一改全片失效。
  */
-const bak = cli.slice(cli.indexOf('fn backup_before_migrate'),
-                      cli.indexOf('fn remap'));
-const bakDoc = cli.slice(cli.lastIndexOf('/**', cli.indexOf('fn backup_before_migrate')),
-                         cli.indexOf('fn backup_before_migrate'));
-/** 命令分派 */
-/* 结尾锚点用代码（函数签名），不用文档注释 —— 注释改写会让切片失效 */
-const dispatch = cli.slice(cli.indexOf('pub fn try_handle'), cli.indexOf('fn backup_before_migrate('));
+/*
+ * 终点锚点原先是 `fn remap`（cli.rs 里那份抄来的 remap()）。
+ * 那份重复实现删掉、改调 super::remap_keys 之后，`indexOf('fn remap')`
+ * 返回 **-1** —— slice(a, -1) 不报错，而是**静默扩到文件末尾**：
+ * bak 从 63 行变成 137 行，把 pub fn try_handle 整段圈了进来。
+ *
+ * 危险不在"多扫了"，而在**断言的证据可能来自别处**：只要将来有人
+ * 把备份函数里的 for src in [cfg_path, rec_path] 删了，而同名字样
+ * 恰好出现在后面那段里，这条断言照样绿 —— 静默假绿。
+ *
+ * 所以终点换成**下一个函数签名**（代码锚点），并单独钉一条锚点命中。
+ */
+const I_BAK = cli.indexOf('fn backup_before_migrate');
+const I_DISPATCH = cli.indexOf('pub fn try_handle', I_BAK);
+const bak = cli.slice(I_BAK, I_DISPATCH);
+const bakDoc = cli.slice(cli.lastIndexOf('/**', I_BAK), I_BAK);
+/** 迁移主流程（换键写回那一段） */
+const mig = cli.slice(cli.indexOf('fn migrate('), I_BAK);
 
 console.log('\n=== 1. dry-run 开关 ===');
 {
@@ -99,6 +110,16 @@ console.log('\n=== 3. 预演要展示跳过原因 ===');
 
 console.log('\n=== 4. 动手前自动备份 ===');
 {
+  /*
+   * 切片锚点必须命中。锚点写的是一个**已被删除的函数名**时
+   * indexOf 返回 -1，slice 不报错而是静默扩到文件末尾 ——
+   * 断言的证据就可能来自别处（静默假绿），且报错指不到真因。
+   */
+  t('备份段切片锚点命中（锚点消失会让切片静默扩到文件末尾）',
+    I_BAK >= 0 && I_DISPATCH > I_BAK, `I_BAK=${I_BAK} I_DISPATCH=${I_DISPATCH}`);
+  t('备份段不含后面的函数（切片没膨胀）',
+    bak.length > 0 && !bak.includes('pub fn try_handle'),
+    `${bak.split('\n').length} 行`);
   t('backup_before_migrate 存在', /fn backup_before_migrate/.test(cli));
   t('在搬迁之前调用', cli.indexOf('backup_before_migrate(cfg_path') < cli.indexOf('rename_with_fallback'));
   t('config 与 record 都备份', /for src in \[cfg_path, rec_path\]/.test(bak));
@@ -157,7 +178,19 @@ console.log('\n=== 7. 原有的保护仍在（没被改坏）===');
   /* 真实代码在 fsutil.rs：复制失败要带着"源目录保持原样"提前返回，
      绝不能继续往下删源 —— 所以断言的是那个 `?` 之前的错误信息。 */
   t('复制没成功就不删源（真实代码）', /源目录保持原样/.test(fsu));
-  t('图标/标签色/锁 跟着换键', /cfg\.folder_icons = remap/.test(cli));
+  /*
+   * 判据只钉"写回哪张表 + 用的是新路径"，**不钉函数名**：
+   * cli.rs 原先抄了一份 remap()，删掉后改调 super::remap_keys ——
+   * 钉着 `= remap(` 的写法就红了，而代码**一直在挪表**：红的方向是错的，
+   * 照着去查会以为"搬家把图标设置弄丢了"。
+   */
+  const WRITE_BACK = (table) =>
+    new RegExp(`cfg\\.${table}\\s*=\\s*(?:super::)?\\w*remap\\w*\\([^;]*?&it\\.dst\\)`);
+  t('图标两套跟着换键',
+    WRITE_BACK('folder_icons').test(mig) && WRITE_BACK('folder_gui_icons').test(mig));
+  t('标签色两套跟着换键',
+    WRITE_BACK('tag_colors').test(mig) && WRITE_BACK('tag_gui_colors').test(mig));
+  t('锁跟着换键', /cfg\.locks\.iter_mut\(\)/.test(mig));
   t('注释：为什么项目组搬走要重建链接', /指向它的链接全断了/.test(cli));
   t('项目组搬走后重建链接',
     /super::junction::create\(&r\.project, &r\.group, &names\)/.test(cli));

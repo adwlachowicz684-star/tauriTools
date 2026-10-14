@@ -21,6 +21,26 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx');
 const { t, done } = makeT();
 
+/*
+ * 换键写回的判据：**只钉意图，不钉函数名**。
+ *
+ * cli.rs 原先抄了一份 remap()，后来删掉改调 super::remap_keys。
+ * 那次重构让钉着 `remap(cfg.X.clone(), &key, &it.dst)` 的三条断言全红 ——
+ * 而代码**一直在挪表**。红不可怕，可怕的是**红的方向**：报告说
+ * 「搬家挪 gui 表 ❌」，读者会以为"搬家静默丢图标"（这正是本文件
+ * 要防的事故），真因却是判据钉了旧写法。
+ * 所以这里认 `cfg.X = <任意 remap*>(... &it.dst)`，改名不再误伤。
+ */
+const WRITE_BACK = (table) =>
+  new RegExp(`cfg\\.${table}\\s*=\\s*(?:super::)?\\w*remap\\w*\\([^;]*?&it\\.dst\\)`);
+/* cli.rs 的迁移主流程。终点锚点用**下一个函数签名**（代码），
+   且单独钉一条"锚点命中" —— 锚点为 -1 时 slice 会静默扩到文件末尾。 */
+const cliMigrateSeg = (cli) => {
+  const i = cli.indexOf('fn migrate(');
+  const end = cli.indexOf('fn backup_before_migrate', i);
+  return { i, end, seg: i >= 0 && end > i ? cli.slice(i, end) : '' };
+};
+
 console.log('\n=== 1. 两套独立，互不覆盖 ===');
 {
   const model = fs.readFileSync(path.join(RS, 'model.rs'), 'utf8');
@@ -47,8 +67,12 @@ console.log('\n=== 2. 搬家 / 改名都要挪两套（漏了静默丢失）==='
 {
   const cli = strip(fs.readFileSync(path.join(RS, 'cli.rs'), 'utf8'));
   const mod = strip(fs.readFileSync(path.join(RS, 'mod.rs'), 'utf8'));
-  t('搬家挪 gui 表', /remap\(cfg\.folder_gui_icons\.clone\(\), &key, &it\.dst\)/.test(cli));
-  t('搬家挪 explorer 表', /remap\(cfg\.folder_icons\.clone\(\), &key, &it\.dst\)/.test(cli));
+  const { i: miCli, seg: mc } = cliMigrateSeg(cli);
+  t('cli 搬家段切片锚点命中（锚点为 -1 会让切片静默扩到文件末尾）',
+    miCli >= 0 && mc.length > 0 && !mc.includes('fn backup_before_migrate'),
+    `fn migrate( @ ${miCli}，${mc.split('\n').length} 行`);
+  t('搬家挪 gui 表', WRITE_BACK('folder_gui_icons').test(mc));
+  t('搬家挪 explorer 表', WRITE_BACK('folder_icons').test(mc));
 
   /*
    * **只钉"文件里有这一行"是漏报** —— 改名那条路径一直有，
@@ -134,7 +158,7 @@ console.log('\n=== 5. 标签色的两套（#113）===');
   t('set_tag_color 选表', /let table = if gui_only \{ &mut cfg\.tag_gui_colors \} else \{ &mut cfg\.tag_colors \}/.test(mod));
 
   /* 搬家 / 改名换键两套都要挪 */
-  t('搬家挪 GUI 色', /remap\(cfg\.tag_gui_colors\.clone\(\), &key, &it\.dst\)/.test(cli));
+  t('搬家挪 GUI 色', WRITE_BACK('tag_gui_colors').test(cliMigrateSeg(cli).seg));
   t('改名换键挪 GUI 色', /remap_keys\(std::mem::take\(&mut cfg\.tag_gui_colors\)/.test(mod));
 
   /* 命令参数 */
