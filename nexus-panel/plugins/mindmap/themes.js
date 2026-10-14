@@ -592,15 +592,39 @@ function hslToHex(h, s, l) {
  *
  * 只调亮度、不动色相饱和度 —— 与本项目修主题对比度时的一贯做法一致：
  * 这样派生出来的线/文字仍是"同一个色调家族"，不会横空出现一个陌生色。
+ *
+ * ============================================================
+ * 为什么两个方向都要找，不能只朝一个方向
+ * ============================================================
+ * 首选方向是"浅底走深、深底走浅"（`isLightColor`），但**只朝一个方向
+ * 找，达标这件事根本不成立**：
+ *
+ *   随机 2000 色实测    ratio=4.5 未达标 21.1%   ratio=3 未达标 1.1%
+ *   灰度扫描            失效区间 luma 119..140（连续 22 级）
+ *
+ * 根因是"感知明暗"与"WCAG 相对亮度"在中间调上分道扬镳：
+ * luma 134 的深绿 #23af17 按感知算属于"深底"→ 走更浅，可它相对亮度
+ * 已到 0.31，一路走到纯白也只有 2.91；反过来走深是 7.21。
+ *
+ * 好消息是：ratio ≤ 4.58 时**两个方向必有其一可达**（白端要求
+ * relLum ≤ 1.05/r-0.05，黑端要求 relLum ≥ 0.05r-0.05，两区间在
+ * r ≤ 4.58 时相交），所以补上反向查找后 4.5 与 3 是**恒成立**的，
+ * 末尾那个兜底只对更高的 ratio 才有意义。
+ *
+ * 顺序仍是先试感知方向 —— 双向都达标时（灰度 luma 117~118 这一小段）
+ * 出来的仍是"浅底配深字"，不会为了达标而选一个别扭的方向。
  */
 export function awayFrom(base, ratio = 3) {
   const light = isLightColor(base);
-  const dir = light ? -1 : 1;
-  for (let i = 1; i <= 64; i++) {
-    const c = shiftColor(base, dir * i * 4);
-    if (contrastRatio(c, base) >= ratio) return c;
-  }
-  return light ? '#141418' : '#f2f2f4';
+  const preferred = light ? -1 : 1;
+  const search = (dir) => {
+    for (let i = 1; i <= 64; i++) {
+      const c = shiftColor(base, dir * i * 4);
+      if (contrastRatio(c, base) >= ratio) return c;
+    }
+    return null;
+  };
+  return search(preferred) || search(-preferred) || (light ? '#141418' : '#f2f2f4');
 }
 
 /** 感知亮度（0-255），用于判断深/浅底 */

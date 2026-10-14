@@ -15,7 +15,8 @@
  *   于是三个层级背景必须落在同一明暗侧，否则必有某一级文字看不清。
  */
 import { readFileSync } from 'node:fs';
-import { PRESET_THEMES, mergePresetThemes, THEMES } from './themes.js';
+import { PRESET_THEMES, mergePresetThemes, THEMES,
+  awayFrom, contrastRatio, luma } from './themes.js';
 
 let pass = 0, fail = 0;
 const t = (name, ok, detail = '') => {
@@ -199,6 +200,90 @@ console.log('\n=== 6. mergePresetThemes 行为 ===');
 
   t('null / 非数组入参不抛异常',
     mergePresetThemes(null, null).length === PRESET_THEMES.length);
+}
+
+console.log('\n=== 7. awayFrom：达标是硬承诺，不是"尽力而为" ===');
+{
+  /*
+   * 这条守的是一条**写进了函数注释的承诺**："偏移，直到对比度达标"。
+   *
+   * 只朝一个方向找时它是假的：
+   *   随机 2000 色   ratio=4.5 未达标 21.1%   ratio=3 未达标 1.1%
+   *   灰度扫描       失效区间 luma 119..140（连续 22 级）
+   * 原因不是没走够步数，而是**方向选错了**：感知明暗（luma）与 WCAG
+   * 相对亮度在中间调上分道扬镳，深绿 #23af17（luma 134）一路走到纯白
+   * 也只有 2.91，反过来走深是 7.21。
+   *
+   * 当前 6 处调用全以 canvasBg 为 base，而 canvasSurface 把亮度钉在
+   * 深色档（luma 实测 43~48），恰好都落在"朝浅走"那一侧 —— 所以这一条
+   * 眼下**碰不到**，是潜在的，不是正在发作的。守它有两个理由：
+   *   ① 注释里写着"直到达标"，代码却做不到 —— 谁改了 canvasSurface 的
+   *      亮度档，文字色就会静默退化成看不清，而没有任何一处会报错；
+   *   ② 兜底色（#f2f2f4）比"走到纯白"还差（2.60 vs 2.91），
+   *      即失败时连"尽力"都没尽到。
+   */
+
+  /* 全量扫描：灰度阶梯 + 色域网格，两个 ratio 都不允许有漏网。
+     用确定性采样而不是随机，避免"换个种子就绿了"的假通过。 */
+  const gray = (v) => '#' + [v, v, v].map((n) => n.toString(16).padStart(2, '0')).join('');
+  const grid = [];
+  for (const r of [0, 51, 102, 153, 204, 255]) {
+    for (const g of [0, 51, 102, 153, 204, 255]) {
+      for (const b of [0, 51, 102, 153, 204, 255]) {
+        grid.push('#' + [r, g, b].map((n) => n.toString(16).padStart(2, '0')).join(''));
+      }
+    }
+  }
+  const sweep = (ratio) => {
+    const bad = [];
+    const all = [...Array(256).keys()].map(gray).concat(grid);
+    for (const c of all) {
+      const got = awayFrom(c, ratio);
+      if (contrastRatio(got, c) < ratio) bad.push(`${c}→${got} ${contrastRatio(got, c).toFixed(2)}`);
+    }
+    return bad;
+  };
+  const b45 = sweep(4.5), b3 = sweep(3);
+  t(`全量扫描（灰度 256 + 色域 ${grid.length}）ratio=4.5 无一漏网`,
+    b45.length === 0, b45.slice(0, 3).join(' | ') || `${256 + grid.length} 色全部达标`);
+  t('全量扫描 ratio=3 无一漏网', b3.length === 0, b3.slice(0, 3).join(' | ') || '全部达标');
+
+  /* 单点反例：这几个是实测抓出来的，任何一个退化都得报红 */
+  const cases = ['#23af17', '#ef1803', '#a57973', '#9566f1', '#767676', '#8b8b8b'];
+  const weak = cases.filter((c) => contrastRatio(awayFrom(c, 4.5), c) < 4.5);
+  t('实测反例（中间调 / 高饱和红 / 紫）在 4.5 下达标', weak.length === 0,
+    weak.map((c) => `${c} ${contrastRatio(awayFrom(c, 4.5), c).toFixed(2)}`).join(' | ') || '全部达标');
+
+  /* 方向不能被"为了达标"带偏：双向都能达标时仍按感知方向走。
+     #767676（luma 118）是实测唯一双向都够的一小段：白端 4.54、黑端 4.62，
+     而它按 luma 属于"深底" → 必须出浅色（这是唯一能钉住 preferred 的样本）。 */
+  const mid = awayFrom('#767676', 4.5);
+  t('双向都达标时仍走感知方向（深底出浅色，不为达标选别扭方向）',
+    luma(mid) > luma('#767676'), `${mid} luma ${luma(mid).toFixed(0)}`);
+
+  /* 真实画布底（深色档）必须仍出浅色 —— 保住"浅字压深底"这个观感 */
+  const darkBase = '#2b2f36';
+  const onDark = awayFrom(darkBase, 4.5);
+  t('深画布底仍派生浅色', luma(onDark) > luma(darkBase),
+    `${onDark} luma ${luma(onDark).toFixed(0)} vs ${luma(darkBase).toFixed(0)}`);
+  const lightBase = '#eeeeee';
+  const onLight = awayFrom(lightBase, 4.5);
+  t('浅画布底仍派生深色', luma(onLight) < luma(lightBase),
+    `${onLight} luma ${luma(onLight).toFixed(0)} vs ${luma(lightBase).toFixed(0)}`);
+
+  /* 兜底不许走到纯白 / 纯黑 —— 与 clampLuma 注释里"画布不能走到两端"
+     是同一条规矩。兜底眼下不可达（ratio ≤ 4.58 时必有一向可达），
+     这里只是钉住它别被人顺手改成 #fff / #000。 */
+  let fn = '';
+  try {
+    const body = readFileSync(new URL('./themes.js', import.meta.url), 'utf8');
+    const m = body.match(/export function awayFrom[\s\S]*?\n}/);
+    fn = m ? m[0] : '';
+  } catch {}
+  t('源码契约：两个方向都找（不能只留单向）',
+    /-\s*preferred/.test(fn), fn ? '已找到反向查找' : '未找到函数体');
+  t('源码契约：兜底仍是软白 / 软黑（不走纯白纯黑）',
+    /'#141418'\s*:\s*'#f2f2f4'/.test(fn), fn ? '已确认' : '未找到函数体');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
