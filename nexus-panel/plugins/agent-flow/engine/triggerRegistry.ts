@@ -56,6 +56,24 @@ export type TriggerCanvasView = {
   nodes: { id: string; data?: Record<string, unknown> }[];
 };
 
+/**
+ * 一个"埋在模块里"的触发器。
+ *
+ * collectGlobalTriggers 只扫画布顶层，模块内部那层它看不到，
+ * 于是这些触发器**永远不会自动触发**，也不出现在触发器面板里 ——
+ * 用户看到的是"我明明配了 webhook，面板上却没有、也不触发"。
+ */
+export type BuriedTrigger = {
+  canvasId: string;
+  canvasName?: string;
+  /** 画布上的那个模块实例 */
+  hostId: string;
+  /** 模块名（取实例上的 label，模块库里那条可能已经改过名） */
+  hostLabel: string;
+  /** 模块内部触发器节点的 id —— 展开后会变成 hostId__triggerId */
+  triggerId: string;
+};
+
 /* ------------------------------------------------------------------ */
 /* 收集                                                                */
 /* ------------------------------------------------------------------ */
@@ -164,6 +182,70 @@ export function collectGlobalTriggers(
           lastResult: null,
         } as GlobalTrigger);
       }
+    }
+  }
+  return out;
+}
+
+/**
+ * 扫描"埋在模块里的"触发器 —— 那些 collectGlobalTriggers 看不见的。
+ *
+ * canPack 只挡住了**新建**：它在这份判定之前就已经躺在模块库里的
+ * （以及脱钩副本里的）触发器，一个都拦不到，也不再有任何提示。
+ * 不扫出来的话，用户面对的是"面板上什么都没有、自动触发一次都没发生"，
+ * 而没有任何东西告诉他原因在哪。
+ *
+ * @param resolveBody 由调用方给出模块内部结构。
+ *   刻意**不在这里 import modules.ts**：那边已经 import 了本文件的
+ *   isTriggerNode（canPack 用），反过来引就是循环依赖，
+ *   循环在打包后表现为"某一侧拿到未初始化的绑定"，极难排查。
+ *   调用方手上本来就有模块库 + 脱钩副本，交给它最合适。
+ */
+export function collectBuriedTriggers(
+  canvases: TriggerCanvasView[],
+  resolveBody: (data: Record<string, unknown>) => { nodes?: { id: string; data?: Record<string, unknown> }[] } | null,
+): BuriedTrigger[] {
+  const out: BuriedTrigger[] = [];
+
+  const walk = (
+    c: TriggerCanvasView,
+    body: { nodes?: { id: string; data?: Record<string, unknown> }[] } | null,
+    hostId: string,
+    hostLabel: string,
+    visiting: string[],
+  ) => {
+    for (const n of body?.nodes ?? []) {
+      const d = (n?.data ?? {}) as Record<string, unknown>;
+      if (isTriggerNode(d)) {
+        out.push({
+          canvasId: c.id,
+          canvasName: c.name,
+          hostId,
+          hostLabel,
+          triggerId: String(n?.id ?? ''),
+        });
+        continue;
+      }
+      /* 模块套模块：递归下去，同一个模块不重复进（否则 A→B→A 会转不出来） */
+      if (String(d.kind ?? '') !== 'module') continue;
+      const key = `${String(d.moduleId ?? '')}|${JSON.stringify((d.inner as { nodes?: unknown[] })?.nodes ?? null).length}`;
+      if (visiting.indexOf(key) >= 0) continue;
+      const inner = ((d.inner as { nodes?: { id: string; data?: Record<string, unknown> }[] })?.nodes)
+        ? (d.inner as { nodes: { id: string; data?: Record<string, unknown> }[] })
+        : resolveBody(d);
+      if (!inner) continue;
+      walk(c, inner, hostId, hostLabel, [...visiting, key]);
+    }
+  };
+
+  for (const c of canvases ?? []) {
+    for (const n of c.nodes ?? []) {
+      const d = (n?.data ?? {}) as Record<string, unknown>;
+      if (String(d.kind ?? '') !== 'module') continue;
+      const own = (d.inner as { nodes?: { id: string; data?: Record<string, unknown> }[] })?.nodes;
+      const body = own ? (d.inner as { nodes: { id: string; data?: Record<string, unknown> }[] }) : resolveBody(d);
+      if (!body) continue;
+      walk(c, body, String(n?.id ?? ''), String(d.label ?? n?.id ?? '模块'), []);
     }
   }
   return out;

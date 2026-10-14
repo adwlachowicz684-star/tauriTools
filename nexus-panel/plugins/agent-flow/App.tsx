@@ -73,7 +73,7 @@ import { expandCanvasRefs } from './engine/canvasRef';
 import { syncCanvasesRefNames, snapshotCanvasName } from './engine/canvasRefName';
 import {
   collectGlobalTriggers, activeTriggers, dedupeWatchDirs, isActiveTrigger,
-  type GlobalTrigger,
+  collectBuriedTriggers, type GlobalTrigger, type BuriedTrigger,
 } from './engine/triggerRegistry';
 import { ERR_NO_TRIGGER, reachableFrom } from './engine/triggerScope';
 import {
@@ -638,6 +638,56 @@ export default function App() {
 
   /** 触发器面板要能看出"哪些是别的画布的"，所以保留完整信息 */
   const triggersWithCanvas = allGlobalTriggers;
+
+  /*
+   * 埋在模块里的触发器：扫出来并明确说出来。
+   *
+   * canPack 只挡住**新建**的。判定加上之前就已经存进模块库的、
+   * 以及脱钩副本里自带的那些，一个都拦不到 ——
+   * 而它们既不出现在触发器面板上，也永远不会自动触发。
+   *
+   * 不报出来的话，用户面对的是"我明明配了 webhook，面板上没有、
+   * 也不触发"，而没有任何东西指出原因在哪 ——
+   * 这正是 canPack 那条注释里说的"极难排查的那一种"。
+   */
+  const buried = useMemo<BuriedTrigger[]>(
+    () => collectBuriedTriggers(
+      canvases.map((c) => ({
+        id: c.id,
+        name: c.name,
+        nodes: (c.nodes ?? []) as { id: string; data?: Record<string, unknown> }[],
+      })),
+      (d) => {
+        const own = (d.inner as { nodes?: unknown[] } | null)?.nodes;
+        if (own) return { nodes: own as { id: string; data?: Record<string, unknown> }[] };
+        const def = findModule(String(d.moduleId ?? ''));
+        return def ? { nodes: (def.nodes ?? []) as { id: string; data?: Record<string, unknown> }[] } : null;
+      },
+    ),
+    [canvases, nodes],
+  );
+
+  /*
+   * 只在"埋着的那一批"真的变了时说一次。
+   * 放在渲染里直接 pushLog 的话，每次 canvases 变化都会刷一行，
+   * 日志很快被同一句话淹没，真正的问题反而看不见。
+   */
+  const buriedKeyRef = useRef('');
+  useEffect(() => {
+    if (buried.length === 0) {
+      buriedKeyRef.current = '';
+      return;
+    }
+    const key = buried.map((b) => `${b.canvasId}/${b.hostId}/${b.triggerId}`).sort().join('|');
+    if (key === buriedKeyRef.current) return;
+    buriedKeyRef.current = key;
+    const where = buried.slice(0, 3).map((b) => `「${b.hostLabel}」`).join('、');
+    pushLog(
+      `⚠ 有 ${buried.length} 个触发器埋在模块里（${where}${buried.length > 3 ? ' 等' : ''}）：`
+      + '全局扫描只看画布顶层，模块内部的不会被扫描，自动触发永远不会发生。'
+      + '请把触发器拖到画布上，模块里只放它后面的节点',
+    );
+  }, [buried, pushLog]);
 
 
   /*
