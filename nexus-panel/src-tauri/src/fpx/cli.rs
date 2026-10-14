@@ -498,13 +498,13 @@ fn migrate(
     for it in &items {
         if !it.note.is_empty() { continue; }
         let key = store::normalize_key(&it.src);
-        cfg.folder_icons = remap(cfg.folder_icons.clone(), &key, &it.dst);
+        cfg.folder_icons = super::remap_keys(cfg.folder_icons.clone(), &key, &it.dst);
         /* #13 两套图标都要挪。只挪 folder_icons 的话，
            搬完家界面专属图标**静默失效**（卡片显示回默认图标且无任何报错）。 */
-        cfg.folder_gui_icons = remap(cfg.folder_gui_icons.clone(), &key, &it.dst);
-        cfg.tag_colors = remap(cfg.tag_colors.clone(), &key, &it.dst);
+        cfg.folder_gui_icons = super::remap_keys(cfg.folder_gui_icons.clone(), &key, &it.dst);
+        cfg.tag_colors = super::remap_keys(cfg.tag_colors.clone(), &key, &it.dst);
         /* #113 同 #13：两套都要挪，漏了静默失效 */
-        cfg.tag_gui_colors = remap(cfg.tag_gui_colors.clone(), &key, &it.dst);
+        cfg.tag_gui_colors = super::remap_keys(cfg.tag_gui_colors.clone(), &key, &it.dst);
         for l in cfg.locks.iter_mut() {
             if store::normalize_key(&l.path) == key { l.path = it.dst.clone(); }
         }
@@ -592,21 +592,14 @@ fn backup_before_migrate(cfg_path: &str, rec_path: &str) -> Result<Vec<String>, 
     Ok(out)
 }
 
-fn remap(
-    map: std::collections::HashMap<String, String>,
-    old_key: &str,
-    new_path: &str,
-) -> std::collections::HashMap<String, String> {
-    let mut out = std::collections::HashMap::with_capacity(map.len());
-    for (k, v) in map {
-        if store::normalize_key(&k) == old_key {
-            out.insert(new_path.to_string(), v);
-        } else {
-            out.insert(k, v);
-        }
-    }
-    out
-}
+/*
+ * 【这里原本抄了一份 remap()，与 mod.rs 的 remap_keys 逐行相同】
+ * 已删 —— 改调 super::remap_keys。
+ *
+ * 为什么不能留：两张表改一处漏一处的后果是"迁移后设置静默消失"
+ * （详见 mod.rs 里 remap_keys 的注释）。判据见
+ * regression-guard-test.mjs 第 18 节（Rust 侧不许有重复函数体）。
+ */
 
 fn render(
     moved: usize,

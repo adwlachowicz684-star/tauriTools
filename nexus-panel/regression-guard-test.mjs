@@ -1481,5 +1481,102 @@ console.log('\n=== 17. 跨语言常量一致 ===');
     Number('2001') !== Number('2000') && Number('4.0') === Number('4'));
 }
 
+
+/* ============================================================
+ * 18. Rust 侧不允许存在函数体完全相同的重复实现
+ * ------------------------------------------------------------
+ * 上一节盯的是"常量"，这一节盯"整段逻辑"。
+ *
+ * 已经抓到过一组：fpx/cli.rs 的 remap() 与 fpx/mod.rs 的 remap_keys()
+ * **逐行相同**（把 HashMap 里等于旧路径的键换成新路径）。
+ * 两个入口各用一份：cli.rs 是 `--migrate-hierarchy` 批量搬家，
+ * mod.rs 是运行时的改名 / 移动目录。
+ *
+ * 两份的差别将来只会是"漏了一个"：新增一张按路径索引的表
+ * （比如又一种按目录记录的颜色 / 图标），只在一处补了、另一处没补 ——
+ * 用户跑一次迁移，那张表的键还指着**搬走之前**的旧路径，
+ * 于是设置**静默消失**，不报错、config 里也看不出异常。
+ *
+ * 判据取"归一化后的函数体"，不是函数名：
+ *   · 去注释、去字符串字面量、数字归一成 N、空白折叠
+ *   · 只比**跨文件**的同名/异名重复，同文件内的重载不算
+ *   · 太短的（< 120 字符）跳过，否则 getter 之类会全假报
+ *
+ * 跨插件的重复**不在这里守** —— 插件自包含是既定设计，跨插件相同
+ * 函数体有时是刻意的（见第 13/14 节同样的取舍）。这里只看 Rust，
+ * 而 Rust 全在同一个 crate 里：能互相看见还抄两份，没有正当理由。
+ * ============================================================ */
+console.log('\n=== 18. Rust 侧重复函数体 ===');
+{
+  /* 取 fn 的函数体：跳到参数表末尾，再花括号配平 */
+  function rustFnBodies(src) {
+    const out = [];
+    const re = /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+    let m;
+    while ((m = re.exec(src))) {
+      let i = m.index;
+      while (i < src.length && src[i] !== '(') i++;
+      if (i >= src.length) continue;
+      let j = i, paren = 0;
+      for (; j < src.length; j++) {
+        if (src[j] === '(') paren++;
+        else if (src[j] === ')') { paren--; if (paren === 0) { j++; break; } }
+      }
+      while (j < src.length && src[j] !== '{' && src[j] !== ';') j++;
+      if (j >= src.length || src[j] === ';') continue;   // trait 里没有体
+      let k = j, d = 0;
+      for (; k < src.length; k++) {
+        if (src[k] === '{') d++;
+        else if (src[k] === '}') { d--; if (d === 0) { k++; break; } }
+      }
+      out.push({ name: m[1], body: src.slice(j, k) });
+    }
+    return out;
+  }
+  /*
+   * 剥注释走共用模块，不在这里内联正则 ——
+   * 本文件多写一个 `\/\*[\s\S]*?\*\/` 就会被 dead-class 的
+   * "内联副本只增不减"判据记一笔（基线 18），于是每次新增扫描节
+   * 都要靠上调基线来"解决"，那正是这个判据要挡的事。
+   */
+  function normRs(x) {
+    return stripJs(x)
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+      .replace(/\b\d+(?:\.\d+)?\b/g, 'N')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  const rsFiles = walk(HERE).filter((p) => p.endsWith('.rs'));
+  const byBody = new Map();
+  let fnCount = 0;
+  for (const p of rsFiles) {
+    let src;
+    try { src = readFileSync(p, 'utf8'); } catch { continue; }
+    for (const { name, body } of rustFnBodies(src)) {
+      fnCount++;
+      const n = normRs(body);
+      if (n.length < 120) continue;
+      if (!byBody.has(n)) byBody.set(n, []);
+      byBody.get(n).push(relativeTo(p) + ':' + name);
+    }
+  }
+  t('扫到了足够的 Rust 函数（判据没失明）', rsFiles.length > 20 && fnCount > 200,
+    `${rsFiles.length} 个文件，${fnCount} 个函数`);
+
+  const dups = [...byBody.values()]
+    .filter((v) => new Set(v.map((x) => x.split(':')[0])).size > 1);
+  t('没有跨文件重复的函数体', dups.length === 0,
+    dups.map((v) => v.join(' = ')).join('；'));
+
+  /* 元断言：两头都灵 */
+  const A = '{ let mut out = std::collections::HashMap::with_capacity(map.len()); for (k, v) in map { if norm(&k) == old_key { out.insert(new_path.to_string(), v); } else { out.insert(k, v); } } out }';
+  const B = A.replace('out.insert(new_path.to_string(), v)', 'out.insert(new_path.to_string(), k)');
+  t('两份逐字相同的函数体会被判重复、差一处就不会（判据没失明）',
+    normRs(A) === normRs(A) && normRs(A) !== normRs(B) && normRs(A).length >= 120,
+    `归一化长度 ${normRs(A).length}`);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

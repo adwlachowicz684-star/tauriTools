@@ -18,6 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -28,28 +29,16 @@ const SRC = {
   card: read('plugins/settings/FavDirsCard.tsx'),
 };
 
-/** 剥 /* *\/ 与 // 注释：注释里提到同名关键字会让"存在性"判定变成恒真。 */
-function stripComments(s) {
-  let out = '';
-  let i = 0;
-  while (i < s.length) {
-    const c = s[i];
-    const n = s[i + 1];
-    if (c === '/' && n === '/') {
-      const j = s.indexOf('\n', i);
-      i = j < 0 ? s.length : j;
-      continue;
-    }
-    if (c === '/' && n === '*') {
-      const j = s.indexOf('*/', i + 2);
-      i = j < 0 ? s.length : j + 2;
-      continue;
-    }
-    out += c; i++;
-  }
-  return out;
-}
-const code = (k) => stripComments(SRC[k]);
+/*
+ * 剥注释改用共用模块（test-scan-utils.mjs 的 stripCommentsJs）。
+ *
+ * 本文件原先内联了一份：它用**裸的 `//` 判据**（两个斜杠直到行尾），
+ * 遇到 `https://`、`file://` 会把整行后半截吞掉 ——
+ * 那时断言其实在检查一段被截断的文本，可能假绿。
+ * 共用模块用的是 `(^|\s)//`，行首 / 行尾 / 缩进后三种真注释形态都覆盖，
+ * 同时不吃 URL。语义与原来一致，且更安全。
+ */
+const code = (k) => stripCommentsJs(SRC[k]);
 
 let pass = 0;
 let fail = 0;
