@@ -166,7 +166,24 @@ console.log('\n=== 10. 类型定义同步 ===');
 const dts = src('js/plugin-sdk.d.ts');
 t('导出 Owned 接口', /export interface Owned/.test(dts));
 t('PluginContext 上有 owned', /owned: Owned;/.test(dts));
-t('注释说明 iframe 侧记了也无害（不夸大）', /随 iframe 一起消失|iframe 自己 window/.test(dts));
+/*
+ * 下面这条**只验注释文本**，不验实现 —— 历史上它制造了"iframe 侧已被覆盖"
+ * 的错觉，而实际上 bootIframePlugin 从没给过 owned（ctx.owned === undefined）。
+ * 注释在，它就绿；实现给不给，它一概不知。
+ *
+ * iframe 侧是否**真的**拿到，由 owned-iframe-test.mjs 的行为层守：
+ * 真跑 bootIframePlugin、真拿 ctx、真挂监听。这里只留注释一致性检查。
+ */
+t('注释说明 iframe 侧记了也无害（**只验注释**，实现由行为层守）',
+  /随 iframe 一起消失|iframe 自己 window/.test(dts));
+
+/* 接线：行为层那份必须真的被 npm script 点名，否则它就是个孤儿测试 ——
+   从来没跑过，而本文件的注释级断言照样全绿。 */
+const pkg = JSON.parse(src('package.json'));
+t('owned-iframe 测试文件存在（行为层守 iframe 侧）',
+  (() => { try { src('owned-iframe-test.mjs'); return true; } catch { return false; } })());
+t('owned-iframe 测试**被 npm script 点名**（不是孤儿）',
+  Object.values(pkg.scripts || {}).some((s) => /owned-iframe-test\.mjs/.test(String(s))));
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

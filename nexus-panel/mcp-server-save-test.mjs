@@ -20,6 +20,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { fileURLToPath } from 'node:url';
+// 剥注释一律走共用实现：全仓只此一份，避免各写一份再漂移。
+// 原先内联的那份把块注释替换成**空串**（会把 `a/*x*/b` 粘成 `ab`），
+// 共用实现替换成空格，语义更安全；行注释规则同为「不吃 https:// 里的 //」。
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 /* npm script 从仓库根跑，process.cwd() 不可靠 —— 一律以本文件位置为基准 */
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -92,7 +96,7 @@ t(
 
 section('2. 面板：保存按钮与守卫都用同一份判据');
 const src = fs.readFileSync(PANEL, 'utf8');
-const stripped = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+const stripped = stripCommentsJs(src);
 
 t('（前置）源码读到了', src.length > 3000);
 t(
