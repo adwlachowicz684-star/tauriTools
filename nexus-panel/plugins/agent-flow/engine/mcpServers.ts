@@ -19,6 +19,15 @@
 
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 import { looksLikeSecretName } from './sanitize';
+/*
+ * 传输判据用**协议层**那份（mcpClient），不用本文件的 transportOf ——
+ *
+ * 本文件 transportOf 返回 'local' / 'remote'，是给界面页签用的（本地/远程）；
+ * 协议层返回 'http' / 'stdio'，是真正去连时用的那套。
+ * 两套名字说的是同一件事，各判各的就会出现"面板说能连、连的时候说不能"。
+ * 这里要回答的是"能不能连"，所以用协议层的。
+ */
+import { stdioSupported, transportOf as protocolTransportOf } from './mcpClient';
 
 /** 复用画布配置里的形状，不另起一套 —— 两处形状漂移更麻烦 */
 export type McpTransport = 'local' | 'remote';
@@ -52,6 +61,50 @@ export function transportOf(s: GlobalMcpServer): McpTransport {
 /** 填了才算"可用"；两个都空的服务起不来 */
 export function isRunnable(s: GlobalMcpServer): boolean {
   return !!(String(s?.command ?? '').trim() || String(s?.url ?? '').trim());
+}
+
+/**
+ * 这个服务**现在**的状态（面板上每个服务那一格显示什么）。
+ *
+ * ================= 为什么收成一处 =================
+ *
+ * 以前面板上是一个全局布尔 prop（protocolReady）在分三支，
+ * 而 App **从来没传过它** —— 于是恒为 undefined：
+ *
+ *   · 已经连上、侧栏都生成出 3 个工具了，面板上还写着「未接入协议」
+ *   · 而且那条说明写着"还没去连过，不代表服务有问题" —— 那是假话
+ *
+ * 用户面对的是同一行里「未接入协议」和「3 个工具」并排，
+ * 两个数字自相矛盾，只能以为系统坏了。
+ *
+ * 全局布尔也表达不了真正要说的事：**能不能连，是按服务不同的** ——
+ * HTTP 已经接上，stdio 还没有。用同一个布尔回答，必然有一个是假的
+ * （给 true 则 stdio 服务假显示"已就绪"，而它其实连不上）。
+ *
+ * 所以按服务算，且 stdio 单独一种状态 —— 不能并进"配置不全"：
+ * 用户填得规规矩矩，却被说成"配置不全"，会一直去改一个本来就对的配置。
+ */
+export type McpState = {
+  /** 面板上显示的短标签 */
+  label: string;
+  /** 绿（可以连）还是灰（连不上） */
+  on: boolean;
+  /** hover 时的解释；空串表示不用解释 */
+  hint: string;
+};
+
+export function mcpStateOf(s: GlobalMcpServer): McpState {
+  if (!isRunnable(s)) {
+    return { label: '配置不全', on: false, hint: '要把启动命令或地址填上一个' };
+  }
+  if (protocolTransportOf(s) === 'stdio' && !stdioSupported()) {
+    return {
+      label: 'stdio 未接入',
+      on: false,
+      hint: 'stdio 传输（command 方式）还没接上 —— 请改用 HTTP 地址',
+    };
+  }
+  return { label: '已就绪', on: true, hint: '' };
 }
 
 export function loadServers(kv: KV = defaultKV()): GlobalMcpServer[] {

@@ -62,7 +62,7 @@ export type VerifyFn = (kind: CredentialKind, secret: string) => Promise<{
 export function CredentialPanel({
   credentials, onChange, onClose, verify, fetchModels,
   locked, mode, onUnlock, onChangeMode, cryptoWarn, unlockError,
-  mcpServers, onMcpChange, mcpProtocolReady, mcpToolCount, onMcpRefresh, mcpRefreshing,
+  mcpServers, onMcpChange, mcpToolCount, onMcpRefresh, mcpRefreshing,
   initialPage,
 }: {
   credentials: Credential[];
@@ -89,8 +89,10 @@ export function CredentialPanel({
   /* ---- 服务（全局库，与密钥同一处管） ---- */
   mcpServers?: GlobalMcpServer[];
   onMcpChange?: (next: GlobalMcpServer[]) => void;
-  /** MCP 协议是否已接入。未接入时状态位明说，不给假绿勾 */
-  mcpProtocolReady?: boolean;
+  /*
+   * 手动刷新。不传则面板上**根本没有刷新按钮** ——
+   * 用户改了配置只能等 800ms 防抖自动刷新，没有手动入口。
+   */
   /** 每个服务已生成的节点数，按服务名索引 */
   mcpToolCount?: Record<string, number>;
   onMcpRefresh?: () => void;
@@ -212,7 +214,6 @@ export function CredentialPanel({
             <McpServersPanel
               servers={mcpServers}
               onChange={onMcpChange}
-              protocolReady={mcpProtocolReady}
               toolCount={mcpToolCount}
               onRefresh={onMcpRefresh}
               refreshing={mcpRefreshing}

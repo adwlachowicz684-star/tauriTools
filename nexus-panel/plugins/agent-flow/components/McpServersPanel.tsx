@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   type GlobalMcpServer, type McpTransport,
-  newServer, validateServers, transportOf, isRunnable, secretEnvNames,
+  newServer, validateServers, transportOf, isRunnable, mcpStateOf, secretEnvNames,
 } from '../engine/mcpServers';
 
 /**
@@ -25,7 +25,6 @@ type Props = {
   servers: GlobalMcpServer[];
   onChange: (next: GlobalMcpServer[]) => void;
   /** 协议是否已接入。false 时状态位明说"未接入"，不假装 */
-  protocolReady?: boolean;
   /** 每个服务已生成的节点数，按服务名索引 */
   toolCount?: Record<string, number>;
   onRefresh?: () => void;
@@ -54,7 +53,7 @@ function dotColor(name: string): string {
 }
 
 export default function McpServersPanel({
-  servers, onChange, protocolReady, toolCount, onRefresh, refreshing,
+  servers, onChange, toolCount, onRefresh, refreshing,
 }: Props) {
   const [tab, setTab] = useState<McpTransport>('local');
   const [editing, setEditing] = useState<GlobalMcpServer | null>(null);
@@ -131,10 +130,17 @@ export default function McpServersPanel({
 
       <div className="cred-tip">{TABS.find((t) => t.key === tab)?.hint}</div>
 
-      {!protocolReady ? (
+      {/*
+       * 以前这里写的是"MCP 协议还没接上，状态位不代表服务有问题"。
+       * 那是**假话**：HTTP 传输早就接上了，只是没人回来改这句话 ——
+       * 而它正是"所有服务恒显示未接入协议"这个 bug 的思想来源。
+       *
+       * 现在说的是真正没接上的那一种：stdio。按服务判定，不再一刀切。
+       */}
+      {servers.some((s) => mcpStateOf(s).label === 'stdio 未接入') ? (
         <div className="cred-note">
-          MCP 协议还没接上 —— 下面每个服务的状态显示「未接入协议」，
-          意思是**还没去连过**，不代表服务有问题。接上后这里会变成真实状态。
+          有服务用的是 stdio 传输（command 方式），还没接上 ——
+          状态位会写成「stdio 未接入」。改用 HTTP 地址即可。
         </div>
       ) : null}
 
@@ -242,15 +248,21 @@ export default function McpServersPanel({
                       : (s.url ? String(s.url) : '（没填地址）')}
                   </div>
                   <div className="mcp-item-meta">
-                    {!protocolReady ? (
-                      <span className="mcp-state off" title="还没去连过，不代表服务有问题">
-                        未接入协议
-                      </span>
-                    ) : !isRunnable(s) ? (
-                      <span className="mcp-state off">配置不全</span>
-                    ) : (
-                      <span className="mcp-state on">已就绪</span>
-                    )}
+                    {/*
+                     * 由 mcpStateOf 一次算出来，不再靠那个全局布尔 prop 分三支。
+                     *
+                     * protocolReady 此前 App **从来没传**，于是恒为 undefined ——
+                     * 结果连上了也永远显示「未接入协议」，和旁边的「N 个工具」自相矛盾。
+                     * 见 engine/mcpServers 里 mcpStateOf 的说明。
+                     */}
+                    {(() => {
+                      const st = mcpStateOf(s);
+                      return (
+                        <span className={'mcp-state ' + (st.on ? 'on' : 'off')} title={st.hint}>
+                          {st.label}
+                        </span>
+                      );
+                    })()}
                     {tools > 0 ? <span className="mcp-tools">{tools} 个工具</span> : null}
                     {secrets.length > 0 ? (
                       <span className="mcp-secret" title={`含密钥环境变量：${secrets.join('、')}（导出时脱敏）`}>

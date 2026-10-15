@@ -489,14 +489,41 @@ test('日志区自己也要能裁剪（内容多时不外溢）', () => {
 test('MCP 状态位不假装', () => {
   if (!hasSrc) return;
   const m = read(path.join(ROOT, 'components/McpServersPanel.tsx'));
-  assert.ok(m.includes('未接入协议'), '缺"未接入协议"的明确状态');
+  /*
+   * 以前要求的是"未接入协议"这个笼统说法。
+   * 现在按服务判定之后，说法变准确了：不是"协议没接上"，
+   * 而是"**stdio** 没接上"（HTTP 早就能用了）。
+   * 笼统说法本身就是 bug 的源头 —— 它让 HTTP 服务也被说成没接上。
+   */
+  assert.ok(m.includes('stdio 未接入'), '没接上的那一种要**指名**，不能笼统说"未接入协议"');
+  /*
+   * "已就绪"这个标签现在不在面板里了 —— 状态标签全部由 mcpStateOf 给出，
+   * 面板只负责渲染。所以成功态要去判定本体那里查，
+   * 否则这条会恒红，而红的理由是"我把标签挪走了"，不是代码有问题。
+   */
+  const eng = read(path.join(ROOT, 'engine/mcpServers.ts'));
+  assert.ok(eng.includes("label: '已就绪'"), '判定本体要有明确的成功态');
   /*
    * 必须**真的读 protocolReady**来分支，不能只在 props 里声明了它、
    * 渲染时却写死成功 —— 那样界面上照样是假绿勾，而守卫看不出来。
    */
+  /*
+   * 以前这里要求"必须由 !protocolReady 分支决定"。
+   *
+   * 而 protocolReady 这个 prop **App 从来没有传过** —— 于是恒为 undefined，
+   * 结果连上了也永远显示「未接入协议」，与旁边的「N 个工具」自相矛盾。
+   * 守的是"有没有那个分支"，挡不住"那个分支的取值永远是假的"。
+   *
+   * 现在改成按服务算（mcpStateOf），守的也就该是：
+   * ① 真的调用了它  ② 不许再把那个死 prop 请回来。
+   */
   assert.ok(
-    /!protocolReady\s*\?/.test(m),
-    '状态必须由 !protocolReady 分支决定，不能写死成功',
+    /mcpStateOf\s*\(/.test(m),
+    '状态必须由 mcpStateOf 算出（按服务判定，不是全局布尔）',
+  );
+  assert.ok(
+    !/protocolReady/.test(m),
+    'protocolReady 是没人传的死 prop —— 它恒为 undefined，会让所有服务永远显示"未接入协议"',
   );
 });
 
