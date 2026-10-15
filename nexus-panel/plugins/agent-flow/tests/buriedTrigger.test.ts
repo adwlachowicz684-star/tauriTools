@@ -222,3 +222,26 @@ test('源码守卫：埋藏判定必须用 isActiveTrigger，不能退化成 isT
     '退化成 isTriggerNode 会把"用户自己关掉的"也算进去 —— 那是误报',
   );
 });
+
+test('源码守卫：多画布时日志必须带上画布名（否则用户在当前画布上找不到那个模块）', () => {
+  const src = readSrc('App.tsx');
+  const i = src.indexOf('const where = buried.slice');
+  assert.ok(i >= 0);
+  const seg = src.slice(i - 1200, i + 600);
+  assert.ok(/canvasName/.test(seg), '要说清是哪张画布');
+  assert.ok(/canvases\.length/.test(seg), '判据用画布数量，不用"是不是当前画布"（那会随切换变化）');
+});
+
+test('行为：多条埋藏分别来自不同画布时，各自带上自己的画布名', () => {
+  const out = collectBuriedTriggers(
+    [
+      canvas('c1', '画布一', [{ id: 'i1', data: { kind: 'module', moduleId: 'M1', label: '发版' } }]),
+      canvas('c2', '画布二', [{ id: 'i2', data: { kind: 'module', moduleId: 'M1', label: '备份' } }]),
+    ],
+    resolve,
+  );
+  assert.equal(out.length, 2);
+  assert.deepEqual(out.map((b) => b.canvasName), ['画布一', '画布二']);
+  assert.equal(out[0].hostLabel, '发版');
+  assert.equal(out[1].hostLabel, '备份');
+});

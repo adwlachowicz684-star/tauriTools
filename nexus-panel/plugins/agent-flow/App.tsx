@@ -691,7 +691,25 @@ export default function App() {
     const key = buried.map((b) => `${b.canvasId}/${b.hostId}/${b.triggerId}`).sort().join('|');
     if (key === buriedKeyRef.current) return;
     buriedKeyRef.current = key;
-    const where = buried.slice(0, 3).map((b) => `「${b.hostLabel}」的 ${b.kind || '触发器'}`).join('、');
+    /*
+     * 有多张画布时**必须**带上画布名。
+     *
+     * 徽章（buriedHere）刻意只显示当前画布那张，所以别的画布上的埋藏
+     * 触发器在界面上**完全没有痕迹**，只剩日志这一行。而这一行不带画布名
+     * 的话，用户就在当前这张画布上找「发版」这个模块 —— 找不到，
+     * 于是以为提示说的是一个不存在的东西（与"删了还挂着"同一种失信）。
+     *
+     * 只有一张画布时不带：那种情况下"哪张画布"没有歧义，写出来是噪音。
+     *
+     * 判据用 canvases.length 而不是"是不是当前画布"—— 后者会随切换画布
+     * 变化，而这条日志只在埋藏集合变化时说一次（见上），说出去了就改不了，
+     * 用会变的值写一句不会再说的话，必然有对不上的时候。
+     */
+    const nameCanvas = canvases.length > 1;
+    const where = buried.slice(0, 3)
+      .map((b) => `${nameCanvas ? `画布「${b.canvasName ?? b.canvasId}」的 ` : ''}`
+        + `模块「${b.hostLabel}」的 ${b.kind || '触发器'}`)
+      .join('、');
     pushLog(
       `⚠ 有 ${buried.length} 个触发器埋在模块里（${where}${buried.length > 3 ? ' 等' : ''}）：`
       + '全局扫描只看画布顶层，模块内部的不会被扫描，自动触发永远不会发生。'
