@@ -63,6 +63,25 @@ export const plugins = [
     description: '工作流编排画布（跟随面板主题）',
   },
   {
+    id: 'task-board',
+    name: '任务管理器',
+    icon: '▦',
+    /*
+     * 多 AI 窗口 + 人工共用的任务看板。数据只有一份：数据目录里的
+     * tasks.json（默认 app_data_dir/task-board，设置里可改）。
+     *   · 人 → 本看板（五列流转：待办/已认领/进行中/待审查/已完成）
+     *   · AI 窗口 → curl 本地 HTTP API（设置里起服务，默认 9911）
+     *   · agent-flow → generic-http 节点打同一个 API，条件触发自动建任务
+     * builtin: true —— 随仓库发布的内置插件，tb_* 文件命令全权限放行。
+     */
+    type: 'iframe',
+    entry: './plugins/task-board/index.html',
+    requiresBuild: true,
+    builtin: true,
+    version: '1.0.0',
+    description: '多窗口协作任务看板（AI / 人工 / agent-flow 共用一份 tasks.json）',
+  },
+  {
     id: 'demo-react',
     name: '示例·React 沙箱',
     icon: '◆',

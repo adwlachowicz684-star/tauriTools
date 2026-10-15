@@ -9,6 +9,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 mod af_flow;
+mod task_board;
 mod fpx;
 /*
  * updater / dupview / rt_dep 的 mod 声明。
@@ -340,6 +341,14 @@ fn main() {
         .manage(af_flow::ProcRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WatchRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
         .manage(af_flow::WebhookRegistry(std::sync::Mutex::new(std::collections::HashMap::new())))
+        /*
+         * task_board（任务管理器）的共享状态：HTTP 服务注册表 + 授权的数据目录。
+         * 少了这行：tb_http_start 一被调用就 panic 整个进程。
+         */
+        .manage(task_board::TbState {
+            servers: std::sync::Mutex::new(std::collections::HashMap::new()),
+            data_dir: std::sync::Mutex::new(None),
+        })
         .invoke_handler(tauri::generate_handler![
             rust_ping, app_version, window_action, set_window_icon,
             mm_print, mm_print_support, mm_svg_to_pdf, mm_pdf_vector_support, mm_open_devtools,
@@ -381,6 +390,15 @@ fn main() {
              */
             af_flow::af_os_keyring_get, af_flow::af_os_keyring_set,
             af_flow::af_os_keyring_delete,
+            /*
+             * task_board（任务管理器）六条 —— 本地 HTTP API 服务的起停 +
+             * 数据目录授权 + 看板 UI 的文件读写通道。
+             * 少了它们：插件设置里打开服务开关没反应，AI 窗口 / agent-flow
+             * 的 generic-http 节点全部连不上 127.0.0.1:<port>。
+             */
+            task_board::tb_default_dir, task_board::tb_set_data_dir,
+            task_board::tb_read_store, task_board::tb_write_store,
+            task_board::tb_http_start, task_board::tb_http_stop,
             /*
              * updater（应用自更新）三条 —— 见上面的 mod updater 注释。
              * 少了这三条：设置 → 更新 点「检查更新」没反应，且运行时才报

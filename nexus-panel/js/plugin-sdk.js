@@ -1024,15 +1024,27 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
         return off;
       }
 
+      /* Owned 归属句柄：iframe 插件也拿一份，兑现 buildCtx 注释与
+         plugin-sdk.d.ts 的既有契约（"保持 ctx 形状一致"）。
+         它记的是 iframe **自己** window/document 上的东西，随 iframe
+         remove() 一起消失——记了也无害，但 API 形状不再缺角
+         （此前 ctx.owned 在这里是 undefined，插件一碰就整树空白）。 */
+      const owned = createOwned(manifest.id, {
+        warn: (...a) => console.warn('[owned]', ...a),
+      });
+
       const ctx = buildCtx({
         id: manifest.id, manifest, mode: 'iframe',
         root: container, container, transport, bus, theme: currentTheme, bindShortcut,
         openArgs,
+        owned,
       });
 
       // 卸载时兜底注销
       const baseDestroy = ctx.__destroy;
       ctx.__destroy = async () => {
+        // 与同页路径同序：先撤 owned 登记的句柄，再走插件自己的 unmount
+        try { owned.dispose(); } catch (e) { console.error('[owned dispose]', e); }
         shortcutCleanups.splice(0).forEach((off) => { try { off(); } catch {} });
         stopInspectRelay?.();
         await baseDestroy();

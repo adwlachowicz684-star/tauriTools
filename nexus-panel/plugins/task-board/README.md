@@ -1,0 +1,67 @@
+# task-board · 任务管理器插件
+
+多 AI 窗口 + 人工 + agent-flow 流程共用的任务看板。**数据只有一份**：数据目录下的 `tasks.json`。
+
+## 三条通道，一份数据
+
+| 谁 | 怎么用 |
+|---|---|
+| 人 | 打开插件看板：五列流转、新建、认领、审查、备注、删除 |
+| AI 窗口 | `curl` 打本地 HTTP API（默认 `127.0.0.1:9911`，设置里起服务） |
+| agent-flow | 画布上 `generic-http` 节点打同一个 API；提交审查可 POST 回调触发流程 |
+
+## 任务生命周期
+
+```
+todo ─认领→ claimed ─开始→ doing ─提交审查→ review ─通过→ done
+                                      ↑          │
+                                      └────打回──┘
+```
+
+`done` 只能由审查窗口打；开发窗口最多送到 `review`。认领必须署名（`assignee` = 窗口 ID）。
+
+## 文件清单
+
+```
+plugins/task-board/
+  index.html      首帧底色脚本 + 入口
+  main.tsx        bootIframeReactPlugin
+  App.tsx         看板（五列/过滤器/身份切换/详情/历史）
+  Settings.tsx    数据目录/端口/令牌/自动启动/通知 URL
+  styles.css      样式（style-audit / tokens / standard 三守卫零告警）
+  types.ts        数据模型
+  core.mjs        纯逻辑（状态机/归一化/排序/过滤）+ core.d.ts
+  lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
+  task-board-test.mjs   core 单测（50 项）
+  docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
+  docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
+```
+
+Rust 侧：`src-tauri/src/task_board.rs`（HTTP 服务 + 文件读写 + 目录授权），
+命令 `tb_default_dir / tb_set_data_dir / tb_read_store / tb_write_store / tb_http_start / tb_http_stop`。
+
+## HTTP API 速查
+
+```
+GET    /api/health             探活
+GET    /api/tasks              全量任务 + 窗口身份
+GET    /api/tasks/{id}         单条
+POST   /api/tasks              新建 {title, detail?, priority?, tags?, reporter?}
+PATCH  /api/tasks/{id}         流转/改字段 {status?, assignee?, priority?, title?, detail?, tags?, by?, note?}
+POST   /api/tasks/{id}/events  追加事件 {by, action, note?}
+POST   /api/agents             注册窗口身份 {id, name?, role?}
+```
+
+token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"ok":false,"error"}`。
+
+## 测试
+
+```bash
+npm run test:tb-core        # core 纯逻辑 50 项
+node style-audit-test.mjs   # 样式审计（含本插件）
+node style-standard-test.mjs --dir plugins/task-board
+npm run scan:admit          # 插件准入扫描
+npm run build && npm run check:dist
+```
+
+详细使用见 `docs/AI-CONVENTIONS.md` 与 `docs/AGENT-FLOW.md`。
