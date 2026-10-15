@@ -20116,6 +20116,106 @@ group('BUG 152 · 交换格式丢掉的概要与标注必须计入提示');
   }
 }
 
+
+/* ------------------------------------------------------------------
+   BUG 155：导入 .xmind 时没还原成的附件 / 图片必须数出来
+   ------------------------------------------------------------------ */
+group('BUG 155 · 附件没存进本地库不能闷声留在节点上');
+
+/*
+ * `readXMind` 早先只数**成功**的（`attachments` / `inlined`）。
+ * 失败的那批引用**原样留在节点上**（仍是包内路径 `xap:attachments/…`），
+ * 于是节点照样显示附件图标、点开才发现打不开 —— 而界面刚说过
+ * 「已导入（含 1 个附件）」，数是成功数，失败的一个字都没提。
+ *
+ * 与 BUG 126（下载没发出去却说「已保存」）同一类：
+ * 界面给了一个**并不存在**的东西。失败的真实原因是配额
+ * （附件字节存 IndexedDB，本仓库别处已点名这个场景）。
+ */
+{
+  const X = await import('./xmind.js');
+  const enc = new TextEncoder();
+  const sheet = (atts, image) => ({ id: 's1', title: '画布', class: 'sheet', rootTopic: {
+    id: 'r', title: '根', ...(image ? { image: { src: image } } : {}),
+    children: { attached: atts.map((a, i) => ({ id: 'n' + i, title: 'n' + i, href: a, children: { attached: [] } })) },
+  } });
+  const run = async (files, sheets, saveAsset) => {
+    const zb = await X.zipWrite([{ name: 'content.json', data: enc.encode(JSON.stringify(sheets)) }, ...files]);
+    return X.readXMind(new Uint8Array(zb), saveAsset);
+  };
+  const okRef = async (n, d) => JSON.stringify({ n, a: 'id_' + n, s: d.length });
+  const PDF = { name: 'attachments/a.pdf', data: new Uint8Array([1, 2, 3]) };
+  const MP4 = { name: 'attachments/b.mp4', data: new Uint8Array([4, 5, 6]) };
+
+  // ① 全部成功时不许误报
+  {
+    const r = await run([PDF], [sheet(['xap:attachments/a.pdf'])], okRef);
+    eq(r.attachments, 1, '① 全部成功：附件数对');
+    eq(r.assetsFailed, 0, '★ 全部成功时失败数为 0（不许误报）');
+    eq(r.imagesFailed, 0, '全部成功时图片失败数为 0');
+  }
+
+  // ② 存不进本地库（配额满）—— saveAsset 返回 null
+  {
+    const r = await run([PDF], [sheet(['xap:attachments/a.pdf'])], async () => null);
+    eq(r.attachments, 0, '② 存不进去：成功数为 0');
+    eq(r.assetsFailed, 1, '★ 存不进本地库必须数出来（BUG 155 前是 0，界面只说「含 0 个附件」）');
+  }
+
+  // ③ 包里根本没有这个条目
+  {
+    const r = await run([], [sheet(['xap:attachments/a.pdf'])], okRef);
+    eq(r.assetsFailed, 1, '★ 包里没有的附件引用同样是死链，要数出来');
+  }
+
+  // ④ saveAsset 抛错
+  {
+    const r = await run([PDF], [sheet(['xap:attachments/a.pdf'])], async () => { throw new Error('boom'); });
+    eq(r.assetsFailed, 1, '★ saveAsset 抛错也要数出来（不能只守返回 null 那条）');
+  }
+
+  // ⑤ 一成一败：两个数都要对
+  {
+    const r = await run([PDF, MP4], [sheet(['xap:attachments/a.pdf', 'xap:attachments/b.mp4'])],
+      async (n) => (String(n).endsWith('.mp4') ? null : okRef(n, new Uint8Array([1]))));
+    eq(r.attachments, 1, '⑤ 一成一败：成功 1');
+    eq(r.assetsFailed, 1, '★ 一成一败：失败 1（成功数不能盖掉失败数）');
+  }
+
+  // ⑥ 图片在包里 / 不在包里
+  {
+    const PNG = { name: 'resources/p.png', data: new Uint8Array([137, 80, 78, 71]) };
+    const a = await run([PNG], [sheet([], 'xap:resources/p.png')], okRef);
+    eq(a.inlined, 1, '⑥ 图片在包里：内联成功');
+    eq(a.imagesFailed, 0, '图片在包里时不算失败');
+    const b = await run([], [sheet([], 'xap:resources/p.png')], okRef);
+    eq(b.imagesFailed, 1, '★ 包里找不到这张图要数出来（引用留在节点上 = 画面空白）');
+  }
+
+  // ⑦ 反向：不是包内引用的不能算失败（本地 asset 引用 / data: URI）
+  {
+    const r = await run([], [sheet([], 'data:image/png;base64,AAAA')], okRef);
+    eq(r.imagesFailed, 0, '★ data: URI 图片不是包内引用，不许算失败');
+    /*
+     * 注意：**不能拿 JSON 引用串喂这条**。那种串在 href 还原那一步
+     * 落进 `data.hyperlink`（不是 `data.file`），压根进不到下面的
+     * `isPackRef` 判据 —— 于是判据删掉它也照样是 0，断言成了摆设。
+     * 真正会撞上这道判据的是 **file:// 本地附件**：它是非空、非包内的
+     * 字符串，去掉判据就会被当成"包里没有这个条目"计入失败 ——
+     * 明明附件好好的，界面却说「N 个附件未能存入本地库」。
+     */
+    const r2 = await run([], [sheet(['file:///Users/me/%E6%8A%A5%E5%91%8A.pdf'])], okRef);
+    eq(r2.assetsFailed, 0, '★ 本地 file:// 附件不是包内路径，不许算失败（误报等于说附件丢了）');
+  }
+
+  // ⑧ 源码契约：导入那句提示必须真把两个数接进去
+  {
+    const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    ok(/r\.assetsFailed/.test(src), '★ XMind 导入提示必须接上 r.assetsFailed（数了不说等于没数）');
+    ok(/r\.imagesFailed/.test(src), '★ XMind 导入提示必须接上 r.imagesFailed');
+  }
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {

@@ -2836,8 +2836,22 @@ async function gcOrphanAssets(quiet = false) {
          */
         const ok = await persist();
         const srcTip = { native: '无损快照', zen: 'XMind Zen 格式', legacy: 'XMind 8 老版格式' }[r.source] || r.source;
+        /*
+         * BUG 155：没还原成的附件 / 图片必须说出来。
+         *
+         * `r.attachments` 数的是**成功存进本地库**的个数 —— 存不进去的那些
+         * 引用留在节点上（仍是包内路径），节点照样显示附件图标、点开才发
+         * 现打不开，而一句「含 1 个附件」刚好把失败的瞒过去。
+         * 与 BUG 126 同一类：界面给了一个并不存在的东西。
+         * 失败的真实原因是配额（附件字节存 IndexedDB）。
+         */
+        const lostTip = [];
+        if (r.assetsFailed) lostTip.push(`${r.assetsFailed} 个附件未能存入本地库`);
+        if (r.imagesFailed) lostTip.push(`${r.imagesFailed} 张图片在包里找不到`);
         status(`已导入 ${workbook.sheets.length} 张画布（${srcTip}${r.attachments ? `，${r.attachments} 个附件` : ''}）`
-          + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容'));
+          + (lostTip.length ? `；${lostTip.join('、')}` : '')
+          + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容'),
+          lostTip.length > 0);
         ctx.toast(ok ? `已导入 ${workbook.sheets.length} 张画布` : '已导入，但保存失败', ok ? 'ok' : 'err');
       } catch (e) {
         status('XMind 导入失败：' + (e?.message || e), true);

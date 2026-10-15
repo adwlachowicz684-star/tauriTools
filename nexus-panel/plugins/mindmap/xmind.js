@@ -2040,7 +2040,8 @@ export async function writeXMind(sheets, activeId, loadAsset = null) {
  * @param {ArrayBuffer|Uint8Array|Blob} input
  * @param {(name:string, data:Uint8Array, meta:object)=>Promise<string|null>} [saveAsset]
  *        附件落地回调：把包内 resources/ 的文件存起来，返回新的引用串；返回 null 则保留包内路径字符串。
- * @returns {Promise<{sheets:Array, activeId:string, source:string, attachments:number}>}
+ * @returns {Promise<{sheets:Array, activeId:string, source:string, attachments:number,
+ *           inlined:number, assetsFailed:number, imagesFailed:number}>}
  *          source 标明数据来自哪一档：'native' | 'zen' | 'legacy'
  */
 export async function readXMind(input, saveAsset = null) {
@@ -2118,6 +2119,23 @@ export async function readXMind(input, saveAsset = null) {
   let attachments = 0;
   // 内联的图片数（不占 saveAsset，单独计）
   let inlined = 0;
+  /*
+   * BUG 155：**没还原成功的附件 / 图片必须数出来**。
+   *
+   * 早先只数成功的（`attachments` / `inlined`），失败的那些留在节点上：
+   *   · 附件 → `out[idx]` 保持包内路径（`xap:attachments/视频.mp4`），
+   *            那在本地根本不存在。节点上照样显示附件图标，
+   *            点开才发现打不开，而界面刚说过「已导入（含 1 个附件）」——
+   *            数是成功数，失败的那个**一个字都没提**。
+   *   · 图片 → 同理，`d.image` 保持包内路径，画面上一片空白。
+   *
+   * 真实的失败路径是**配额**：附件字节存进 IndexedDB，配额触顶时
+   * `saveAsset` 返回 null（本文件别处的注释已点名这个场景）。
+   * 静默失败的后果与 BUG 126（下载没发出去却说「已保存」）同一类：
+   * 界面给了一个**不存在**的东西，而用户无从察觉。
+   */
+  let assetsFailed = 0;
+  let imagesFailed = 0;
 
   for (const s of wb.sheets) {
     const km = parseKm(s.content);
@@ -2138,6 +2156,7 @@ export async function readXMind(input, saveAsset = null) {
       if (imgPath) {
         const uri = bytesToDataUri(entries.get(imgPath), imgPath);
         if (uri) { d.image = uri; inlined++; }
+        else imagesFailed++;   // BUG 155：包里没有这张图 → 引用成了死链
       }
       if (!saveAsset) return;
       for (const key of ['file', 'video']) {
@@ -2153,14 +2172,16 @@ export async function readXMind(input, saveAsset = null) {
           if (!v || !isPackRef(v)) return;
           // 剥掉可能的 `xap:` 前缀才是 zip 里的条目名（BUG 118）
           const data = entries.get(packPathOf(v));
-          if (!data) return;
+          // BUG 155：包里没有这个条目 → 引用就地变成死链，必须数出来
+          if (!data) { assetsFailed++; return; }
           const name = stripPackSeq(sanitizeFileName(v.split('/').pop() || 'attach'));
           tasks.push(
             Promise.resolve(saveAsset(name, data, { video: key === 'video' }))
               .then((ref) => {
                 if (ref) { out[idx] = ref; attachments++; }
+                else assetsFailed++;   // BUG 155：存不进本地库（配额满）
               })
-              .catch(() => { /* 单个附件失败不影响整体导入 */ }),
+              .catch(() => { assetsFailed++; /* 单个附件失败不影响整体导入 */ }),
           );
         });
         // 注意：**不能在这里写回**。out[idx] 此刻还是占位值（包内路径），
@@ -2184,6 +2205,9 @@ export async function readXMind(input, saveAsset = null) {
     attachments,
     // 从包里内联出来的图片数（供 UI 提示；不算在 attachments 里）
     inlined,
+    // BUG 155：上面两个是**成功数**；这两个是没还原成的，界面必须说
+    assetsFailed,
+    imagesFailed,
   };
 }
 
