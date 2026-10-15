@@ -30,6 +30,48 @@ export const VAULT_MODE_META: Record<VaultMode, { label: string }> = {
 
 export const CRED_KEY = 'agent-flow.credentials.v1';
 
+/*
+ * 凭据库落盘 —— 全 hook **唯一**入口，且必须**如实回答存没存成**。
+ * ----------------------------------------------------------------
+ * 早先两处都是 try + 空 catch（只留一句「忽略」），
+ * 然后**无条件往下走**：一处（连接变化）什么都不说，另一处（换保管方式）
+ * 紧接着 `onLog('✓ 连接存储方式已改为…')` —— 说了保存其实没保存。
+ *
+ * 而 localStorage 是这里的**唯一落盘点**：读只从
+ * `parseStore(localStorage.getItem(CRED_KEY))` 来，没有第二条路。
+ * 所以没存下 = 这次改动根本不存在。
+ *
+ * 这里比别处更严重的理由是**它会造成不可逆丢失**：换保管方式时，
+ * 落盘之前先 `osKeyringDelete()` 删掉 OS 里那条旧钥匙 —— 一旦落盘失败，
+ * 磁盘上还是用旧钥匙加密的旧密文，而旧钥匙已经没了，凭据**永久解不开**，
+ * 界面上却打了个 ✓。所以删钥匙必须**等落盘成功之后**再做（见 changeVaultMode）。
+ */
+let lastVaultWriteError: string | null = null;
+
+/** 取走最近一次落盘失败的原因（取完清空）。null = 这一路没失败过。 */
+export function takeVaultWriteError(): string | null {
+  const e = lastVaultWriteError;
+  lastVaultWriteError = null;
+  return e;
+}
+
+/** @returns {boolean} true = 真落盘了；false = 没存下，调用方必须说出来 */
+export function persistVaultStore(next: StoredFile): boolean {
+  try {
+    localStorage.setItem(CRED_KEY, serializeStore(next));
+    lastVaultWriteError = null;
+    return true;
+  } catch (e) {
+    lastVaultWriteError = e instanceof Error ? e.message : String(e);
+    return false;
+  }
+}
+
+/** 落盘失败时该说的那句话（两处共用一份，避免各写一套） */
+export function vaultWriteFailMsg(what: string, err: string | null): string {
+  return `✗ ${what}没能保存（${err || '浏览器存储不可用'}）—— 本次改动重启后会回到原来的样子`;
+}
+
 /**
  * 连接库（加密存储 + 解锁 + 换保管方式）。
  *
@@ -280,7 +322,14 @@ export function useCredentialVault({
     encryptStore(be, store, credentials, vaultKey).then((next) => {
       if (!alive) return;
       setStore(next);
-      try { localStorage.setItem(CRED_KEY, serializeStore(next)); } catch { /* 忽略 */ }
+      /*
+       * 没存下**必须说出来**：localStorage 是这里的唯一落盘点，
+       * 存不下就等于这次改动根本不存在 —— 而界面上已经显示改过了，
+       * 用户只能到重启后才发现退回原样。
+       */
+      if (!persistVaultStore(next)) {
+        onLog(vaultWriteFailMsg('连接改动', takeVaultWriteError()));
+      }
     });
     return () => { alive = false; };
     // store 是上一次的产物，纳入依赖会死循环
@@ -343,11 +392,12 @@ export function useCredentialVault({
      * 离开 oskeyring 时把 OS 里那条删掉 ——
      * 留着等于在数据目录之外又留了一把能解开旧密文的钥匙，
      * 而用户以为已经换掉了。
+     *
+     * ⚠️ **必须等落盘成功之后**再删：磁盘上此刻还是用旧钥匙加密的旧密文，
+     * 一旦先删了钥匙而落盘失败，就再也没有任何一把钥匙能解开它 ——
+     * 凭据永久丢失，且不可逆。旧钥匙留在 OS 里只是"多一把旧钥匙"，
+     * 而删除失败造成的是"一条都解不开"，两者不能等价对待。
      */
-    if (store.mode === 'oskeyring' && mode !== 'oskeyring') {
-      await osKeyringDelete();
-    }
-
     const base: StoredFile = {
       ...store,
       mode,
@@ -356,7 +406,14 @@ export function useCredentialVault({
     const next = await encryptStore(be, base, credentials, newKey);
     setStore(next);
     setVaultKey(newKey);
-    try { localStorage.setItem(CRED_KEY, serializeStore(next)); } catch { /* 忽略 */ }
+    if (!persistVaultStore(next)) {
+      /* 不打 ✓：存储方式根本没换成，打 ✓ 等于让人以为已经换好了。 */
+      onLog(vaultWriteFailMsg('新的保管方式', takeVaultWriteError()));
+      return;
+    }
+    if (store.mode === 'oskeyring' && mode !== 'oskeyring') {
+      await osKeyringDelete();
+    }
     onLog(`✓ 连接存储方式已改为${VAULT_MODE_META[mode].label}`);
   }, [store, credentials, onLog]);
   const openCredentials = useCallback((kind: string) => {

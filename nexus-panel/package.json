@@ -262,7 +262,8 @@
     "test:pg-config-corrupt-notice": "node plugins/project-group/config-corrupt-notice-test.mjs",
     "test:pg-segment-name-scope": "node plugins/project-group/segment-name-scope-test.mjs",
     "test:typecheck-guard": "node typecheck-guard-test.mjs",
-    "test:custom-plugin-save": "node custom-plugin-save-test.mjs"
+    "test:custom-plugin-save": "node custom-plugin-save-test.mjs",
+    "test:credential-vault-persist": "node credential-vault-persist-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",
