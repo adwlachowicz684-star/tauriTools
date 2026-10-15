@@ -8,7 +8,8 @@
 import {
   loadBlueprints, saveBlueprints, visibleBlueprints, refreshAll,
   describeRefresh, collectServers, pruneByServers,
-  type McpToolFetcher, type RefreshOutcome, type ServerRef,
+  bootRefresh as bootRefreshCore,
+  type BootRefreshHooks, type McpToolFetcher, type RefreshOutcome, type ServerRef,
 } from './mcpStore';
 import { registerBlueprints } from '../nodes/mcpGenerated';
 import {
@@ -47,25 +48,29 @@ export type BootRefreshResult = {
  * @param serverList 画布上配的服务（全部画布的并集）
  * @param fetcher    协议实现；不传则这次刷新必然退化成用快照
  */
-export async function bootRefresh(
+/**
+ * 启动后刷新一次 —— 转发到 mcpStore 那份（可测的实现在那边）。
+ *
+ * 这里只负责注入 React 侧才有的两样东西：
+ *   · register：重新注册进节点注册表（注册表在 nodes/mcpGenerated，拉得动 React）
+ *   · isStale：由调用方给 —— 见 mcpStore 里 bootRefresh 的说明。
+ *
+ * 以前本文件里那份实现把 saveBlueprints / registerBlueprints 写在
+ * await 内部，调用方那句"过期就丢弃"**挡不住**它们 ——
+ * 于是界面显示新工具、存盘却是旧蓝图，下次启动静默回到旧版本。
+ */
+export function bootRefresh(
   serverList: ServerRef[],
   previous: NodeBlueprint[],
   fetcher?: McpToolFetcher,
+  hooks: BootRefreshHooks = {},
 ): Promise<BootRefreshResult> {
-  const outcome = await refreshAll({ servers: serverList, previous, fetcher });
-  if (outcome.ok) {
-    /*
-     * 刷完按当前服务列表裁剪：服务已经从画布上删掉的，
-     * 它的工具标 stale（不在侧栏出现，但画布上的老节点照常显示）。
-     */
-    const pruned = pruneByServers(outcome.list, serverList);
-    saveBlueprints(pruned);
-    // 重新注册 —— 新增/变更的节点得出现在侧栏
-    registerBlueprints(pruned);
-    return { outcome: { ...outcome, list: pruned }, message: describeRefresh(outcome) };
-  }
-  return { outcome, message: describeRefresh(outcome) };
+  return bootRefreshCore(serverList, previous, fetcher, {
+    ...hooks,
+    register: (list) => { registerBlueprints(list); hooks.register?.(list); },
+  });
 }
+
 
 /*
  * 侧栏分组与计数原本定义在本文件，

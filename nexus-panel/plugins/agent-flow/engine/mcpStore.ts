@@ -121,6 +121,65 @@ export type RefreshOptions = {
  *
  * 逐个 server 独立处理：一个失败不影响其它。
  */
+/**
+ * 刷新完还要做的两件事（写蓝图快照 + 重新注册），
+ * 以及"这次刷新还作数吗"的判据。
+ *
+ * ================= 为什么要 isStale =================
+ *
+ * 刷新是异步的，而触发它的时机有三个（启动、手动点、改配置防抖）。
+ * 并发时"后发的先返回"很常见：
+ *
+ *   1. 改了服务配置 → 新刷新发出（seq=2）
+ *   2. 上一次旧刷新（seq=1，反映的是**旧服务列表**）这时才返回
+ *   3. 它已经把旧结果 saveBlueprints + registerBlueprints 了
+ *
+ * 调用方那句 `if (seq !== mcpRefreshSeq.current) return` 只挡住了
+ * **界面**那一半（rebuildMcpGroups）—— 存储与注册表这两处副作用
+ * 发生在 await 内部，**在检查之前就已经写完了**。
+ *
+ * 于是：界面显示的是新工具（对），而 localStorage 里存的是旧蓝图。
+ * 用户当时看不出任何问题，**下次启动**工具又变回旧的 ——
+ * 而且是静默的，不报错。这正是刷新代号本来要防的那件事，只防住了一半。
+ *
+ * 所以过期判据必须传进来，在写任何副作用**之前**问一次。
+ */
+export type BootRefreshHooks = {
+  /** 写快照之后要不要重新注册进节点注册表。由 React 侧注入（那边才有注册表） */
+  register?: (list: NodeBlueprint[]) => void;
+  /** true 表示这次刷新已经被更新的那次取代 —— 结果一律不落盘 */
+  isStale?: () => boolean;
+  /** 存到哪儿。默认 localStorage —— 与 saveBlueprints 的口径一致 */
+  kv?: KV;
+};
+
+export async function bootRefresh(
+  serverList: ServerRef[],
+  previous: NodeBlueprint[],
+  fetcher?: McpToolFetcher,
+  hooks: BootRefreshHooks = {},
+): Promise<{ outcome: RefreshOutcome; message: string }> {
+  const outcome = await refreshAll({ servers: serverList, previous, fetcher });
+  const message = describeRefresh(outcome);
+  if (!outcome.ok) return { outcome, message };
+  /*
+   * 过期就**什么都不写**。
+   *
+   * 注意：不是"写了再让调用方忽略"，而是压根不写 ——
+   * 存储与注册表这两处没有"被覆盖后还能撤销"的余地。
+   */
+  if (hooks.isStale?.()) return { outcome, message };
+  /*
+   * 刷完按当前服务列表裁剪：服务已经删掉的，它的工具标 stale
+   * （不在侧栏出现，但画布上的老节点照常显示）。
+   */
+  const pruned = pruneByServers(outcome.list, serverList);
+  saveBlueprints(pruned, hooks.kv);
+  // 重新注册 —— 新增/变更的节点得出现在侧栏
+  hooks.register?.(pruned);
+  return { outcome: { ...outcome, list: pruned }, message };
+}
+
 export async function refreshAll(opts: RefreshOptions): Promise<RefreshOutcome> {
   const previous = opts.previous ?? [];
   const servers = opts.servers ?? [];

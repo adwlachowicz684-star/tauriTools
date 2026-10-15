@@ -164,7 +164,19 @@ export function useMcpRegistry({
        * 见上面 mcpServers 的说明。
        */
       const servers = overrideServers ?? mcpRefsRef.current;
-      const r = await bootRefresh(servers, mcpBlueprints, mcpFetcher);
+      /*
+       * 过期判据要**传进去**，不能只在返回后自己判断 ——
+       *
+       * bootRefresh 内部会 saveBlueprints + registerBlueprints，
+       * 那两处副作用发生在 await 里面。等它返回再判断"这次过期了不更新界面"，
+       * 存储与注册表**已经被旧结果写完**了 —— 于是界面显示新工具（对），
+       * 而存盘是旧蓝图，用户下次启动静默回到旧版本，且不报错。
+       *
+       * 传进去的话，过期那次在写任何东西之前就停手。
+       */
+      const r = await bootRefresh(servers, mcpBlueprints, mcpFetcher, {
+        isStale: () => seq !== mcpRefreshSeq.current,
+      });
       // 被更新的刷新取代了就丢弃结果 —— 它反映的是过期的服务列表
       if (seq !== mcpRefreshSeq.current) return;
       if (r.outcome.ok) rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
