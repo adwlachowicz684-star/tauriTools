@@ -11,7 +11,10 @@ import {
   type McpToolFetcher, type RefreshOutcome, type ServerRef,
 } from './mcpStore';
 import { registerBlueprints } from '../nodes/mcpGenerated';
-import { groupByServer, type NodeBlueprint, type ServerGroup } from './mcpTools';
+import {
+  groupByServer, mcpSidebarGroups, toolCountOf,
+  type NodeBlueprint, type ServerGroup,
+} from './mcpTools';
 
 /**
  * 启动时调用：把存下来的蓝图注册进注册表。
@@ -28,31 +31,6 @@ export function hydrateMcpNodes(): NodeBlueprint[] {
 /** 侧栏分组：只显示没过期的 */
 export function mcpServerGroups(list: NodeBlueprint[]): ServerGroup[] {
   return groupByServer(visibleBlueprints(list));
-}
-
-/** 侧栏一个 MCP 条目 */
-export type McpSidebarItem = { key: string; label: string; hint?: string };
-
-/** 侧栏一个 server 小组 */
-export type McpSidebarGroup = { server: string; color: string; items: McpSidebarItem[] };
-
-/**
- * 转成侧栏要的形状。
- *
- * key 用 bp.type —— 注册时没给 meta.presets，
- * 注册表会用 meta 生成单个预设，key 就是 type（见 allPresets）。
- * 侧栏拿到 key 后 onAdd({kind:key})，与其余节点走同一条路径。
- */
-export function mcpSidebarGroups(list: NodeBlueprint[]): McpSidebarGroup[] {
-  return mcpServerGroups(list).map((g) => ({
-    server: g.server,
-    color: g.color,
-    items: g.blueprints.map((b) => ({
-      key: b.type,
-      label: b.tool,
-      hint: b.sub,
-    })),
-  }));
 }
 
 export type BootRefreshResult = {
@@ -88,3 +66,14 @@ export async function bootRefresh(
   }
   return { outcome, message: describeRefresh(outcome) };
 }
+
+/*
+ * 侧栏分组与计数原本定义在本文件，
+ * 但本文件 import 了 nodes/mcpGenerated（要注册进节点注册表），
+ * 而它又拉起 React 组件 —— 于是**只要 import 本文件就跑不了单测**。
+ *
+ * 那两个都是纯数据变换，已挪到 mcpTools（不依赖 React、可直接测）。
+ * 这里 re-export，调用方不用改。
+ */
+export type { McpSidebarGroup, McpSidebarItem } from './mcpTools';
+export { mcpSidebarGroups, toolCountOf } from './mcpTools';

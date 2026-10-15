@@ -9,9 +9,15 @@ import {
   type McpToolFetcher,
 } from '../engine/mcpStore';
 import { listTools, transportOf, stdioSupported } from '../engine/mcpClient';
-import {
-  hydrateMcpNodes, mcpSidebarGroups, bootRefresh,
-} from '../engine/mcpRegistry';
+import { hydrateMcpNodes, bootRefresh } from '../engine/mcpRegistry';
+/*
+ * 侧栏分组与计数来自 mcpTools 而不是 mcpRegistry ——
+ *
+ * mcpRegistry import 了 nodes/mcpGenerated（要注册进节点注册表），
+ * 那会一路拉起 React 组件。把纯数据变换留在 mcpTools 里，
+ * 它们才能被单测直接覆盖（mcpRegistry 本身在测试环境里 import 不了）。
+ */
+import { mcpSidebarGroups, toolCountOf } from '../engine/mcpTools';
 
 /**
  * MCP 服务库 + 工具节点刷新。
@@ -103,15 +109,19 @@ export function useMcpRegistry({
     setMcpGroups(list);
   }, []);
 
-  /** 每个服务已生成的工具节点数，按服务名索引 */
-  const mcpToolCount = useMemo(() => {
-    const out: Record<string, number> = {};
-    for (const b of mcpBlueprints) {
-      const k = String(b?.server ?? '').trim();
-      if (k) out[k] = (out[k] ?? 0) + 1;
-    }
-    return out;
-  }, [mcpBlueprints]);
+  /*
+   * 每个服务已生成的工具节点数。
+   *
+   * **从 mcpGroups 派生，不从 mcpBlueprints 算** ——
+   *
+   * mcpBlueprints 是启动快照（useState 只取了第一个元素，没有 setter），
+   * 刷新成功后它不变。用它算就会出现"侧栏有 3 个工具、
+   * 服务面板一个都不显示"这种两个数字对不上的情况，且不报错。
+   *
+   * mcpGroups 刷新成功会更新、删服务会立刻裁剪，
+   * 与侧栏显示的是同一份 —— 从它派生就不可能分叉（见 toolCountOf）。
+   */
+  const mcpToolCount = useMemo(() => toolCountOf(mcpGroups), [mcpGroups]);
 
 
   /*

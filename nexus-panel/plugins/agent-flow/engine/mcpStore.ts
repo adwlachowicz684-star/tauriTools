@@ -75,10 +75,14 @@ export function saveBlueprints(list: NodeBlueprint[], kv: KV = defaultKV()): voi
   saveWrapped(kv, MCP_BP_KEY, BP_VERSION, BP_FIELD, list ?? []);
 }
 
-/** 侧栏要显示哪些（过滤掉 stale 的） */
-export function visibleBlueprints(list: NodeBlueprint[]): NodeBlueprint[] {
-  return (list ?? []).filter((b) => !b.stale);
-}
+/*
+ * 侧栏要显示哪些（过滤掉 stale 的）——
+ *
+ * 已挪到 mcpTools：那边要做侧栏分组，而它依赖这个过滤，
+ * 反过来 mcpStore 已经 import 了 mcpTools，让它再 import 回来就是循环依赖。
+ * 放在 mcpTools（纯数据层），这里 re-export，调用方不用改。
+ */
+export { visibleBlueprints } from './mcpTools';
 
 /* ------------------------------------------------------------------ */
 /* 刷新                                                                */

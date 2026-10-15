@@ -561,3 +561,63 @@ export function mergeBlueprints(
   for (const v of map.values()) out.push(v);
   return out;
 }
+
+/** 侧栏要显示哪些（过滤掉 stale 的） */
+export function visibleBlueprints(list: NodeBlueprint[]): NodeBlueprint[] {
+  return (list ?? []).filter((b) => !b.stale);
+}
+
+/* ------------------------------------------------------------------ */
+/* 侧栏分组与计数（纯数据变换，不依赖 React 与注册表）                    */
+/* ------------------------------------------------------------------ */
+
+/** 侧栏一个 MCP 条目 */
+export type McpSidebarItem = { key: string; label: string; hint?: string };
+
+/** 侧栏一个 server 小组 */
+export type McpSidebarGroup = { server: string; color: string; items: McpSidebarItem[] };
+
+/**
+ * 转成侧栏要的形状。
+ *
+ * key 用 bp.type —— 注册时没给 meta.presets，
+ * 注册表会用 meta 生成单个预设，key 就是 type（见 allPresets）。
+ * 侧栏拿到 key 后 onAdd({kind:key})，与其余节点走同一条路径。
+ */
+export function mcpSidebarGroups(list: NodeBlueprint[]): McpSidebarGroup[] {
+  return groupByServer(visibleBlueprints(list)).map((g) => ({
+    server: g.server,
+    color: g.color,
+    items: g.blueprints.map((b) => ({
+      key: b.type,
+      label: b.tool,
+      hint: b.sub,
+    })),
+  }));
+}
+
+/**
+ * 每个服务下当前有几个工具节点，按服务名索引。
+ *
+ * **必须从侧栏分组派生，不能从蓝图快照算。**
+ *
+ * 快照（hydrateMcpNodes 的结果）是启动那一刻读的，刷新成功后它**不会变**
+ * —— 于是两个地方显示同一件事，一个更新了一个没有：
+ *
+ *   启动快照为空、刷新拉到 3 个工具
+ *     → 侧栏有 3 个，服务面板却一个工具数都不显示
+ *   刷新后服务端删掉一个工具
+ *     → 侧栏 2 个，服务面板还写着「3 个工具」
+ *
+ * 两种都不报错，只是两个数字对不上 —— 用户会以为其中一处是坏的。
+ * 从同一个源派生，就不会有分叉的可能。
+ */
+export function toolCountOf(groups: McpSidebarGroup[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const g of groups ?? []) {
+    const k = String(g?.server ?? '').trim();
+    if (!k) continue;
+    out[k] = (out[k] ?? 0) + (g?.items?.length ?? 0);
+  }
+  return out;
+}
