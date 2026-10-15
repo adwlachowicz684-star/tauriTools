@@ -1773,5 +1773,90 @@ console.log('\n=== 18. Rust 侧重复函数体 ===');
     `半=${halves(half.bySel).length} 全=${halves(full.bySel).length} 单=${halves(oneKey.bySel).length}`);
 }
 
+
+console.log('\n=== 21. 两个外壳入口必须对用户看到的东西达成一致 ===');
+/*
+ * 仓库有两个外壳入口：index.html（无构建 / 原生壳 js/shell.js）与
+ * index.react.html（Vite / React 壳 src/App.tsx）。它们跑在同一份
+ * localStorage 上、共用同一套主题与样式，用户并不区分自己在哪个壳里。
+ *
+ * 这一类问题的共同形状：**两个壳各自都正确，但互不知情** ——
+ *   改了一侧忘另一侧，于是"在 A 壳正常、在 B 壳不对"，且不报错。
+ * 前面第 13 节（CSP 类型判定）、第 17 节（Rust 常量）都是同一族，
+ * 本节补上「首屏」与「存储键」这两处。
+ */
+{
+  const htmlA = join(HERE, 'index.html');
+  const htmlB = join(HERE, 'index.react.html');
+  const a = readFileSync(htmlA, 'utf8');
+  const b = readFileSync(htmlB, 'utf8');
+
+  /* ---- 21.1 首屏防闪脚本：必须用「注入 <style>」，不得用内联样式 ----
+   *
+   * 内联样式（element.style.*）优先级高于任何 CSS 规则，而 applyTo() 只清
+   * THEME_VARS 里的变量、**不清 background** —— 首屏铺的那一版底色会永久
+   * 挂在 <html> 上：首屏深色、之后切浅色，底色卡在深色那一版（实测现象）。
+   * body 平时盖得住它，只在 overscroll / 窗口拉伸 / 背景图未加载时露出，
+   * 正因为只在边缘露，排查时极难往"首屏脚本"上想。
+   *
+   * 这条**曾经只在一侧修好**：index.react.html 早已改成注入 <style>
+   * （它的注释里写明了原因），而 index.html 一直是老写法。
+   */
+  const injected = (s) => /createElement\('style'\)/.test(s)
+    && /nexus-preload-bg/.test(s) && /appendChild/.test(s);
+  const inlineBg = (s) => /\.style\.(background\s*=|setProperty\('--bg')/.test(s);
+  t('两个入口的防闪脚本都用注入 <style>（不是内联样式）',
+    injected(a) && injected(b) && !inlineBg(a) && !inlineBg(b),
+    `index.html 注入=${injected(a)} 内联=${inlineBg(a)}；`
+    + `index.react.html 注入=${injected(b)} 内联=${inlineBg(b)}`);
+
+  t('两个入口都点名了对方（改一边必须改另一边）',
+    /index\.react\.html/.test(a) && /index\.html/.test(b),
+    '至少有一侧没写明它与另一侧必须同步');
+
+  /* 元断言：判据两端都灵 —— 老写法要被认出来 */
+  {
+    const old = `var r = document.documentElement;`
+      + `\n        r.style.setProperty('--bg', bg);`
+      + `\n        r.style.background = bg;`;
+    t('21.1 判据本身有效（老的内联写法会被认出）',
+      !injected(old) && inlineBg(old), `注入=${injected(old)} 内联=${inlineBg(old)}`);
+  }
+
+  /* ---- 21.2 两个壳共享的存储键必须来自同一常量 ----
+   *
+   * 两个壳跑在同一份 localStorage 上。若各写裸字面量，谁改了一侧的拼写，
+   * 另一侧就开始读另一个键 —— "在 A 壳设的状态，B 壳不认"，且不报错。
+   * 判定：两个壳的源码里出现该键时，**必须**是 host.js 导出的常量。
+   */
+  const shellJs = stripJs(readFileSync(join(HERE, 'js/shell.js'), 'utf8'));
+  const appTsx = stripJs(readFileSync(join(HERE, 'src/App.tsx'), 'utf8'));
+  const hostJs = stripJs(readFileSync(join(HERE, 'js/host.js'), 'utf8'));
+
+  const SHARED = ['nexus:last-plugin', 'nexus:sidebar-open'];
+  const bare = [];
+  for (const key of SHARED) {
+    for (const [name, src] of [['js/shell.js', shellJs], ['src/App.tsx', appTsx]]) {
+      if (src.includes(`'${key}'`) || src.includes(`"${key}"`)) bare.push(`${name} 里有裸字面量 ${key}`);
+    }
+    /* 常量必须真的定义在 host.js 并从两个壳 import */
+    const cname = key === 'nexus:last-plugin' ? 'KEY_LAST_PLUGIN' : 'KEY_SIDEBAR_OPEN';
+    if (!new RegExp(`export const ${cname}\\s*=\\s*'${key.replace(/[-]/g, '\\-')}'`).test(hostJs))
+      bare.push(`host.js 缺少 export const ${cname} = '${key}'`);
+    if (!new RegExp(`import[\\s\\S]{0,400}${cname}`).test(shellJs)) bare.push(`shell.js 没 import ${cname}`);
+    if (!new RegExp(`import[\\s\\S]{0,600}${cname}`).test(appTsx)) bare.push(`App.tsx 没 import ${cname}`);
+  }
+  t('两个壳共用的存储键走同一常量（不得各写裸字面量）',
+    bare.length === 0, bare.join('；') || `${SHARED.length} 个键均由 host.js 提供`);
+
+  /* 元断言：判据没失明 —— 真写死字面量必须被抓到 */
+  {
+    const fake = "localStorage.getItem('nexus:sidebar-open')";
+    t('21.2 判据本身有效（裸字面量会被认出）',
+      (fake.includes("'nexus:sidebar-open'")), '探针命中');
+  }
+}
+
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -16,6 +16,8 @@
  *   const issues = auditCss(cssText, fileName);   // 只有文本时
  */
 
+import { stripCommentsKeep } from '../test-scan-utils.mjs';
+
 /* ------------------------------------------------------------------
    外壳保证存在的变量
    分三类，因为"不存在"的严重程度不同：
@@ -162,8 +164,12 @@ export function auditCss(css, file = 'styles.css', opt = {}) {
      而不是整块删掉。因为 line 字段是拿去原文件里定位的，而这里的正则都在 text
      上匹配 —— 一旦整块删除，text 的行号坐标就比原文件少了注释占的行，
      报出去的行号会系统性偏小（project-group 的 style.css 曾因此偏 31 行）。
-     换成空白同时保证注释里的写法不会被规则误判。 */
-  const text = String(css || '').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+     换成空白同时保证注释里的写法不会被规则误判。
+
+     这份"保偏移剥注释"正是 test-scan-utils 的 stripCommentsKeep ——
+     此前本文件内联了一份（第 166 行），与 dead-class-test 里那份是同一逻辑的
+     第二、三份实现。改用共用模块，逻辑只留一处。 */
+  const text = stripCommentsKeep(css);
   const out = [];
   const lineOf = (i) => text.slice(0, i).split('\n').length;
   const push = (level, rule, msg, i) =>

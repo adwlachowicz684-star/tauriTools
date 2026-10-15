@@ -43,6 +43,10 @@ const CSS_FILES = [
   'plugins/project-group/style.css', 'plugins/agent-flow/styles.css',
   'plugins/mindmap/styles.css', 'plugins/mindmap/editor/kityminder.core.css',
   'plugins/color-picker/style.css', 'plugins/settings/settings.css',
+  /* 新插件的样式表**必须登记在这里** —— 漏登记的话它里面定义的类名
+     全部被当成"没配样式"，而该插件自己的类名又全在源码里，
+     于是整套 tb-* 报成死类名（实测：task-board 新增时漏登记，一次报 68 条）。 */
+  'plugins/task-board/styles.css',
 ].filter((f) => existsSync(join(HERE, f)));
 
 /*
@@ -873,15 +877,23 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
   t('stripComments 不吞行注释', stripComments('a // b') === 'a // b');
   t('stripCommentsJs 剥行注释', stripCommentsJs('a // b') === 'a ' , JSON.stringify(stripCommentsJs('a // b')));
 
-  /* 冻结基线 18 处。
+  /* 冻结基线 15 处（2026-10 由 18 收紧而来）。
    *
    * 排除两个**对方活跃区**（plugins/mindmap/、plugins/agent-flow/tests/）：
    *   这两处我迁过两轮（75 处 → 3 处），每次都被对方的整文件改动覆盖回来
    *   （现在 mindmap-test.mjs 又是 77 处）。继续迁是纯无效往返，还会让
    *   每次拉取都撞冲突标记。所以这里只守**我能稳定控制的文件**。
    *
-   * 剩余 18 处：command-consistency 3 处（改空串/空格判据后语义不同，见上）、
-   * scripts/ 2 处、md-* 2 处、project-group 11 处 —— 逐个迁移风险不小，
+   * 本轮迁走 5 处（基线因此 18 → 15）：
+   *   · js/style-audit.js —— 它内联的正是"保偏移剥注释"，与 test-scan-utils
+   *     的 stripCommentsKeep 逐字相同（第 166 行那份是为它才抽出来的）。
+   *   · theme-alpha-percent / close-action-persist / credential-vault-persist /
+   *     mcp-server-save 四个测试 —— 内联的是"空串版"，对应 stripCommentsFlatJs。
+   *     迁移顺带修掉一个隐患：它们行注释判据是 `(^|[^:])\/\/`，会把 `a//b`
+   *     （路径拼接）整行后半截吞掉；共用模块用 `(^|\s)`，只认真注释形态。
+   *
+   * 剩余 15 处：command-consistency 3 处（改空串/空格判据后语义不同，见上）、
+   * scripts/ 2 处、project-group 10 处 —— 逐个迁移风险不小，
    * 但**绝不能再多**。新增一份就报红，并指明改用共用模块。 */
   // 匹配源码文本 /\/\*[\s\S]*?\*\//
   const INLINE = /\/\\\/\\\*\[\\s\\S\]\*\?\\\*\\\//g;
@@ -920,7 +932,7 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
   };
   walk(HERE);
 
-  const BASELINE = 18;
+  const BASELINE = 15;
   t('剥注释不再新增内联副本', total <= BASELINE,
     total > BASELINE
       ? `实测 ${total} 处 > 基线 ${BASELINE}；新增的请改用 import { stripComments } from './test-scan-utils.mjs'`

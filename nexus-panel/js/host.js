@@ -50,6 +50,25 @@ import { THEME_VARS } from './themes.js';
  */
 export { THEME_VARS };
 
+/* ------------------------------------------------------------------
+ * 两个外壳（原生 js/shell.js 与 React src/App.tsx）**共用**的存储键。
+ *
+ * 为什么必须定义在这里：
+ *   两个壳都 import 本文件，且它们跑在**同一份 localStorage** 上 ——
+ *   用户在原生壳里收起侧栏、切到 React 壳（或反之）应当还是收起的。
+ *
+ *   此前两个壳各自写裸字面量，彼此没有任何关联。谁改了其中一侧的拼写
+ *   （比如加前缀），另一侧立刻开始读另一个键 ——
+ *   于是"在 A 壳设的状态，B 壳不认"，而且**不报错**，
+ *   排查时会以为是状态没存住，实际只是键名岔开了。
+ *
+ *   与「跨文件 CSS 撞名」是同一类：两份定义都对，但互不知情。
+ * ------------------------------------------------------------------ */
+/** 上次打开的插件 id（刷新/重启后回到原处） */
+export const KEY_LAST_PLUGIN = 'nexus:last-plugin';
+/** 侧栏展开状态：'1' 展开，'0' 收起，缺省（null）视为展开 */
+export const KEY_SIDEBAR_OPEN = 'nexus:sidebar-open';
+
 export function isNoBuild() {
   return globalThis.__NEXUS_NO_BUILD__ === true;
 }
