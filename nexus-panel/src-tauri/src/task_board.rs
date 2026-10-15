@@ -821,6 +821,9 @@ fn str_field(body: &Value, key: &str) -> Option<String> {
 
 /// 状态流转图：与前端 plugins/task-board/core.mjs 的 canTransition 逐字对齐
 /// （双端各自校验，防 HTTP 通道绕过看板规则——如 todo 直跳 done 淌过审查）。
+///
+/// 有守卫盯着：regression-guard-test.mjs 第 22 节会逐档比对这张表，
+/// 连 MCP schema 里的 enum 一起盯（改了它们 AI 就调不通）。
 /// 反向路径都在：claimed→todo / doing→todo 退回，review→doing 打回，done→review 重开。
 fn can_transition(from: &str, to: &str) -> bool {
     if from == to {
