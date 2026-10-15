@@ -7862,12 +7862,81 @@ group('BUG 113 · FreeMind 备注（richcontent TYPE=NOTE）双向');
     eq(back.root.children[1].data.note, 'NB', '★ 深层：B 的备注不错位');
   }
 
-  // ⑥ exchangeLoss：FreeMind 现在带得走备注，OPML 仍然不带
+  // ⑥ exchangeLoss：FreeMind 与 OPML 都带得走备注（BUG 153），Mermaid / PlantUML 仍不带
   {
     const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note: '备注' }, children: [] } });
     eq(fmt.exchangeLoss(c, 'freemind').note, 0, '★ FreeMind 带得走备注 → 不计入丢失');
-    eq(fmt.exchangeLoss(c, 'opml').note, 1, 'OPML 仍装不下备注 → 计入丢失');
+    eq(fmt.exchangeLoss(c, 'opml').note, 0, '★ OPML 带得走备注（_note，BUG 153）→ 不计入丢失');
     eq(fmt.exchangeLoss(c, 'mermaid').note, 1, 'Mermaid 仍装不下备注');
+    eq(fmt.exchangeLoss(c, 'plantuml').note, 1, 'PlantUML 仍装不下备注');
+  }
+
+  /*
+   * ⑥b OPML 备注往返（BUG 153）
+   *
+   * ⓘ 光把上面那条 loss 从 1 改成 0 **不算数** —— 那只是改了"声称"，没证明
+   *   导出的 .opml 里真有、导回来真还在。这里逐条量行为。
+   */
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note: '根备注' }, children: [
+      { data: { id: 'c1', text: '子1', note: '含 < 尖括号 & 和号 "引号"' }, children: [] },
+      { data: { id: 'c2', text: '子2', note: '第一行\n第二行' }, children: [] },
+      { data: { id: 'c3', text: '子3' }, children: [] },
+    ] } });
+    const out = fmt.toOpml(c);
+    ok(/_note="/.test(out), '★ 导出写了 _note（OmniOutliner / Logseq / Tinderbox 都读它）');
+    ok(/_note="[^"]*&quot;/.test(out),
+      '★ _note 走 escXml（备注里的 " 必须转义，否则属性值提前收口）');
+    ok(/_note="[^"]*&lt;/.test(out), '_note 里的 < 必须转义（不转义整份 .opml 就是坏 XML）');
+    ok(/&#10;/.test(out), '★ 换行写成字符引用 &#10;（裸 LF 会被 XML 规范化成空格）');
+    const back = JSON.parse(fmt.fromOpml(out));
+    eq(back.root.data.note, '根备注', '★ OPML 往返：根备注保住（BUG 153 前整条消失）');
+    eq(back.root.children[0]?.data?.note, '含 < 尖括号 & 和号 "引号"',
+      '★ OPML 往返：含 < & " 的备注保住');
+    eq(back.root.children[1]?.data?.note, '第一行\n第二行',
+      '★ OPML 往返：多行备注保住换行（不转义会挤成「第一行 第二行」）');
+    ok(!back.root.children[2]?.data?.note, 'OPML 往返：无备注节点不长出备注');
+  }
+
+  // ⑥c 深层 + 多顶层：索引必须一一对齐（applyNotes 与 applyLinks 同走前序 rows2）
+  {
+    const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note: 'N0' }, children: [
+      { data: { id: 'a', text: 'A', note: 'NA', hyperlink: 'https://a.x' },
+        children: [{ data: { id: 'a1', text: 'A1', note: 'NA1' }, children: [] }] },
+      { data: { id: 'b', text: 'B', note: 'NB' }, children: [] },
+    ] } });
+    const back = JSON.parse(fmt.fromOpml(fmt.toOpml(c)));
+    eq(back.root.data.note, 'N0', 'OPML 深层：根备注不错位');
+    eq(back.root.children[0].data.note, 'NA', '★ OPML 深层：A 的备注不错位');
+    eq(back.root.children[0].data.hyperlink, 'https://a.x',
+      '★ OPML 深层：A 的链接仍在（备注不挤掉 url）');
+    eq(back.root.children[0].children[0].data.note, 'NA1', '★ OPML 深层：A1 的备注不错位');
+    eq(back.root.children[1].data.note, 'NB', '★ OPML 深层：B 的备注不错位');
+
+    // 多顶层条目会插虚拟根（BUG 111 / 148 同一份判据），备注必须跟着整体后移
+    const multi = `<opml version="2.0"><body>
+<outline text="第一棵树" _note="N1"><outline text="X" _note="NX"/></outline>
+<outline text="第二棵树" _note="N2"><outline text="Y" _note="NY"/></outline>
+</body></opml>`;
+    const m = JSON.parse(fmt.fromOpml(multi));
+    eq(m.root.children.length, 2, '★ 多顶层：两棵树并列（插了虚拟根）');
+    eq(m.root.children[0].data.note, 'N1', '★ 多顶层：第一棵树的备注不错位');
+    eq(m.root.children[0].children[0].data.note, 'NX', '★ 多顶层：X 的备注不错位');
+    eq(m.root.children[1].data.note, 'N2', '★ 多顶层：第二棵树的备注不错位');
+    eq(m.root.children[1].children[0].data.note, 'NY', '★ 多顶层：Y 的备注不错位');
+  }
+
+  // ⑥d 转义换行只能加在备注这一处，不能进 escXml（那边靠裸换行插 <br/>）
+  {
+    const fsrc = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
+    const esc = fsrc.match(/function escXml\s*\([\s\S]*?\n\}/);
+    ok(!!esc, 'escXml 存在');
+    if (esc) {
+      ok(!/&#10;/.test(esc[0]),
+        '★ escXml 里不转义换行（FreeMind 的 <p> 靠裸换行插 <br/>，一转义段落就并成一段）');
+    }
+    ok(/escXml\(note\)\.replace\(/.test(fsrc),
+      '★ 换行转义只加在 _note 这一处（BUG 153）');
   }
 
   // ⑦ 两处共用同一份 XHTML 转换（各写一份迟早对不上）
@@ -7997,7 +8066,7 @@ group('BUG 111 · 交换格式的超链接与"装不下什么"必须说清');
 
     eq(op.hyperlink, 0, '★ OPML 带得走超链接（url），不计入丢失');
     eq(op.collapsed, 1, '★ OPML **装不下折叠状态**（早先注释 wrongly 说它带）');
-    eq(op.note, 1, 'OPML 装不下备注（只有 FreeMind 带得走）');
+    eq(op.note, 0, '★ OPML 带得走备注（_note，BUG 153）—— 早先这句说它装不下');
     eq(mm.hyperlink, 1, '★ Mermaid 装不下超链接');
     eq(mm.collapsed, 1, '★ Mermaid 装不下折叠状态');
     eq(pu.hyperlink, 1, '★ PlantUML 装不下超链接');

@@ -567,8 +567,21 @@ export function fromFreemind(text) {
 /**
  * 画布 → OPML 2.0。
  *
- * `text` 属性是 OPML 里唯一必须的；`_note` 之类扩展属性写了也只是增加噪音，
- * 别的软件不会读。
+ * `text` 属性是 OPML 里唯一必须的；备注走 `_note`（BUG 153）。
+ *
+ * ⓘ 早先这里写着「`_note` 之类扩展属性写了也只是增加噪音，别的软件不会读」
+ *   —— 这句是**错的**，按它执行了很久，于是导入 OmniOutliner / Logseq /
+ *   Zavala / Tinderbox 导出的 .opml 时备注**整条消失**（不报错、也不提示），
+ *   我们导出的 .opml 在那些软件里同样看不到备注。
+ *
+ *   查证（`_note` 的来龙去脉）：它由 OmniOutliner 引入、被一批大纲工具沿用
+ *   —— Logseq 的 mldoc 在 OPML 导入导出里把首行写 `text`、其余行写 `_note`；
+ *   Tinderbox 的 OPML 模板把 $Text 映射到 `_note`；Zavala 与 Bike 也用。
+ *   它确实**不在** OPML 2.0 标准里，但「标准里没有」不等于「没人读」：
+ *   标准未定义的属性本来就是被忽略的，写了不会让别的软件读坏。
+ *
+ *   真正要防的是**自己发明**属性（本文件别处那条「硬塞自定义属性只会在别的
+ *   软件里变乱码，一律不写」说的是那个），而 `_note` 是现成的通行写法。
  */
 export function toOpml(content, title = '脑图') {
   const km = parseKm(content);
@@ -594,6 +607,21 @@ export function toOpml(content, title = '脑图') {
     // BUG 111：url 是 OPML 2.0 规范属性（OmniOutliner / 幕布 等都读写）
     const href = String(n?.data?.hyperlink || '').trim();
     if (href) attrs.push(`url="${escXml(href)}"`);
+    /*
+     * BUG 153：备注写 `_note`（通行的非标准属性，见函数头那段说明）。
+     *
+     * **换行必须写成字符引用** —— 与 escXml 里把 tab 写成 `&#9;` 同一个道理：
+     * XML 的属性值规范化会把裸的 LF / CR 变成空格，而字符引用**不走**规范化。
+     * 不转义的话多行备注往返后挤成一行（实测 "第一行\n第二行" → "第一行 第二行"）。
+     *
+     * ⓘ 只在**这里**转义换行，不能加进 escXml：那边 `<p>${escXml(p).replace(
+     *   /\n/g, '<br/>')}</p>` 依赖 escXml **保留**裸换行来插 `<br/>`，
+     *   一转义 `<br/>` 就再也插不进去（FreeMind 的备注段落会静默并成一段）。
+     */
+    const note = normalizeNoteText(n?.data?.note);
+    if (note) {
+      attrs.push(`_note="${escXml(note).replace(/\r/g, '&#13;').replace(/\n/g, '&#10;')}"`);
+    }
     if (!kids.length) {
       lines.push(`${pad}<outline ${attrs.join(' ')}/>`);
       return;
@@ -612,7 +640,7 @@ export function toOpml(content, title = '脑图') {
  * 不造根的话，除第一个以外的顶层条目会被静默丢掉。
  */
 export function fromOpml(text) {
-  const rows = readXmlNodes(text, 'outline', 'text', null, 'url');
+  const rows = readXmlNodes(text, 'outline', 'text', null, 'url', readOpmlNote);
   if (!rows) return null;
   if (!rows.length) return null;
   // ★ 走 rowsWithVirtualRoot（与 PlantUML / Markdown 同一份判据），不再自己
@@ -622,7 +650,22 @@ export function fromOpml(text) {
   // BUG 111：超链接回填（url 是 OPML 2.0 规范属性）。
   // 用 rows2 而不是 rows —— 多顶层 outline 时会插入虚拟根，索引必须对齐。
   applyLinks(root, rows2.map((r) => r.link));
+  /*
+   * BUG 153：备注回填（`_note`）。
+   * 索引同样要按 rows2 —— 与 applyLinks 同理，插了虚拟根就整体错位。
+   */
+  applyNotes(root, rows2.map((r) => r.note));
   return stringifyKm(root);
+}
+
+/**
+ * 取 `<outline>` 的备注：`_note`（见 toOpml 头那段说明）。
+ *
+ * ⓘ 与 FreeMind 那条读侧共用 `normalizeNoteText` —— 两处各写一份，改了一处
+ *   不改另一处，同一个备注换个格式就是两种样子。
+ */
+function readOpmlNote(el) {
+  return normalizeNoteText(el?.getAttribute?.('_note') || '');
 }
 
 /* ------------------------------------------------------------
@@ -1588,7 +1631,8 @@ export const EXCHANGE_KEEP = {
     relationships: true,
     styleKeys: ['color', 'background',
       'font-family', 'font-size', 'font-weight', 'font-style'] },
-  opml: { hyperlink: true },
+  // BUG 153：备注走 `_note`（通行的非标准写法，往返实测保得住）
+  opml: { hyperlink: true, note: true },
   mermaid: {},
   plantuml: {},
 };
