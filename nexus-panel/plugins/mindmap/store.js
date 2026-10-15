@@ -274,6 +274,30 @@ export async function listBackups() {
   return out;
 }
 
+/**
+ * 清空全部快照。
+ *
+ * 必须**回话**（返回删掉了几份、几份没删成），不能像早先那样
+ * `for (const k of await keys(...)) await del(k)` 就完事：
+ *
+ *   · `del` 是「吞异常返回 false」而不是抛出，不接返回值就**完全不知道**
+ *     有没有删掉；
+ *   · `keys` 列举失败时返回**空数组**（见上面它的注释），那时**一份都没删**，
+ *     而调用方拿到的还是「删之前数出来的份数」。
+ *
+ * 清空是破坏性且**不可逆**的操作（快照就是为了"误操作后可回滚"而存在的），
+ * 调用方按删之前的数报「已清空 N 份」，等于给了一句无法核对的假成功。
+ *
+ * @returns {Promise<{cleared:number, failed:number}>}
+ *   cleared —— 真正删掉的份数；failed —— del 返回 false 的份数。
+ *   ⚠️ 两者都为 0 时**不代表成功**：那是 `keys` 列举失败（一份都没轮到）。
+ */
 export async function clearBackups() {
-  for (const k of await keys(K_BACKUP)) await del(k);
+  let cleared = 0;
+  let failed = 0;
+  for (const k of await keys(K_BACKUP)) {
+    if (await del(k)) cleared++;
+    else failed++;
+  }
+  return { cleared, failed };
 }

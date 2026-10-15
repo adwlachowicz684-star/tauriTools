@@ -2758,9 +2758,32 @@ export async function openBackups(app) {
             danger: true,
           });
           if (!ok) return;
-          await store.clearBackups();
+          /*
+           * 必须接住 clearBackups 的**回话**（BUG 158）。
+           *
+           * 早先这里是 `await store.clearBackups(); app.api.status(\`已清空 ${n} 份快照\`)`，
+           * 而 n 是**删之前**数出来的 —— 删除结果一次都没核对过。实测（把 del 逐个
+           * 打回 false）界面照样说「已清空 3 份快照」，且不是错误级。
+           *
+           * 这不是纸面情况：store.del 是「吞异常返回 false」，store.keys 列举失败时
+           * 返回**空数组**（那时一份都没轮到，一份也没删）。而清空是破坏性且不可逆
+           * 的操作 —— 快照正是「误操作后可回滚」的唯一指望，说成已清空、实际还堆在
+           * 本地库里，用户会以为退路已经拆掉而放心继续改。
+           *
+           * ⓘ cleared 与 failed **都为 0** 不等于成功：那是 keys 列举失败，
+           *   所以单独走「仍在本地库中」那句，别报成 0 份已清空。
+           */
+          const r = await store.clearBackups();
+          const cleared = r?.cleared || 0;
+          const failed = r?.failed || 0;
           await render();
-          app.api.status(`已清空 ${n} 份快照`);
+          if (failed) {
+            app.api.status(`已清空 ${cleared} 份快照，${failed} 份未能删除（本地存储操作被拒绝）`, true);
+          } else if (!cleared) {
+            app.api.status(`快照未能清空：${n} 份仍在本地库中（列举或删除失败）`, true);
+          } else {
+            app.api.status(`已清空 ${cleared} 份快照`);
+          }
         }, (m) => app.api.status(m, true)),
       }, '清空快照'),
     ),

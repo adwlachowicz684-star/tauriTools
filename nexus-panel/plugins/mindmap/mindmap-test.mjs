@@ -132,7 +132,11 @@ function installIndexedDB() {
   // failTx 是「整库不可用」，用它测不出「只有某几条读挂了」的真实场景
   // （IndexedDB 单条记录损坏 / 大 Blob 读取被打断）—— 而那正是会把
   // 「读不出来」误判成「资产没了」的入口。
-  const ctl = { failPut: false, failTx: false, failOpen: false, failGetPrefix: '' };
+  // failDel：让「删失败」这条路径能被测到。
+  // 早先 delete 是**无条件成功**，于是 store.del 的 false 分支、以及
+  // clearBackups 的 failed 计数从来没被真正跑过 —— 那两条是没验证过的空壳
+  // （BUG 158 就是在那里：清空快照按删之前的数报「已清空 N 份」）。
+  const ctl = { failPut: false, failTx: false, failOpen: false, failGetPrefix: '', failDel: false };
 
   class FakeRequest {
     constructor() {
@@ -173,7 +177,12 @@ function installIndexedDB() {
       }
       return this._new(r);
     }
-    delete(key) { const r = new FakeRequest(); this.data.delete(key); r._done(undefined); return this._new(r); }
+    delete(key) {
+      const r = new FakeRequest();
+      if (ctl.failDel) r._fail(new Error('删除被拒绝（注入）'));
+      else { this.data.delete(key); r._done(undefined); }
+      return this._new(r);
+    }
     getAllKeys() { const r = new FakeRequest(); r._done([...this.data.keys()]); return this._new(r); }
   }
 
@@ -20433,6 +20442,151 @@ group('BUG 157：导入快照写不进本地库 —— 不能说成「重复或�
       '★ failed 必须真的说进提示里（数了却不说 = 这次的洞换个地方重演）');
   }
 }
+
+
+group('BUG 158：清空快照 —— 不能按「删之前数出来的份数」报「已清空 N 份」');
+
+{
+  const St = fs.readFileSync(path.join(HERE, 'store.js'), 'utf8').replace(/\r\n/g, '\n');
+  const Pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
+  const balanced = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0, j = src.indexOf('{', i);
+    if (j < 0) return '';
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return '';
+  };
+
+  /* ============ ① store 层：真跑一遍删除结果（不是只看源码） ============ */
+
+  const clearBody = balanced(St, 'export async function clearBackups(');
+  ok(clearBody.length > 0, '★ 取得到 clearBackups 的函数体', '长度：' + clearBody.length);
+  ok(/return \{ cleared, failed \}/.test(clearBody),
+    '★ clearBackups 回话：返回「删掉了几份 / 几份没删成」');
+
+  const seed = async (n) => {
+    for (let i = 0; i < n; i++) await store.putBackup({ ts: 8000000000000 + i, sheets: [], activeId: null });
+  };
+  const wipe = async () => { for (const k of await store.keys('backup:')) await store.del(k); };
+
+  await wipe();
+  {
+    await seed(3);
+    const r = await store.clearBackups();
+    eq(r?.cleared, 3, '★ 三份全删掉：cleared=3');
+    eq(r?.failed, 0, '★ 三份全删掉：failed=0');
+    eq((await store.keys('backup:')).length, 0, '★ 全删掉后库里一份不剩');
+  }
+
+  {
+    await seed(3);
+    ctl.failDel = true;
+    const r = await store.clearBackups();
+    ctl.failDel = false;
+    eq(r?.cleared, 0, '★ del 逐个被打回 false 时 cleared=0（不是「删之前数出来的 3」）');
+    eq(r?.failed, 3, '★ del 逐个被打回 false 时 failed=3');
+    eq((await store.keys('backup:')).length, 3, '★ 删失败时三份**真的还在**库里');
+    await wipe();
+  }
+
+  /* ============ ② panels 层：把「清空快照」按钮的真身跑一遍 ============ */
+
+  const ob = balanced(Pn, 'export async function openBackups(');
+  const seg = (() => {
+    const i = ob.indexOf("}, '清空快照'),");
+    const j = i < 0 ? -1 : ob.lastIndexOf('onclick:', i);
+    return j < 0 ? '' : ob.slice(j, i);
+  })();
+  ok(seg.length > 0, 'panels：能定位「清空快照」按钮的 onclick');
+
+  /*
+   * 行为级：只做源码契约守不住这次的洞 —— 「已清空 ${n} 份」和「已清空
+   * ${cleared} 份」在文本上都成立，差别只体现在**删除结果不同时说出来的话**。
+   * 必须真的跑一遍才看得到。
+   */
+  const run = async (clearRet, backups = 3) => {
+    const seen = [];
+    const stubStore = {
+      listBackups: async () => Array.from({ length: backups }, (_, i) => ({ ts: 1000 + i, sheets: [] })),
+      clearBackups: async () => clearRet,
+    };
+    const app = { api: { status: (m, err) => seen.push({ m: String(m), err: !!err }) } };
+    const askConfirm = async () => true;
+    const render = async () => {};
+    const safe = (_n, fn) => fn;
+    const onclick = new Function('store', 'app', 'askConfirm', 'render', 'safe',
+      'const o = {' + seg + '}; return o.onclick;')(stubStore, app, askConfirm, render, safe);
+    await onclick();
+    return seen.at(-1) || null;
+  };
+
+  const three = { cleared: 3, failed: 0 };
+
+  /* ⓪ 全部删除成功：只说清空了几份，不提失败 */
+  {
+    const r = await run(three);
+    eq(r?.m, '已清空 3 份快照', '★ 全删掉时就是「已清空 3 份快照」');
+    ok(!r?.err, '★ 全删掉时不是错误级提示');
+  }
+
+  /* ① 全部删除失败：必须说成失败，不能照说「已清空 3 份」 */
+  {
+    const r = await run({ cleared: 0, failed: 3 });
+    ok(/3 份未能删除/.test(r?.m || ''), '★ 删不掉必须说「N 份未能删除」',
+      '实际：' + JSON.stringify(r?.m));
+    ok(!/^已清空 3 份快照$/.test(r?.m || ''),
+      '★ 删不掉**不能**照说「已清空 3 份快照」（那是按删之前的数报的假成功）',
+      '实际：' + JSON.stringify(r?.m));
+    ok(r?.err === true, '★ 删不掉时提示是错误级（否则一句平常话会被当成正常结果略过）');
+  }
+
+  /* ② 部分失败：两边都要说，不能只报成功的那一份 */
+  {
+    const r = await run({ cleared: 1, failed: 2 });
+    ok(/已清空 1 份快照/.test(r?.m || ''), '★ 部分失败：说清删掉了 1 份',
+      '实际：' + JSON.stringify(r?.m));
+    ok(/2 份未能删除/.test(r?.m || ''), '★ 部分失败：说清还有 2 份没删掉',
+      '实际：' + JSON.stringify(r?.m));
+    ok(r?.err === true, '★ 部分失败也是错误级');
+  }
+
+  /* ③ keys 列举失败：cleared 与 failed 都为 0，**不等于成功** */
+  {
+    const r = await run({ cleared: 0, failed: 0 });
+    ok(/仍在本地库中/.test(r?.m || ''), '★ 一份都没轮到时必须说「仍在本地库中」',
+      '实际：' + JSON.stringify(r?.m));
+    ok(!/已清空 0 份/.test(r?.m || ''),
+      '★ 一份都没轮到时**不能**说「已清空 0 份快照」（看着像成功）',
+      '实际：' + JSON.stringify(r?.m));
+    ok(r?.err === true, '★ 一份都没轮到时是错误级');
+  }
+
+  /* ④ 旧版不回话（返回 undefined）也不能退化成假成功 */
+  {
+    const r = await run(undefined);
+    ok(/仍在本地库中/.test(r?.m || ''), '★ 拿不到回话时不得报成功',
+      '实际：' + JSON.stringify(r?.m));
+    ok(r?.err === true, '★ 拿不到回话时是错误级');
+  }
+
+  /*
+   * ⑤ 源码契约：成功文案必须用**删掉的个数**，不是删之前数出来的 n。
+   *
+   * ⚠️ 必须先剥掉块注释再比：上面那段「早先这里是 … 已清空 ${n} 份快照」的
+   *    注释里就写着旧写法，不剥的话「不得再出现 ${n}」这条会**恒为真地红**
+   *    —— 它数到的是注释，不是代码（本项目反复栽的"断言数到注释自身"）。
+   */
+  const segCode = seg.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/app\.api\.status\(`已清空 \$\{cleared\} 份快照`\)/.test(segCode),
+    '★ 成功文案用 cleared（真删掉的个数），不用删之前的 n');
+  ok(!/已清空 \$\{n\} 份快照/.test(segCode),
+    '★ 不得再出现「已清空 ${n} 份快照」（n 是删之前数出来的，删除结果没核对过）');
+}
+
 
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
