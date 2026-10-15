@@ -17,16 +17,34 @@
 
     /* 首屏防闪：在主题系统就绪前先把底色铺上，避免白闪。
        颜色由 theme-manager 每次应用主题时写入 localStorage，
-       所以新增主题不必回来改这里 —— 只改 js/themes.js 即可。 */
+       所以新增主题不必回来改这里 —— 只改 js/themes.js 即可。
+
+       ⚠️ 与 index.react.html（Vite 模式）里的同名脚本**必须保持一致** ——
+       改一边就要改另一边，否则两个外壳的观感会分岔。
+
+       必须用「注入 <style>」而不是「内联 style.background」：
+       ------------------------------------------------------------------
+       内联样式（element.style.*）优先级**高于任何 CSS 规则**，
+       而 theme-manager 的 applyTo() 只清理 THEME_VARS 里的变量，
+       **不会清 background** —— 于是首屏铺的那一版底色会永久挂在 <html> 上：
+       首屏是深色、之后切到浅色主题，底色卡在深色那一版（实测现象）。
+       body 平时盖得住它（body 有自己的 background），
+       只在 overscroll、窗口拉伸、背景图未加载这些边缘时机露出来 ——
+       正因为只在边缘露，排查时极难往"首屏脚本"上想。
+
+       <style> 标签里的规则参与**正常层叠**（只比选择器与顺序），
+       主题系统就绪后会被后加载的样式表正常覆盖，不会卡住。 */
     (function () {
       try {
         var bg = localStorage.getItem('nexus:preload-bg');
         var fg = localStorage.getItem('nexus:preload-fg');
         if (!bg) return;
-        var r = document.documentElement;
-        r.style.setProperty('--bg', bg);
-        if (fg) r.style.setProperty('--text', fg);
-        r.style.background = bg;
+        var st = document.createElement('style');
+        st.id = 'nexus-preload-bg';
+        st.textContent =
+          'html,body{background:' + bg + ';' +
+          (fg ? 'color:' + fg + ';' : '') + '}';
+        document.head.appendChild(st);
       } catch (e) { /* 存储不可用时忽略 */ }
     })();
   </script>
