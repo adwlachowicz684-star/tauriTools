@@ -72,6 +72,8 @@ export type BuriedTrigger = {
   hostLabel: string;
   /** 模块内部触发器节点的 id —— 展开后会变成 hostId__triggerId */
   triggerId: string;
+  /** 生效的那张卡是什么类型（webhook / 定时 / …），好让提示说得更具体 */
+  kind: string;
 };
 
 /* ------------------------------------------------------------------ */
@@ -216,13 +218,29 @@ export function collectBuriedTriggers(
   ) => {
     for (const n of body?.nodes ?? []) {
       const d = (n?.data ?? {}) as Record<string, unknown>;
-      if (isTriggerNode(d)) {
+      /*
+       * 判据**必须**用 isActiveTrigger，不能退化成 isTriggerNode。
+       *
+       * 后者只看 kind，于是"用户自己关掉的触发器"（节点开关关了、
+       * 或触发卡片全禁用了）也会被报成"埋在模块里，永远不会触发" ——
+       * 而他是**故意**关的。这种误报比漏报更糟：它指向一个不存在的问题，
+       * 用户照着去改（把触发器挪出模块）之后，触发器照样不生效，
+       * 于是连这条提示带整套触发器面板一起失去信任。
+       *
+       * isActiveTrigger 的判据与 collectGlobalTriggers 逐条对齐
+       * （见它上面的注释）—— 也就是说：埋着的判定等价于
+       * "把它搬到画布顶层，全局会不会收集到"。会 → 才是真埋着。
+       */
+      if (isActiveTrigger(d)) {
+        const k = triggerEntriesOf(d).filter(entryEnabled)
+          .map((e) => String(e.kind ?? ''))[0] ?? '';
         out.push({
           canvasId: c.id,
           canvasName: c.name,
           hostId,
           hostLabel,
           triggerId: String(n?.id ?? ''),
+          kind: k,
         });
         continue;
       }

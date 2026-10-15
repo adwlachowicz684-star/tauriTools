@@ -58,7 +58,7 @@ test('脱钩副本（inner）里的触发器同样算埋着', () => {
       id: 'inst',
       data: {
         kind: 'module', moduleId: '', label: '脱钩的',
-        inner: { nodes: [{ id: 't9', data: { kind: 'trigger' } }], edges: [] },
+        inner: { nodes: [{ id: 't9', data: { kind: 'trigger', trigger: 'webhook' } }], edges: [] },
       },
     }])],
     resolve,
@@ -148,4 +148,77 @@ test('源码守卫：提示给出的做法是做得到的（不能说"拖到画�
     '模块编辑视图里没法把节点拖到主画布——这是在承诺一件做不到的事',
   );
   assert.ok(/编辑内部/.test(src), '要指向真正能做的地方');
+});
+
+test('自己关掉的触发器不报（误报比漏报更糟）', () => {
+  const out = collectBuriedTriggers(
+    [canvas('c1', '画布一', [{
+      id: 'inst',
+      data: {
+        kind: 'module', moduleId: '', label: '脱钩的',
+        inner: {
+          nodes: [
+            { id: 'off', data: { kind: 'trigger', trigger: 'webhook', enabled: false } },
+            { id: 'noCard', data: { kind: 'trigger' } },
+          ],
+          edges: [],
+        },
+      },
+    }])],
+    resolve,
+  );
+  assert.equal(out.length, 0, '用户是**故意**关的；报出来会指向一个不存在的问题');
+});
+
+test('卡片全禁用也不报 —— 与全局收集同一口径', () => {
+  const out = collectBuriedTriggers(
+    [canvas('c1', '画布一', [{
+      id: 'inst',
+      data: {
+        kind: 'module', moduleId: '', label: '脱钩的',
+        inner: {
+          nodes: [{
+            id: 't1',
+            data: {
+              kind: 'trigger',
+              entries: [{ id: 'e1', kind: 'webhook', enabled: false }],
+            },
+          }],
+          edges: [],
+        },
+      },
+    }])],
+    resolve,
+  );
+  assert.equal(out.length, 0);
+});
+
+test('生效的那张卡类型要报出来（提示里说得更具体）', () => {
+  const out = collectBuriedTriggers(
+    [canvas('c1', '画布一', [{
+      id: 'inst',
+      data: {
+        kind: 'module', moduleId: '', label: '脱钩的',
+        inner: {
+          nodes: [{ id: 't1', data: { kind: 'trigger', trigger: 'cron' } }],
+          edges: [],
+        },
+      },
+    }])],
+    resolve,
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'cron');
+});
+
+test('源码守卫：埋藏判定必须用 isActiveTrigger，不能退化成 isTriggerNode', () => {
+  const src = readSrc('engine/triggerRegistry.ts');
+  const i = src.indexOf('export function collectBuriedTriggers');
+  assert.ok(i >= 0);
+  const body = src.slice(i, src.indexOf('\n}\n', i));
+  assert.ok(/isActiveTrigger\s*\(/.test(body), '必须用 isActiveTrigger（与全局收集同一口径）');
+  assert.ok(
+    !/if \(isTriggerNode\(d\)\)/.test(body),
+    '退化成 isTriggerNode 会把"用户自己关掉的"也算进去 —— 那是误报',
+  );
 });
