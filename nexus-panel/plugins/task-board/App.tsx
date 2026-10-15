@@ -9,6 +9,9 @@ import {
 } from './types';
 import type { TbConfig, Task, TaskStore, Priority, TaskStatus } from './types';
 import { actionsFor, allTags, applyTransition, filterTasks, fmtTime, relTime, sortTasks } from './core';
+/* 输入法守卫：中文 / 日文输入时回车是「把候选词上屏」，不是界面上的「提交」。
+   备注框回车直接落盘 tasks.json，不挡的话打一半的拼音会被当成一条备注写进去。 */
+import { isComposing } from '../../js/ime.js';
 
 /**
  * 任务管理器 · 看板
@@ -92,10 +95,12 @@ export default function App() {
     setStore(await S.readStore(ctx, c.dataDir));
   };
 
-  const withErr = (fn: () => Promise<void>) => async () => {
+  /* 带参转发（...args）：新建任务那类「带草稿入参」的回调也要能走同一份
+     报错判据，否则它就得自己写一份 try/catch，两边会各改各的。 */
+  const withErr = (fn: (...args: any[]) => Promise<void>) => async (...args: any[]) => {
     try {
       setErr('');
-      await fn();
+      await fn(...args);
     } catch (e: any) {
       setErr(String(e?.message || e));
       ctx.toast(String(e?.message || e), 'err');
@@ -299,12 +304,12 @@ export default function App() {
           agents={store.agents}
           me={me}
           onClose={() => setNewOpen(false)}
-          onCreate={async (draft) => {
+          onCreate={withErr(async (draft) => {
             await S.createTask(ctx, cfg.dataDir, me, draft);
             setNewOpen(false);
             await refresh();
             ctx.toast('任务已创建', 'ok');
-          }}
+          })}
         />
       )}
 
@@ -578,6 +583,7 @@ function DetailModal({
           onChange={(e) => setNote(e.target.value)}
           placeholder="写条备注 / 进展，回车提交"
           onKeyDown={(e) => {
+            if (isComposing(e.nativeEvent || e)) return;
             if (e.key === 'Enter' && note.trim()) {
               onComment(note);
               setNote('');

@@ -20,11 +20,19 @@ export default function Settings() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const c = await S.loadConfig(ctx);
-      if (!alive) return;
-      setCfg(c);
-      setLoaded(true);
-      setServiceOn(await S.apiHealth(c));
+      try {
+        const c = await S.loadConfig(ctx);
+        if (!alive) return;
+        setCfg(c);
+        setLoaded(true);
+        setServiceOn(await S.apiHealth(c));
+      } catch (e: any) {
+        // 不接住就是未捕获 rejection：界面永远停在「加载中…」，
+        // 看不出是配置读不出来，只会以为插件卡住了。
+        if (!alive) return;
+        setMsg('配置加载失败：' + String(e?.message || e));
+        setLoaded(true);
+      }
     })();
     return () => {
       alive = false;
@@ -118,8 +126,14 @@ export default function Settings() {
           <button
             className="tb-act sm"
             onClick={async () => {
-              const dir = await ctx.invoke<string>('tb_default_dir');
-              setCfg({ ...cfg, dataDir: dir });
+              // 取不到默认目录时（Rust 侧未授权 / 命令缺失）必须说一声：
+              // 不接住就是未捕获 rejection，点了按钮界面纹丝不动、也不报错。
+              try {
+                const dir = await ctx.invoke<string>('tb_default_dir');
+                setCfg({ ...cfg, dataDir: dir });
+              } catch (e: any) {
+                setMsg('取默认目录失败：' + String(e?.message || e));
+              }
             }}
           >
             用默认

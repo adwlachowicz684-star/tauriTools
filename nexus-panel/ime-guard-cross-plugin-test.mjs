@@ -42,9 +42,11 @@ const code = (p) => strip(rd(p));
 
 let pass = 0;
 let fail = 0;
-function t(name, ok) {
+function t(name, ok, detail = '') {
+  // 第三个参数是证据，原来被吞掉了：报红只给名字、不给是哪个文件，
+  // 看报告的人得自己去 plugins/ 下扫一遍才能定位。
   if (ok) { pass++; console.log(`✅ ${name}`); }
-  else { fail++; console.log(`❌ ${name}`); }
+  else { fail++; console.log(`❌ ${name}${detail ? ' — ' + detail : ''}`); }
 }
 
 /* ── 1. js/ime.js 真身行为 ───────────────────────────────────── */
