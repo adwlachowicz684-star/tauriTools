@@ -1711,17 +1711,33 @@ async function gcOrphanAssets(quiet = false) {
     // 导入的历史快照 ts 普遍比本机现有的更旧，而清理从最旧的开始删 ——
     // 不保护的话「已导入 N 份」的提示和「列表里一份都没有」会同时出现。
     const addedKeys = new Set();
-    let added = 0, skipped = 0;
+    /*
+     * `failed` 必须与 `skipped` **分开数**（BUG 157）。
+     *
+     * `putBackup` 写不进去时返回 null（IndexedDB 配额触顶是真会发生的：
+     * 一份快照就是整本工作簿，从别的机器带回 10 份很常见）。早先一律
+     * `skipped++`，于是界面说「跳过 N 份（重复或格式不符）」——
+     * 那是**定性错误**：用户读到的是"那几份本来就不该进来"（本机已有 /
+     * 文件里就是坏的），不会再去管；实际是本地库写不进去、快照根本没进来。
+     * 与 BUG 155 同一类：失败要说成失败，不能混进"本来就不需要"里。
+     *
+     * ⓘ ts 已在上面判过，`putBackup` 那条「ts 非法返回 false」到不了这里，
+     *   所以走到 else 只可能是写入失败。
+     */
+    let added = 0, skipped = 0, failed = 0;
     for (const b of list) {
       // ts 缺失的快照无法排序，也无法去重 —— 宁可跳过也不要塞进库里
       // 造成「列表里出现一个时间戳为 undefined 的条目」
       if (!b || typeof b.ts !== 'number' || !Array.isArray(b.sheets)) { skipped++; continue; }
       if (mine.has(b.ts)) { skipped++; continue; }
       const ok = await store.putBackup({ ts: b.ts, sheets: b.sheets, activeId: b.activeId });
-      if (ok) { added++; mine.add(b.ts); addedKeys.add(ok); } else skipped++;
+      if (ok) { added++; mine.add(b.ts); addedKeys.add(ok); } else failed++;
     }
     await trimBackups(addedKeys);
-    status(`已导入 ${added} 份快照${skipped ? `，跳过 ${skipped} 份（重复或格式不符）` : ''}`);
+    status(`已导入 ${added} 份快照`
+      + (skipped ? `，跳过 ${skipped} 份（重复或格式不符）` : '')
+      + (failed ? `，${failed} 份未能写入本地库（可能是空间不足）` : ''),
+    failed > 0);
   }
 
   /**

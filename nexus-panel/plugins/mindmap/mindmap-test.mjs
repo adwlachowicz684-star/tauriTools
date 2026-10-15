@@ -20348,6 +20348,92 @@ group('BUG 156：主题面板三处 applyTheme —— 它的回话不能盖掉�
   }
 }
 
+group('BUG 157：导入快照写不进本地库 —— 不能说成「重复或格式不符」');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const body = idx.slice(idx.indexOf('async function importBackups()'),
+    idx.indexOf('/**\n   * 按当前上限滚动清理旧快照。'));
+  ok(body.length > 0 && /trimBackups\(addedKeys\)/.test(body),
+    '★ 取得到 importBackups 的函数体', '长度：' + body.length);
+
+  /*
+   * 行为级：把函数体包进 new Function 跑，注入 store / io / status / trimBackups。
+   *
+   * 只做源码契约守不住这次的洞 —— 「skipped++」和「failed++」在文本上都成立，
+   * 差别只体现在**说出来的那句话**上，必须真的跑一遍才看得到。
+   */
+  const run = async (putRet, backups, existing = []) => {
+    const seen = [];
+    const store = {
+      listBackups: async () => existing.map((ts) => ({ ts, sheets: [] })),
+      putBackup: async () => putRet,
+    };
+    const io = {
+      pickFile: async () => ({}),
+      readText: async () => JSON.stringify({
+        kind: 'nexus-mindmap-backups', version: 1, backups,
+      }),
+    };
+    const status = (m, err) => seen.push({ m: String(m), err: !!err });
+    const trimBackups = async () => {};
+    await new Function('store', 'io', 'status', 'trimBackups',
+      body + '\n; return importBackups;')(store, io, status, trimBackups)();
+    return seen.at(-1) || null;
+  };
+
+  const two = [{ ts: 1000, sheets: [] }, { ts: 2000, sheets: [] }];
+
+  /* ① 写入成功：只说导入了几份，不提失败 */
+  {
+    const r = await run('backup:00000000001000', two);
+    eq(r?.m, '已导入 2 份快照', '★ 写入成功时就是「已导入 2 份快照」');
+    ok(!r?.err, '★ 写入成功时不是错误级提示');
+  }
+
+  /* ② 写入失败（配额）：必须说成失败，不能混进「重复或格式不符」 */
+  {
+    const r = await run(null, two);
+    ok(/2 份未能写入本地库/.test(r?.m || ''), '★ 写不进去必须说「N 份未能写入本地库」',
+      '实际：' + JSON.stringify(r?.m));
+    ok(!/重复或格式不符/.test(r?.m || ''),
+      '★ 写不进去**不能**说成「重复或格式不符」（那是定性错误：用户会以为那几份本来就不该进来）',
+      '实际：' + JSON.stringify(r?.m));
+    ok(r?.err === true, '★ 写失败时提示是错误级（否则一句平常话会被当成正常结果略过）');
+  }
+
+  /* ③ 重复的：才该说「重复或格式不符」，且不能夹带「未能写入」 */
+  {
+    const r = await run('backup:00000000002000', two, [1000]);
+    ok(/跳过 1 份（重复或格式不符）/.test(r?.m || ''), '★ 本机已有的那一份才算「重复」',
+      '实际：' + JSON.stringify(r?.m));
+    ok(!/未能写入本地库/.test(r?.m || ''), '★ 没有写入失败时不得虚报「未能写入本地库」',
+      '实际：' + JSON.stringify(r?.m));
+    ok(!r?.err, '★ 只是重复时不是错误级');
+  }
+
+  /* ④ ts 不合法：同样属于「格式不符」，不算写入失败 */
+  {
+    const r = await run('backup:00000000002000', [{ ts: 'x', sheets: [] }, { ts: 2000, sheets: [] }]);
+    ok(/跳过 1 份（重复或格式不符）/.test(r?.m || ''), '★ 缺 ts 的那一份算「格式不符」',
+      '实际：' + JSON.stringify(r?.m));
+    ok(!/未能写入本地库/.test(r?.m || ''), '★ 格式不符不得被算成写入失败',
+      '实际：' + JSON.stringify(r?.m));
+  }
+
+  /* ⑤ 源码契约：三个计数器必须分开（合并计数就是这次的洞） */
+  {
+    const head = idx.slice(idx.indexOf('async function importBackups()'),
+      idx.indexOf('await trimBackups(addedKeys);'));
+    ok(/let added = 0, skipped = 0, failed = 0;/.test(head),
+      '★ 导入快照分别数「成功 / 跳过 / 失败」');
+    ok(/if \(ok\) \{ added\+\+; mine\.add\(b\.ts\); addedKeys\.add\(ok\); \} else failed\+\+;/.test(head),
+      '★ 写入失败进 failed，不进 skipped');
+    ok(/failed \? `，\$\{failed\} 份未能写入本地库/.test(body),
+      '★ failed 必须真的说进提示里（数了却不说 = 这次的洞换个地方重演）');
+  }
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
