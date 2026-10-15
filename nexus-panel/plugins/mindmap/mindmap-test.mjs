@@ -7825,7 +7825,9 @@ group('BUG 113 · FreeMind 备注（richcontent TYPE=NOTE）双向');
     eq(back.root.data.note, '根备注', '往返：根备注保住');
     eq(back.root.children[0]?.data?.note, '含 < 尖括号 & 和号',
       '★ 往返：含 < 与 & 的备注保住（必须转义，否则整段变标签）');
-    eq(back.root.children[1]?.data?.note, '段一\n段二', '★ 往返：多段落备注保住');
+    // BUG 154：空行现在保住了（早先 split(/\n{2,}/) 把它当分隔符丢掉，
+    // 于是这段期望写的是「段一\n段二」—— 那是把丢失当成了预期）
+    eq(back.root.children[1]?.data?.note, '段一\n\n段二', '★ 往返：多段落备注保住（含空行）');
     eq(back.root.children[2]?.data?.note, 'a b',
       '★ 往返：控制字符被换成空格（XML 1.0 不允许，不换整份 .mm 会打不开）');
     ok(!back.root.children[3].data.note, '往返：无备注节点不长出备注');
@@ -7937,6 +7939,56 @@ group('BUG 113 · FreeMind 备注（richcontent TYPE=NOTE）双向');
     }
     ok(/escXml\(note\)\.replace\(/.test(fsrc),
       '★ 换行转义只加在 _note 这一处（BUG 153）');
+  }
+
+  /*
+   * ⑥e 读侧归一化必须与 FreeMind 共用同一份（BUG 153）
+   *
+   * ⓘ 必须喂**别人写的** XML，不能用自己导出的 —— 写侧已经归一化了，
+   *   读侧归不归一都看不出差别（我第一版就栽在这里，变异放行照样全绿）。
+   */
+  {
+    const raw = '  行一  \n\n\n行二  ';
+    const xmlOpml = `<opml version="2.0"><body><outline text="X" _note="${
+      raw.replace(/\n/g, '&#10;')}"/></body></opml>`;
+    const xmlMm = `<map version="1.0.1"><node TEXT="X"><richcontent TYPE="NOTE"><html><body>${
+      raw}</body></html></richcontent></node></map>`;
+    const viaOpml = JSON.parse(fmt.fromOpml(xmlOpml)).root.data.note;
+    const viaMm = JSON.parse(fmt.fromFreemind(xmlMm)).root.data.note;
+    eq(viaOpml, '行一\n\n行二',
+      '★ 别人的 .opml：备注同样归一化（去行尾空白 / 合并空行 / 去首尾）');
+    eq(viaMm, '行一\n\n行二', 'FreeMind 读侧同样归一化');
+    eq(viaOpml, viaMm, '★ 同一份原始备注走两种格式必须一样（读侧共用 normalizeNoteText）');
+  }
+
+  /*
+   * ⑥f BUG 154：备注里的空行不能凭空消失
+   *
+   * 早先 noteToRichcontent 用 `split(/\n{2,}/)` 拆段落，空行是分隔符、
+   * 本身就丢了 —— 而 exchangeLoss 声称 FreeMind 带得走备注（note: 0），
+   * 一句都不说。OPML（BUG 153 之后）保得住，同一个内容两种结果。
+   */
+  {
+    const rt = (note) => {
+      const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note }, children: [] } });
+      return JSON.parse(fmt.fromFreemind(fmt.toFreemind(c))).root.data.note;
+    };
+    const rtOpml = (note) => {
+      const c = JSON.stringify({ root: { data: { id: 'r', text: '根', note }, children: [] } });
+      return JSON.parse(fmt.fromOpml(fmt.toOpml(c))).root.data.note;
+    };
+    eq(rt('段一\n\n段二'), '段一\n\n段二', '★ 空行保住（BUG 154 前变成「段一\\n段二」）');
+    eq(rt('行1\n行2'), '行1\n行2', '单个换行仍是换行（没被当成空段落拆开）');
+    eq(rt('段一'), '段一', '单段不受影响');
+    // 3 个以上换行由 normalizeNoteText 收敛成 2 个 —— 两种格式必须一致
+    eq(rt('a\n\n\n\nb'), 'a\n\nb', '连续空行收敛为 2 个换行');
+    eq(rtOpml('a\n\n\n\nb'), 'a\n\nb', 'OPML 同样收敛（两处同一份归一化）');
+    eq(rt('段一\n\n段二'), rtOpml('段一\n\n段二'),
+      '★ 同一份备注：FreeMind 与 OPML 结果必须一致');
+    // 空段落必须是标准写法，不能是自造标签
+    ok(/<p><\/p>/.test(fmt.toFreemind(JSON.stringify(
+      { root: { data: { id: 'r', text: '根', note: '段一\n\n段二' }, children: [] } }))),
+      '★ 空行写成空段落 <p></p>（标准 XHTML，Freeplane 认）');
   }
 
   // ⑦ 两处共用同一份 XHTML 转换（各写一份迟早对不上）

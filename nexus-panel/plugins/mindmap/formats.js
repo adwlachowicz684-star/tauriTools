@@ -482,9 +482,31 @@ export function toFreemind(content, rels = null) {
   function noteToRichcontent(note, depth) {
     const t = String(note ?? '').trim();
     if (!t) return '';
-    const inner = t.split(/\n{2,}/).map((p) => `<p>${escXml(p).replace(/\n/g, '<br/>')}</p>`).join('');
+    /*
+     * BUG 154：空行必须写成**空段落** `<p></p>`，不能当分隔符丢掉。
+     *
+     * 早先是 `t.split(/\n{2,}/)` —— 空行是分隔符，本身就消失了，于是
+     * 「段一\n\n段二」往返后变成「段一\n段二」：用户敲的那个空行没了，
+     * 而 exchangeLoss 声称 FreeMind 带得走备注（note: 0），一句都不说。
+     * 更冤的是同一份备注走 OPML（BUG 153 之后）**保得住**空行 ——
+     * 同一个内容、两种格式两种结果。
+     *
+     * 空段落是标准 XHTML，FreeMind / Freeplane 都渲染成一行空行。
+     */
+    const inner = [];
+    let buf = [];
+    const flush = () => {
+      if (!buf.length) return;
+      inner.push(`<p>${escXml(buf.join('\n')).replace(/\n/g, '<br/>')}</p>`);
+      buf = [];
+    };
+    for (const ln of t.split('\n')) {
+      if (ln.trim() === '') { flush(); inner.push('<p></p>'); } else buf.push(ln);
+    }
+    flush();
+    const innerHtml = inner.join('');
     return '  '.repeat(depth + 1)
-      + `<richcontent TYPE="NOTE"><html><body>${inner}</body></html></richcontent>`;
+      + `<richcontent TYPE="NOTE"><html><body>${innerHtml}</body></html></richcontent>`;
   }
 }
 
