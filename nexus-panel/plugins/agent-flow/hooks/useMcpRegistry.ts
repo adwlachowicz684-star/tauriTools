@@ -17,7 +17,7 @@ import { hydrateMcpNodes, bootRefresh } from '../engine/mcpRegistry';
  * 那会一路拉起 React 组件。把纯数据变换留在 mcpTools 里，
  * 它们才能被单测直接覆盖（mcpRegistry 本身在测试环境里 import 不了）。
  */
-import { mcpSidebarGroups, toolCountOf } from '../engine/mcpTools';
+import { mcpSidebarGroups, toolCountOf, type NodeBlueprint } from '../engine/mcpTools';
 
 /**
  * MCP 服务库 + 工具节点刷新。
@@ -105,6 +105,23 @@ export function useMcpRegistry({
   const [mcpRefreshing, setMcpRefreshing] = useState(false);
   const mcpBootedRef = useRef(false);
 
+  /*
+   * **当前**的蓝图清单 —— 刷新时要拿它当"上一次的结果"。
+   *
+   * 不能直接用 mcpBlueprints：那是 useState 的初值（useState 只取了第一个
+   * 元素，没有 setter），**恒为启动快照**。第二次刷新拿它当 previous 会：
+   *
+   *   1. 第一次刷新新学到的工具（启动快照里没有的）在第二次刷新时
+   *      **整条从列表里消失**，而不是被标 stale ——
+   *      存盘丢了它，下次启动画布上用着它的节点就变成未知类型，
+   *      参数面板变空，用户连修都没法修。而且全程不报错。
+   *   2. diff 每次都算成"新增" —— 日志每次都说"新增 N"，
+   *      其实一次都没变。
+   *
+   * 用 ref 而不是 state：改它不该触发重渲染（界面看的是 mcpGroups）。
+   */
+  const mcpCurrentRef = useRef<NodeBlueprint[]>(mcpBlueprints);
+
   const rebuildMcpGroups = useCallback((list: ReturnType<typeof mcpSidebarGroups>) => {
     setMcpGroups(list);
   }, []);
@@ -174,19 +191,23 @@ export function useMcpRegistry({
        *
        * 传进去的话，过期那次在写任何东西之前就停手。
        */
-      const r = await bootRefresh(servers, mcpBlueprints, mcpFetcher, {
+      const r = await bootRefresh(servers, mcpCurrentRef.current, mcpFetcher, {
         isStale: () => seq !== mcpRefreshSeq.current,
       });
       // 被更新的刷新取代了就丢弃结果 —— 它反映的是过期的服务列表
       if (seq !== mcpRefreshSeq.current) return;
-      if (r.outcome.ok) rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
+      if (r.outcome.ok) {
+        // 记下这次的结果 —— 下次刷新要拿它当"上一次"，否则新学到的工具会丢
+        mcpCurrentRef.current = r.outcome.list;
+        rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
+      }
       onLog(r.message);
     } finally {
       // 只有仍是最新那次才收起"刷新中" ——
       // 否则旧刷新返回时会把新刷新还在跑的状态提前清掉
       if (seq === mcpRefreshSeq.current) setMcpRefreshing(false);
     }
-  }, [mcpBlueprints, rebuildMcpGroups, onLog]);
+  }, [rebuildMcpGroups, onLog]);
 
   /*
    * 配了 MCP 服务就自动刷新一次。
