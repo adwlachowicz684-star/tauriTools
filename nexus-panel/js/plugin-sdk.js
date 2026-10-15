@@ -1024,11 +1024,26 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
         return off;
       }
 
-      /* Owned 归属句柄：iframe 插件也拿一份，兑现 buildCtx 注释与
-         plugin-sdk.d.ts 的既有契约（"保持 ctx 形状一致"）。
-         它记的是 iframe **自己** window/document 上的东西，随 iframe
-         remove() 一起消失——记了也无害，但 API 形状不再缺角
-         （此前 ctx.owned 在这里是 undefined，插件一碰就整树空白）。 */
+      /*
+       * owned —— 归属通道（iframe 侧）。
+       *
+       * 为什么 iframe 也要发：**契约层已经承诺了**。
+       * plugin-sdk.d.ts 声明的是 `owned: Owned`（必选，不是 `owned?`），
+       * 并注明"iframe 插件也会拿到"。实现不给，插件按契约写
+       * `ctx.owned.setTimeout(...)` 就是当场 TypeError —— 实测表现是
+       * **整树空白**（插件渲染到一半抛错，界面上什么都不剩），
+       * 连错在哪都不知道。
+       *
+       * 记什么：iframe 自己 window / document 上的东西。
+       * 这些东西**多数**随 iframe.remove() 一起消失，但**不是全部** ——
+       * BroadcastChannel、WebSocket 是**跨文档**注册的（挂在 origin 上），
+       * iframe 移除后并不会自动关闭，要等 GC；addHandle 那一路对 iframe
+       * 因此是真兜底，不是"记了也无害"。
+       *
+       * 撤销时机：宿主 safeTeardown 里 `ctx.__destroy()` 排在
+       * `iframe.remove()` **之前**（见 js/host.js），所以这里的 dispose
+       * 一定跑得到 —— 不存在"补了也回收不到"。
+       */
       const owned = createOwned(manifest.id, {
         warn: (...a) => console.warn('[owned]', ...a),
       });
@@ -1036,8 +1051,8 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
       const ctx = buildCtx({
         id: manifest.id, manifest, mode: 'iframe',
         root: container, container, transport, bus, theme: currentTheme, bindShortcut,
-        openArgs,
         owned,
+        openArgs,
       });
 
       // 卸载时兜底注销

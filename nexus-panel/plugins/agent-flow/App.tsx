@@ -3160,7 +3160,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         {buriedHere.length > 0 && (
           <span
             className="trg-btn-static trg-buried"
-            title={`${buriedHere.map((b) => `模块「${b.hostLabel}」里的 ${b.kind || '触发器'}（${b.triggerId}）`).join('；')}`
+            title={`${buriedHere.map((b) => `模块「${b.hostLabel}」里的 ${b.triggerId}`).join('；')}`
               + ' —— 全局扫描只看画布顶层，模块内部的不会被扫描，自动触发永远不会发生。'
               + '请在「编辑内部」里删掉模块内那个，把触发器建在画布上'}
           >

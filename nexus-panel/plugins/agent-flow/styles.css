@@ -1301,7 +1301,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 /* 下：左＝节点库·模块库 / 画布库，中＝画布，右＝设置 / 日志           */
 /* ------------------------------------------------------------------ */
 .app-shell { display: flex; height: 100vh; overflow: hidden; }
-.app-shell > .app { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .app-inner { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* 左边栏：与画布一样高 —— 高度由父级 flex 决定，不写死 */
@@ -2313,7 +2312,6 @@ input.mono, textarea.mono {
 .task-tag { font-size: var(--fs-micro, 10px); padding: 0 6px; border-radius: var(--r-pill, 999px);
   background: var(--af-item); color: var(--af-soft); }
 .task-node-dur { margin-left: auto; color: var(--af-mute); font-size: var(--fs-note, 11px); }
-.task-caret { color: var(--af-mute); width: 10px; }
 .task-node-body { padding: 0 10px 9px; display: flex; flex-direction: column; gap: 7px; }
 /* 容器本身此前也无定义：相邻两组 field 之间没有间距，会糊成一片 */
 .task-field { margin-bottom: 10px; }

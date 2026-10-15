@@ -54,6 +54,10 @@ BASE_FILE = os.path.join(ROOT, '.git', 'derive-base.json')
 EXCLUDE_DIRS = {
     'node_modules', '.git', 'target', 'dist', 'build',
     '.tauri', '__pycache__', '.venv', 'venv',
+    # .tool_output 是 sweep 分片的日志落盘目录。不排会造成 110 条
+    # LOCAL_ONLY 噪声，把真正的"我改了没推"整屏淹掉 —— 而后者才是
+    # 这份清单唯一要回答的问题（历史教训：清单被噪声淹没 = 等于没有清单）。
+    '.tool_output',
 }
 
 

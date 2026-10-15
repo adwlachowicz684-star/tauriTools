@@ -300,6 +300,56 @@ const gyTestVars = (src) => {
   return out;
 };
 
+/**
+ * 返回「写死在项目目录里的临时产物目录」的命中（第 7 节判据）
+ * ------------------------------------------------------------------
+ * 为什么单列一节（本项目第二次撞，第一次在 smoke-react）：
+ *   publish-update-test.mjs 把产物目录写死成 `_tmp_publish_fixture`，
+ *   然后 `rmSync` 再 `mkdirSync`。两个进程同时跑（体检分片并发就够）时，
+ *   后一个把前一个**正在用**的目录删掉 → 实测 6 并发里 3 个直接
+ *   `ENOTEMPTY: rmdir _tmp_publish_fixture` 崩在半路（连汇总行都没有），
+ *   另外几个报「失败 6 项」，而报错一个字都没提并发 —— 只会让人去查发布逻辑。
+ *
+ * 判据两段，缺一不可：
+ *   A. `const X = join(<项目根>, '<字面量>')` 且 X 真被 fs 写/删
+ *      —— 只声明不写无害（可能只是读一个仓库内目录）
+ *   B. `mkdirSync|rmSync|...(join(<项目根>, '<字面量>'))` 直接调用
+ *
+ * 名字限定为"看起来就是临时产物"（`_` 开头 / 含 tmp / fixture / scratch）：
+ *   sweep-tests.mjs 的 `join(ROOT, '.tool_output')` 是**有意共享**的诊断输出
+ *   目录（续跑要靠上次那份明细），按名字放行，不误伤。
+ *   代价：将来若有人用不含这些字样的名字写死，这一节会漏 —— 已知让步，
+ *   宁可漏也不可误报（误报的下场是守卫被删，见第 6 节同一条理由）。
+ */
+const SCRATCH = /^_|tmp|fixture|scratch|bak/i;
+const fixedScratchDirs = (src) => {
+  const text = stripComments(src);          // 说明里举的反例不算真用法
+  const lines = text.split('\n');
+  /* 项目根：由 fileURLToPath / __dirname / resolve(...,'..') 得来的那个变量 */
+  const roots = new Set();
+  for (const l of lines) {
+    const m = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/.exec(l);
+    if (!m) continue;
+    if (/fileURLToPath|__dirname|resolve\([^)]*\.\./.test(l)) roots.add(m[1]);
+  }
+  const out = [];
+  const declRe = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:path\.)?join\(\s*([A-Za-z_$][\w$]*)\s*,\s*['"`]([^'"`]+)['"`]\s*\)/g;
+  for (const l of lines) {
+    /* 每行新建正则：/g 的 lastIndex 会跨行残留（第 6 节那个坑） */
+    for (let m; (m = new RegExp(declRe.source, 'g').exec(l));) {
+      if (!roots.has(m[2]) || !SCRATCH.test(m[3])) continue;
+      const used = new RegExp(`(?:rmSync|mkdirSync|writeFileSync|appendFileSync|cpSync)\\(\\s*${m[1]}\\b`).test(text);
+      if (used) out.push(`${m[1]} = join(${m[2]}, '${m[3]}')`);
+    }
+    const callRe = /(?:mkdirSync|rmSync|writeFileSync|appendFileSync|cpSync|mkdtempSync)\(\s*(?:path\.)?join\(\s*([A-Za-z_$][\w$]*)\s*,\s*['"`]([^'"`]+)['"`]\s*\)/g;
+    for (let m; (m = new RegExp(callRe.source, 'g').exec(l));) {
+      if (!roots.has(m[1]) || !SCRATCH.test(m[2])) continue;
+      out.push(`${m[1]}:${m[2]}`);
+    }
+  }
+  return out;
+};
+
 console.log('=== 1. 锚点不能是注释 ===');
 {
   const bad = [];
@@ -662,7 +712,48 @@ console.log('\n=== 6. 断言不能拿带 g / y 标志的正则做 .test() ===');
       .includes('RX'));
 }
 
-console.log('\n=== 7. 反向自检：护栏本身能抓到 ===');
+console.log('\n=== 7. 临时产物目录不得写死名字（并发会互相删） ===');
+/*
+ * 判据与推导见 fixedScratchDirs 的注释。这里只讲**为什么必须常驻**：
+ * 写死名字在单跑时永远绿 —— 它只在"两个进程同时跑"时才炸，而体检分片、
+ * 两个终端同时敲测试都会触发。炸出来的报错（ENOTEMPTY / 失败 6 项）
+ * 指向"产物不对"，真因一个字都没提，排查方向整个被引到发布逻辑上。
+ */
+{
+  const all = walk(ROOT, TEST_EXTS)
+    .filter((p) => !p.endsWith('assertion-hygiene-test.mjs'));
+  const bad = [];
+  for (const p of all) {
+    let s = '';
+    try { s = fs.readFileSync(p, 'utf8'); } catch { continue; }
+    for (const h of fixedScratchDirs(s)) bad.push(`${path.relative(ROOT, p)}:${h}`);
+  }
+  t('没有测试把临时产物目录写死在项目里', bad.length === 0,
+    bad.slice(0, 6).join(' | ') || '干净');
+  /* 空转自检：范围被改窄 / 目录读不到 → bad 恒空 → 绿得毫无意义 */
+  t('扫描范围非空（判据不能空转）', all.length >= 20, `实测 ${all.length} 个`);
+  /*
+   * 配对断言（少了它们，把 fixedScratchDirs 改成恒返回空也是全绿 ——
+   * 主断言照样"干净"，整节失明而报告一片绿）：
+   *   ① 写死写法必须被认出来
+   *   ② mkdtemp / tmpdir + pid 的写法不得误报
+   *   ③ 有意共享的诊断目录（.tool_output）确实被放行
+   */
+  t('写死目录判据确能命中（反面证据）',
+    fixedScratchDirs("const ROOT = dirname(fileURLToPath(import.meta.url));\n"
+      + "const tmp = join(ROOT, '_tmp_publish_fixture');\n"
+      + "rmSync(tmp, { recursive: true, force: true });").length === 1);
+  t('mkdtemp / tmpdir 写法不误报',
+    fixedScratchDirs("const ROOT = dirname(fileURLToPath(import.meta.url));\n"
+      + "const tmp = mkdtempSync(join(tmpdir(), 'publish-update-fixture-'));\n"
+      + "mkdirSync(join(tmp, 'nsis'), { recursive: true });").length === 0);
+  t('有意共享的诊断目录被放行（sweep 的 .tool_output）',
+    fixedScratchDirs("const ROOT = dirname(fileURLToPath(import.meta.url));\n"
+      + "const OUT_DIR = join(ROOT, '.tool_output');\nmkdirSync(OUT_DIR, { recursive: true });")
+      .length === 0);
+}
+
+console.log('\n=== 8. 反向自检：护栏本身能抓到 ===');
 {
   /* 造一个"只活在注释里"的模式，护栏必须把它标出来 */
   const probe = '这条说明只存在于注释里的探针XYZ';

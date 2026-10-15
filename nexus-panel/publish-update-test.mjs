@@ -16,9 +16,10 @@
  * 运行：node publish-update-test.mjs
  */
 
-import { readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   normalizeChannel,
@@ -155,8 +156,21 @@ t('platforms 结构正确', obj.platforms['windows-x86_64'].signature === 'SIG')
 t('platforms 的 url 正确', obj.platforms['windows-x86_64'].url === 'https://x/y.zip');
 
 console.log('\n— 端到端：真跑 --dry-run —');
-const tmp = join(ROOT, '_tmp_publish_fixture');
-rmSync(tmp, { recursive: true, force: true });
+/*
+ * ⚠️ 临时产物目录**必须每进程一个名字**，不能写死。
+ *    写死成 `_tmp_publish_fixture` 时，两个进程同时跑（体检分片并发就会）
+ *    会互相 `rmSync` 对方正在用的目录 → 实测 6 并发里 3 个直接
+ *    `ENOTEMPTY: rmdir _tmp_publish_fixture` 崩在半路，另外几个报「失败 6 项」，
+ *    而报错一个字都没提"并发"，只说产物不对 —— 照着去查发布逻辑会白跑一趟。
+ *    同类坑第一百四十一轮在 smoke-react 上撞过一次（临时产物改成各进程各用各的名字）。
+ * 落在 os.tmpdir() 而不是 ROOT：崩在半路时也不会把垃圾留在仓库里
+ * （仓库里多一个目录，--scope 会报成 LOCAL_ONLY 噪声）。
+ */
+const tmp = mkdtempSync(join(tmpdir(), 'publish-update-fixture-'));
+// 两个"空/只有 dmg"的目录同样每进程一个名字，且声明提到外层：
+// 放在块作用域里会导致末尾清理引用不到（ReferenceError 崩在打印汇总行之前）。
+const empty = mkdtempSync(join(tmpdir(), 'publish-update-empty-'));
+const onlyDmg = mkdtempSync(join(tmpdir(), 'publish-update-dmg-'));
 mkdirSync(join(tmp, 'nsis'), { recursive: true });
 writeFileSync(join(tmp, 'nsis/App_0.1.0_x64-setup.nsis.zip'), 'PK-fake-zip');
 writeFileSync(join(tmp, 'nsis/App_0.1.0_x64-setup.nsis.zip.sig'), 'untrusted comment:\nFAKESIG\n');
@@ -190,18 +204,12 @@ function run(args) {
   t('stable 用 updater-stable', r.out.includes('updater-stable'));
 }
 {
-  const empty = join(ROOT, '_tmp_publish_empty');
-  rmSync(empty, { recursive: true, force: true });
-  mkdirSync(empty, { recursive: true });
   const r = run(['--dry-run', `--from-dir=${empty}`]);
   t('产物目录为空 → 非 0 退出', r.code !== 0);
   t('空目录报错说明拒绝生成空清单', /为空|没有任何/.test(r.out));
 }
 {
   /* 只放 dmg：没有任何合法产物，也必须拒绝，而不是生成空 platforms */
-  const onlyDmg = join(ROOT, '_tmp_publish_dmg');
-  rmSync(onlyDmg, { recursive: true, force: true });
-  mkdirSync(onlyDmg, { recursive: true });
   writeFileSync(join(onlyDmg, 'App_0.1.0_aarch64.dmg'), 'dmg');
   writeFileSync(join(onlyDmg, 'App_0.1.0_aarch64.dmg.sig'), 'SIG');
   const r = run(['--dry-run', `--from-dir=${onlyDmg}`]);
@@ -213,8 +221,8 @@ function run(args) {
 }
 
 rmSync(tmp, { recursive: true, force: true });
-rmSync(join(ROOT, '_tmp_publish_empty'), { recursive: true, force: true });
-rmSync(join(ROOT, '_tmp_publish_dmg'), { recursive: true, force: true });
+rmSync(empty, { recursive: true, force: true });
+rmSync(onlyDmg, { recursive: true, force: true });
 
 console.log(`\n— 结果：${pass} 通过 / ${fail} 失败 —`);
 process.exit(fail ? 1 : 0);
