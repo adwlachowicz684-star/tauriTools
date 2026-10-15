@@ -664,7 +664,17 @@ export default function App() {
         return def ? { nodes: (def.nodes ?? []) as { id: string; data?: Record<string, unknown> }[] } : null;
       },
     ),
-    [canvases, nodes],
+    /*
+     * 依赖里必须有 editingModule。
+     *
+     * findModule 读的是 localStorage 的模块库，而**模块库变化不触发任何
+     * state 更新** —— 只依赖 canvases / nodes 的话，用户照提示进模块
+     * 把触发器删掉、点「完成」，这个列表**根本不会重算**，警告照旧挂着。
+     * 用户会以为"我删了它却还说埋着"，于是反过来怀疑这条提示是错的。
+     *
+     * 进出编辑模块 editingModule 一定变（有值 → null），是天然的重算信号。
+     */
+    [canvases, nodes, editingModule],
   );
 
   /*
@@ -685,9 +695,20 @@ export default function App() {
     pushLog(
       `⚠ 有 ${buried.length} 个触发器埋在模块里（${where}${buried.length > 3 ? ' 等' : ''}）：`
       + '全局扫描只看画布顶层，模块内部的不会被扫描，自动触发永远不会发生。'
-      + '请把触发器拖到画布上，模块里只放它后面的节点',
+      + '请把触发器建在画布上，模块里只放它后面的节点'
+      + '（在「编辑内部」里删掉模块内那个即可）',
     );
   }, [buried, pushLog]);
+
+  /*
+   * 工具栏那个计数只统计"真在监听的"，埋着的**一个都不算** ——
+   * 于是用户看到「触发器 1/1」会以为配的都在生效。
+   * 这里把埋着的数量并排放出来，hover 能看到是哪个模块。
+   *
+   * 只算当前激活画布那张：别的画布的问题出现在这张的计数旁边，
+   * 只会让人去找一张他没打开过的画布。
+   */
+  const buriedHere = buried.filter((b) => b.canvasId === activeId);
 
 
   /*
@@ -3118,6 +3139,16 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         <span className="trg-btn-static" title="触发器已作为节点放在画布上">
           ⏱ 触发器{triggers.length > 0 && <span className="dot">{enabledCount}/{triggers.length}</span>}
         </span>
+        {buriedHere.length > 0 && (
+          <span
+            className="trg-btn-static trg-buried"
+            title={`${buriedHere.map((b) => `模块「${b.hostLabel}」里的 ${b.triggerId}`).join('；')}`
+              + ' —— 全局扫描只看画布顶层，模块内部的不会被扫描，自动触发永远不会发生。'
+              + '请在「编辑内部」里删掉模块内那个，把触发器建在画布上'}
+          >
+            ⚠ 埋在模块里 {buriedHere.length}
+          </span>
+        )}
 
         {/*
           外观已挪到右侧「画布设置」里的「外观」一节。

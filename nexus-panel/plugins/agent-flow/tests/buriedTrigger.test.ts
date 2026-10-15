@@ -112,3 +112,40 @@ test('源码守卫：扫描不 import modules.ts（那边已经引了本文件�
   const src = readSrc('engine/triggerRegistry.ts');
   assert.ok(!/from '\.\/modules'|from "\.\/modules"/.test(src), '不要反向依赖 modules.ts');
 });
+
+test('源码守卫：埋着的列表要随模块编辑结束重算（否则删了还挂着，用户以为提示是错的）', () => {
+  const src = readSrc('App.tsx');
+  const i = src.indexOf('const buried = useMemo');
+  assert.ok(i >= 0);
+  const body = src.slice(i, src.indexOf('\n  );', i));
+  assert.ok(
+    /editingModule/.test(body),
+    '依赖里必须有 editingModule —— findModule 读 localStorage，模块库变化不触发 state 更新',
+  );
+});
+
+test('源码守卫：工具栏要把埋着的数量并排显示出来（计数里不算它们）', () => {
+  const src = readSrc('App.tsx');
+  const i = src.indexOf('buriedHere');
+  assert.ok(i >= 0, '必须有 buriedHere');
+  /*
+   * 窗口起点取徽章自身再往前 400 字符 ——
+   * 取 buriedHere 首次出现处（定义）到它之后的话，渲染区在几千行之外，
+   * 截出来是空串，于是守卫恒绿而什么都没盯住。
+   */
+  const badge = src.indexOf('className="trg-btn-static trg-buried"');
+  assert.ok(badge >= 0, '工具栏要有警告徽章');
+  const seg = src.slice(badge - 400, badge + 2000);
+  assert.ok(/className="trg-btn-static trg-buried"/.test(src), '工具栏要有警告徽章');
+  assert.ok(/title=/.test(seg), '徽章必须能 hover 看到是哪个模块');
+  assert.ok(/自动触发/.test(seg), 'title 要说清后果');
+});
+
+test('源码守卫：提示给出的做法是做得到的（不能说"拖到画布上"——模块编辑视图里拖不出去）', () => {
+  const src = readSrc('App.tsx');
+  assert.ok(
+    !/请把触发器拖到画布上/.test(src),
+    '模块编辑视图里没法把节点拖到主画布——这是在承诺一件做不到的事',
+  );
+  assert.ok(/编辑内部/.test(src), '要指向真正能做的地方');
+});
