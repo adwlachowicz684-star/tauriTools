@@ -93,6 +93,21 @@ export function stripCommentsFlatJs(code) {
 
 import { readFileSync } from 'node:fs';
 
+/**
+ * 剥块注释但**保持偏移**（注释内容除换行外一律换成空格，长度与原文一致）。
+ *
+ * 什么时候必须用这个而不能用 stripComments：
+ *   需要把"剥完后的匹配位置"映回**原文行号**时 —— 比如"这条选择器附近
+ *   有没有注释说明"。stripComments 把整块注释压成一个空格，偏移全乱，
+ *   实测 mindmap/styles.css 会整体前移近 70 行，
+ *   于是上下文取到的是完全无关的另一段（断言因此永远绿或永远红）。
+ *
+ * 为什么保留换行：`\n` 不替换，行号才对得上。这是我们唯一关心的对齐。
+ */
+export function stripCommentsKeep(code) {
+  return String(code).replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+}
+
 /** 读文件并直接剥注释 —— 覆盖 `stripComments(readFileSync(p,'utf8'))` 这个高频组合 */
 export function readStripped(path) {
   return stripComments(readFileSync(path, 'utf8'));

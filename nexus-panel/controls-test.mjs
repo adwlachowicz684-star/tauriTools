@@ -263,12 +263,41 @@ console.log('\n=== 3.5 主题参数表（规整管理）===');
 
   /* 3.5s 删除自定义主题要清掉它留下的全部覆盖（都按 id 分档，
      主题删了就再没人读得到，只会在存储里堆孤儿键）。 */
-  const delSrc = tmSrc.match(/export function deleteCustomTheme[\s\S]{0,900}?\n}/);
-  const db = delSrc ? delSrc[0] : '';
+  /*
+   * ⚠️ 不能用 `/export function deleteCustomTheme[\s\S]{0,900}?\n}/` 这种
+   * **定长窗口**切函数体：函数里的说明注释一变长，窗口就装不下后半截，
+   * 于是 `styleKey(` 落在窗口之外 → 断言把"已经清干净了"的代码报成没清。
+   * 实测：给删除函数补了两行注释之后，这条立刻假红。
+   *
+   * 正确做法：花括号配对切到函数真正结束，与注释长短无关。
+   */
+  let db = '';
+  {
+    const st = tmSrc.indexOf('export function deleteCustomTheme');
+    if (st >= 0) {
+      const b0 = tmSrc.indexOf('{', st);
+      let d = 0, j = b0;
+      for (; j < tmSrc.length; j++) {
+        if (tmSrc[j] === '{') d++;
+        else if (tmSrc[j] === '}') { d--; if (d === 0) { j++; break; } }
+      }
+      db = tmSrc.slice(st, j);
+    }
+  }
+  /*
+   * ⚠️ 判据钉的是"删变量映射"这个**动作**，不是某个具体的删除函数名：
+   * 实现里早已把裸 localStorage.removeItem 换成包装器 removeLS，
+   * 而断言还钉 `removeItem(varMapKey(id))` 这个字面写法 —— 写法一换就假红，
+   * 把"清得很干净"的代码报成"有残留"。
+   * 所以三条都要求"被 remove* 调用包裹"，剩下的 KEY_* 则只要求出现。
+   */
+  const REM = /remove(LS|Item|LocalItem)?\s*\(/;
   t('删除主题会清理它的覆盖残留',
-    /removeItem\(varMapKey\(id\)\)/.test(db)
-      && /KEY_BASE_OVR/.test(db) && /KEY_STYLE_OVR/.test(db) && /styleKey\(/.test(db),
-    /removeItem\(varMapKey\(id\)\)/.test(db)
+    REM.test(db) && /remove\w*\(\s*varMapKey\(id\)/.test(db)
+      && /remove\w*\(\s*KEY_BASE_OVR/.test(db)
+      && /remove\w*\(\s*KEY_STYLE_OVR/.test(db)
+      && /remove\w*\(\s*styleKey\(/.test(db),
+    /remove\w*\(\s*varMapKey\(id\)/.test(db)
       ? '变量 / 基调 / 风格 / 风格参数 均已清'
       : '只删主题本身，覆盖残留会永久占用存储');
 

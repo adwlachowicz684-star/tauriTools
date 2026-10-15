@@ -435,6 +435,14 @@ html, body {
   gap: 6px;
 }
 
+/* ⚠️ 跨文件撞名：css/controls.css 第 411 行把 .mm-chip 与 .nx-tag / .p-tag
+   并成一组（"标签 / 徽标"），给了 22px 高、内凹底色那套形态。
+   本插件的 .mm-chip 是**侧栏按钮**（26px、外凸、可点），不是标签 ——
+   同名不同物。加载顺序是 controls.css → 本文件，故本份胜，
+   但那份的 display / align-items / gap / padding / line-height /
+   white-space 会一并生效进来（本份只覆盖了 5 个属性）。
+   改本份时若发现"多出不该有的内距/底色"，先去 controls.css 那组里找。
+   真要收拾，应把本份改名（如 .mm-chip-btn），而不是继续互相覆盖。 */
 .mm-chip {
   height: 26px;
   border: 0;

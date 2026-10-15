@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { auditCss, summarize, LEVEL_ORDER, SHELL_VARS, TOKEN_VARS, CONTROLS_VARS } from './js/style-audit.js';
 // 读源码做扫描前必须剥注释：注释里提到的 --grp-* / setProperty('--x') 会被
 // 当成真定义，让"不该报的没报"这类断言**假绿** —— 比报红更危险。
-import { stripComments as strip } from './test-scan-utils.mjs';
+import { stripComments as strip, stripCommentsKeep } from './test-scan-utils.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let pass = 0, fail = 0;
@@ -388,7 +388,15 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
     /* 共享层给基础值、主题层/插件层给 override —— 这类分层的**加载顺序是确定的**
        （插件 CSS 先 @import 共享层，自己再覆盖），所以不是 bug，
        但删掉共享层那一份会让插件层静默缺掉一堆属性，故此登记备查。 */
-    '.p-input', '.p-tag', '.p-row', '.tp-row', '.upd-notes', '.fpx-busy-dot',
+    /*
+     * ⚠️ 这里**曾**有 '.tp-row'，已移出：它不是"分层覆盖"，而是**撞名**。
+     *   controls.css 的 .tp-row 是主题参数面板的「参数行」；
+     *   neumorphism.css 曾另有一条 .tp-row，是主题缩略图里那排小色条
+     *   —— 同名不同物，二者同现于设置页，互相污染（详见 neumorphism.css）。
+     *   缩略图那条已改名 .tp-bars，冲突随之消失。
+     * 别把它加回来：加回来等于把一次撞名当成"基础值 + override"记档。
+     */
+    '.p-input', '.p-tag', '.p-row', '.upd-notes', '.fpx-busy-dot',
     '.mm-field',   /* controls 8px/center；mindmap 覆盖成 5px/stretch */
     '.mm-chip',    /* controls 给 22px 标签形态；mindmap 覆盖成 26px 按钮形态 */
     /*
@@ -430,6 +438,51 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
   t('已知清单里没有已合并/消失的选择器', stale.length === 0,
     stale.join(', ') || KNOWN.join(', '));
 
+  /*
+   * 元断言 4：清单里每一条都必须有**跨文件出处说明**。
+   *
+   * 光登记"这两处冲突"是不够的：后人打开其中一个文件，看不见另一个
+   * 文件的存在，就会照着"改了没反应"去查缓存 / 查构建 / 查浏览器，
+   * 而真相只是同权重下另一份在后。说明必须**点名另一个文件**
+   * （不是泛泛写"别处也有"），否则等于没写。
+   *
+   * 判定方式：在定义处的上下文里（前 12 行到块末）找 .css 文件名，
+   * 且那个文件名**不是当前文件自己** —— 只提自己不算出处。
+   */
+  {
+    const miss = [];
+    for (const k of KNOWN) {
+      let cited = false;
+      for (const f of cssFiles) {
+        const base = f.split(/[\\/]/).pop();
+        const raw = readFileSync(f, 'utf8');
+        const lines = raw.split('\n');
+        const stripped = stripCommentsKeep(raw);   /* 保偏移：位置能映回原文行号，才能取到注释 */
+        /* 只需转义点号：KNOWN 里都是 `.类名` 形态（含 `:disabled` 等后缀，
+           冒号/连字符在正则里无特殊含义）。
+           别用 `k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` 那套通用转义 ——
+           替换串里的 `$&` 会被当成"整个匹配"展开，实际得到的是 `$\\.`，
+           正则变成 `$\\.mm-chip` 这种永远不匹配的式子，断言**永远绿**。 */
+        const re = new RegExp('(^|[\\s,])' + k.replaceAll('.', '\\.')
+          + '(\\s|,|\\{|\\.|$)', 'g');
+        for (const m of stripped.matchAll(re)) {
+          const ln = stripped.slice(0, m.index).split('\n').length;   /* 1-based 行号 */
+          /* 窗口取前 25 行：注释块常在定义上方十几行（.fpx-busy 那份
+             撞名说明距定义 20 行），取窄了会把真说明判成"没写"。 */
+          const ctx = lines.slice(Math.max(0, ln - 25), ln + 15).join('\n');
+          for (const cm of ctx.matchAll(/([\w./-]+\.css)/g)) {
+            if (cm[1].split(/[\\/]/).pop() !== base) { cited = true; break; }
+          }
+          if (cited) break;
+        }
+        if (cited) break;
+      }
+      if (!cited) miss.push(k);
+    }
+    t('已知清单每条都点名了另一个文件（否则后人看不见冲突的另一半）',
+      miss.length === 0, miss.join(', ') || `已知 ${KNOWN.length} 处全部有出处`);
+  }
+
   /* 元断言 3：探针有效 —— 造一个必然冲突的选择器，必须被认出来
      （这条防的是"扫描器坏了但基线恰好还是 0"） */
   {
@@ -449,6 +502,24 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
         }
     }
     t('冲突判据本身有效（探针）', hit === 1, `探针命中 ${hit} 次`);
+
+    /* 元断言 5：出处判据不能失明 —— 把注释里的文件名抹掉，必须报红。
+       这条防的是"窗口/正则写错，于是每条都被判成有出处"。 */
+    {
+      const probe = '.zz-cite-probe';
+      const bare = [`a.css`, `b.css`];
+      const mk = (name, withCite) => {
+        const body = `${probe} { height: ${withCite ? '1px' : '2px'}; }`;
+        return withCite
+          ? `/* 另一份在 ${bare[1]} —— 点名了 */\n${body}`
+          : `${body}`;
+      };
+      /* 有出处 → 判有；无出处 → 判无。两端都验，避免判据恒真 */
+      const citedOk = /[\w./-]+\.css/.test(mk('a', true));
+      const bareOk = !/[\w./-]+\.css/.test(mk('a', false));
+      t('出处判据本身有效（探针）', citedOk && bareOk,
+        `有出处=${citedOk} 无出处=${bareOk}`);
+    }
   }
 }
 

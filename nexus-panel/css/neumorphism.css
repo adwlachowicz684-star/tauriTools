@@ -1634,7 +1634,19 @@ html.theme-transition *:not(.spinner) {
 }
 .tp-line { height: 4px; width: 100%; border-radius: var(--r-pill); opacity: .95; }
 .tp-line.dim { width: 62%; opacity: .65; }
-.tp-row { display: flex; align-items: center; gap: var(--sp-2); margin-top: 2px; }
+/* ⚠️ 这里**不能**叫 .tp-row —— 那是个撞车的名字。
+   controls.css 第 1945 行有一条 `.tp-row`（主题参数面板的「参数行」：
+   左文右控件，带内凹底色与圆角），与本条**同名而不同物**：本条是
+   主题缩略图里那排小色条。二者都出现在设置页，而本文件后于
+   controls.css 加载，于是：
+     · 缩略图那条会平白吃到参数行的 padding / background / box-shadow
+       → 预览里多出一个下沉小盒子；
+     · 参数行的 align-items / gap / margin-top 又被本条改掉
+       → 行距与对齐不是 controls.css 里写的设计值。
+   改名（tp-bars）把两者彻底分开：缩略图这组只在 .tp-mid 内出现，
+   与参数行毫无关系，不该共用类名。
+   同理 .tp-line 也在 .tp-mid 内，但它没有被别的组件占用，故未改。 */
+.tp-bars { display: flex; align-items: center; gap: var(--sp-2); margin-top: 2px; }
 .theme-prev .bar { flex: 1; height: 8px; border-radius: var(--r-pill); }
 .theme-prev .bar.s { flex: none; width: 18px; opacity: .6; }
 /* 当前主题：缩略图很小，光靠描边看不出来，再补一个勾 */

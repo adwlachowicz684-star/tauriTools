@@ -106,7 +106,12 @@
 .nx-dlg-msg.nx-err { color: var(--danger); }
 .nx-dlg-msg.nx-warn { color: var(--warn); }
 
-/* ---------- 输入框（prompt） ---------- */
+/* ---------- 输入框（prompt） ----------
+   与上面 .nx-btn 同理：css/controls.css 第 289 行也有一条 .nx-input
+   （padding / font-size / color / background / border / border-radius /
+   box-shadow / outline 重叠），而本文件后于 controls.css 加载，
+   **本份胜** —— controls.css 那份同样"改了没反应"。
+   留两份的原因也一样（有入口只引 dialog.css）。 */
 .nx-dlg-field { display: flex; flex-direction: column; gap: var(--sp-4); }
 .nx-dlg-label { font-size: var(--fs-11, 11px); color: var(--text-dim); }
 .nx-input {
@@ -129,7 +134,18 @@
   color: var(--danger);
 }
 
-/* ---------- 底部按钮 ---------- */
+/* ---------- 底部按钮 ----------
+   ⚠️ 跨文件撞名：css/controls.css 第 154 行也有一条 .nx-btn
+   （height / padding / font-size / color / background / border /
+   border-radius / box-shadow / cursor 全重叠）。
+   所有入口的加载顺序都是 controls.css → dialog.css，同级同权重下
+   **本文件这份胜** —— 于是 controls.css 里那份基础定义在任何文档里
+   都不生效：谁去 controls.css 改按钮高度都会发现"改了没反应"。
+
+   为什么不删掉本文件这份：有入口只引 dialog.css、不引 controls.css
+   （color-picker/index.js），删了那些文档里的按钮会退化成裸元素。
+   真要收拾，得先把本份收窄成 `.nx-dlg .nx-btn` 之类的作用域写法
+   —— 那会改变观感，属于需要产品拍板的事。 */
 .nx-dlg-foot {
   flex: none;
   margin-top: 18px;

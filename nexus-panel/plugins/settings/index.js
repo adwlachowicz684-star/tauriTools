@@ -319,7 +319,7 @@ export default definePlugin({
             h('div.tp-mid', {},
               h('i.tp-line', { style: { background: v['--text'] } }),
               h('i.tp-line.dim', { style: { background: v['--text-dim'] || v['--text'] } }),
-              h('div.tp-row', {},
+              h('div.tp-bars', {},
                 h('i.bar', { title: '强调色：按钮 / 选中态', style: { background: v['--accent'] } }),
                 // 变量名是 --env-color（旧名 --accent-2 已废弃，取到 undefined 会画出空条）
                 h('i.bar.s', { title: '环境色：次要点缀（非状态色）', style: { background: v['--env-color'] } }),

@@ -153,7 +153,7 @@ export function openThemePicker({ anchor, onPick } = {}) {
 
     // 这两条是主题的装饰配色，不是状态色
     const row = document.createElement('div');
-    row.className = 'tp-row';
+    row.className = 'tp-bars';
     const bar1 = document.createElement('i');
     bar1.className = 'bar';
     bar1.title = '强调色：按钮 / 选中态';
