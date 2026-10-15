@@ -895,10 +895,41 @@ function ask(title,text,btns){
     m.classList.add('open');
   });
 }
+/* 文件夹缓存键：路径 + 学科。改名/删除都会让缓存里的路径过期。 */
+function boxKey(path,subj){return path+'|'+(subj||'');}
 function ensureBox(leaf,subj){
-  const key=leaf.path+'|'+(subj||'');
+  const key=boxKey(leaf.path,subj);
   if(!CACHE[key])CACHE[key]=buildBox(leaf,subj);
   return CACHE[key];
+}
+/* 找菜单/卡片所在的那个 .dirbox 对应的 tree 节点。
+   【为什么不能只比 CUR.path】
+   目录树是嵌套的：CUR.path 只指向被选中的那一个节点，
+   而卡片可能出现在父目录的子树里（按学科筛选后每个学科各一框）。
+   旧写法从 CUR.path 往下走，遇到"选中的是子目录、卡片在父目录"就找不到 leaf，
+   于是目录树里的 files 保留旧路径 —— 与卡片 data-path 分叉。 */
+function boxLeaf(box){
+  const dir=box.getAttribute('data-dir');
+  const forder=(box.getAttribute('data-full')||dir);
+  let found=null;
+  (function walk(x){
+    if(found)return;
+    if(x.dir===dir||x.path===dir||x.full===dir||x.path===forder){found=x;return;}
+    (x.kids||[]).forEach(walk);
+  })(DATA);
+  if(found)return found;
+  return CUR.path?findNode(CUR.path):null;
+}
+/* 改名把路径换掉了：所有以该路径为键的缓存（目录树框、逐页图）同时作废。
+   只改目录树里的 files 是不够的 —— CACHE 的键本身还是旧路径，
+   复用旧框就会带着旧 data-path 渲染出第二张卡，第二次改名又带着它发请求。 */
+function dropPaths(oldpaths){
+  Object.keys(CACHE).forEach(function(k){
+    if(oldpaths.some(function(p){return k.indexOf(p+'|')===0;}))delete CACHE[k];
+  });
+  Object.keys(PAGE_CACHE).forEach(function(k){
+    if(oldpaths.indexOf(k)>=0)delete PAGE_CACHE[k];
+  });
 }
 function buildBox(leaf,subj){
   const d=leaf;
@@ -1106,9 +1137,14 @@ async function ren(btn){
   card.setAttribute('data-fam',fam);
   card.querySelector('.fname').textContent=j.newname;
   card.querySelector('.fname').setAttribute('data-tip',j.newname);
-  toast('已改名');
+  /* 撞名时后端会自动退让到 `_2` `_3`。不把实际落地的名字说出来，
+     用户只会以为自己输的名字生效了，然后在目录里找不到那个文件。 */
+  toast(j.newname===nn?'已改名':'已改名（重名，自动改为 '+j.newname+'）');
   if(fam!==oldfam)refreshBox(card,path,j.newpath,j.newname,fam);
   else setFamLabel(card,fam);
+  /* 路径变了，以旧路径为键的缓存一律作废（含逐页图）。
+     放在 refreshBox 之后：它内部会用旧键写下新的框，紧接着清掉即可。 */
+  dropPaths([path]);
 }
 function setFamLabel(card,fam){
   const meta=card.querySelector('.meta');
@@ -1120,19 +1156,11 @@ function setFamLabel(card,fam){
 function refreshBox(card,oldpath,newpath,newname,fam){
   const box=card.closest('.dirbox');
   if(!box)return;
-  const dir=box.getAttribute('data-dir');
   const subj=box.getAttribute('data-subj')||'';
-  const n=findNode(CUR.path);
-  if(!n)return;
-  let leaf=null;
-  (function walk(x){
-    if(leaf)return;
-    if(x.dir===dir&&x._own>0){leaf=x;return;}
-    (x.kids||[]).forEach(walk);
-  })(n);
+  const leaf=boxLeaf(box);
   if(!leaf||!leaf.files)return;
   leaf.files.forEach(function(it){if(it.path===oldpath){it.name=newname;it.path=newpath;it.fam=fam;}});
-  const key=leaf.path+'|'+subj;
+  const key=boxKey(leaf.path,subj);
   CACHE[key]=buildBox(leaf,subj);
   box.replaceWith(CACHE[key]);
 }
@@ -1171,6 +1199,15 @@ function applyDone(dir,subj,val){
     else if(m)m.remove();
   });
 }
+/* 目录树里那条记录也要同步 —— 与改名同一个坑：不同步的话
+   下一次操作（改名/预览）会带着过期 path 发请求。 */
+function setItemDim(path,dim){
+  if(!DATA)return;
+  (function walk(x){
+    (x.files||[]).forEach(function(it){if(it.path===path)it.dim=dim;});
+    (x.kids||[]).forEach(walk);
+  })(DATA);
+}
 async function del(btn){
   const card=btn.closest('.card');
   const path=card.getAttribute('data-path');
@@ -1178,6 +1215,7 @@ async function del(btn){
   if(!j.ok){toast('失败:'+j.err);return;}
   card.classList.add('dim');
   var o=findItem(path);if(o)o.dim=true;
+  setItemDim(path,true);
   btn.textContent='恢复';btn.className='btn-restore';btn.onclick=function(){restore(this)};
   toast('已删除(可点恢复)');
 }
@@ -1188,6 +1226,7 @@ async function restore(btn){
   if(!j.ok){toast('恢复失败:'+j.err);return;}
   card.classList.remove('dim');
   var o=findItem(path);if(o)o.dim=false;
+  setItemDim(path,false);
   btn.textContent='删除';btn.className='btn-del';btn.onclick=function(){del(this)};
   toast('已恢复');
 }

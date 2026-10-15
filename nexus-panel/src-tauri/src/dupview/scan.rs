@@ -144,6 +144,10 @@ fn norm(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
+/// 卷内回收目录名。**必须带点前缀**：试卷根目录会被用户直接打开翻，
+/// 一个显眼的 `_trash` 混在卷子里很容易被当成杂物手动删掉。
+pub const TRASH_DIRNAME: &str = ".dupview_trash";
+
 /// 递归收集 PDF 与 docx。docx 不能直接渲染，扫描时先经 `docx::pdf_cache`
 /// 转成 PDF（缓存复用），之后的链路与 PDF 完全一样。
 fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
@@ -156,6 +160,10 @@ fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
+                /* 卷内回收目录里的文件已标「已删除」，再扫回来会复活成重复项。 */
+                if p.file_name().and_then(|x| x.to_str()) == Some(TRASH_DIRNAME) {
+                    continue;
+                }
                 stack.push(p);
                 continue;
             }
@@ -301,6 +309,7 @@ fn run(app: &AppHandle, roots: Vec<String>) -> Result<(), String> {
             txtsame: old.map(|p| p.txtsame).unwrap_or(false),
             dim: false,
             img,
+            trash: None,
         });
 
         let n = done.fetch_add(1, Ordering::Relaxed) + 1;
@@ -344,14 +353,22 @@ fn run(app: &AppHandle, roots: Vec<String>) -> Result<(), String> {
     set_status(app, "内容比对", 0, total, "");
     content_group_mark(&mut items, &imgdir, &dir);
 
-    /* ---- 5. 计划目标名：按改名规则全量重算，并覆盖写 dup_families.json ---- */
+    /* ---- 5. 计划目标名：按改名规则全量重算（只算、把 fam 回填进条目）---- */
     set_status(app, "生成改名计划", 0, total, "");
-    /* 计划文件写不进去（被别的进程占着）不该连累整轮扫描：fam 已经算好回填在
-       内存条目里，map.json 照写，只把失败原因挂到状态上让用户看见。 */
-    let plan_err = super::refresh_plan(app, &mut items).err();
+    /* 只算不落盘：落盘排在第 6 步之后。索引(map.json)必须先于计划落定，
+       否则一旦中间被打断就留下"计划是新的、索引还是旧的"的半截状态，
+       下一轮改名照新计划改磁盘、却在旧索引里找不到条目 → 界面一直显示旧名。 */
+    let plan = super::refresh_plan_parts(app, &mut items);
 
-    /* ---- 6. 落盘 ---- */
+    /* ---- 6. 落盘：索引优先 ---- */
     super::write_json(&dir.join(MAP_FILE), &items)?;
+    /* 计划写不进去（被别的进程占着）不该连累整轮扫描：fam 已经算好回填在
+       内存条目里、map.json 也已落定，只把失败原因挂到状态上让用户看见。 */
+    let plan_err = match plan {
+        Ok(Some(p)) => super::write_json(&super::rename::plan_path(&dir), &p).err(),
+        Ok(None) => None,
+        Err(e) => Some(e),
+    };
     let added = items
         .iter()
         .filter(|it| !prev_by_path.contains_key(&it.path))

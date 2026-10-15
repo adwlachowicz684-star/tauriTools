@@ -217,6 +217,25 @@ pub fn split_ext(name: &str) -> (&str, &str) {
     }
 }
 
+/// 加副本后缀：`a.pdf` + 2 → `a_2.pdf`。
+///
+/// 【为什么先过一遍 `base_of`】
+/// 目标名本身可能已经带后缀（`a_3.pdf`）。直接拼接会叠成 `a_3_2.pdf`，
+/// 而它和 `a_2.pdf` 是同一个家族 —— 后缀要表达的是"第几份副本"，
+/// 就该从基底往上数，所以先剥掉旧后缀再重新编号。
+pub fn with_copy_suffix(name: &str, n: u32) -> String {
+    let base = base_of(name);
+    let (stem, ext) = split_ext(&base);
+    format!("{}_{}{}", stem, n, ext)
+}
+
+/// Windows 路径比较键：不区分大小写、分隔符统一。
+/// 判"这名儿被占了"必须用它 —— `A.pdf` 与 `a.pdf` 在磁盘上是同一个文件，
+/// 靠字符串相等会漏判，然后 `rename` 过去直接把原文件覆盖掉。
+pub fn norm_key(p: &Path) -> String {
+    p.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+}
+
 /// 撞名家族基底名：去掉末尾的 `_2` `_3`（旧版 `base_of` 的同义实现
 /// `re.sub(r"_(\d+)(\.\w+)$", r"\2", name)`）。
 pub fn base_of(name: &str) -> String {
@@ -1190,5 +1209,45 @@ mod tests {
     fn 无标签不动() {
         assert_eq!(swap_dir_tags("_高三上"), None);
         assert_eq!(swap_dir_tags("【江苏】南京一中"), None);
+    }
+}
+
+/* 副本后缀：改名撞名时自动退让用的那一段。
+   单独成组是因为它跟目录改名毫无关系，混进上面那组只会让人误以为同源。 */
+#[cfg(test)]
+mod copy_suffix_tests {
+    use super::{base_of, with_copy_suffix};
+
+    #[test]
+    fn 加在扩展名之前() {
+        assert_eq!(with_copy_suffix("卷子.pdf", 2), "卷子_2.pdf");
+        assert_eq!(with_copy_suffix("卷子.pdf", 3), "卷子_3.pdf");
+    }
+
+    /* 已经是副本的接着往上数，不能叠成 `卷子_3_2.pdf` ——
+       后缀表达的是"第几份副本"，从基底数才有意义。 */
+    #[test]
+    fn 不叠加已有后缀() {
+        assert_eq!(with_copy_suffix("卷子_3.pdf", 2), "卷子_2.pdf");
+        assert_eq!(with_copy_suffix("卷子_3.pdf", 4), "卷子_4.pdf");
+    }
+
+    /* 名字里带数字不是副本后缀（`2026` 前面没有下划线），不能被剥掉。 */
+    #[test]
+    fn 不误伤名字里的数字() {
+        assert_eq!(with_copy_suffix("2026一模.pdf", 2), "2026一模_2.pdf");
+    }
+
+    #[test]
+    fn 无扩展名也能加() {
+        assert_eq!(with_copy_suffix("卷子", 2), "卷子_2");
+    }
+
+    /* 与家族基底保持一致：加了后缀的文件仍属同一个撞名家族，
+       否则卡片上的分组会把副本甩出去单独一组。 */
+    #[test]
+    fn 加完后缀仍归同一家族() {
+        assert_eq!(base_of("卷子_2.pdf"), "卷子.pdf");
+        assert_eq!(base_of(&with_copy_suffix("卷子.pdf", 2)), "卷子.pdf");
     }
 }

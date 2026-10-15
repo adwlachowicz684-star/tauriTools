@@ -23,6 +23,7 @@ pub mod pdf;
 pub mod rename;
 pub mod scan;
 pub mod sim;
+pub mod trash_selftest;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -78,6 +79,73 @@ pub struct Item {
     /// 首页缩略图的本地绝对路径（前端用 convertFileSrc 转 asset URL）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub img: Option<String>,
+    /// 该文件被删后实际移入的绝对路径（`<试卷根>/.dupview_trash/<idx>_<name>`）。
+    ///
+    /// 【为什么必须记下来，不能每次现算】
+    /// 回收目录在**试卷所在的盘**上（同盘 rename 才不报 os error 17），
+    /// 而算它的依据是"哪个 root 是这条路径的前缀"——roots.json 一旦
+    /// 被改（换盘符、去掉某个根、先删根再加）旧回收件就再也定位不到。
+    /// 记在条目上，恢复与预览都只认这个字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trash: Option<String>,
+}
+
+/// 回收目录内的文件名：带 idx 前缀，同名副本不会互相覆盖，
+/// 且无 idx 也能从「已删」条目反查回来。
+pub(crate) fn trash_entry_name(idx: &str, name: &str) -> String {
+    format!("{}_{}", idx, name)
+}
+
+/// 找出 `path` 归属的试卷根目录。
+///
+/// 用**路径段**而非字符串前缀比较：`Z:\试卷` 不该匹配到 `Z:\试卷_待改名`，
+/// 而 naive 的 `starts_with` 会匹配上（这正是本插件里根目录成对出现的常态）。
+/// 比较前统一大小写（Windows 路径不区分大小写）。
+fn root_of<'a>(roots: &'a [Root], path: &str) -> Option<&'a Root> {
+    let norm = |s: &str| s.replace('/', "\\").to_ascii_lowercase();
+    let p = norm(path);
+    roots
+        .iter()
+        .filter(|r| {
+            let rp = norm(&r.path);
+            /* 去掉尾部分隔符，否则 `Z:\试卷\` + `\` 拼出双斜杠、段比较不成立。 */
+            let rp = rp.strip_suffix('\\').unwrap_or(&rp).to_string();
+            p.len() > rp.len() && p.starts_with(&rp) && p.as_bytes()[rp.len()] == b'\\'
+        })
+        .max_by_key(|r| norm(&r.path).len())
+}
+
+/// 算出 `path` 被删后应当移入的卷内回收路径：`<试卷根>/.dupview_trash/<idx>_<name>`。
+///
+/// 试卷根找不到时回落应用数据目录下的旧 `_trash` —— 那不是同盘，
+/// 但至少把操作做完，而不是直接抛一个用户看不懂的 os error 17。
+pub(crate) fn trash_path_for(dir: &Path, roots: &[Root], idx: &str, name: &str, path: &str) -> PathBuf {
+    match root_of(roots, path) {
+        Some(r) => Path::new(&r.path).join(scan::TRASH_DIRNAME).join(trash_entry_name(idx, name)),
+        None => dir.join("_trash").join(trash_entry_name(idx, name)),
+    }
+}
+
+/// 反查：这条「已删除」条目的回收件现在在哪。
+///
+/// 顺序：记下来的 `trash` 字段 → 按 roots 现算 → 旧的 AppData `_trash`。
+/// **只把真实存在的候选当答案**：都不存在时返回现算的那个，
+/// 让调用方按它去报"回收目录里找不到该文件" ——
+/// 若在这里硬回落成 AppData 路径，文件明明还在卷内却会报错在 C: 上，
+/// 排查时完全指错地方。
+pub(crate) fn trash_file_of(dir: &Path, roots: &[Root], it: &Item) -> PathBuf {
+    if let Some(t) = it.trash.as_deref().filter(|s| !s.is_empty()) {
+        return PathBuf::from(t);
+    }
+    let vol = trash_path_for(dir, roots, &it.idx, &it.name, &it.path);
+    if vol.exists() {
+        return vol;
+    }
+    let legacy = dir.join("_trash").join(trash_entry_name(&it.idx, &it.name));
+    if legacy.exists() {
+        return legacy;
+    }
+    vol
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -272,6 +340,9 @@ fn migrate_map(app: &AppHandle) -> Result<(), String> {
             txtsame: v["txtsame"].as_bool().unwrap_or(false),
             ylw: v["ylw"].as_bool().unwrap_or(false),
             dim: deleted.iter().any(|d| *d == path),
+            /* 旧索引没有 trash 字段（那时回收目录固定 C: AppData），
+               沿用旧值；下次删除时才会写上新位置。 */
+            trash: v["trash"].as_str().filter(|s| !s.is_empty()).map(|s| s.to_string()),
             path,
             name,
             idx,
@@ -367,10 +438,31 @@ fn migrate_docx_cache(dir: &Path) {
 /// 只在扫描 / 迁移 / 改名之后调用。列表接口直接读 map.json 里回填好的 fam，
 /// 免得每次打开面板都重走一遍全树解析。
 pub(crate) fn refresh_plan(app: &AppHandle, items: &mut [Item]) -> Result<(), String> {
+    match refresh_plan_parts(app, items)? {
+        Some(plan) => write_json(&rename::plan_path(&data_dir(app)?), &plan),
+        None => Ok(()),
+    }
+}
+
+/// 只**算**计划并把 fam 回填进条目，不落盘。
+///
+/// 【为什么要把"算"和"写"拆开】
+/// 扫描是先落 `dup_families.json`、后落 `map.json`（原来两者都在这一个函数里
+/// 顺序做完）。中间一旦 `map.json` 写失败/被中断，就留下"计划是新的、索引还是
+/// 旧的"的半截状态 —— 下一轮改名按新计划把磁盘文件改掉，却在旧索引里
+/// **找不到对应条目**，于是索引永远追不上磁盘，界面一直显示改名前的旧名。
+/// 拆开后扫描可以先落索引、再落计划，索引是唯一可信的那一份。
+///
+/// 返回 `Ok(None)` = 这一轮不具备算计划的条件（没根 / 有根不可访问），
+/// 此时不该把残缺结果写回去。
+pub(crate) fn refresh_plan_parts(
+    app: &AppHandle,
+    items: &mut [Item],
+) -> Result<Option<rename::PlanFile>, String> {
     let dir = data_dir(app)?;
     let roots: Vec<Root> = read_json(&dir.join("_work/roots.json"));
     if roots.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let pairs: Vec<(String, String)> = roots
         .iter()
@@ -380,7 +472,7 @@ pub(crate) fn refresh_plan(app: &AppHandle, items: &mut [Item]) -> Result<(), St
     /* 只要有一个根目录当前不可访问（盘没挂上），算出来的就是一份残缺计划 ——
        写回去会把那一整棵树的目标名抹掉，所以这一轮只算不落盘。 */
     if !pairs.iter().all(|(_, p)| Path::new(p).is_dir()) {
-        return Ok(());
+        return Ok(None);
     }
 
     let mut plan = rename::build_plan(&pairs);
@@ -406,8 +498,7 @@ pub(crate) fn refresh_plan(app: &AppHandle, items: &mut [Item]) -> Result<(), St
     if pp.exists() && !bak.exists() {
         let _ = std::fs::copy(&pp, &bak);
     }
-    write_json(&pp, &plan)?;
-    Ok(())
+    Ok(Some(plan))
 }
 
 /// 渲染 / 比对时实际要打开的文件：docx 走转换后的 PDF 缓存，其余就是它自己。
@@ -574,25 +665,20 @@ pub fn dupview_list(app: AppHandle) -> Result<ListOut, String> {
 /// 它就是 map.json 里那一项的值，权威且零成本。
 ///
 /// 【已删除的文件从哪取】
-/// 删除 = 移进 `<data>/_trash/<idx>_<name>`（见 dupview_delete），条目仍留在
-/// 列表里、原路径已经空了。所以原路径不存在时回落到回收目录，让"已删除"的
-/// 卡片照样能预览。回收文件名带 idx 前缀，同名副本不会互相覆盖，
-/// 按同一个 idx 就能精确定位 —— 与 dupview_restore 用的是同一套命名。
-fn page_target(dir: &Path, path: &str, idx: &str) -> PathBuf {
+/// 删除 = 移进**试卷所在盘**的 `<试卷根>/.dupview_trash/<idx>_<name>`
+/// （见 dupview_delete），条目仍留在列表里、原路径已经空了。
+/// 所以原路径不存在时回落到该条目的回收件，让"已删除"的卡片照样能预览。
+/// 回收文件名带 idx 前缀，同名副本不会互相覆盖，按同一个 idx 就能精确定位
+/// —— 与 dupview_restore 走的是同一个 `trash_file_of`。
+fn page_target(dir: &Path, roots: &[Root], it: &Item) -> PathBuf {
+    let path = it.path.as_str();
     let src = if Path::new(path).exists() {
         PathBuf::from(path)
     } else {
-        let name = Path::new(path)
-            .file_name()
-            .map(|x| x.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let t = dir.join("_trash").join(format!("{}_{}", idx, name));
-        if t.exists() {
-            t
-        } else {
-            PathBuf::from(path)
-        }
+        let t = trash_file_of(dir, roots, it);
+        if t.exists() { t } else { PathBuf::from(path) }
     };
+    let idx = it.idx.as_str();
     /* docx 要打开的是转换后的 PDF（pdf_cache 负责转换/取缓存），
        直接开 docx 会让 pdfium 报错，前端表现为"逐页图加载失败"。
        缓存按 idx 命名，与源文件是否已被移进回收目录无关，命中即复用。 */
@@ -610,18 +696,40 @@ fn safe_idx(idx: &str) -> Option<&str> {
     (idx.len() == 8 && idx.bytes().all(|b| b.is_ascii_hexdigit())).then_some(idx)
 }
 
+fn roots_of(dir: &Path) -> Vec<Root> {
+    read_json(&dir.join("_work/roots.json"))
+}
+
+/// 按 path 找条目，找不到再用 idx 兜底 ——
+/// 文件被改过名 / 目录被改过名时，前端手里的 path 可能已过期，
+/// 但 idx 是路径 MD5、只跟着名走，这时用 idx 仍能定位到回收件。
+fn find_item(dir: &Path, path: &str, idx: &str) -> Option<Item> {
+    let map: Vec<Item> = read_json(&dir.join("_work/map.json"));
+    map.iter()
+        .find(|x| x.path == path)
+        .or_else(|| map.iter().find(|x| x.idx == idx))
+        .cloned()
+}
+
 /// 逐页图的页数。只读一次 PDF 头，不做任何渲染 ——
 /// 前端拿到它就能立刻把缩略条的格子摆出来，再逐页填图。
+///
+/// 【为什么还要收 path】
+/// `idx` 只够定位缩略图缓存；真正的文件可能在卷内回收目录里，
+/// 得靠 map.json 里那条记录（path / trash）才找得到。
 #[tauri::command(async, rename_all = "snake_case")]
 pub fn dupview_pageinfo(app: AppHandle, path: String, idx: String) -> serde_json::Value {
     let dir = match data_dir(&app) {
         Ok(d) => d,
         Err(e) => return err(&e),
     };
-    let Some(idx) = safe_idx(&idx) else {
+    let Some(idx_ok) = safe_idx(&idx) else {
         return err("badidx");
     };
-    let p = page_target(&dir, &path, idx);
+    let Some(it) = find_item(&dir, &path, idx_ok) else {
+        return err("文件不在扫描结果里");
+    };
+    let p = page_target(&dir, &roots_of(&dir), &it);
     if !p.exists() {
         return err("nofile");
     }
@@ -646,10 +754,13 @@ pub fn dupview_page(
         Ok(d) => d,
         Err(e) => return err(&e),
     };
-    let Some(idx) = safe_idx(&idx) else {
+    let Some(idx_ok) = safe_idx(&idx) else {
         return err("badidx");
     };
-    let p = page_target(&dir, &path, idx);
+    let Some(it) = find_item(&dir, &path, idx_ok) else {
+        return err("文件不在扫描结果里");
+    };
+    let p = page_target(&dir, &roots_of(&dir), &it);
     if !p.exists() {
         return err("nofile");
     }
@@ -676,6 +787,15 @@ pub fn dupview_page(
 /// 缓存（缩略图 / 逐页图 / docx→PDF）都以 `idx`（路径 MD5）命名，改名后路径变、
 /// idx 跟着变。不搬的话旧缓存成孤儿、新 idx 下什么都没有 ——
 /// 表现是"改完名卡片变白图、docx 要重转"。所以改名成功就立刻 `migrate_idx_cache`。
+///
+/// 【为什么必须同时认 idx】
+/// `path` 是"名字"的函数，而改名恰恰就是改名字 —— 前端手里的旧路径
+/// 只要有一处没跟上（卡片 data-path 改了但目录树的 `files` 还是旧的，
+/// 见 `refreshBox` 只在 leaf 命中时才更新）就会带着过期路径回来。
+/// 于是**第二次改同一张卡就报「文件不在扫描结果里」**：
+/// 文件明明在，只是按旧路径查不到了。
+/// idx 跟的是名字、不跟路径，这里用它兜底；两个都查不到才算真不在。
+/// 兜底时按**当前磁盘状态**重新定位，别信传进来的那个路径。
 #[tauri::command(rename_all = "snake_case")]
 pub fn dupview_rename(app: AppHandle, path: String, newname: String) -> serde_json::Value {
     let dir = match data_dir(&app) {
@@ -684,24 +804,70 @@ pub fn dupview_rename(app: AppHandle, path: String, newname: String) -> serde_js
     };
     let f = dir.join("_work/map.json");
     let mut map: Vec<Item> = read_json::<Vec<Item>>(&f);
-    let (oldname, idx) = match map.iter().find(|x| x.path == path) {
-        Some(it) => (it.name.clone(), it.idx.clone()),
-        None => return err("文件不在扫描结果里"),
+    let hit = match map.iter().position(|x| x.path == path) {
+        Some(i) => i,
+        /* 过期路径：用同一目录下的 idx 反查条目（调用方传错目录也认不出来，
+           但那种情况本来就不该改）。 */
+        None => {
+            let stem = Path::new(&path)
+                .file_stem()
+                .map(|x| x.to_string_lossy().to_string())
+                .unwrap_or_default();
+            /* idx 允许前缀匹配：改名会连带换 idx，旧 idx 未必正好是 8 位原值。 */
+            let now = scan::idx_of(&path);
+            match map.iter().position(|x| x.idx == now || x.idx.starts_with(&now[..4.min(now.len())])) {
+                Some(i) => i,
+                None => match map
+                    .iter()
+                    .position(|x| !x.dim && x.name.starts_with(&stem) && Path::new(&x.path).exists())
+                {
+                    Some(i) => i,
+                    None => return err("文件不在扫描结果里"),
+                },
+            }
+        }
     };
+    let path = if Path::new(&path).exists() {
+        path
+    } else {
+        /* 旧路径已失效：以条目里记的为准，它才是磁盘上真实的位置。 */
+        let p = map[hit].path.clone();
+        if !Path::new(&p).exists() {
+            return err("文件不在磁盘上（可能已被移动或删除）");
+        }
+        p
+    };
+    let oldname = map[hit].name.clone();
+    let idx = map[hit].idx.clone();
     if newname.is_empty() || newname == oldname {
         return err("新文件名无效");
     }
     let src = Path::new(&path);
-    let dst = match src.parent() {
-        Some(p) => p.join(&newname),
+    let parent = match src.parent() {
+        Some(p) => p.to_path_buf(),
         None => return err("无法定位所在目录"),
     };
-    if dst.exists() {
-        return err("目标文件名已存在");
+    /* 同名就退让到 `_2` `_3` …，而不是弹一个"目标文件名已存在"了事 ——
+       这个插件整天在处理成批的重复卷子，撞名是常态不是异常。
+       一批里第 3 份副本叫 `xxx.pdf` 是错的，叫 `xxx_3.pdf` 才是对的。 */
+    let mut final_name = newname.clone();
+    let mut n = 0u32;
+    loop {
+        let cand = parent.join(&final_name);
+        if !cand.exists() {
+            break;
+        }
+        n += 1;
+        if n > 999 {
+            return err("同名文件太多，无法自动加后缀");
+        }
+        final_name = rename::with_copy_suffix(&newname, n);
     }
+    let dst = parent.join(&final_name);
     if let Err(e) = std::fs::rename(docx::lp(src), docx::lp(&dst)) {
         return err(&format!("改名失败：{e}"));
     }
+    let newname = final_name;
     let newpath = dst.to_string_lossy().to_string();
     let new_idx = scan::idx_of(&newpath);
     migrate_idx_cache(&dir, &idx, &new_idx);
@@ -736,11 +902,19 @@ pub fn dupview_rename(app: AppHandle, path: String, newname: String) -> serde_js
     ok(serde_json::json!({"newname": newname, "newpath": newpath, "idx": new_idx, "fam": fam}))
 }
 
-/// 删除 = 移到 <data>/_trash，**不真删**。
+/// 删除 = 移到**试卷所在盘**的 `<试卷根>/.dupview_trash/<idx>_<name>`，**不真删**。
 ///
 /// 这个插件的全部意义就是让人批量删重复卷子，而批量删除最容易误删。
 /// 回收目录里的文件名带 idx 前缀，因此同名副本不会互相覆盖，
 /// 还原时能精确定位回去。
+///
+/// 【为什么回收目录必须待在试卷那一盘】
+/// 早先固定用应用数据目录（C:）下的 `_trash`，而试卷常在别的卷上
+/// （本机是 Z: 网络/映射盘）—— `std::fs::rename` 跨卷直接
+/// `os error 17 系统无法将文件移到不同的磁盘驱动器`，**删除整个功能不可用**。
+/// 跨卷复制既慢（一份卷子几十 MB、几百份就是几 GB）又要占 C: 空间，
+/// 所以改成卷内回收：同卷 rename 是改目录项，瞬时而零拷贝。
+/// 实际落点记进 `Item.trash`，roots.json 变动后仍能找回。
 #[tauri::command(rename_all = "snake_case")]
 pub fn dupview_delete(app: AppHandle, path: String) -> serde_json::Value {
     let dir = match data_dir(&app) {
@@ -757,12 +931,27 @@ pub fn dupview_delete(app: AppHandle, path: String) -> serde_json::Value {
     if !src.exists() {
         return err("文件已不存在");
     }
-    let dst = dir.join("_trash").join(format!("{}_{}", idx, name));
+    let roots: Vec<Root> = read_json(&dir.join("_work/roots.json"));
+    let dst = trash_path_for(&dir, &roots, &idx, &name, &path);
+    let Some(parent) = dst.parent() else {
+        return err("回收路径不合法");
+    };
+    if let Err(e) = std::fs::create_dir_all(parent) {
+        return err(&format!("无法创建回收目录 {}：{e}", parent.display()));
+    }
+    /* 同卷 rename 走不通才回退 copy+删（例如回收目录被别的进程锁住），
+       至少不让用户卡在"删不掉"。 */
     if let Err(e) = std::fs::rename(src, &dst) {
-        return err(&format!("移入回收目录失败：{e}"));
+        if let Err(e2) = std::fs::copy(src, &dst) {
+            return err(&format!("移入回收目录失败：{e}（复制也失败：{e2}）"));
+        }
+        if let Err(e2) = std::fs::remove_file(src) {
+            return err(&format!("移入回收目录失败：{e}（原文件删除也失败：{e2}）"));
+        }
     }
     if let Some(it) = map.iter_mut().find(|x| x.idx == idx) {
         it.dim = true;
+        it.trash = Some(dst.to_string_lossy().to_string());
     }
     if let Err(e) = write_json(&f, &map) {
         return err(&e);
@@ -778,19 +967,36 @@ pub fn dupview_restore(app: AppHandle, path: String) -> serde_json::Value {
     };
     let f = dir.join("_work/map.json");
     let mut map: Vec<Item> = read_json::<Vec<Item>>(&f);
-    let (idx, name) = match map.iter().find(|x| x.path == path) {
-        Some(it) => (it.idx.clone(), it.name.clone()),
+    /* 先把 idx 抠出来再用 —— `it` 借用着 map，后面 iter_mut 会撞借用检查 */
+    let idx = match map.iter().find(|x| x.path == path) {
+        Some(x) => x.idx.clone(),
         None => return err("文件不在扫描结果里"),
     };
-    let src = dir.join("_trash").join(format!("{}_{}", idx, name));
+    let roots: Vec<Root> = read_json(&dir.join("_work/roots.json"));
+    let src = match map.iter().find(|x| x.idx == idx) {
+        Some(x) => trash_file_of(&dir, &roots, x),
+        None => return err("文件不在扫描结果里"),
+    };
     if !src.exists() {
-        return err("回收目录里找不到该文件");
+        return err(&format!("回收目录里找不到该文件：{}", src.display()));
     }
-    if let Err(e) = std::fs::rename(&src, Path::new(&path)) {
-        return err(&format!("还原失败：{e}"));
+    let target = Path::new(&path);
+    /* 还原位置可能已不存在（整段目录被删/改名），先补回来再搬，
+       否则还原会以一个"系统找不到指定的路径"告终。 */
+    if let Some(parent) = target.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return err(&format!("无法创建目标目录 {}：{e}", parent.display()));
+        }
+    }
+    if let Err(e) = std::fs::rename(&src, target) {
+        if let Err(e2) = std::fs::copy(&src, target) {
+            return err(&format!("还原失败：{e}（复制也失败：{e2}）"));
+        }
+        let _ = std::fs::remove_file(&src);
     }
     if let Some(it) = map.iter_mut().find(|x| x.idx == idx) {
         it.dim = false;
+        it.trash = None;
     }
     if let Err(e) = write_json(&f, &map) {
         return err(&e);
@@ -957,7 +1163,53 @@ fn plan_actions(data: &Path, dir: &str, recursive: bool) -> Vec<RenAction> {
     }
     /* 稳定顺序：预览列表按（相对目录, 新名）排，反复打开不会跳。 */
     out.sort_by(|a, b| (&a.rel, &a.new_name).cmp(&(&b.rel, &b.new_name)));
+    dedup_targets(&mut out);
     out
+}
+
+/// 目标名已被占用时自动退让到 `_2` `_3` …，而不是跳过这一条。
+///
+/// 【为什么放在这里，而不是执行分支里】
+/// 预览与执行**共用同一份 `plan_actions`**。消解放到执行里就会出现
+/// "预览说改成 A、执行却落成了 A_2"，用户按预览核对时完全对不上。
+/// 放在这里，预览列表里直接就是最终会用到的名字。
+///
+/// 【什么算"被占用"】
+///   ① 磁盘上已存在，且那份文件**不参与**本轮改名（参与改名的会先挪走）；
+///   ② 本轮已经分配给别人的名字。
+/// 二者都要算 —— 只看磁盘会在同一批内部撞车，只看本轮会覆盖磁盘上已有的卷子。
+fn dedup_targets(acts: &mut Vec<RenAction>) {
+    let old_keys: HashSet<String> = acts
+        .iter()
+        .map(|a| rename::norm_key(&a.old_path))
+        .collect();
+    let mut used: HashSet<String> = HashSet::new();
+    for a in acts.iter_mut() {
+        let Some(parent) = a.new_path.parent().map(|p| p.to_path_buf()) else {
+            continue;
+        };
+        let mut n = 0u32;
+        let mut final_name = a.new_name.clone();
+        loop {
+            let cand = parent.join(&final_name);
+            let key = rename::norm_key(&cand);
+            let taken =
+                (cand.exists() && !old_keys.contains(&key)) || used.contains(&key);
+            if !taken {
+                break;
+            }
+            n += 1;
+            if n > 999 {
+                /* 一个目录下真有上千个同名副本，多半是别的地方出错了；
+                   停在这里，别把文件名撑成一串天文数字。 */
+                break;
+            }
+            final_name = rename::with_copy_suffix(&a.new_name, n);
+        }
+        used.insert(rename::norm_key(&parent.join(&final_name)));
+        a.new_name = final_name.clone();
+        a.new_path = parent.join(&final_name);
+    }
 }
 
 /// 目标被占判定 —— 预览与执行**共用同一判据**，避免"预览说能改、执行却跳过"。
@@ -1131,15 +1383,35 @@ pub fn dupview_rename_all(app: AppHandle, path: String, recursive: bool) -> serd
                 let new_idx = scan::idx_of(&new_path);
                 migrate_idx_cache(&dir, &a.old_idx, &new_idx);
                 let fam = rename::base_of(&a.new_name);
-                if let Some(it) = map.iter_mut().find(|x| x.idx == a.old_idx) {
-                    it.path = new_path.clone();
-                    it.name = a.new_name.clone();
-                    it.idx = new_idx.clone();
-                    it.fam = fam;
-                    if it.img.is_some() {
-                        let p = dir.join("_imgs").join(format!("{new_idx}.png"));
-                        it.img = p.is_file().then(|| p.to_string_lossy().to_string());
+                /* 先按 idx、再按旧路径找 —— 与 rename_in_plan 用同一套判据。
+                   【为什么不能只按 idx，且不能找不到就算了】
+                   计划文件(dup_families.json)与索引(map.json)可能不同步
+                   （历史上扫描先落计划、后落索引，中途被打断就会半截），
+                   此时计划里有的文件索引里根本没有。只按 idx 找就静默跳过：
+                   磁盘上的文件已经改了名，索引还是旧的那一行，
+                   界面于是永远显示改名前的名字 —— 用户只能看到"改了却没变"。
+                   两条路都找不到时必须报出来，让人知道要去重新扫描。 */
+                let old_path = a.old_path.to_string_lossy().to_string();
+                let pos = map
+                    .iter()
+                    .position(|x| x.idx == a.old_idx)
+                    .or_else(|| map.iter().position(|x| x.path == old_path));
+                match pos {
+                    Some(i) => {
+                        let it = &mut map[i];
+                        it.path = new_path.clone();
+                        it.name = a.new_name.clone();
+                        it.idx = new_idx.clone();
+                        it.fam = fam;
+                        if it.img.is_some() {
+                            let p = dir.join("_imgs").join(format!("{new_idx}.png"));
+                            it.img = p.is_file().then(|| p.to_string_lossy().to_string());
+                        }
                     }
+                    None => errs.push(format!(
+                        "{}：磁盘已改名，但索引里没有这条记录（索引与磁盘不同步，请重新扫描该目录）",
+                        a.new_name
+                    )),
                 }
                 rename::rename_in_plan(
                     &mut plan,
@@ -1610,3 +1882,4 @@ fn rel_under(abs: &str, root: &str) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| ".".to_string())
 }
+
