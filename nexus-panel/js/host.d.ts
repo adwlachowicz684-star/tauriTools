@@ -100,7 +100,8 @@ export interface Host {
   /** 插件注入到侧边栏的条目 */
   getSidebarItems(): Array<{ id: string; pluginId: string; label: string; icon?: string; event: string; [k: string]: unknown }>;
   refresh(): Promise<PluginManifest[]>;
-  removePlugin(id: string): void;
+  /** 返回有没有真的移除掉（没存下时为 false，此时不撤授权） */
+  removePlugin(id: string): boolean;
 }
 
 export function createHost(opts: {
@@ -125,7 +126,12 @@ export function onCloseActionChange(fn: (v: CloseAction) => void): () => void;
 
 export function loadRegistry(): Promise<PluginManifest[]>;
 export function getCustomPlugins(): PluginManifest[];
-export function saveCustomPlugins(list: PluginManifest[]): void;
+/** 落盘并如实回答存没存成；false 时界面必须说出来，不能照报「已添加」 */
+export function saveCustomPlugins(list: PluginManifest[]): boolean;
+/** 取走最近一次写入失败的原因（取完清空）；null 表示没失败过 */
+export function takeCustomPluginWriteError(): string | null;
+/** 写入失败时该说的那句话（判据只有一份，四个调用点都用它） */
+export function customPluginWriteFailMsg(kind: string, name: string, err: string | null): string;
 export function resolveEntry(entry: string): string;
 export function readTheme(): Record<string, string>;
 export function escapeHtml(s: string): string;

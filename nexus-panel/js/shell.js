@@ -7,6 +7,7 @@
 
 import {
   createHost, loadRegistry, getCustomPlugins, saveCustomPlugins,
+  takeCustomPluginWriteError, customPluginWriteFailMsg,
   filterByRuntime, visiblePlugins, isInsideTauri, escapeHtml,
 } from './host.js';
 import {
@@ -575,7 +576,16 @@ function openAddDialog() {
       type: box.querySelector('#p-type').value,
       icon: box.querySelector('#p-icon').value.trim() || '◌',
     };
-    saveCustomPlugins([...getCustomPlugins(), p]);
+    const saved = saveCustomPlugins([...getCustomPlugins(), p]);
+    const werr = takeCustomPluginWriteError();
+    /* 存不下时**必须先把遮罩收掉**再 return：
+       留着它界面就停在这一屏，而后面的「已添加」又不会弹 ——
+       点了没反应、还退不出去。 */
+    if (!saved) {
+      mask.remove();
+      toast(customPluginWriteFailMsg('添加', name, werr), 'err');
+      return;
+    }
     mask.remove();
     toast(`已添加「${name}」`, 'ok');
     await init();
@@ -586,7 +596,10 @@ function openAddDialog() {
 }
 
 window.__nexusRemovePlugin = async (id) => {
-  host.removePlugin(id);
+  if (!host.removePlugin(id)) {
+    toast(customPluginWriteFailMsg('移除', '', takeCustomPluginWriteError()), 'err');
+    return;
+  }
   toast('已移除插件', 'ok');
   await init();
   navigate(host.getPlugins()[0]?.id || 'home');

@@ -109,7 +109,18 @@ const refreshShell = new Function('hostMod',
 const removeSrc = sliceBalanced(storeSrc, 'label: \'移除\', danger: true,', '移除 onclick');
 const removeOnclick = new Function(
   'ctx', 'shell', 'p', 'getCustomPlugins', 'saveCustomPlugins', 'render', 'refreshShell',
-  `return { ${removeSrc} };`
+  /*
+   * 桩：这两个是本轮新增的"落盘结果"入口。这里只跑**正常路径**
+   * （没写失败），所以 take 恒为 null —— 守卫不该挡住正常流程。
+   * 失败路径由 custom-plugin-save-test.mjs 专门验。
+   *
+   * 注意桩必须**返回 true**：saveCustomPlugins 现在如实回答存没存成，
+   * 桩不返回值（undefined）会被判成"没存下"，整个 onclick 直接 return，
+   * refreshShell 一次都不会被调用 —— 后面的时序断言全崩。
+   */
+  `const takeCustomPluginWriteError = () => null;
+   const customPluginWriteFailMsg = (k, n, e) => k + '失败:' + (n || '') + ':' + e;
+   return { ${removeSrc} };`
 );
 
 function makeCtx() {
@@ -139,7 +150,7 @@ function makeCtx() {
     { state: {}, refresh() {} },
     { id: 'x', name: '我的插件' },
     () => [{ id: 'x', name: '我的插件' }, { id: 'y' }],
-    (l) => { saved = l; },
+    (l) => { saved = l; return true; },
     () => {},
     () => new Promise((r) => { release = r; }),
   ).onclick;
@@ -167,7 +178,7 @@ function makeCtx() {
   let rendered = 0;
   const fn = removeOnclick(
     ctx, { state: {}, refresh() {} }, { id: 'x', name: '我的插件' },
-    () => [{ id: 'x' }], () => {}, () => { rendered++; },
+    () => [{ id: 'x' }], () => true, () => { rendered++; },
     async () => { throw new Error('注册表读不到'); },
   ).onclick;
   await fn();
@@ -186,7 +197,7 @@ function makeCtx() {
     const ctx = makeCtx();
     const fn = removeOnclick(
       ctx, { state: {}, refresh() {} }, { id: 'x', name: 'P' },
-      () => [], () => {}, () => {}, async () => [],
+      () => [], () => true, () => {}, async () => [],
     ).onclick;
     await fn();
     t('移除一次 invoke 都不调（旧代码那行 noop 是纯死代码）',
@@ -214,7 +225,9 @@ t('抽到添加 onclick（源结构没变）', /saveCustomPlugins/.test(addSrc) 
 
 const addOnclick = new Function(
   'ctx', 'shell', 'getCustomPlugins', 'saveCustomPlugins', 'render', 'refreshShell', 'askPrompt',
-  `return { ${addSrc} };`
+  `const takeCustomPluginWriteError = () => null;
+   const customPluginWriteFailMsg = (k, n, e) => k + '失败:' + (n || '') + ':' + e;
+   return { ${addSrc} };`
 );
 
 {
@@ -224,7 +237,7 @@ const addOnclick = new Function(
   let saved = null;
   let release;
   const fn = addOnclick(
-    ctx, { state: {}, refresh() {} }, () => [], (l) => { saved = l[0]; }, () => {},
+    ctx, { state: {}, refresh() {} }, () => [], (l) => { saved = l[0]; return true; }, () => {},
     () => new Promise((r) => { release = r; }),
     async (o) => { asked.push(o); return o?.__v ?? ''; },
   ).onclick;
@@ -252,7 +265,7 @@ const addOnclick = new Function(
   const answers = ['  我的工具  ', './plugins/x/index.html', 'app_version, fs_op'];
   let n = 0;
   const fn = addOnclick(
-    ctx, { state: {}, refresh() {} }, () => [], (l) => { saved = l[0]; }, () => {},
+    ctx, { state: {}, refresh() {} }, () => [], (l) => { saved = l[0]; return true; }, () => {},
     async () => [],
     async (o) => { asked.push(o); return answers[n++]; },
   ).onclick;
@@ -277,7 +290,7 @@ const addOnclick = new Function(
   const answers = ['A', './a.html', null];
   let n = 0;
   const fn = addOnclick(
-    ctx, { state: {}, refresh() {} }, () => [], (l) => { saved = l[0]; }, () => {},
+    ctx, { state: {}, refresh() {} }, () => [], (l) => { saved = l[0]; return true; }, () => {},
     async () => [], async () => answers[n++],
   ).onclick;
   await fn();

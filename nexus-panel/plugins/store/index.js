@@ -1,5 +1,8 @@
 import { definePlugin, h } from '../../js/plugin-sdk.js';
-import { getCustomPlugins, saveCustomPlugins } from '../../js/host.js';
+import {
+  getCustomPlugins, saveCustomPlugins,
+  takeCustomPluginWriteError, customPluginWriteFailMsg,
+} from '../../js/host.js';
 import { prompt as askPrompt } from '../../js/dialog.js';
 
 /**
@@ -87,7 +90,12 @@ export default definePlugin({
               label: '移除', danger: true,
               onclick: async () => {
                 const next = getCustomPlugins().filter((x) => x.id !== p.id);
-                saveCustomPlugins(next);
+                /* 没存下就不能往下走：刷新出来的还是旧列表，
+                   而下面那句「已移除」会先弹出来 —— 说了移除其实没移除。 */
+                if (!saveCustomPlugins(next)) {
+                  ctx.toast?.(customPluginWriteFailMsg('移除', p.name, takeCustomPluginWriteError()), 'err');
+                  return;
+                }
                 /*
                  * 先刷新、再报成功。
                  *
@@ -226,7 +234,12 @@ export default definePlugin({
               description: '自定义插件',
               commands: cmds ? cmds.split(',').map((x) => x.trim()).filter(Boolean) : [],
             };
-            saveCustomPlugins([...getCustomPlugins(), item]);
+            /* 写在 try 之前：存不下时这个插件根本不在清单里，
+               后面刷新/渲染都是白做，而「已添加」又会照弹。 */
+            if (!saveCustomPlugins([...getCustomPlugins(), item])) {
+              ctx.toast?.(customPluginWriteFailMsg('添加', item.name, takeCustomPluginWriteError()), 'err');
+              return;
+            }
             try {
               await refreshShell(shell);
             } catch (e) {

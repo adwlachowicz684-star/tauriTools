@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createHost, loadRegistry, filterByRuntime, visiblePlugins, saveCustomPlugins, getCustomPlugins, isInsideTauri,
+  takeCustomPluginWriteError, customPluginWriteFailMsg,
   type Host, type PluginManifest,
 } from '../js/host.js';
 import * as extPolicy from '../js/external-policy.js';
@@ -272,7 +273,13 @@ export default function App() {
 
   const addPlugin = useCallback((p: Omit<PluginManifest, 'id'>) => {
     const item: PluginManifest = { ...p, id: `custom-${nextId()}`, custom: true };
-    saveCustomPlugins([...getCustomPlugins(), item]);
+    /* 存不下时也要把对话框收掉：留着它界面就停在这一屏，
+       而下面的「已添加」又不弹 —— 点了没反应、还退不出去。 */
+    if (!saveCustomPlugins([...getCustomPlugins(), item])) {
+      pushToast(customPluginWriteFailMsg('添加', item.name, takeCustomPluginWriteError()), 'err');
+      setDialogOpen(false);
+      return;
+    }
     pushToast(`已添加「${item.name}」`, 'ok');
     setDialogOpen(false);
     (async () => {
@@ -283,7 +290,12 @@ export default function App() {
   }, [pushToast]);
 
   const removePlugin = useCallback((id: string) => {
-    hostRef.current?.removePlugin(id);
+    /* 用 === false 而不是 !：hostRef 还没挂上时是 undefined，
+       那属于另一回事，不该被这里当成"移除失败"改写行为。 */
+    if (hostRef.current?.removePlugin(id) === false) {
+      pushToast(customPluginWriteFailMsg('移除', '', takeCustomPluginWriteError()), 'err');
+      return;
+    }
     pushToast('已移除插件', 'ok');
     (async () => {
       hostRef.current!.state.plugins = filterByRuntime(await loadRegistry());

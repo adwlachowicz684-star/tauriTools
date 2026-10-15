@@ -247,8 +247,54 @@ export async function loadRegistry() {
 export function getCustomPlugins() {
   try { return JSON.parse(localStorage.getItem('nexus:custom-plugins') || '[]'); } catch { return []; }
 }
+/*
+ * 写入自定义插件清单 —— 全项目唯一入口，且**如实回答存没存成**。
+ * ------------------------------------------------------------
+ * 早先这里是无条件 `localStorage.setItem(...)`、什么都不返回。
+ * 写不进去时（配额满、隐私模式、Vite 模式下设置页是隔离 iframe 拿不到
+ * 存储）它直接抛异常，而四个调用点全是「save → 紧接着 toast 已添加 /
+ * 已移除」：异常把整个 onclick 打断在半路，于是**遮罩不移除、提示也不弹**，
+ * 用户看到的是界面卡住、点了没反应。
+ *
+ * 这与 theme-manager / fav-dirs / recent.js 是同一类问题，那里都已经改成
+ * 「落盘结果单独给出来」，这里当时漏了 —— 而它是最外层（宿主）的一处：
+ * 存不下就等于这个插件**根本没装**，后面 navigate 到它必然落空。
+ *
+ * 返回 boolean：true 落盘成功，false 没存下（原因用
+ * takeCustomPluginWriteError() 取）。
+ */
+let lastCustomPluginWriteError = null;
+
+/** 取走最近一次写入失败的原因（取完清空）。null 表示这一路没失败过。 */
+export function takeCustomPluginWriteError() {
+  const e = lastCustomPluginWriteError;
+  lastCustomPluginWriteError = null;
+  return e;
+}
+
+/**
+ * 写入失败时该说的那句话 —— 判据只有一份，四个调用点都用它。
+ *
+ * 不说「已添加」：没存下就不会出现在清单里，下一行 navigate 过去必然落空，
+ * 报成功等于让人去找一个不存在的东西。
+ */
+export function customPluginWriteFailMsg(kind, name, err) {
+  const who = name ? `「${name}」` : '这个插件';
+  /* 后半句必须分开写：添加没存下是"重启后不会出现"，
+     移除没存下是"重启后又回来了"—— 说反了会让人往错的方向找。 */
+  const after = kind === '移除' ? '重启后它还会回来' : '重启后不会出现';
+  return `${kind}失败：没能保存${who}（${err || '未知原因'}）—— ${after}`;
+}
+
 export function saveCustomPlugins(list) {
-  localStorage.setItem('nexus:custom-plugins', JSON.stringify(list));
+  try {
+    localStorage.setItem('nexus:custom-plugins', JSON.stringify(list));
+    lastCustomPluginWriteError = null;
+    return true;
+  } catch (e) {
+    lastCustomPluginWriteError = e?.message || String(e);
+    return false;
+  }
 }
 
 /* ---------------------------- 宿主 ---------------------------- */
@@ -1752,8 +1798,16 @@ export function createHost(opts = {}) {
       state.plugins = filterByRuntime(await loadRegistry());
       return state.plugins;
     },
+    /**
+     * 移除自定义插件。**返回有没有真的移除掉**。
+     *
+     * 没存下就不撤授权：插件其实还在清单里（重启后照样出现），
+     * 此时把授权先撤了，会留下"插件在、但外链全被拦"的半截状态，
+     * 比"没做成"更难解释。
+     */
     removePlugin(id) {
-      saveCustomPlugins(getCustomPlugins().filter((p) => p.id !== id));
+      const ok = saveCustomPlugins(getCustomPlugins().filter((p) => p.id !== id));
+      if (!ok) return false;
       /*
        * 卸载必须**连带撤销该插件的用户放行**。
        *
@@ -1763,6 +1817,7 @@ export function createHost(opts = {}) {
        * 而"谁放行过什么"本该随插件一起消失。
        */
       revokeAllGrants(id);
+      return true;
     },
   };
 }
