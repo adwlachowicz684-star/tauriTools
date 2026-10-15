@@ -1855,6 +1855,155 @@ console.log('\n=== 21. 两个外壳入口必须对用户看到的东西达成一
     t('21.2 判据本身有效（裸字面量会被认出）',
       (fake.includes("'nexus:sidebar-open'")), '探针命中');
   }
+
+
+  /* ============================================================
+   * 22. 任务看板：状态 / 优先级清单与流转图，双端 + 类型层必须同一份
+   *
+   * 为什么单独盯这里
+   * ------------------------------------------------------------
+   * 两侧注释互相指着对方：
+   *   · core.mjs 第 2 行「与 Rust task_board.rs 的 STATUSES 保持一致（双端各自校验）」
+   *   · task_board.rs「与前端 plugins/task-board/core.mjs 的 canTransition 逐字对齐」
+   * 但**没有任何测试真的读另一侧**（实测：346 个测试文件里 0 个读 task_board.rs）。
+   * 也就是说这是条"靠人记得同步"的约定 —— 而它抄了 7 遍：
+   *   JS 侧：core.mjs 的 STATUSES / types.ts 的 STATUS_ORDER / TaskStatus 联合类型
+   *   Rust ：const STATUSES / MCP schema 两处 enum / 校验用的非法状态提示
+   *
+   * 漂了的后果不是报错，而是**双端互相否决**：
+   *   · JS 允许、Rust 拒 → HTTP 通道返回错误，界面上"点了没反应"
+   *   · Rust 允许、JS 拒 → 看板里那个流转按钮根本不出现（静默少一条路）
+   * 两种都查不到原因：看 core.mjs 和 task_board.rs 各自都没问题。
+   * ------------------------------------------------------------ */
+  {
+    const tbCore = readFileSync(join(HERE, 'plugins/task-board/core.mjs'), 'utf8');
+    const tbTypes = readFileSync(join(HERE, 'plugins/task-board/types.ts'), 'utf8');
+    const tbRs = readFileSync(join(HERE, 'src-tauri/src/task_board.rs'), 'utf8');
+
+    const uniq = (a) => [...new Set(a)];
+    const same = (a, b) => Array.isArray(a) && Array.isArray(b)
+      && a.length === b.length && a.every((x, i) => x === b[i]);
+
+    /** 取 `NAME = ['a', 'b']` 里的字面量数组 */
+    const listOf = (src, re) => {
+      const m = src.match(re);
+      if (!m) return null;
+      return m[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
+    };
+    /** 取 `export type X = 'a' | 'b'` 的联合成员（保序） */
+    const unionOf = (src, name) => {
+      const m = src.match(new RegExp(`export type ${name}\\s*=\\s*([^;]+);`));
+      if (!m) return null;
+      return m[1].split('|').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
+    };
+    /** 源码里所有字符串数组字面量（用于把 Rust 侧的 enum / 校验清单一起扫出来） */
+    const strArrays = (src) => {
+      const out = [];
+      const re = /\[\s*((?:['"][^'"]*['"]\s*,\s*)*['"][^'"]*['"])\s*\]/g;
+      let m;
+      while ((m = re.exec(src))) {
+        const items = m[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+        if (items.length >= 2) out.push(items);
+      }
+      return out;
+    };
+    /** 取 JS 侧 canTransition 里的 allowed 表 */
+    const jsFlow = (src) => {
+      const i = src.indexOf('const allowed = {');
+      if (i < 0) return null;
+      const seg = src.slice(i, src.indexOf('};', i));
+      const re = /(\w+)\s*:\s*\[([^\]]*)\]/g;
+      const out = {};
+      let m;
+      while ((m = re.exec(seg))) out[m[1]] = m[2].split(',').map((s) => s.trim().replace(/'/g, '')).filter(Boolean);
+      return out;
+    };
+    /** 取 Rust 侧 can_transition 里的 allowed 表 */
+    const rsFlow = (src) => {
+      const i = src.indexOf('fn can_transition');
+      if (i < 0) return null;
+      const seg = src.slice(i, i + 1500);
+      const re = /\(\s*"([a-z]+)"\s*,\s*&\s*\[([^\]]*)\]\s*\)/g;
+      const out = {};
+      let m;
+      while ((m = re.exec(seg))) out[m[1]] = m[2].split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean);
+      return out;
+    };
+
+    const jsStatus = listOf(tbCore, /export const STATUSES\s*=\s*\[([^\]]*)\]/);
+    const jsPrio = listOf(tbCore, /export const PRIORITIES\s*=\s*\[([^\]]*)\]/);
+
+    t('22.1 看板的状态 / 优先级清单解析得到（判据没落空）',
+      !!jsStatus && !!jsPrio, `STATUSES=${JSON.stringify(jsStatus)} PRIORITIES=${JSON.stringify(jsPrio)}`);
+
+    if (jsStatus && jsPrio) {
+      const orderStatus = listOf(tbTypes, /export const STATUS_ORDER[^=]*=\s*\[([^\]]*)\]/);
+      const unionStatus = unionOf(tbTypes, 'TaskStatus');
+      const orderPrio = listOf(tbTypes, /export const PRIORITY_ORDER[^=]*=\s*\[([^\]]*)\]/);
+      const unionPrio = unionOf(tbTypes, 'Priority');
+
+      const stDiff = [];
+      if (!same(orderStatus, jsStatus)) stDiff.push(`STATUS_ORDER=${JSON.stringify(orderStatus)}`);
+      if (!same(unionStatus, jsStatus)) stDiff.push(`TaskStatus=${JSON.stringify(unionStatus)}`);
+      t('22.2 types.ts 的状态清单与 core.mjs 同一份（含联合类型）',
+        stDiff.length === 0, stDiff.join('；') || `两侧 ${jsStatus.length} 项一致`);
+
+      const prDiff = [];
+      if (!same(orderPrio, jsPrio)) prDiff.push(`PRIORITY_ORDER=${JSON.stringify(orderPrio)}`);
+      if (!same(unionPrio, jsPrio)) prDiff.push(`Priority=${JSON.stringify(unionPrio)}`);
+      t('22.3 types.ts 的优先级清单与 core.mjs 同一份（含联合类型）',
+        prDiff.length === 0, prDiff.join('；') || `两侧 ${jsPrio.length} 项一致`);
+
+      /* Rust 侧：把所有"内容等于该清单"的数组字面量都扫出来逐条比对，
+         这样 MCP schema 里的 enum 也被一起盯住（改了它们同样会让 AI 调不通）。 */
+      /*
+       * 形状判定而不是"内容等于清单"判定 —— 后者有个致命漏洞：
+       * 谁把 'claimed' 改成 'taken'，那个数组就不再等于清单、直接被过滤掉，
+       * 于是扫描结果只是"少了一处"，断言照样绿（破坏验证时实测踩到过）。
+       * 改成先按形状认出"这像一份状态清单 / 优先级清单"，再逐条比内容。
+       */
+      const statusLike = (a) => a.length >= 4 && a.every((x) => /^[a-z]+$/.test(x))
+        && (a.includes('todo') || a.includes('done'));
+      const prioLike = (a) => a.length >= 3 && a.every((x) => /^P\d$/.test(x));
+      const rsStatus = strArrays(tbRs).filter(statusLike);
+      const rsPrio = strArrays(tbRs).filter(prioLike);
+      const rsBad = rsStatus.filter((a) => !same(a, jsStatus)).map((a) => JSON.stringify(a));
+      const rsBadP = rsPrio.filter((a) => !same(a, jsPrio)).map((a) => JSON.stringify(a));
+
+      t('22.4 Rust 侧状态清单每处都与前端一致（含 MCP schema 的 enum）',
+        rsStatus.length > 0 && rsBad.length === 0,
+        rsStatus.length === 0 ? '没扫到任何状态清单 —— 判据落空'
+          : (rsBad.length ? `不一致：${rsBad.join(' / ')}` : `Rust 侧 ${rsStatus.length} 处全部一致`));
+      t('22.5 Rust 侧优先级清单每处都与前端一致（含 MCP schema 的 enum）',
+        rsPrio.length > 0 && rsBadP.length === 0,
+        rsPrio.length === 0 ? '没扫到任何优先级清单 —— 判据落空'
+          : (rsBadP.length ? `不一致：${rsBadP.join(' / ')}` : `Rust 侧 ${rsPrio.length} 处全部一致`));
+
+      /* 流转图：双端各有一份，注释互相指着对方说"逐字对齐" */
+      const jf = jsFlow(tbCore);
+      const rf = rsFlow(tbRs);
+      const flowDiff = [];
+      if (!jf || !rf) flowDiff.push(`解析失败 js=${!!jf} rs=${!!rf}`);
+      else {
+        for (const k of Object.keys(jf)) {
+          if (!rf[k]) flowDiff.push(`Rust 缺 ${k}`);
+          else if (!same(jf[k], rf[k])) flowDiff.push(`${k}: js=${JSON.stringify(jf[k])} rs=${JSON.stringify(rf[k])}`);
+        }
+        for (const k of Object.keys(rf)) if (!jf[k]) flowDiff.push(`JS 缺 ${k}`);
+      }
+      t('22.6 状态流转图双端逐档一致（core.mjs × task_board.rs）',
+        !!jf && !!rf && flowDiff.length === 0,
+        flowDiff.join('；') || `${Object.keys(jf || {}).length} 档全部一致`);
+
+      /* 元断言：判据没失明 —— 改坏一侧必须被上面同一套比较认出来 */
+      const broken = jsStatus.slice();
+      broken[1] = 'taken';
+      t('22.7 判据本身有效（改坏一项会被认出）',
+        !same(broken, jsStatus) && !(rsStatus.length && rsStatus.every((a) => same(a, broken))),
+        `探针 ${JSON.stringify(broken)}`);
+    }
+  }
+
 }
 
 

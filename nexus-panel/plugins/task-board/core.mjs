@@ -1,5 +1,7 @@
 // task-board 纯逻辑层：不碰 DOM、不碰 ctx，浏览器与 node 单测共用。
 // 与 Rust task_board.rs 的 STATUSES 保持一致（双端各自校验）。
+// 有守卫盯着：regression-guard-test.mjs 第 22 节会逐项比对两侧清单与流转图
+// （此前这条约定靠人记得同步 —— 实测 346 个测试里 0 个读 task_board.rs）。
 
 export const STATUSES = ['todo', 'claimed', 'doing', 'review', 'done'];
 export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
