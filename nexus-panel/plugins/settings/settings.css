@@ -77,6 +77,17 @@
  *
  * 观感对齐同目录 ExternalCard 的同类 <pre>（它用的是 .p-mono + 一串内联），
  * 这样两处"展示一段程序生成文本"的样式一致。
+ *
+ * ⚠️ 跨文件撞名：css/neumorphism.css 第 685 行也有一条 .upd-notes
+ * （max-height / background / font-size / user-select 等 11 个属性重叠）。
+ * 设置页是 iframe 插件、引了同一份 neumorphism.css，两份**共现**：
+ *   · 本文件那份是 <pre> 的完整形态（等宽字体、字号 --fs-code）；
+ *   · neumorphism 那份补的是 user-select:text —— 根 body 关了选中，
+ *     而更新说明正是"摘一段发给同事"的场景，必须显式改回可选中。
+ * 同权重下**后加载者胜**：谁在后，重叠的那部分属性就归谁。
+ * 改动任一份前先确认另一份有没有同名属性，否则会出现
+ * "改了字号没反应"。真要收拾，应把外壳那份收窄成
+ * `.nx-dlg .upd-notes` 之类的作用域写法，或把 user-select 挪进本文件。
  */
 .upd-notes {
   /* pre 自带 margin，会与上一行的间距叠加成双倍 */

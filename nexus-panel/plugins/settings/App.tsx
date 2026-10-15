@@ -1373,7 +1373,7 @@ export default function Settings() {
                               className="tp-line dim"
                               style={{ background: v['--text-dim'] || v['--text'] }}
                             />
-                            <div className="tp-row">
+                            <div className="tp-bars">
                               <i
                                 className="bar"
                                 title="强调色：按钮 / 选中态"
