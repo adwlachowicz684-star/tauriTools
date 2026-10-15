@@ -19874,6 +19874,127 @@ group('BUG 149 · BOM（\uFEFF）不能让首行静默失效');
   eq((fsrc.match(/export const stripBom/g) || []).length, 1, '★ stripBom 不得有第二份定义');
 }
 
+/* ============================================================
+   BUG 152：概要 / 标注在交换格式里被写成普通分支，却一句都不说
+
+   `exchangeLoss` 一路补出了「备注 / 超链接 / 优先级 / 进度 / 标签 / 折叠 /
+   样式」（BUG 112 / 114）、「图片 / 附件 / 外框」（BUG 119）、「标记图标 /
+   关系线」（BUG 123，另加 BUG 127 的 fmIcons / fmCloud），漏了 BUG 141 / 143
+   才收的这两类：
+
+     · `xsummary` —— XMind 的概要（括在几个兄弟外面的括注，不是分支）
+     · `xcallout` —— XMind 的标注（挂在节点旁的小气泡，不是分支）
+
+   实测：五种格式的产物把它们**写成普通分支** —— 文字还在，但"这是概要/标注"
+   的性质没了，而在别的 XMind 软件里打开就是凭空多出的一排分支。
+   而 exchangeLoss 报 nodes=0 → **提示整段不出现**，界面只说「已保存」。
+
+   导入别人的 .xmind（带概要、带标注）再导出成 .opml / .md 恰好命中 ——
+   那两个是最常被当成备份的格式，导入又是整体替换且不可撤销。
+   ------------------------------------------------------------------ */
+
+group('BUG 152 · 交换格式丢掉的概要与标注必须计入提示');
+
+{
+  const f152 = await import('./formats.js');
+  const KINDS = ['markdown', 'freemind', 'opml', 'mermaid', 'plantuml'];
+  /*
+   * 文字一律用中性的 AAA / BBB / SUM / CAL —— 早先探针用「概要」「标注」当
+   * 节点文字，于是 `产物里含 概要` 恒真，什么都测不出来（BUG 131 那类假绿）。
+   */
+  const mk = (extra) => JSON.stringify({ root: { data: { id: 'r', text: 'ROOT' }, children: [
+    { data: { id: 'a', text: 'AAA' } },
+    { data: { id: 'b', text: 'BBB' } },
+    { data: { id: 's', text: 'SUM', ...(extra?.s || {}) } },
+    { data: { id: 'c', text: 'CAL', ...(extra?.c || {}) } },
+  ] } });
+  const RICH = { s: { xsummary: true, xsummaryRange: '(0,1)', xsummaryId: 'sm1' },
+    c: { xcallout: true } };
+
+  // ① 事实：四种可导回的格式里，概要 / 标注都变成了普通分支
+  {
+    const back = { freemind: (t) => f152.fromFreemind(t), opml: (t) => f152.fromOpml(t),
+      mermaid: (t) => f152.fromMermaid(t), plantuml: (t) => f152.fromPlantUml(t) };
+    for (const [name, fn] of Object.entries({
+      freemind: (c) => f152.toFreemind(c), opml: (c) => f152.toOpml(c, 'T'),
+      mermaid: (c) => f152.toMermaid(c), plantuml: (c) => f152.toPlantUml(c) })) {
+      const txt = fn(JSON.parse(mk(RICH)));
+      const km = JSON.parse(back[name](txt));
+      const flat = [];
+      (function walk(n) { flat.push(n); (n.children || []).forEach(walk); })(km.root);
+      const sum = flat.find((n) => n.data?.text === 'SUM');
+      const cal = flat.find((n) => n.data?.text === 'CAL');
+      ok(sum && !sum.data.xsummary, `${name}：导回后概要不再是概要（变成普通分支）`);
+      ok(cal && !cal.data.xcallout, `${name}：导回后标注不再是标注（变成普通分支）`);
+    }
+  }
+
+  // ② 两类都必须被统计（原来全是 0，于是提示整段不出现）
+  {
+    const content = mk(RICH);
+    for (const kind of KINDS) {
+      const l = f152.exchangeLoss(content, kind, {});
+      eq(l.summary, 1, `★ ${kind}：概要计入丢失`);
+      eq(l.callout, 1, `★ ${kind}：标注计入丢失`);
+      ok(l.nodes > 0, `★ ${kind}：nodes > 0（否则提示整段不出现）`);
+    }
+  }
+
+  // ③ 边界：只有真值才算，普通节点不算
+  {
+    eq(f152.exchangeLoss(mk({ s: { xsummary: false }, c: { xcallout: false } }), 'opml').summary, 0,
+      '假值不算概要（写法一致：d.xsummary 判真值）');
+    eq(f152.exchangeLoss(mk({ s: { xsummary: false }, c: { xcallout: false } }), 'opml').callout, 0,
+      '假值不算标注');
+    const plain = JSON.parse(mk({}));
+    eq(f152.exchangeLoss(JSON.stringify(plain), 'opml').summary, 0, '没有概要的节点报 0');
+    eq(f152.exchangeLoss(JSON.stringify(plain), 'opml').callout, 0, '没有标注的节点报 0');
+    eq(f152.exchangeLoss(JSON.stringify(plain), 'opml').nodes, 0, '★ 干净画布不能平白喊丢东西');
+    // 一个节点既是概要又是标注（理论上不会，但别数成两处 nodes）
+    const both = JSON.stringify({ root: { data: { id: 'r', text: 'R' },
+      children: [{ data: { id: 'x', text: 'X', xsummary: true, xcallout: true } }] } });
+    const lb = f152.exchangeLoss(both, 'opml', {});
+    eq(lb.summary, 1, '同时带两项时各计 1');
+    eq(lb.callout, 1, '同时带两项时各计 1（标注）');
+    eq(lb.nodes, 1, '★ 同一个节点只算 1 个节点（nodes 是去重后的合计）');
+  }
+
+  // ④ 跨画布累加：Markdown 导出的是整本工作簿
+  {
+    const sheets = ['a', 'b'].map((k) => ({ id: k, content: mk(RICH) }));
+    const all = f152.exchangeLossAll(sheets, 'markdown');
+    eq(all.summary, 2, '★ exchangeLossAll 累加概要（两张画布各 1）');
+    eq(all.callout, 2, '★ exchangeLossAll 累加标注');
+    eq(all.nodes, 4, '★ nodes 也累加（两张画布各 2）');
+  }
+
+  // ⑤ 两处提示表都必须带上这两类 —— 逐张查，不能用一个大窗口盖过去
+  {
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const nameAt = [];
+    for (let k = code.indexOf('const NAME = {'); k >= 0; k = code.indexOf('const NAME = {', k + 1)) {
+      nameAt.push(k);
+    }
+    ok(nameAt.length >= 2, `两处提示表都在（实际 ${nameAt.length} 处）`);
+    nameAt.forEach((at, i) => {
+      const win = code.slice(at, at + 460);
+      ok(/summary: '概要'/.test(win), `★ 第 ${i + 1} 张提示表带上概要`, code.slice(at, at + 90));
+      ok(/callout: '标注'/.test(win), `★ 第 ${i + 1} 张提示表带上标注`, code.slice(at, at + 90));
+    });
+    // 只改统计、提示表不接 = 等于没修（本项目第 N 次）
+    ok(/Object\.keys\(NAME\)\.filter\(\(k\) => loss\[k\] > 0\)/.test(code),
+      '★ 提示是按 NAME 表逐项生成的（表上加一类就多说一类）');
+  }
+
+  // ⑥ 反向：XMind 自己的路径不受影响（概要 / 标注 .xmind 写得回去）
+  {
+    const xm = await import('./xmind.js');
+    const sheets = [{ id: 's1', title: 'T', content: mk(RICH) }];
+    eq(xm.xmindLossCount(sheets).fmIcons, 0, 'XMind 不因概要/标注报图标损失');
+    eq(xm.xmindLossCount(sheets).blocked, 0, 'XMind 不因概要/标注报附件损失');
+  }
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {

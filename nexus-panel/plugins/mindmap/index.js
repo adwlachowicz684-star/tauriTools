@@ -2462,7 +2462,9 @@ async function gcOrphanAssets(quiet = false) {
       const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
         progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
         image: '图片与图标', attachment: '附件', boundary: '外框',
-        markers: '标记图标' };
+        markers: '标记图标',
+        // BUG 152：概要 / 标注 —— 交换格式没有对应概念，会被写成普通分支
+        summary: '概要', callout: '标注' };
       const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
         .map((k) => `${NAME[k]} ${loss[k]} 处`);
       // 关系线按「条」说。它挂在画布上，"共涉及 N 个节点"对它不成立
@@ -2527,7 +2529,9 @@ async function gcOrphanAssets(quiet = false) {
     const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
       progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
       image: '图片与图标', attachment: '附件', boundary: '外框',
-      markers: '标记图标' };
+      markers: '标记图标',
+      // BUG 152：概要 / 标注 —— 交换格式没有对应概念，会被写成普通分支
+      summary: '概要', callout: '标注' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);
     /*

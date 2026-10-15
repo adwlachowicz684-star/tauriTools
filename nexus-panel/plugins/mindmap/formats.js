@@ -1637,7 +1637,9 @@ export function exchangeLoss(content, kind, sheet) {
   const keep = EXCHANGE_KEEP[kind] || {};
   const out = { note: 0, hyperlink: 0, priority: 0, progress: 0,
     labels: 0, collapsed: 0, style: 0, image: 0, attachment: 0,
-    boundary: 0, markers: 0, relationships: 0, nodes: 0 };
+    boundary: 0, markers: 0, relationships: 0, nodes: 0,
+    // BUG 152：概要 / 标注（BUG 141 / 143 才收的 XMind 数据）
+    summary: 0, callout: 0 };
   const km = parseKm(content);
   if (!km) return out;
   const touched = new Set();
@@ -1688,6 +1690,16 @@ export function exchangeLoss(content, kind, sheet) {
     if (!keep.fmIcons && Array.isArray(d.fmIcons) && d.fmIcons.length) bump(n, 'markers');
     // BUG 127：FreeMind 的 `<cloud>` 收在 `fmCloud` 里，同理只有 .mm 带得走
     if (!keep.fmCloud && String(d.fmCloud ?? '').trim()) bump(n, 'boundary');
+    /*
+     * BUG 152：概要（`xsummary`，BUG 143 收）与标注（`xcallout`，BUG 141 收）
+     * 同样是一概装不下的 —— 五种格式里没有一种有对应概念，实测产物把它们
+     * **写成普通分支**（文字还在，但"这是概要/标注"的性质没了）。
+     * 这两类是 BUG 141 / 143 才有的数据，加进来时没同步计入 —— 于是导入
+     * 别人的 .xmind（带概要、带标注）再导出成 .opml / .md，全变成普通分支
+     * 却一句提示都没有，实测 exchangeLoss 报 nodes=0。
+     */
+    if (!keep.summary && d.xsummary) bump(n, 'summary');
+    if (!keep.callout && d.xcallout) bump(n, 'callout');
   });
   /*
    * BUG 123：关系线（BUG 122 收在画布级 `xrelationships`）同样装不下。
@@ -1711,7 +1723,8 @@ export function exchangeLoss(content, kind, sheet) {
 /** `exchangeLoss` 结果里需要跨画布累加的字段 */
 const LOSS_KEYS = ['note', 'hyperlink', 'priority', 'progress', 'labels',
   'collapsed', 'style', 'image', 'attachment', 'boundary', 'markers',
-  'relationships', 'nodes'];
+  // BUG 152：概要 / 标注也要跨画布累加（不然 Markdown 那句提示数不到）
+  'relationships', 'nodes', 'summary', 'callout'];
 
 /**
  * 多张画布合计的丢失统计（Markdown 导出用）。
