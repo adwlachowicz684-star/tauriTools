@@ -20216,6 +20216,138 @@ group('BUG 155 · 附件没存进本地库不能闷声留在节点上');
   }
 }
 
+group('BUG 156：主题面板三处 applyTheme —— 它的回话不能盖掉本该说清的话');
+
+{
+  const psrc = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  /* ---------------- ① 导入主题：「已导入（含已修正 N 个无效值）」必须留在状态栏上 ---------------- */
+  {
+    const imp = psrc.slice(psrc.indexOf('async function importThemeFile'),
+      psrc.indexOf('/* ------------------------- 主题页'));
+    const tail = imp.slice(imp.indexOf('app.bridge.registerTheme(copy);')).replace(/\}\s*$/, '');
+    ok(tail.length > 0, '★ 取得到 importThemeFile 的收尾段');
+
+    const run = async (applyRet, fixed) => {
+      const seen = [];
+      const app = {
+        bridge: { registerTheme: () => true },
+        api: {
+          /*
+           * 桩必须模仿真身 applyTheme：它 `await persist()` 之后还会再写一句
+           * status（「主题：X」）。**不模仿**的话，「有没有 await」在断言上
+           * 完全看不出差别 —— 那正是这类断言最容易空转的地方。
+           */
+          applyTheme: async () => { await tick(); seen.push('主题：甲'); return applyRet; },
+          status: (m) => seen.push(String(m)),
+        },
+      };
+      await new Function('app', 'copy', 'name', 'fixed', 'refresh',
+        'return (async () => {\n' + tail + '\n})();')(app, { id: 'custom-1' }, '甲', fixed, () => {});
+      await tick();
+      return seen;
+    };
+
+    const bad = await run(false, ['background']);
+    const lastBad = String(bad.at(-1) || '');
+    // 关键：断言落在「**最后**一句」上 —— 不 await 的话最后一句会是「主题：X」
+    ok(lastBad.includes('已修正 1 个无效值'),
+      '★ 写盘失败时「已修正 N 个无效值」仍在状态栏上（不被 applyTheme 那句盖掉）',
+      '实际末句：' + lastBad);
+    ok(lastBad.includes('未能保存'),
+      '★ 写盘失败必须拼进这句（主题列表与画布是两个独立存储，前者存上不等于后者存上）',
+      '实际末句：' + lastBad);
+
+    const good = await run(true, ['background']);
+    const lastGood = String(good.at(-1) || '');
+    ok(lastGood.includes('已修正 1 个无效值'), '★ 写盘成功时「已修正 N 个无效值」同样要在',
+      '实际末句：' + lastGood);
+    ok(!lastGood.includes('未能保存'), '★ 写盘成功时不带「未能保存」',
+      '实际末句：' + lastGood);
+
+    const plain = await run(true, []);
+    eq(String(plain.at(-1) || ''), '已导入自定义主题：甲', '★ 没有修正项时末句就是「已导入自定义主题：X」');
+
+    /*
+     * `undefined` 是**真会发生**的返回值：applyTheme 在 `registerTheme` 失败时
+     * 是提前 `return;`（它自己已经说过「自定义主题注册失败」，不需要我们再
+     * 叠加一句「未能保存」—— 那是另一件事，说上去等于给定性错误）。
+     * 所以判据必须是 `!== false` 而不是 `=== true`：
+     * 后者会把「注册失败」误报成「未能保存」，把用户引向错误的排查方向。
+     */
+    const none = await run(undefined, ['background']);
+    const lastNone = String(none.at(-1) || '');
+    ok(!lastNone.includes('未能保存'),
+      '★ applyTheme 返回 undefined（注册失败、它自己已说过）时不叠加「未能保存」',
+      '实际末句：' + lastNone);
+  }
+
+  /* ---------------- ② 主题编辑器保存：toast 说的「已保存并应用」必须成立 ---------------- */
+  {
+    const ed = psrc.slice(psrc.indexOf('export function openThemeEditor'));
+    const a1 = ed.indexOf('const save = async');
+    const a2 = ed.indexOf('\n  };', a1);
+    const inner = ed.slice(a1, a2).slice(ed.slice(a1, a2).indexOf('{') + 1);
+    ok(inner.includes('applyTheme'), '★ 取得到主题编辑器的保存回调');
+
+    const run = async (applyRet) => {
+      const seen = [];
+      const app = {
+        customThemes: [],
+        bridge: { registerTheme: () => true },
+        api: {
+          saveThemes: async () => true,
+          applyTheme: async () => { await tick(); seen.push('s:主题：X'); return applyRet; },
+          status: (m) => seen.push('s:' + m),
+          refreshSide: () => {},
+          toast: (m, k) => seen.push('t:' + m + '|' + k),
+        },
+      };
+      await new Function('app', 'editing', 'nameInput', 'dlg',
+        'return (async () => {\n' + inner + '\n})();')(
+        app, { id: 'th1', name: 'x', palette: {} }, { value: 'T' }, { close: () => {} });
+      await tick();
+      return seen;
+    };
+
+    const t1 = String((await run(false)).find((x) => x.startsWith('t:')) || '');
+    ok(t1.includes('未能保存'), '★ 画布没存上时 toast 不能还说「已保存并应用」', '实际：' + t1);
+    ok(t1.endsWith('|err'), '★ 画布没存上时 toast 是 err 级', '实际：' + t1);
+    const t2 = String((await run(true)).find((x) => x.startsWith('t:')) || '');
+    ok(t2.includes('主题已保存并应用'), '★ 存上了才是「主题已保存并应用」', '实际：' + t2);
+    ok(t2.endsWith('|ok'), '★ 存上了 toast 是 ok 级', '实际：' + t2);
+    // 判据同上必须是 `!== false`（undefined = 它自己已经说过，不是保存失败）
+    ok(/const applyOk = await app\.api\.applyTheme\(editing\.id\) !== false;/.test(inner),
+      '★ 编辑器保存：判据是 `!== false`（undefined 不当成保存失败）');
+  }
+
+  /* ---------------- ③ 删除主题：回滚之后「删除失败」必须再说一遍 ---------------- */
+  {
+    const seg = psrc.slice(psrc.indexOf("safe('删除主题'"));
+    const b1 = seg.indexOf('const ok = await app.api.saveThemes();');
+    const b2 = seg.indexOf('refresh();', b1);
+    const body = seg.slice(b1, b2);
+    ok(body.includes('删除失败（未写入本地库）'), '★ 取得到删除主题的失败回滚段');
+
+    const seen = [];
+    const app = {
+      customThemes: [{ id: 'p1' }],
+      api: {
+        saveThemes: async () => false,
+        applyTheme: async () => { await tick(); seen.push('主题：P'); return true; },
+        status: (m) => seen.push(String(m)),
+      },
+    };
+    await new Function('app', 't', 'at', 'isCurrent',
+      'return (async () => {\n' + body + '\n})();')(app, { id: 'p1', name: 'P' }, 0, true);
+    await tick();
+    ok(seen.length >= 2, '★ 回滚确实执行了（applyTheme 被调过）', '实际：' + JSON.stringify(seen));
+    eq(String(seen.at(-1) || ''), '删除失败（未写入本地库）',
+      '★ 回滚之后必须把「删除失败」重新说一遍（applyTheme 那句会盖掉它）');
+  }
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {

@@ -1864,12 +1864,22 @@ export function buildSide(app, opts = {}) {
       return;
     }
     app.bridge.registerTheme(copy);
-    app.api.applyTheme(copy.id);
+    /*
+     * 必须 await 并接住写盘结果（BUG 156）。
+     *
+     * applyTheme 内部 `await persist()` 之后还会再写一句 status，不 await 的话
+     * 那句会在**下面**这句之后才落地 —— 于是「已导入…（含已修正 N 个无效值）」
+     * 被「主题：X」整句盖掉，等于白写（A65 那句「修正过的字段必须说出来」也
+     * 跟着丢了）。同理要接结果：主题列表与画布内容是**两个独立存储**，
+     * 前者存上了、后者没存上完全可能，那时 toast/状态栏不能说成成功。
+     */
+    const applyOk = await app.api.applyTheme(copy.id) !== false;
     refresh();
     // 修正过的字段必须说出来 —— 静默改掉用户文件里的值不合适
-    app.api.status(fixed.length
+    app.api.status((fixed.length
       ? `已导入「${name}」；已修正 ${fixed.length} 个无效值：${fixed.join('、')}`
-      : `已导入自定义主题：${name}`);
+      : `已导入自定义主题：${name}`)
+      + (applyOk ? '' : '（未能保存：重载后会回到上一个主题）'));
   }
 
   /* ------------------------- 主题页 ------------------------- */
@@ -1973,8 +1983,14 @@ export function buildSide(app, opts = {}) {
                   back.splice(at, 0, t);
                   app.customThemes = back;
                 }
+                // 回滚，别把用户卡在中间态
+                if (isCurrent) await app.api.applyTheme(t.id);
+                /*
+                 * BUG 156：失败提示必须放在回滚**之后**。applyTheme 末尾也会写
+                 * 一句 status（「主题：X」），放在它前面会被整句盖掉 —— 用户只看
+                 * 到主题名，看不到「删除失败（未写入本地库）」。
+                 */
                 app.api.status('删除失败（未写入本地库）', true);
-                if (isCurrent) await app.api.applyTheme(t.id);   // 回滚，别把用户卡在中间态
                 return;
               }
               refresh();
@@ -2381,13 +2397,17 @@ export function openThemeEditor(app, theme, seedTheme) {
       app.api.status('主题保存失败（未写入本地库）', true);
       return;
     }
-    app.api.applyTheme(editing.id);
+    // BUG 156：同上，必须 await 并接住结果。「已保存并应用」里的「应用」是
+    // 指落到当前画布上（`s.theme = name` + persist），而主题列表走的是另一个
+    // 存储 —— 上面 saveThemes 成功不代表画布内容也存上了。
+    const applyOk = await app.api.applyTheme(editing.id) !== false;
     // **必须重刷侧栏**：主题列表是在 pageTheme() 里按 app.customThemes
     // 现算的，不刷的话新建的主题不会出现在列表里，得切走页签再切回来才看得到
     // —— 用户会以为没保存成功，其实已经落盘了。编辑改名同理（列表还显示旧名）。
     app.api.refreshSide?.();
     dlg.close();
-    app.api.toast('主题已保存并应用', 'ok');
+    app.api.toast(applyOk ? '主题已保存并应用' : '主题已保存，但当前画布未能保存',
+      applyOk ? 'ok' : 'err');
   };
 
   const dlg = dialog(theme ? '编辑主题' : '新建主题', [
