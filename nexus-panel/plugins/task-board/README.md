@@ -2,13 +2,27 @@
 
 多 AI 窗口 + 人工 + agent-flow 流程共用的任务看板。**数据只有一份**：数据目录下的 `tasks.json`。
 
-## 三条通道，一份数据
+## 四条通道，一份数据
 
 | 谁 | 怎么用 |
 |---|---|
 | 人 | 打开插件看板：五列流转、新建、认领、审查、备注、删除 |
 | AI 窗口 | `curl` 打本地 HTTP API（默认 `127.0.0.1:9911`，设置里起服务） |
+| MCP 客户端 | 直连 `http://127.0.0.1:9911/mcp`（Streamable HTTP + JSON-RPC 2.0），6 个任务工具原生可调 |
 | agent-flow | 画布上 `generic-http` 节点打同一个 API；提交审查可 POST 回调触发流程 |
+
+## MCP 工具（POST /mcp，JSON-RPC 2.0）
+
+| 工具 | 作用 |
+|---|---|
+| `tb_list_tasks` | 列任务（status/priority/tag/assignee/q 过滤） |
+| `tb_create_task` | 新建 {title, detail?, priority?, tags?, reporter?} |
+| `tb_get_task` | 单条详情含历史 |
+| `tb_update_task` | 流转/改字段（走同一套流转图与认领守卫） |
+| `tb_add_event` | 追加备注 |
+| `tb_register_agent` | 注册窗口身份 |
+
+鉴权与 HTTP API 相同（X-TB-Token / Authorization: Bearer）。客户端配置示例见插件「⚙ 设置」底部。
 
 ## 任务生命周期
 

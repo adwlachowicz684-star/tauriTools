@@ -187,6 +187,25 @@ export default function Settings() {
         <summary>AI / agent-flow 调用示例（curl）</summary>
         <pre>{S.curlExample(cfg)}</pre>
       </details>
+
+      <details className="tb-curl">
+        <summary>MCP 端点（外部 AI 客户端直连，WorkBuddy / Claude 等）</summary>
+        <pre>{`端点:  http://127.0.0.1:${cfg.port}/mcp   (Streamable HTTP, JSON-RPC 2.0)
+令牌:  ${cfg.token ? `Bearer ${cfg.token}` : '（未设令牌，建议在上方生成）'}
+
+工具:  tb_list_tasks / tb_create_task / tb_get_task
+       tb_update_task / tb_add_event / tb_register_agent
+
+WorkBuddy / Claude 等客户端的 MCP 配置示例:
+{
+  "mcpServers": {
+    "task-board": {
+      "url": "http://127.0.0.1:${cfg.port}/mcp",
+      "headers": { "X-TB-Token": "${cfg.token || '<令牌>'}" }
+    }
+  }
+}`}</pre>
+      </details>
     </div>
   );
 }

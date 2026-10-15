@@ -426,6 +426,11 @@ fn route(req: &Request, dir: &PathBuf) -> (u16, String, Option<String>) {
             },
             Err(e) => (400, err_json(&e), None),
         },
+        ("POST", ["mcp"]) => {
+            // MCP JSON-RPC 2.0 端点：鉴权已在上游 handle_conn 统一做过
+            let (code, body) = mcp_handle(&req.body, dir);
+            (code, body, None)
+        }
         _ => (404, r#"{"ok":false,"error":"not found"}"#.to_string(), None),
     }
 }
@@ -482,6 +487,264 @@ fn parse_body(body: &str) -> Result<Value, String> {
         return Ok(json!({}));
     }
     serde_json::from_str(body).map_err(|e| format!("请求体不是合法 JSON: {}", e))
+}
+
+// ---------------------------------------------------------------- MCP（JSON-RPC 2.0）
+
+// 端点 POST /mcp：把任务能力暴露为 MCP 工具，外部 AI 客户端
+// （WorkBuddy / Claude 等）直连 http://127.0.0.1:<port>/mcp 即可，
+// 不必 curl。鉴权复用 X-TB-Token（handle_conn 统一校验）。
+// 协议形状与 fpx/mcp.rs 保持一致（initialize/ping/tools/list/tools/call，
+// 无 id = 通知不回包），但工具表独立——这里是任务能力，那里是 fpx 能力。
+
+/// MCP 工具表。6 个工具覆盖任务全生命周期，参数与 HTTP API 一致。
+fn mcp_tools() -> Vec<Value> {
+    let tool = |name: &str, desc: &str, props: Value, required: Vec<&str>| json!({
+        "name": name,
+        "description": desc,
+        "inputSchema": { "type": "object", "properties": props, "required": required },
+    });
+
+    vec![
+        tool(
+            "tb_list_tasks",
+            "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）",
+            json!({
+                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "review", "done"], "description": "按状态过滤，缺省=全部" },
+                "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "按优先级过滤" },
+                "tag":      { "type": "string", "description": "按标签过滤" },
+                "assignee": { "type": "string", "description": "按认领人过滤；传 \"__none__\" 查未认领" },
+                "q":        { "type": "string", "description": "关键词，匹配标题/详情/id" },
+            }),
+            vec![],
+        ),
+        tool(
+            "tb_create_task",
+            "新建任务（发现问题→建任务交给其他窗口认领）",
+            json!({
+                "title":    { "type": "string", "description": "一句话说清问题" },
+                "detail":   { "type": "string", "description": "复现步骤/期望行为，可选" },
+                "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "默认 P2" },
+                "tags":     { "type": "array", "items": { "type": "string" }, "description": "自由标签" },
+                "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
+            }),
+            vec!["title"],
+        ),
+        tool(
+            "tb_get_task",
+            "查单条任务详情（含全部历史事件）",
+            json!({ "id": { "type": "string", "description": "任务 id，如 tb-0001" } }),
+            vec!["id"],
+        ),
+        tool(
+            "tb_update_task",
+            "流转/修改任务：认领、开工、提交审查、通过、打回、退回、改字段",
+            json!({
+                "id":       { "type": "string", "description": "任务 id" },
+                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "review", "done"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）" },
+                "assignee": { "type": "string", "description": "认领人；已被他人认领会被拒绝；空串=释放认领" },
+                "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "改优先级" },
+                "title":    { "type": "string", "description": "改标题" },
+                "detail":   { "type": "string", "description": "改详情" },
+                "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签" },
+                "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
+                "note":     { "type": "string", "description": "备注；打回时必填原因" },
+            }),
+            vec!["id"],
+        ),
+        tool(
+            "tb_add_event",
+            "给任务追加备注/进展（不改状态）",
+            json!({
+                "id":     { "type": "string", "description": "任务 id" },
+                "by":     { "type": "string", "description": "操作者窗口 ID" },
+                "action": { "type": "string", "description": "事件类型，缺省 note" },
+                "note":   { "type": "string", "description": "内容" },
+            }),
+            vec!["id"],
+        ),
+        tool(
+            "tb_register_agent",
+            "注册本窗口身份（首次使用先登记，认领/流转时署名用它）",
+            json!({
+                "id":   { "type": "string", "description": "窗口 ID，如 dev-a" },
+                "name": { "type": "string", "description": "显示名，可选" },
+                "role": { "type": "string", "enum": ["dev", "review", "manual"], "description": "缺省 dev" },
+            }),
+            vec!["id"],
+        ),
+    ]
+}
+
+/// tools/call 分发：业务函数与 HTTP 路由共用同一份（同一把锁下执行），
+/// 业务失败走 MCP 约定的 isError 内容，而不是 JSON-RPC error——
+/// 让 AI 读得到失败原因并自行调整参数重试。
+fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
+    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|x| x.to_string());
+    let result: Result<Value, String> = match name {
+        "tb_list_tasks" => (|| -> Result<Value, String> {
+            let store = load_tasks(dir)?;
+            let tasks = store
+                .get("tasks")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let status = s("status");
+            let priority = s("priority");
+            let tag = s("tag");
+            let assignee = s("assignee");
+            let q = s("q").map(|x| x.to_lowercase());
+            let hit: Vec<&Value> = tasks
+                .iter()
+                .filter(|t| {
+                    if let Some(st) = &status {
+                        if t.get("status").and_then(|v| v.as_str()) != Some(st.as_str()) {
+                            return false;
+                        }
+                    }
+                    if let Some(p) = &priority {
+                        if t.get("priority").and_then(|v| v.as_str()) != Some(p.as_str()) {
+                            return false;
+                        }
+                    }
+                    if let Some(tag) = &tag {
+                        let has = t
+                            .get("tags")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.iter().any(|x| x.as_str() == Some(tag.as_str())))
+                            .unwrap_or(false);
+                        if !has {
+                            return false;
+                        }
+                    }
+                    if let Some(asg) = &assignee {
+                        let cur = t.get("assignee").and_then(|v| v.as_str()).unwrap_or("");
+                        if asg == "__none__" {
+                            if !cur.is_empty() {
+                                return false;
+                            }
+                        } else if cur != asg.as_str() {
+                            return false;
+                        }
+                    }
+                    if let Some(q) = &q {
+                        let hay = format!(
+                            "{} {} {}",
+                            t.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                            t.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                            t.get("detail").and_then(|v| v.as_str()).unwrap_or("")
+                        )
+                        .to_lowercase();
+                        if !hay.contains(q.as_str()) {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .collect();
+            Ok(json!({ "count": hit.len(), "tasks": hit }))
+        })(),
+        "tb_create_task" => create_task(dir, args).map(|t| json!({ "created": t })),
+        "tb_get_task" => (|| -> Result<Value, String> {
+            let id = s("id").unwrap_or_default();
+            let store = load_tasks(dir)?;
+            match find_task(&store, &id) {
+                Some(t) => Ok(json!({ "task": t })),
+                None => Err(format!("任务 {id} 不存在")),
+            }
+        })(),
+        "tb_update_task" => {
+            patch_task(dir, &s("id").unwrap_or_default(), args).map(|(t, review)| {
+                json!({ "updated": t, "review_notice_sent": review })
+            })
+        }
+        "tb_add_event" => {
+            add_event(dir, &s("id").unwrap_or_default(), args).map(|t| json!({ "task": t }))
+        }
+        "tb_register_agent" => {
+            register_agent(dir, args).map(|a| json!({ "agents": a }))
+        }
+        other => Err(format!("未知工具: {other}")),
+    };
+
+    match result {
+        Ok(v) => json!({
+            "content": [{ "type": "text", "text": v.to_string() }],
+        }),
+        Err(e) => json!({
+            "content": [{ "type": "text", "text": e }],
+            "isError": true,
+        }),
+    }
+}
+
+/// JSON-RPC 2.0 分发。返回 None = 通知（无 id），调用方回 202 空体。
+fn mcp_dispatch(req: &Value, dir: &PathBuf) -> Option<Value> {
+    // 「没有 id」= 通知；「id: null」= 合法请求，要回 id:null 的响应
+    let is_notification = !req
+        .as_object()
+        .map(|o| o.contains_key("id"))
+        .unwrap_or(false);
+    if is_notification {
+        return None;
+    }
+
+    let id = req.get("id").cloned().unwrap_or(Value::Null);
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+    let result = match method {
+        "initialize" => Ok(json!({
+            "protocolVersion": "2024-11-05",
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "nexus-panel-task-board", "version": "1.0.0" },
+        })),
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({ "tools": mcp_tools() })),
+        "tools/call" => {
+            let params = req.get("params").cloned().unwrap_or(json!({}));
+            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            Ok(mcp_call_tool(name, &args, dir))
+        }
+        other => Err(json!({ "code": -32601, "message": format!("未知方法: {other}") })),
+    };
+
+    Some(match result {
+        Ok(r) => json!({ "jsonrpc": "2.0", "id": id, "result": r }),
+        Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": e }),
+    })
+}
+
+/// POST /mcp 的请求体可能是一批 JSON-RPC（数组=batch），逐条分发。
+fn mcp_handle(body: &str, dir: &PathBuf) -> (u16, String) {
+    let parsed: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                400,
+                json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":format!("解析失败: {e}")}})
+                    .to_string(),
+            );
+        }
+    };
+
+    let responses: Vec<Value> = match parsed {
+        Value::Array(batch) => batch
+            .iter()
+            .filter_map(|req| mcp_dispatch(req, dir))
+            .collect(),
+        single => match mcp_dispatch(&single, dir) {
+            Some(resp) => vec![resp],
+            None => vec![], // 纯通知：202 空体
+        },
+    };
+
+    if responses.is_empty() {
+        (202, String::new())
+    } else if responses.len() == 1 {
+        (200, responses[0].to_string())
+    } else {
+        (200, Value::Array(responses).to_string())
+    }
 }
 
 // ---------------------------------------------------------------- 数据
@@ -835,5 +1098,92 @@ mod tests {
     fn self_transition_allowed() {
         assert!(can_transition("doing", "doing"));
         assert!(can_transition("todo", "todo"));
+    }
+
+    /* ---------------- MCP 协议层 ---------------- */
+
+    use super::{mcp_dispatch, mcp_handle, mcp_tools, empty_store, save_tasks};
+    use std::path::PathBuf;
+
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "tb-mcp-test-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        save_tasks(&d, &empty_store()).unwrap();
+        d
+    }
+
+    #[test]
+    fn tools_list_has_six_entries() {
+        let tools = mcp_tools();
+        assert_eq!(tools.len(), 6);
+        for t in &tools {
+            assert!(t.get("inputSchema").is_some(), "工具缺 inputSchema");
+        }
+    }
+
+    #[test]
+    fn notification_gets_no_response() {
+        // 无 id = 通知，不回包
+        let req = serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"});
+        assert!(mcp_dispatch(&req, &PathBuf::new()).is_none());
+    }
+
+    #[test]
+    fn initialize_shape() {
+        let req = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}});
+        let resp = mcp_dispatch(&req, &PathBuf::new()).unwrap();
+        assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
+        assert_eq!(resp["result"]["serverInfo"]["name"], "nexus-panel-task-board");
+    }
+
+    #[test]
+    fn call_create_then_list_roundtrip() {
+        let dir = tmp_dir("roundtrip");
+        let call = |name: &str, args: serde_json::Value| {
+            let req = serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call",
+                "params":{"name":name,"arguments":args}});
+            mcp_dispatch(&req, &dir).unwrap()["result"].clone()
+        };
+
+        let r = call("tb_create_task", serde_json::json!({
+            "title": "MCP 冒烟", "priority": "P1", "tags": ["test"], "reporter": "dev-a"
+        }));
+        assert!(r.get("isError").is_none(), "建任务不应报错: {r}");
+        assert_eq!(r["content"][0]["type"], "text");
+
+        let r = call("tb_list_tasks", serde_json::json!({"status": "todo"}));
+        let text = r["content"][0]["text"].as_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["count"], 1);
+
+        // 业务错误走 isError 内容而不是 JSON-RPC error
+        let r = call("tb_update_task", serde_json::json!({
+            "id": "tb-0001", "status": "done", "by": "dev-a"
+        }));
+        assert_eq!(r["isError"], true, "todo 直跳 done 必须被流转图拦下");
+    }
+
+    #[test]
+    fn batch_and_parse_error() {
+        let dir = tmp_dir("batch");
+        // 批量：通知 + 请求混发，只回请求那条
+        let body = serde_json::json!([
+            {"jsonrpc":"2.0","method":"notifications/initialized"},
+            {"jsonrpc":"2.0","id":7,"method":"ping"}
+        ])
+        .to_string();
+        let (code, text) = mcp_handle(&body, &dir);
+        assert_eq!(code, 200);
+        assert!(text.contains("\"id\":7"));
+
+        // 坏 JSON → -32700
+        let (code, text) = mcp_handle("{oops", &dir);
+        assert_eq!(code, 400);
+        assert!(text.contains("-32700"));
     }
 }
