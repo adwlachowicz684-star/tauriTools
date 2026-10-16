@@ -1672,15 +1672,20 @@ async function gcOrphanAssets(quiet = false) {
     // 两者必须分开 —— 若用「置 0」来暂停，恢复时用户得重新想起原来设的几分钟。
     const now = Date.now();
     const intervalMs = (Number(settings.backupMinutes) || 0) * 60 * 1000;
+    // 滚动清理删不掉的份数（BUG 160）：必须并进下面那句「已保存」，
+    // 单独 status 一次会被它整句盖掉。
+    let trimFailed = 0;
     if (!settings.backupPaused && intervalMs > 0 && now - lastBackupAt > intervalMs) {
       lastBackupAt = now;
       const fp = wb.fingerprintSheets(workbook.sheets);
       if (fp !== lastBackupFp) {
         lastBackupFp = fp;
-        await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
+        const bk = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
+        trimFailed = bk.trimFailed || 0;
       }
     }
-    status('已保存 · ' + new Date().toLocaleTimeString());
+    status('已保存 · ' + new Date().toLocaleTimeString()
+      + (trimFailed ? `（${trimFailed} 份超出窗口的旧快照未能删除）` : ''), !!trimFailed);
   }
 
 
@@ -3209,11 +3214,18 @@ async function gcOrphanAssets(quiet = false) {
       status('内容与最新快照相同，未重复创建', false);
       return null;
     }
-    // pushBackup 写失败返回 null（不抛），不判断就会提示「已创建」但实际没写进去
-    const key = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
+    // pushBackup 写失败返回 null（不抛），不判断就会提示「已创建」但实际没写进去。
+    // ⓘ 它回的是 {key, trimFailed} 而不是裸 key —— 只判 key 会把「超出窗口的
+    //   旧快照没删掉」当成一切正常（BUG 160）。设置面板写着「超出自动删除最旧的
+    //   一份」，删不掉就得说出来，否则快照一路堆积、占满配额才第一次出声。
+    const bk = await store.pushBackup({ sheets: JSON.parse(JSON.stringify(workbook.sheets)), activeId: workbook.activeId }, settings.backupMax);
     lastBackupAt = Date.now();
     lastBackupFp = fp;
-    if (key) { ctx.toast('已创建快照', 'ok'); return true; }
+    if (bk.key) {
+      if (bk.trimFailed) ctx.toast(`已创建快照（${bk.trimFailed} 份超出窗口的旧快照未能删除）`, 'warn');
+      else ctx.toast('已创建快照', 'ok');
+      return true;
+    }
     status('快照创建失败（本地存储写入被拒绝）', true);
     return false;
   }

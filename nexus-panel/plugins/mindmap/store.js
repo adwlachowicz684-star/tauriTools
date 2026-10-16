@@ -228,21 +228,46 @@ export const settings = {
 
 /**
  * 写一份备份快照，并滚动删除超出窗口的旧备份。
- * 返回新备份的 key；写入失败返回 null（备份失败不应影响主流程）。
+ *
+ * ⓘ **滚动清理必须回话**（BUG 160）。早先这里写的是 `await del(all[i])` ——
+ *   不接返回值，于是 `del` 吞异常返回 false 时**完全看不出来**：
+ *
+ *   · 设置面板明写「超出自动删除最旧的一份」，面板上还标着「最多保留 N 份」，
+ *     这是**承诺式**文案，删不掉就等于没兑现；
+ *   · 快照会一路堆积占着配额，堆到写不进去时**连新快照都会失败**——
+ *     而那次失败用户看到的只是「快照创建失败」，不会知道是堆积造成的；
+ *   · 调用方拿到的仍是 key，于是说「已创建快照」，窗口其实已经破了。
+ *
+ *   这与 trimBackups（设置收敛 / 导入后清理）是**同一条规矩的两条路径**：
+ *   那边已经回话（BUG 159），这边漏掉就还是「只修一半」。
+ *
+ * ⚠️ 循环变量 i 无论 del 成不成功都递增 ——「打算删几份」的额度是固定的，
+ *    失败就不往下补删（补删会超额删掉用户的退路，见 BUG 159 的 M6）。
+ *
+ * @returns {Promise<{key:string|null, trimFailed:number}>}
+ *   key —— 新快照的键；写入失败为 null（备份失败不应影响主流程）。
+ *   ⚠️ **不是裸 key**：`if (key)` 那种写法会把「清理失败」当成「一切正常」。
+ *   trimFailed —— 滚动清理里 del 返回 false 的份数。
+ *
+ * ⓘ 与 putBackup 的区别：那个只写不清理、返回 key（成功）/ null（写失败）/
+ *    false（ts 非法）；这个**一定返回对象**，两者不要混用。
  */
 export async function pushBackup(snapshot, keep = BACKUP_KEEP) {
   const ts = Date.now();
   const key = K_BACKUP + String(ts).padStart(14, '0');
   const ok = await set(key, { ts, ...snapshot });
-  if (!ok) return null;
+  if (!ok) return { key: null, trimFailed: 0 };
   // 份数上限可配置（C# MindMapBackupMax）。非法值（0 / 负数 / NaN）退回默认，
   // 否则会算出「保留 0 份」—— 每次备份都会被立刻删掉。
   const n = Number(keep);
   const limit = Number.isFinite(n) && n >= 1 ? Math.floor(n) : BACKUP_KEEP;
   const all = (await keys(K_BACKUP)).sort();
+  let trimFailed = 0;
   // 字典序 = 时间序，从最旧开始删
-  for (let i = 0; i < all.length - limit; i++) await del(all[i]);
-  return key;
+  for (let i = 0; i < all.length - limit; i++) {
+    if (!(await del(all[i]))) trimFailed++;
+  }
+  return { key, trimFailed };
 }
 
 /**

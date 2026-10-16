@@ -982,6 +982,30 @@ group('回归 · 备份滚动窗口');
   await store.pushBackup({ sheets: [] }, 0);
   const after = await store.listBackups();
   ok(after.length >= 1, 'keep=0 时不会把备份全删光');
+
+  /* ★ BUG 160：滚动清理删不掉必须回话。
+     早先 pushBackup 返回**裸 key**，del 失败时调用方照样说「已创建快照」，
+     而设置面板明写「超出自动删除最旧的一份」—— 承诺没兑现却一声不吭，
+     快照一路堆积到配额触顶，那时才第一次出声（而且只说「快照创建失败」）。 */
+  ctl.failDel = true;
+  const pb = await store.pushBackup({ sheets: [{ id: 'x' }] }, 3);
+  ctl.failDel = false;
+  ok(pb && typeof pb === 'object', '★ pushBackup 回的是对象，不是裸 key');
+  ok(pb.trimFailed >= 1, `★ 滚动清理删不掉时 trimFailed > 0（实际 ${pb.trimFailed}）`);
+  {
+    const l = await store.listBackups();
+    ok(l.length > 3, `★ 删不掉时快照确实超出窗口（实际 ${l.length} 份 / 窗口 3）`);
+  }
+  // 正常情况不许误报
+  await store.clearBackups();
+  for (let i = 0; i < 4; i++) {
+    await store.pushBackup({ sheets: [{ id: 'n' + i }] }, 3);
+    await new Promise((r) => setTimeout(r, 2));
+  }
+  const pb2 = await store.pushBackup({ sheets: [{ id: 'ok' }] }, 3);
+  eq(pb2.trimFailed, 0, '★ 删除正常时不得误报 trimFailed');
+  ok(!!pb2.key, '删除正常时 key 仍是新快照的键');
+  await store.clearBackups();
 }
 
 /* ============================================================
@@ -15104,6 +15128,47 @@ group('BUG 159：孤儿回收与快照收敛 —— del 删不掉必须说话');
     // 错误级参数是换行的（`,\n      over > 0`），不能写死一个空格
     ok(/,\s*over > 0\)/.test(seg), '★ 没清掉时那句话是错误级');
   }
+
+  /* ------------------------------------------------------------
+   * ⑧ pushBackup 的滚动清理 —— 与 trimBackups 是**同一条规矩的另一条路径**
+   *    （BUG 160）。那边已回话（BUG 159），这边漏掉就还是「只修一半」。
+   * ------------------------------------------------------------ */
+  {
+    const st = fs.readFileSync(path.join(HERE, 'store.js'), 'utf8');
+    const raw = fnBody(st, 'export async function pushBackup(');
+    // ⓘ 全局 fnBody 按「下一个两空格缩进的函数」切，而 store.js 的导出函数是
+    //   顶层（0 缩进），匹配不到就会一路切到文件尾 —— 断言会测到 putBackup。
+    //   这里按第一个顶层的 `}` 收尾。
+    const cut = raw.indexOf('\n}');
+    const pb = cut > 0 ? raw.slice(0, cut + 2) : raw;
+    ok(pb.length > 0 && pb.indexOf('export async function pushBackup') === 0, '取到 pushBackup（且不含后面的函数）');
+    ok(/if \(!\(await del\(all\[i\]\)\)\) trimFailed\+\+;/.test(pb),
+      '★ 滚动清理必须接住 del 返回值（删不掉要计数）');
+    ok(!/await del\(all\[i\]\)\);/.test(pb),
+      '★ 不得再出现「await del(all[i]);」不接返回值的写法');
+    ok(/return \{ key, trimFailed \}/.test(pb), 'pushBackup 回话 {key, trimFailed}');
+    ok(/return \{ key: null, trimFailed: 0 \}/.test(pb), '写失败时回 key:null（不是裸 null）');
+    // ⓘ i++ 必须在 for 头部**无条件**递增：挪进循环体、只在成功时递增，
+    //   失败的那份就不占额度、循环继续往下删 → 超额删除（BUG 159 的 M6 同型）。
+    ok(/for \(let i = 0; i < all\.length - limit; i\+\+\)/.test(pb),
+      '★ 循环变量无条件递增（删不掉也占额度，不得顺列表删到底）');
+
+    const bn2 = fnBody(code, 'async function backupNow(');
+    ok(/const bk = await store\.pushBackup\(/.test(bn2), '★ backupNow 接住 pushBackup 的回话');
+    ok(/if \(bk\.trimFailed\) ctx\.toast\(/.test(bn2),
+      '★ 清理没做成时那句「已创建快照」必须带上失败份数');
+
+    // 自动保存路径：trimFailed 必须**并进**那句「已保存」—— 单独 status 一次会被整句盖掉
+    const k = code.indexOf('let trimFailed = 0;');
+    ok(k > 0, '定位到自动保存的滚动快照段');
+    if (k > 0) {
+      const sv = code.slice(k - 500, k + 700);
+      ok(/trimFailed = bk\.trimFailed \|\| 0;/.test(sv), '★ 自动保存路径接住 trimFailed');
+      ok(/trimFailed \? `\D*\$\{trimFailed\} 份超出窗口的旧快照未能删除/.test(sv),
+        '★ 自动保存那句「已保存」必须带上没删掉的份数');
+      ok(/!!trimFailed\)/.test(sv), '★ 带上失败份数时那句话是警告级');
+    }
+  }
 }
 
 group('Mermaid 根节点引号嵌套，往返损坏中心主题文字（BUG 49）');
@@ -17048,7 +17113,10 @@ group('恢复快照：写盘失败不得报成功，且不得谎称「已另存�
 
   const bn = bodyOf('backupNow');
   ok(bn.length > 0, '能取到 backupNow');
-  ok(/if \(key\) \{ ctx\.toast\('已创建快照', 'ok'\); return true; \}/.test(bn),
+  // ⓘ 锚的是 `bk.key` 而不是旧写法里的裸 `key`：pushBackup 现在回 {key, trimFailed}，
+  //   只判裸 key 会把「超出窗口的旧快照没删掉」当成一切正常（BUG 160）。
+  ok(/if \(bk\.key\) \{/.test(bn), '★ backupNow 判的是 bk.key（不是裸 key）');
+  ok(bn.indexOf('return true;') > bn.indexOf('if (bk.key) {'),
     'backupNow 成功要回 true');
   ok(/return false;/.test(bn), 'backupNow 写失败要回 false（调用方据此决定能不能说「已另存一份」）');
   ok(/return null;/.test(bn), 'backupNow 内容重复时回 null（那是"没做"而不是"失败"）');
