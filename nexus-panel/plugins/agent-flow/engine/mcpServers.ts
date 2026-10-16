@@ -214,6 +214,14 @@ export function migrateFromCanvases(
       const name = String(s?.name ?? '').trim();
       if (!name || have.has(name)) continue;
       have.add(name);
+      /*
+       * 逐字段搬，不用展开 ——
+       *
+       * 展开会把画布上的杂字段一起带进来；逐个搬则要**记得每个字段**，
+       * 漏掉 disabled 的后果是：用户在画布上关掉的服务迁过来变成启用，
+       * 于是被拿去连接、刷新失败并记一条"连不上"。
+       * 用户看到的是凭空冒出来的连接失败，而他根本没启用过它。
+       */
       merged.push({
         id: String(s?.id ?? '') || newServer(name).id,
         name,
@@ -221,6 +229,7 @@ export function migrateFromCanvases(
         url: s?.url,
         env: s?.env,
         note: s?.note,
+        disabled: s?.disabled,
       });
       added += 1;
     }
