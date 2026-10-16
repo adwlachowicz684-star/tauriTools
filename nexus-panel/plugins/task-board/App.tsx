@@ -8,20 +8,59 @@ import {
   PRIORITY_LABEL,
 } from './types';
 import type { TbConfig, Task, TaskStore, Priority, TaskStatus } from './types';
-import { actionsFor, allTags, applyTransition, filterTasks, fmtTime, relTime, sortTasks } from './core';
+import {
+  NOTAG,
+  UNASSIGNED,
+  actionsFor,
+  allTags,
+  applyTransition,
+  filterTasks,
+  fmtTime,
+  groupTasks,
+  relTime,
+  sortTasks,
+  sortTasksBy,
+  statsOf,
+} from './core';
+import type { GroupKey, SortField, TbStats } from './core';
 /* 输入法守卫：中文 / 日文输入时回车是「把候选词上屏」，不是界面上的「提交」。
    备注框回车直接落盘 tasks.json，不挡的话打一半的拼音会被当成一条备注写进去。 */
 import { isComposing } from '../../js/ime.js';
 
 /**
- * 任务管理器 · 看板
+ * 任务管理器 · 四视图
  * ------------------------------------------------------------
  * 数据只有一份：数据目录里的 tasks.json。
- *   · 人 → 这个看板（读-改-写全走 Rust 授权目录）
+ *   · 人 → 这个面板（读-改-写全走 Rust 授权目录）
  *   · AI 窗口 → curl 打本地 HTTP API（设置里起服务）
  *   · agent-flow → generic-http 节点打同一个 API
- * 看板每 2s 静默重读一次文件，别人（AI/流程）的改动会自动出现。
+ * 面板每 2s 静默重读一次文件，别人（AI/流程）的改动会自动出现。
+ *
+ * 视图：看板（按状态五列）/ 列表（平铺可排序）/ 分组（按一个字段聚合）/
+ *      统计（分布 / 负载 / 动态）。四视图共用同一份筛选结果；
+ *      视图偏好（当前视图、分组依据、排序）走 ctx.store 持久化。
  */
+type TbView = 'board' | 'list' | 'group' | 'stats';
+
+const VIEWS: { key: TbView; label: string; title: string }[] = [
+  { key: 'board', label: '看板', title: '看板：按状态分五列' },
+  { key: 'list', label: '列表', title: '列表：平铺排序，表头可点' },
+  { key: 'group', label: '分组', title: '分组：按一个字段聚合' },
+  { key: 'stats', label: '统计', title: '统计：分布 / 负载 / 最近动态' },
+];
+
+const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'tag'];
+
+const SORT_FIELDS: SortField[] = ['priority', 'status', 'assignee', 'updatedAt', 'createdAt', 'title', 'id'];
+
+/** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
+function groupLabel(key: string, by: GroupKey): string {
+  if (by === 'status') return STATUS_LABEL[key as TaskStatus] || key;
+  if (by === 'priority') return `${key} ${PRIORITY_LABEL[key as Priority] || ''}`.trim();
+  if (key === UNASSIGNED) return '未认领';
+  if (key === NOTAG) return '无标签';
+  return key;
+}
 export default function App() {
   const ctx = useNexus();
   const [cfg, setCfg] = useState<TbConfig | null>(null);
@@ -38,6 +77,11 @@ export default function App() {
   const [rejectFor, setRejectFor] = useState<{ id: string } | null>(null);
   const [err, setErr] = useState('');
   const [serviceOn, setServiceOn] = useState(false);
+  /* 视图偏好：当前视图 / 分组依据 / 排序。走 ctx.store（宿主侧持久化，
+     重开插件、切窗口都不丢；比 iframe 自己的 localStorage 多一层跨源可用性）。 */
+  const [view, setView] = useState<TbView>('board');
+  const [groupBy, setGroupBy] = useState<GroupKey>('status');
+  const [sort, setSort] = useState<{ field: SortField; dir: 'asc' | 'desc' }>({ field: 'priority', dir: 'asc' });
   const cfgRef = useRef<TbConfig | null>(null);
   cfgRef.current = cfg;
 
@@ -52,6 +96,23 @@ export default function App() {
         const st = await S.readStore(ctx, c.dataDir);
         if (!alive) return;
         setStore(st);
+        /* 视图偏好：读不到/格式坏了都静默回默认 —— 丢的只是「上次看到哪」，
+           不该让看板起不来。存储桥接最坏 15s 超时，故整体 try 兜住。 */
+        try {
+          const [v, g, s] = await Promise.all([
+            ctx.store.get('view', 'board'),
+            ctx.store.get('groupBy', 'status'),
+            ctx.store.get('sort', { field: 'priority', dir: 'asc' }),
+          ]);
+          if (!alive) return;
+          if (VIEWS.some((x) => x.key === v)) setView(v as TbView);
+          if (GROUP_KEYS.includes(g as GroupKey)) setGroupBy(g as GroupKey);
+          if (s && typeof s === 'object' && SORT_FIELDS.includes((s as { field: SortField }).field)) {
+            setSort({ field: (s as { field: SortField }).field, dir: (s as { dir?: string }).dir === 'desc' ? 'desc' : 'asc' });
+          }
+        } catch {
+          /* 偏好读取失败：保持默认视图 */
+        }
         if (c.autoStart) {
           try {
             await S.apiStart(ctx, c);
@@ -79,14 +140,44 @@ export default function App() {
 
   /* ---------- 派生数据 ---------- */
   const tags = useMemo(() => (store ? allTags(store.tasks) : []), [store]);
+  /* 四视图共用同一份筛选结果；统计视图例外（它看全量，语义是「账本」不是「查询」） */
+  const filtered = useMemo(() => (store ? filterTasks(store.tasks, filter) : []), [store, filter]);
   const byColumn = useMemo(() => {
     const map: Record<TaskStatus, Task[]> = { todo: [], claimed: [], doing: [], review: [], done: [] };
     if (store) {
-      const list = sortTasks(filterTasks(store.tasks, filter));
+      const list = sortTasks(filtered);
       for (const t of list) map[t.status].push(t);
     }
     return map;
-  }, [store, filter]);
+  }, [store, filtered]);
+  const listRows = useMemo(() => sortTasksBy(filtered, sort.field, sort.dir), [filtered, sort]);
+  const groups = useMemo(() => groupTasks(listRows, groupBy), [listRows, groupBy]);
+  const stats = useMemo<TbStats | null>(() => (store ? statsOf(store) : null), [store]);
+
+  /* 偏好落盘：store 是异步桥接，失败只意味着「下次不记得」，不该弹错打扰用户 */
+  const persist = (k: string, v: unknown) => {
+    try {
+      const p = ctx.store.set(k, v) as unknown as Promise<unknown> | undefined;
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch {
+      /* 同上：静默 */
+    }
+  };
+  const changeView = (v: TbView) => {
+    setView(v);
+    persist('view', v);
+  };
+  const changeGroupBy = (g: GroupKey) => {
+    setGroupBy(g);
+    persist('groupBy', g);
+  };
+  const changeSort = (field: SortField, dir?: 'asc' | 'desc') => {
+    // 点同一列 = 翻转方向；换列 = 用该列默认方向（时间类「新的在前」，其余升序）
+    const next =
+      dir ?? (sort.field === field ? (sort.dir === 'asc' ? 'desc' : 'asc') : field === 'updatedAt' || field === 'createdAt' ? 'desc' : 'asc');
+    setSort({ field, dir: next });
+    persist('sort', { field, dir: next });
+  };
 
   /* ---------- 动作 ---------- */
   const refresh = async () => {
@@ -272,31 +363,105 @@ export default function App() {
 
       {err && <div className="tb-err">{err}</div>}
 
-      {/* 看板五列 */}
-      <div className="tb-board">
-        {STATUS_ORDER.map((st) => (
-          <section key={st} className="tb-col">
-            <header className="tb-col-head">
-              <span className={'tb-col-dot s-' + st} />
-              {STATUS_LABEL[st]}
-              <span className="tb-col-num">{byColumn[st].length}</span>
-            </header>
-            <div className="tb-col-body">
-              {byColumn[st].length === 0 && <div className="tb-col-empty">空</div>}
-              {byColumn[st].map((t) => (
-                <TaskCard
-                  key={t.id}
-                  task={t}
-                  me={me}
-                  onOpen={() => setDetailId(t.id)}
-                  onAction={(to, needNote) => (needNote ? setRejectFor({ id: t.id }) : doTransition(t.id, to))}
-                  onClaim={() => doClaim(t.id)}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
+      {/* 视图切换条：左段四视图 tab，右段放各视图自己的参数 + 命中数 */}
+      <div className="tb-views">
+        <div className="tb-viewtabs">
+          {VIEWS.map((v) => (
+            <button
+              key={v.key}
+              className={'tb-viewtab' + (view === v.key ? ' on' : '')}
+              title={v.title}
+              aria-pressed={view === v.key}
+              onClick={() => changeView(v.key)}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <div className="tb-views-right">
+          {view === 'group' && (
+            <label className="tb-field">
+              <span>分组依据</span>
+              <select value={groupBy} onChange={(e) => changeGroupBy(e.target.value as GroupKey)}>
+                <option value="status">状态</option>
+                <option value="priority">优先级</option>
+                <option value="assignee">认领人</option>
+                <option value="tag">标签</option>
+              </select>
+            </label>
+          )}
+          {view === 'list' && (
+            <>
+              <label className="tb-field">
+                <span>排序</span>
+                <select value={sort.field} onChange={(e) => changeSort(e.target.value as SortField)}>
+                  <option value="priority">优先级</option>
+                  <option value="status">状态</option>
+                  <option value="assignee">认领人</option>
+                  <option value="updatedAt">更新时间</option>
+                  <option value="createdAt">创建时间</option>
+                  <option value="title">标题</option>
+                  <option value="id">ID</option>
+                </select>
+              </label>
+              <button className="tb-act sm" title="切换升序 / 降序" onClick={() => changeSort(sort.field)}>
+                {sort.dir === 'asc' ? '↑ 升序' : '↓ 降序'}
+              </button>
+            </>
+          )}
+          <span className="tb-views-count" title="当前筛选命中 / 总任务">
+            {filtered.length} / {store.tasks.length}
+          </span>
+        </div>
       </div>
+
+      {/* 看板五列 */}
+      {view === 'board' && (
+        <div className="tb-board">
+          {STATUS_ORDER.map((st) => (
+            <section key={st} className="tb-col">
+              <header className="tb-col-head">
+                <span className={'tb-col-dot s-' + st} />
+                {STATUS_LABEL[st]}
+                <span className="tb-col-num">{byColumn[st].length}</span>
+              </header>
+              <div className="tb-col-body">
+                {byColumn[st].length === 0 && <div className="tb-col-empty">空</div>}
+                {byColumn[st].map((t) => (
+                  <TaskCard
+                    key={t.id}
+                    task={t}
+                    me={me}
+                    onOpen={() => setDetailId(t.id)}
+                    onAction={(to, needNote) => (needNote ? setRejectFor({ id: t.id }) : doTransition(t.id, to))}
+                    onClaim={() => doClaim(t.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+
+      {/* 列表：平铺 + 表头排序 */}
+      {view === 'list' && (
+        <ListView rows={listRows} sort={sort} onSort={changeSort} onOpen={(id) => setDetailId(id)} />
+      )}
+
+      {/* 分组：按一个字段聚合，组内沿用当前排序 */}
+      {view === 'group' && (
+        <GroupView
+          groups={groups}
+          groupBy={groupBy}
+          me={me}
+          onOpen={(id) => setDetailId(id)}
+          onAction={(id, to, needNote) => (needNote ? setRejectFor({ id }) : doTransition(id, to))}
+          onClaim={(id) => doClaim(id)}
+        />
+      )}
+
+      {/* 统计：看全量，不受顶部筛选影响 */}
+      {view === 'stats' && stats && <StatsView stats={stats} onOpen={(id) => setDetailId(id)} />}
 
       {/* 新建任务 */}
       {newOpen && (
@@ -410,6 +575,225 @@ function TaskCard({
         </div>
       </div>
     </article>
+  );
+}
+
+/* ================================================================ 列表视图 */
+
+const LIST_COLS: { field: SortField; label: string }[] = [
+  { field: 'priority', label: '优先级' },
+  { field: 'id', label: 'ID' },
+  { field: 'title', label: '标题' },
+  { field: 'status', label: '状态' },
+  { field: 'assignee', label: '认领人' },
+  { field: 'updatedAt', label: '更新' },
+];
+
+function ListView({
+  rows,
+  sort,
+  onSort,
+  onOpen,
+}: {
+  rows: Task[];
+  sort: { field: SortField; dir: 'asc' | 'desc' };
+  onSort: (field: SortField) => void;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <div className="tb-list">
+      <div className="tb-list-head tb-lgrid">
+        {LIST_COLS.map((c) => (
+          <button
+            key={c.field}
+            className={'tb-lh c-' + c.field + (sort.field === c.field ? ' on' : '')}
+            title={`按${c.label}排序（再次点击切换方向）`}
+            onClick={() => onSort(c.field)}
+          >
+            {c.label}
+            <span className="tb-lh-dir">{sort.field === c.field ? (sort.dir === 'asc' ? '↑' : '↓') : '↕'}</span>
+          </button>
+        ))}
+      </div>
+      <div className="tb-list-body">
+        {rows.length === 0 && <div className="tb-col-empty">没有符合条件的任务</div>}
+        {rows.map((t) => (
+          <div key={t.id} className="tb-lrow tb-lgrid" onClick={() => onOpen(t.id)} title="点击查看详情">
+            <span className="tb-lc">
+              <PriorityBadge p={t.priority} />
+            </span>
+            <span className="tb-lc c-id">{t.id}</span>
+            <span className="tb-lc c-title">
+              <span className="tb-ltitle">{t.title}</span>
+              {t.tags.length > 0 && (
+                <span className="tb-ltags">
+                  {t.tags.map((tag) => (
+                    <span key={tag} className="tb-tag">
+                      {tag}
+                    </span>
+                  ))}
+                </span>
+              )}
+            </span>
+            <span className="tb-lc c-status">
+              <span className={'tb-col-dot s-' + t.status} />
+              {STATUS_LABEL[t.status]}
+            </span>
+            <span className="tb-lc c-assignee">{t.assignee ? '@' + t.assignee : '未认领'}</span>
+            <span className="tb-lc c-updatedAt" title={fmtTime(t.updatedAt)}>
+              {relTime(t.updatedAt)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================ 分组视图 */
+
+function GroupView({
+  groups,
+  groupBy,
+  me,
+  onOpen,
+  onAction,
+  onClaim,
+}: {
+  groups: { key: string; tasks: Task[] }[];
+  groupBy: GroupKey;
+  me: string;
+  onOpen: (id: string) => void;
+  onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
+  onClaim: (id: string) => void;
+}) {
+  return (
+    <div className="tb-groups">
+      {groups.length === 0 && <div className="tb-col-empty">没有符合条件的任务</div>}
+      {groups.map((g) => (
+        <section key={g.key} className="tb-group">
+          <header className="tb-group-head">
+            {groupBy === 'status' && <span className={'tb-col-dot s-' + g.key} />}
+            <span className="tb-group-name">{groupLabel(g.key, groupBy)}</span>
+            <span className="tb-col-num">{g.tasks.length}</span>
+          </header>
+          <div className="tb-group-body">
+            {g.tasks.map((t) => (
+              <TaskCard
+                key={t.id}
+                task={t}
+                me={me}
+                onOpen={() => onOpen(t.id)}
+                onAction={(to, needNote) => onAction(t.id, to, needNote)}
+                onClaim={() => onClaim(t.id)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/* ================================================================ 统计视图 */
+
+function BarRow({ label, count, max, dot }: { label: string; count: number; max: number; dot?: string }) {
+  return (
+    <div className="tb-bar-row">
+      <span className="tb-bar-label">
+        {dot && <span className={'tb-col-dot ' + dot} />}
+        {label}
+      </span>
+      <span className="tb-bar-track">
+        <span className="tb-bar-fill" style={{ width: `${max > 0 ? Math.round((count / max) * 100) : 0}%` }} />
+      </span>
+      <span className="tb-bar-num">{count}</span>
+    </div>
+  );
+}
+
+function StatsView({ stats, onOpen }: { stats: TbStats; onOpen: (id: string) => void }) {
+  const maxStatus = Math.max(1, ...Object.values(stats.byStatus));
+  const maxPrio = Math.max(1, ...Object.values(stats.byPriority));
+  const maxWho = Math.max(1, ...stats.byAssignee.map((x) => x.count));
+  const cards: { label: string; value: number; hint?: string; warn?: boolean }[] = [
+    { label: '总任务', value: stats.total },
+    { label: '未完成', value: stats.open },
+    { label: '进行中', value: stats.active, hint: 'doing + review' },
+    { label: '已完成', value: stats.done },
+    { label: '超 7 天未动', value: stats.stale.length, warn: stats.stale.length > 0 },
+  ];
+  return (
+    <div className="tb-stats">
+      <div className="tb-stat-cards">
+        {cards.map((c) => (
+          <div key={c.label} className={'tb-stat-card' + (c.warn ? ' warn' : '')}>
+            <span className="tb-stat-num">{c.value}</span>
+            <span className="tb-stat-label">
+              {c.label}
+              {c.hint && <em className="tb-stat-hint">{c.hint}</em>}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="tb-stat-grid">
+        <section className="tb-stat-panel">
+          <header className="tb-stat-panel-head">状态分布</header>
+          {STATUS_ORDER.map((s) => (
+            <BarRow key={s} label={STATUS_LABEL[s]} count={stats.byStatus[s] || 0} max={maxStatus} dot={'s-' + s} />
+          ))}
+        </section>
+        <section className="tb-stat-panel">
+          <header className="tb-stat-panel-head">优先级分布</header>
+          {PRIORITY_ORDER.map((p) => (
+            <BarRow key={p} label={`${p} ${PRIORITY_LABEL[p]}`} count={stats.byPriority[p] || 0} max={maxPrio} />
+          ))}
+        </section>
+        <section className="tb-stat-panel">
+          <header className="tb-stat-panel-head">认领人负载</header>
+          {stats.byAssignee.length === 0 && <div className="tb-col-empty">暂无数据</div>}
+          {stats.byAssignee.map((a) => (
+            <BarRow key={a.id} label={a.id === UNASSIGNED ? '未认领' : '@' + a.id} count={a.count} max={maxWho} />
+          ))}
+        </section>
+        <section className="tb-stat-panel">
+          <header className="tb-stat-panel-head">热门标签</header>
+          {stats.topTags.length === 0 && <div className="tb-col-empty">暂无标签</div>}
+          <div className="tb-stat-tags">
+            {stats.topTags.map((x) => (
+              <span key={x.tag} className="tb-tag">
+                {x.tag} <em className="tb-stat-hint">×{x.count}</em>
+              </span>
+            ))}
+          </div>
+        </section>
+        <section className="tb-stat-panel wide">
+          <header className="tb-stat-panel-head">最近动态</header>
+          {stats.recent.length === 0 && <div className="tb-col-empty">暂无记录</div>}
+          {stats.recent.map((h, i) => (
+            <div key={i} className="tb-hev tb-click" onClick={() => onOpen(h.taskId)} title="点击查看任务">
+              <span className="tb-hev-at">{fmtTime(h.at)}</span>
+              <span className="tb-hev-by">{h.by}</span>
+              <span className="tb-hev-act">{h.taskId}</span>
+              <span className="tb-hev-note">{h.note || h.action}</span>
+            </div>
+          ))}
+        </section>
+        <section className="tb-stat-panel wide">
+          <header className="tb-stat-panel-head">超 7 天未动（{stats.stale.length}）</header>
+          {stats.stale.length === 0 && <div className="tb-col-empty">没有陈旧任务</div>}
+          {stats.stale.map((t) => (
+            <div key={t.id} className="tb-load-row" onClick={() => onOpen(t.id)} title="点击查看任务">
+              <PriorityBadge p={t.priority} />
+              <span className="tb-load-id">{t.id}</span>
+              <span className="tb-load-title">{t.title}</span>
+              <span className="tb-load-time">{relTime(t.updatedAt)}</span>
+            </div>
+          ))}
+        </section>
+      </div>
+      <p className="tb-stats-hint">统计基于全部任务，不受顶部筛选影响。</p>
+    </div>
   );
 }
 

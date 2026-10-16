@@ -724,10 +724,433 @@
   white-space: pre;
 }
 
+/* ------------------------------------------------ 视图切换条 */
+
+.tb-views {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-4);
+  border-block-end: 1px solid var(--divider);
+}
+
+.tb-viewtabs {
+  display: inline-flex;
+  gap: var(--sp-1);
+}
+
+.tb-viewtab {
+  --ctl-h: 26px;
+  height: var(--ctl-h);
+  padding: 0 var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-mute);
+  font-family: var(--font-sans);
+  font-size: var(--fs-note);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease,
+    color var(--dur-fast) ease;
+}
+
+.tb-viewtab:hover {
+  color: var(--text);
+}
+
+.tb-viewtab.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+}
+
+.tb-views-right {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-inline-start: auto;
+  flex-wrap: wrap;
+}
+
+.tb-views-count {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------ 列表视图 */
+
+.tb-list {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  overflow: auto;
+}
+
+/* 表头与行共用同一套网格（抽成 .tb-lgrid：同一选择器只在一处定义，
+   免得「各写一半」被 regression 守卫盯上） */
+.tb-lgrid {
+  display: grid;
+  grid-template-columns: 64px 76px minmax(0, 1fr) 96px 110px 88px;
+  gap: var(--sp-2);
+  align-items: center;
+  min-width: 620px;
+}
+
+.tb-list-head {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  padding: var(--sp-1) var(--sp-2);
+  border-block-end: 1px solid var(--divider);
+  background: var(--bg);
+}
+
+.tb-lh {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-1);
+  border: none;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-mute);
+  font-family: var(--font-sans);
+  font-size: var(--fs-note);
+  text-align: start;
+  cursor: pointer;
+  transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease;
+}
+
+.tb-lh:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.tb-lh.on {
+  color: var(--text);
+}
+
+.tb-lh-dir {
+  font-size: var(--fs-micro);
+}
+
+.tb-list-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.tb-lrow {
+  padding: var(--sp-2);
+  border-block-end: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+
+.tb-lrow:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.tb-lc {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-note);
+}
+
+.tb-lc.c-id {
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.tb-lc.c-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.tb-ltitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-ltags {
+  display: inline-flex;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+
+.tb-lc.c-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-mute);
+}
+
+.tb-lc.c-assignee {
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-lc.c-updatedAt {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------ 分组视图 */
+
+.tb-groups {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  overflow-y: auto;
+}
+
+.tb-group {
+  border: 1px solid var(--divider);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.tb-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-block-end: 1px solid var(--divider);
+  font-size: var(--fs-note);
+  font-weight: var(--fw-mid, 500);
+}
+
+.tb-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-group-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--sp-2);
+  align-content: start;
+  padding: var(--sp-2);
+}
+
+/* ------------------------------------------------ 统计视图 */
+
+.tb-stats {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  overflow-y: auto;
+}
+
+.tb-stat-cards {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.tb-stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+}
+
+.tb-stat-card.warn {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.tb-stat-num {
+  color: var(--text);
+  font-size: var(--fs-22);
+  font-weight: var(--fw-strong, 600);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-tight, 1.45);
+}
+
+.tb-stat-card.warn .tb-stat-num {
+  color: var(--accent);
+}
+
+.tb-stat-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+  color: var(--text-mute);
+  font-size: var(--fs-note);
+}
+
+.tb-stat-hint {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+  font-style: normal;
+}
+
+.tb-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+
+.tb-stat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+}
+
+.tb-stat-panel.wide {
+  grid-column: 1 / -1;
+}
+
+.tb-stat-panel-head {
+  color: var(--text);
+  font-size: var(--fs-note);
+  font-weight: var(--fw-mid, 500);
+}
+
+.tb-stat-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+/* 分布条：label / 轨道 / 计数三段，fill 宽度由内联百分比给出 */
+.tb-bar-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 96px) minmax(0, 1fr) 40px;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.tb-bar-label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-mute);
+  font-size: var(--fs-note);
+}
+
+.tb-bar-track {
+  height: var(--sp-2);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--text-mute) 18%, transparent);
+  overflow: hidden;
+}
+
+.tb-bar-fill {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
+  transition: width var(--dur-base) ease;
+}
+
+.tb-bar-num {
+  color: var(--text);
+  font-size: var(--fs-note);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+/* 陈旧任务行 */
+.tb-load-row {
+  display: grid;
+  grid-template-columns: auto 72px minmax(0, 1fr) auto;
+  gap: var(--sp-2);
+  align-items: center;
+  padding: var(--sp-2);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+
+.tb-load-row:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.tb-load-id {
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.tb-load-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-note);
+}
+
+.tb-load-time {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 可点击的历史行（统计视图的「最近动态」复用 .tb-hev） */
+.tb-click {
+  cursor: pointer;
+}
+
+.tb-stat-panel .tb-hev {
+  border-radius: var(--r-xs);
+  padding: 0 var(--sp-1);
+  transition: background-color var(--dur-fast) ease;
+}
+
+.tb-stat-panel .tb-hev:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.tb-stats-hint {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+}
+
 /* ------------------------------------------------ 窄屏（列变两排） */
 
 @media (max-width: 900px) {
   .tb-board {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tb-stat-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .tb-stat-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

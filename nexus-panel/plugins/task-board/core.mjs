@@ -169,3 +169,164 @@ export function relTime(ms) {
   if (diff < 24 * 3600_000) return `${Math.floor(diff / 3600_000)} 小时前`;
   return `${Math.floor(diff / (24 * 3600_000))} 天前`;
 }
+
+/** 未认领任务的哨兵 key（与 filterTasks 的 '__none__' 约定一致） */
+export const UNASSIGNED = '__none__';
+/** 无标签任务的哨兵 key（仅 tag 分组时使用） */
+export const NOTAG = '__notag__';
+
+const STATUS_RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
+
+/**
+ * 分组：status / priority / assignee / tag
+ * - status / priority：按 STATUSES / PRIORITIES 固定顺序，只返回非空组
+ * - assignee：未认领（__none__）恒置顶，其余按组内数量倒序
+ * - tag：并集语义（一个任务带 N 个标签就同时进 N 个组），按数量倒序
+ *
+ * 只返回 key 不返回 label —— 标签文案由 UI 层映射 types.ts 的
+ * STATUS_LABEL / PRIORITY_LABEL，避免同一份映射抄两处后漂移。
+ */
+export function groupTasks(tasks, key) {
+  const groups = [];
+  const index = new Map();
+  const push = (k, t) => {
+    let g = index.get(k);
+    if (!g) {
+      g = { key: k, tasks: [] };
+      index.set(k, g);
+      groups.push(g);
+    }
+    g.tasks.push(t);
+  };
+  for (const t of tasks) {
+    if (key === 'status') push(t.status, t);
+    else if (key === 'priority') push(t.priority, t);
+    else if (key === 'assignee') push(t.assignee || UNASSIGNED, t);
+    else if (key === 'tag') {
+      if (t.tags.length === 0) push(NOTAG, t);
+      else for (const tag of t.tags) push(tag, t);
+    }
+  }
+  if (key === 'status') groups.sort((a, b) => STATUS_RANK[a.key] - STATUS_RANK[b.key]);
+  else if (key === 'priority') groups.sort((a, b) => PRIORITIES.indexOf(a.key) - PRIORITIES.indexOf(b.key));
+  else if (key === 'assignee') {
+    groups.sort((a, b) => {
+      if (a.key === UNASSIGNED) return -1;
+      if (b.key === UNASSIGNED) return 1;
+      return b.tasks.length - a.tasks.length || a.key.localeCompare(b.key);
+    });
+  } else if (key === 'tag') {
+    // __notag__ 是伪分组，显式置尾 —— 不能靠 '__' 碰 collation 运气
+    groups.sort((a, b) => {
+      if (a.key === NOTAG) return 1;
+      if (b.key === NOTAG) return -1;
+      return b.tasks.length - a.tasks.length || a.key.localeCompare(b.key);
+    });
+  } else {
+    groups.sort((a, b) => b.tasks.length - a.tasks.length || a.key.localeCompare(b.key));
+  }
+  return groups;
+}
+
+/**
+ * 多字段排序（列表 / 分组视图的表头与组内排序共用）
+ * 字段：priority / status / assignee / updatedAt / createdAt / title / id
+ * 方向：'asc' | 'desc'（默认 asc）
+ * - assignee：未认领恒排最后，与方向无关
+ * - 同级兜底：更新时间倒序（新的在前）；排时间字段本身时按 id 升序保稳定
+ */
+export function sortTasksBy(tasks, field, dir = 'asc') {
+  const sign = dir === 'desc' ? -1 : 1;
+  const cmp = (a, b) => {
+    let r = 0;
+    switch (field) {
+      case 'priority':
+        r = (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
+        break;
+      case 'status':
+        r = (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
+        break;
+      case 'assignee': {
+        if (!a.assignee && !b.assignee) r = 0;
+        else if (!a.assignee) return 1;
+        else if (!b.assignee) return -1;
+        else r = a.assignee.localeCompare(b.assignee);
+        break;
+      }
+      case 'updatedAt':
+      case 'createdAt':
+        r = (a[field] || 0) - (b[field] || 0);
+        break;
+      case 'title':
+        r = a.title.localeCompare(b.title, 'zh-Hans-CN');
+        break;
+      case 'id':
+        r = a.id.localeCompare(b.id);
+        break;
+      default:
+        r = 0;
+    }
+    if (r !== 0) return r * sign;
+    if (field === 'updatedAt' || field === 'createdAt') return a.id.localeCompare(b.id);
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  };
+  return [...tasks].sort(cmp);
+}
+
+const STALE_MS = 7 * 24 * 3600 * 1000;
+
+/**
+ * 统计（「统计」视图数据源）。now 可注入，保证单测不依赖真实时钟。
+ * - open = 未完成总数；active = doing + review（真正在流转的）
+ * - stale = 未完成且超过 7 天没动过，按 updatedAt 升序（最僵硬的在前）
+ * - recent = 跨任务合并 history，按时间倒序前 8 条（带 taskId/title 便于跳转）
+ * - byAssignee 的 __none__ 置顶；topTags 取前 10
+ */
+export function statsOf(store, now = Date.now()) {
+  const tasks = store.tasks || [];
+  const byStatus = {};
+  const byPriority = {};
+  for (const s of STATUSES) byStatus[s] = 0;
+  for (const p of PRIORITIES) byPriority[p] = 0;
+  const byAssignee = new Map();
+  const tagCnt = new Map();
+  const stale = [];
+  for (const t of tasks) {
+    byStatus[t.status] = (byStatus[t.status] || 0) + 1;
+    byPriority[t.priority] = (byPriority[t.priority] || 0) + 1;
+    const who = t.assignee || UNASSIGNED;
+    byAssignee.set(who, (byAssignee.get(who) || 0) + 1);
+    for (const tag of t.tags) tagCnt.set(tag, (tagCnt.get(tag) || 0) + 1);
+    if (t.status !== 'done' && (now - (t.updatedAt || 0)) > STALE_MS) stale.push(t);
+  }
+  const assignees = [...byAssignee.entries()]
+    .sort((a, b) => {
+      if (a[0] === UNASSIGNED) return -1;
+      if (b[0] === UNASSIGNED) return 1;
+      return b[1] - a[1] || a[0].localeCompare(b[0]);
+    })
+    .map(([id, count]) => ({ id, count }));
+  const topTags = [...tagCnt.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 10)
+    .map(([tag, count]) => ({ tag, count }));
+  const recent = [];
+  for (const t of tasks) {
+    for (const h of t.history || []) recent.push({ ...h, taskId: t.id, title: t.title });
+  }
+  recent.sort((a, b) => (b.at || 0) - (a.at || 0));
+  stale.sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+  return {
+    total: tasks.length,
+    open: tasks.filter((t) => t.status !== 'done').length,
+    active: tasks.filter((t) => t.status === 'doing' || t.status === 'review').length,
+    done: byStatus.done,
+    byStatus,
+    byPriority,
+    byAssignee: assignees,
+    topTags,
+    recent: recent.slice(0, 8),
+    stale,
+    agents: store.agents || [],
+  };
+}

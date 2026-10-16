@@ -45,7 +45,7 @@ class FatalBoundary extends Component<{ children: ReactNode }, { err: string }> 
   render() {
     if (this.state.err) {
       return (
-        <pre style={{ padding: 14, color: 'var(--danger, #ff8a8a)', whiteSpace: 'pre-wrap' }}>
+        <pre style={{ padding: 'var(--sp-7, 14px)', color: 'var(--danger, #ff8a8a)', whiteSpace: 'pre-wrap' }}>
           {this.state.err}
         </pre>
       );
