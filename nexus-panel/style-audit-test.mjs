@@ -578,5 +578,53 @@ console.log('\n=== 9. 块注释里不得再开一个块注释 ===');
 }
 
 
+console.log('\n=== 10. 清单条目不得是幽灵（登记了却全仓无人定义）===');
+/* 这三份清单是**免死金牌**：进了 SHELL_VARS / TOKEN_VARS / CONTROLS_VARS 的
+   名字，E2 判据就对它闭嘴。所以里面躺着一个全仓无人定义的名字是危险的 ——
+   谁写了 var(--xxx) 不会被报，而它取到空值（色块/进度条是空的，且不报错）。
+
+   --accent-2 与 --info 就是这样被清掉的：前者在 settings/index.js 的注释里
+   被点名"旧名已废弃，取到 undefined 会画出空条"，后者全仓零引用。留着它们
+   等于给这两类写法发免死金牌。 */
+{
+  const audit = await import('./js/style-audit.js');
+  const SKIP = new Set(['node_modules', '.git', 'dist', '.tool_output', 'target']);
+  const EXTS = ['.css', '.js', '.ts', '.tsx', '.mjs', '.html'];
+  const files = [];
+  (function walk(d) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (SKIP.has(e.name)) continue;
+      const p = join(d, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (EXTS.some((x) => e.name.endsWith(x))) files.push(p);
+    }
+  })(HERE);
+  t('扫描范围有效（全仓样式与脚本）', files.length >= 200, `${files.length} 个文件`);
+
+  const defined = new Set();
+  /* 既认 CSS 的 `--x: v`，也认 JS 对象/内联样式里的 `'--x': v` ——
+     后者在 tsx 的 style={{ '--x': v }} 里很常见，漏了就会假报幽灵。 */
+  const DEF_RE = /(--[a-z0-9-]+)\s*['"]?\s*:/gi;
+  for (const p of files) {
+    /* 剥注释：注释里提到的名字不算定义，否则"不该报的没报"这类断言会假绿 */
+    const s = strip(readFileSync(p, 'utf8'));
+    for (const m of s.matchAll(DEF_RE)) defined.add(m[1]);
+    for (const m of s.matchAll(/setProperty\(\s*['"`](--[a-z0-9-]+)/gi)) defined.add(m[1]);
+  }
+
+  const LISTS = { SHELL_VARS: audit.SHELL_VARS, TOKEN_VARS: audit.TOKEN_VARS,
+                  CONTROLS_VARS: audit.CONTROLS_VARS };
+  const ghosts = [];
+  for (const [n, list] of Object.entries(LISTS)) {
+    for (const v of list) if (!defined.has(v)) ghosts.push(`${n}:${v}`);
+  }
+  t('清单里没有幽灵条目', ghosts.length === 0, ghosts.join(', '));
+
+  /* 判据失明比报红危险：若一个拼错的名字被当成"已定义"，这条断言就永远绿 */
+  t('判据本身有效（探针：无人定义的名字必须被判幽灵）',
+    !defined.has('--probe-ghost-zzz'));
+  t('判据不误报（确有定义的名字不算幽灵）', defined.has('--text-mute'));
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -33,9 +33,15 @@ export const SHELL_VARS = [
   '--surface-overlay',
   // 文本
   '--text', '--text-dim', '--text-soft', '--text-mute',
-  // 强调与状态
-  '--accent', '--accent-glow', '--accent-2', '--env-color',
-  '--ok', '--danger', '--warn', '--running', '--info',
+  /* 强调与状态
+     `--accent-2` 与 `--info` **已从这里移除** —— 它们是清单里的"幽灵条目"：
+     全仓既没有定义点、也没有使用点（前者在 settings/index.js 里被注释
+     点名"旧名已废弃，取到 undefined 会画出空条"）。留在这份清单里的后果是
+     **给它们发免死金牌**：谁再写 `var(--accent-2)`，本文件的 E2 判据不会报，
+     而它取到空值 —— 表现是"某个色块/进度条是空的，且不报错"。
+     移除后同样的写法会被 E2 当场判为"未定义"，这正是想要的效果。 */
+  '--accent', '--accent-glow', '--env-color',
+  '--ok', '--danger', '--warn', '--running',
   // 立体
   '--sh-dark', '--sh-light',
   // 风格层
