@@ -351,15 +351,55 @@ export function pruneByServers(
  * 这里返回**建议**，不直接执行 —— 注销会影响画布上的老节点，
  * 属于 App 那边（它有画布状态）才能判断的事。
  */
+/**
+ * 去掉名字之后剩下的部分 —— 用来认出"同一个服务换了个名字"。
+ *
+ * 名字是服务的**身份**（工具清单挂在名字下），而地址/命令是"连去哪儿"。
+ * 两者要分开看：改名字不该当成把这个服务删掉。
+ */
+export function serverEndpoint(s: ServerRef): string {
+  return `${String(s?.command ?? '')}\u0001${String(s?.url ?? '')}`;
+}
+
 export function serversToDrop(
   previousServers: ServerRef[],
   currentServers: ServerRef[],
 ): string[] {
   const now = new Set((currentServers ?? []).map((s) => String(s?.name ?? '').trim()));
+  const endpointsNow = (currentServers ?? []).map(serverEndpoint);
   const out: string[] = [];
   for (const s of previousServers ?? []) {
     const n = String(s?.name ?? '').trim();
-    if (n && !now.has(n)) out.push(n);
+    if (!n || now.has(n)) continue;
+    /*
+     * **改了名字的服务不算删掉**。
+     *
+     * 只比名字的话，"把 fs 改名为 fs2"和"把 fs 删掉"返回的是同一个结果，
+     * 而这两种操作该做的事完全相反。改名的后果是：
+     *
+     *   1. 旧组被**立刻**剔除（这一步在刷新之前）
+     *   2. 新名的组要等防抖（800ms）刷新成功后才出现
+     *   3. 新名**连不上**时刷新失败 → 新组永远不会出现
+     *
+     * 于是用户改了个名字（或手滑多打一个字），侧栏这个服务的工具
+     * **全部消失**，而存盘里其实还在、也没标 stale。
+     * 用户以为工具没了，且不报错 —— 只是有一条"连不上"的日志。
+     *
+     * 改名不是删除：旧组要留到新名的结果真的拿到为止。
+     */
+    /*
+     * **两端都没填的服务不参与改名比对**。
+     *
+     * 两个都还是空的服务（点「＋加一个服务」后就是空的）会被
+     * "地址相同"误认成互相改名 —— 于是删掉一个空服务时
+     * 另一个空服务的组不会消失，侧栏留着一批根本不存在的工具。
+     *
+     * 判据与 refreshAll 里"填完了没"用的是同一条。
+     */
+    const hasCmd = !!(s?.command && String(s.command).trim());
+    const hasUrl = !!(s?.url && String(s.url).trim());
+    if ((hasCmd || hasUrl) && endpointsNow.includes(serverEndpoint(s))) continue;
+    out.push(n);
   }
   return out;
 }
