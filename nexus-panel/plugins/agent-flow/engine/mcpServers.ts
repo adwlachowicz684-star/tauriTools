@@ -250,23 +250,67 @@ export function resolveServer(
   list: GlobalMcpServer[],
   choice?: string | null,
 ): { ok: true; server: GlobalMcpServer | null } | { ok: false; reason: string; names: string[] } {
-  const usable = (list ?? []).filter((s) => !s.disabled);
+  const all = (list ?? []).filter((s) => s && typeof s === 'object');
+  const usable = all.filter((s) => !s.disabled);
   const picked = String(choice ?? '').trim();
+  const nameOf = (s: GlobalMcpServer) => String(s?.name ?? '').trim();
 
   if (usable.length === 0) {
+    /*
+     * **"一个都没配"和"配了但全停用了"要说不同的话**。
+     *
+     * 统一说"没配任何 MCP 服务"的话，用户去全局库一看服务明明在那
+     * —— 于是以为解析坏了，去查一个不存在的问题。
+     */
     if (picked) {
-      return { ok: false, reason: `选了「${picked}」，但全局没配任何 MCP 服务`, names: [] };
+      if (all.length === 0) {
+        return { ok: false, reason: `选了「${picked}」，但全局没配任何 MCP 服务`, names: [] };
+      }
+      return {
+        ok: false,
+        reason: `选了「${picked}」，但全局的 ${all.length} 个服务都停用了`,
+        names: all.map(nameOf),
+      };
     }
     return { ok: true, server: null };
   }
 
   if (picked) {
-    const hit = usable.find((s) => String(s.name ?? '').trim() === picked);
-    if (hit) return { ok: true, server: hit };
+    const hits = usable.filter((s) => nameOf(s) === picked);
+
+    /*
+     * **同名服务是歧义，不能靠顺序挑一个**。
+     *
+     * 名字是节点里引用的依据，同名的两个服务根本无法区分引用。
+     * find 取第一个的话，选中的是哪个取决于配置顺序 ——
+     * 两个服务提供同名工具时结果看着还挺合理，但连的是另一个服务。
+     */
+    if (hits.length > 1) {
+      return {
+        ok: false,
+        reason: `有 ${hits.length} 个服务都叫「${picked}」，分不清该用哪个`,
+        names: usable.map(nameOf),
+      };
+    }
+    if (hits.length === 1) return { ok: true, server: hits[0] };
+
+    /*
+     * **"有这个名字但停用了" ≠ "没有这个名字"**。
+     *
+     * 说"没有这个名字"的话，用户去全局库一看它明明在 ——
+     * 与上面同理，会以为解析坏了。
+     */
+    if (all.some((s) => s.disabled && nameOf(s) === picked)) {
+      return {
+        ok: false,
+        reason: `「${picked}」已停用 —— 在全局服务里启用它，或换一个服务`,
+        names: usable.map(nameOf),
+      };
+    }
     return {
       ok: false,
       reason: `选了「${picked}」，但全局服务里没有这个名字`,
-      names: usable.map((s) => String(s.name ?? '')),
+      names: usable.map(nameOf),
     };
   }
 
@@ -278,7 +322,7 @@ export function resolveServer(
     return {
       ok: false,
       reason: `配了 ${usable.length} 个 MCP 服务，必须指定用哪一个`,
-      names: usable.map((s) => String(s.name ?? '')),
+      names: usable.map(nameOf),
     };
   }
   return { ok: true, server: usable[0] };
