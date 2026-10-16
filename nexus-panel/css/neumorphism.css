@@ -2725,6 +2725,11 @@ html.theme-transition *:not(.spinner) {
   flex: none;
   padding: 0 var(--sp-2, 4px);
   border-radius: var(--r-xs);
+  /* --accent-soft 全仓**没有任何一处定义**，兜底 transparent 恒生效
+     （即这个标签目前没有底色）。它不是预留钩子：同批把 --surface-2 改成
+     --surface-raised 时漏了它（见上面 1097 行那条修复记录）。
+     不补定义是因为加上底色会改观感；要让它真的跟随主题，
+     请在 tokens.css 里定义 --accent-soft，别在这里写死色值。 */
   background: var(--accent-soft, transparent);
   font-size: var(--fs-10, 10px);
 }
