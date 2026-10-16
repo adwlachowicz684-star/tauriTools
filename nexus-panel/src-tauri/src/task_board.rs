@@ -498,7 +498,10 @@ fn parse_body(body: &str) -> Result<Value, String> {
 // 无 id = 通知不回包），但工具表独立——这里是任务能力，那里是 fpx 能力。
 
 /// MCP 工具表。6 个工具覆盖任务全生命周期，参数与 HTTP API 一致。
-fn mcp_tools() -> Vec<Value> {
+///
+/// pub：MCP 网关（mcp_gate.rs）启动时按它逐个注册（与自身 /mcp 端点
+/// 同一份表，不另抄一遍——抄两份必然漂移）。
+pub fn mcp_tools() -> Vec<Value> {
     let tool = |name: &str, desc: &str, props: Value, required: Vec<&str>| json!({
         "name": name,
         "description": desc,
@@ -579,7 +582,10 @@ fn mcp_tools() -> Vec<Value> {
 /// tools/call 分发：业务函数与 HTTP 路由共用同一份（同一把锁下执行），
 /// 业务失败走 MCP 约定的 isError 内容，而不是 JSON-RPC error——
 /// 让 AI 读得到失败原因并自行调整参数重试。
-fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
+///
+/// pub：MCP 网关（mcp_gate.rs）代理转发用 —— 转发时**不拆包重包**，
+/// 对端（这里是网关回传）看到的 isError 原样可达 AI 客户端。
+pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|x| x.to_string());
     let result: Result<Value, String> = match name {
         "tb_list_tasks" => (|| -> Result<Value, String> {

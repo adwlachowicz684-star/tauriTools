@@ -79,6 +79,12 @@ import FavDirsCard from './FavDirsCard';
 import DepsCard from './DepsCard';
 import WindowCard from './WindowCard';
 import UpdateCard from './UpdateCard';
+/*
+ * MCP 网关（统一接入点）：AI 客户端只接一次，各插件的 MCP 工具
+ * 全部聚合到同一端点（工具名带 插件名__ 前缀）。放在「插件」旁边 ——
+ * 插件的 MCP 能力从这里统一对外，两者是一件事的两面。
+ */
+import McpGatewayCard from './McpGatewayCard';
 import SettingGroup from '../../src/components/SettingGroup';
 import ThemeParamsPanel from './ThemeParamsPanel';
 import { STYLE_LABELS as THEME_STYLE_LABELS } from '../../js/themes.js';
@@ -89,7 +95,7 @@ import SandboxSection from '../../src/components/SandboxSection';
 import { prompt } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 
-type TabKey = 'theme' | 'plugins' | 'deps' | 'external' | 'files' | 'shortcuts' | 'favdirs' | 'window' | 'update' | 'about';
+type TabKey = 'theme' | 'plugins' | 'mcpgw' | 'deps' | 'external' | 'files' | 'shortcuts' | 'favdirs' | 'window' | 'update' | 'about';
 
 /**
  * styleParams() 住在 js/themes.js（JS，没有类型声明），返回的每项结构是
@@ -122,6 +128,7 @@ function shellGlobal(): any {
 const TABS: [TabKey, string][] = [
   ['theme', '主题'],
   ['plugins', '插件'],
+  ['mcpgw', 'MCP 网关'],
   ['deps', '依赖'],
   ['external', '外链'],
   ['files', '文件'],
@@ -1772,6 +1779,9 @@ export default function Settings() {
 
       {/* ---------------- 依赖 ---------------- */}
       {tab === 'deps' ? <DepsCard /> : null}
+
+      {/* ---------------- MCP 网关 ---------------- */}
+      {tab === 'mcpgw' ? <McpGatewayCard /> : null}
 
       {/* ---------------- 外链 ---------------- */}
       {tab === 'external' ? <ExternalCard /> : null}

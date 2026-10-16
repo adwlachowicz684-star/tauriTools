@@ -1472,6 +1472,82 @@ Firefox 的 `::-webkit-*` 无效，用标准属性 `scrollbar-width: thin` +
 `src-tauri/src/main.rs` 已提供 `rust_ping`、`app_version`、`window_action`（自定义标题栏用）。
 新增命令后无需改前端，插件里直接 `ctx.invoke('你的命令')`。
 
+## 十、MCP 网关（AI 客户端统一接入点）
+
+`src-tauri/src/mcp_gate.rs`。各插件原本各自起一个 MCP server（project-group 一个、
+task-board 一个），端口、令牌、客户端配置各一份 —— AI 客户端要配 N 条 `mcpServers`，
+每新增一个带 MCP 的插件就得再改一次配置。网关把这些能力聚合到**一个端点**：
+客户端只配一次，之后新插件的工具自动出现在同一张工具表里。
+
+```json
+{
+  "mcpServers": {
+    "nexus-panel": {
+      "type": "http",
+      "url": "http://127.0.0.1:9910/mcp",
+      "headers": { "Authorization": "Bearer <令牌>" }
+    }
+  }
+}
+```
+
+令牌在「设置 → MCP 网关」页查看，首次启动自动生成并持久化（重启不变，变了客户端全断）。
+端口默认 9910（避开 fpx 的动态分配与 task-board 的 9911），可改。
+
+### 工具名规则：`server__工具`
+
+工具名一律带 `server__` 前缀，如 `project-group__list_cards`、`task-board__claim_task`。
+**不做裸名兼容**：两个插件都提供 `list_items` 时，裸名路由只能靠顺序挑一个 ——
+挑错不报错，读的是另一个服务的数据。前缀是命名空间，拆分取**第一个** `__`。
+
+server 名约束（`validate_server_name`）：非空、≤32 字符、只含小写字母/数字/连字符、
+不能含 `__`、不能占用内置名（`project-group` / `task-board`）。
+
+### 新插件的工具怎么进网关
+
+两条路，按插件形态选：
+
+**路 A：插件在 Rust 侧已有工具表**（与 `fpx::mcp::tools()` / `task_board::mcp_tools()`
+同形态：返回 `{name, description, inputSchema}` 数组）。在 `register_builtins()`
+里加一段循环，`register_native` 逐个登记 —— handler 直接调业务函数，不起第二个端口：
+
+```rust
+for t in my_plugin::mcp_tools() {
+    let name = /* 取 t["name"] */;
+    let app_c = app.clone();
+    let name_c = name.clone();
+    let handler: ToolHandler = Arc::new(move |args| {
+        let dir = /* 调用时现取数据目录，别在注册时定死 */;
+        my_plugin::invoke_tool(&name_c, args, &dir)
+    });
+    register_native(state, "my-plugin", &name, &desc, schema, handler);
+}
+```
+
+注意两点：① 数据目录要**调用时现取**（用户随时可能在设置里换目录，注册时定死 =
+改完目录后读写旧库且不报错）；② 薄封装转调插件自己的 `call_tool`，别在网关侧重抄一份
+参数校验 —— 别名归一化、报错文案只应有一个真相源。
+
+**路 B：插件自己跑着独立的 MCP HTTP server**（如 task-board 的 9911）。
+在「设置 → MCP 网关」的代理注册表单填 server 名 / 地址 / 令牌（走 `mcp_gw_register`），
+或代码里调 `register_proxy`。注册时先拉对方的 `tools/list` 逐个登记，
+**拉不到就不落任何一条** —— 半截注册的结果是「工具表里有、调用必失败」，
+比没有这个服务更难排查。调用时整包转发 JSON-RPC，对端的 `isError` 原样回传。
+
+### 安全模型
+
+只绑 `127.0.0.1`；**所有**请求都要 Bearer 令牌（含 `GET /` —— 健康信息是「这个端口
+是不是 MCP」的指纹，可被端口扫描利用）；无 CORS 头；令牌比较走常量时间。
+暴露面与既有两个本机 server 相同。`auto_start` 默认开：本功能的目的就是「接入后直接
+可用」，再要用户手动开一次就前功尽弃。
+
+### 治理
+
+六条命令（`mcp_gw_start/stop/status/save_config/register/unregister`）已按四件套登记：
+`js/command-caps.js` 定级（start/stop/register 为 **M** —— 改对外连接面的能力不扩散）、
+`js/invoke-policy.js` 的 settings 白名单、`mcp-gate-test.mjs` 跨文件钉住整条接线
+（`npm run test:mcp-gate`）。
+
 ## 十一、打包
 
 ```bash

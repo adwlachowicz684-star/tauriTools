@@ -12,6 +12,17 @@ mod af_flow;
 mod task_board;
 mod fpx;
 /*
+ * MCP 网关（mcp_gate.rs）：把 fpx / task-board 的 MCP 工具聚合到
+ * **一个** HTTP 端点上，AI 客户端只接一次，新插件按约定注册即插即用。
+ *
+ * 少了这行 mod 声明：文件不参与编译，而 mcp_gate.rs 里的 6 条
+ * #[tauri::command] 又都写在 generate_handler! 里（带 mcp_gate:: 前缀），
+ * 所以**编译直接失败（E0433 unresolved module）** —— 比 updater / dupview
+ * 那种"编译照过、运行时 not found"更容易被发现，但同样要防：
+ * 同步提交的覆盖丢失历史上丢过 updater / dupview 的 mod 声明各 5 次以上。
+ */
+mod mcp_gate;
+/*
  * updater / dupview / rt_dep 的 mod 声明。
  *
  * ⚠️ 这三行被同步提交覆盖丢过多次（updater / dupview 各 5 次以上）。
@@ -349,6 +360,12 @@ fn main() {
             servers: std::sync::Mutex::new(std::collections::HashMap::new()),
             data_dir: std::sync::Mutex::new(None),
         })
+        /*
+         * MCP 网关的共享状态：工具注册表 + 运行标志 + 持久化配置。
+         * 少了这行：mcp_gw_* 六条命令一被调用就 panic 整个进程
+         * （Tauri 的 State 解析失败是 panic，不是 Err）。
+         */
+        .manage(mcp_gate::GatewayState::new())
         .invoke_handler(tauri::generate_handler![
             rust_ping, app_version, window_action, set_window_icon,
             mm_print, mm_print_support, mm_svg_to_pdf, mm_pdf_vector_support, mm_open_devtools,
@@ -399,6 +416,14 @@ fn main() {
             task_board::tb_default_dir, task_board::tb_set_data_dir,
             task_board::tb_read_store, task_board::tb_write_store,
             task_board::tb_http_start, task_board::tb_http_stop,
+            /*
+             * MCP 网关六条 —— 统一接入点（{server}__{tool} 前缀聚合）的
+             * 起停 / 状态 / 配置 / 代理注册。前端在「设置 → MCP 网关」页。
+             * 少了它们：网关面板里每个按钮点了都没反应，且运行时才报
+             * "command not found"（与 rt_dep 同类的漏注册，扫描器第 ⑦ 组会抓）。
+             */
+            mcp_gate::mcp_gw_start, mcp_gate::mcp_gw_stop, mcp_gate::mcp_gw_status,
+            mcp_gate::mcp_gw_save_config, mcp_gate::mcp_gw_register, mcp_gate::mcp_gw_unregister,
             /*
              * updater（应用自更新）三条 —— 见上面的 mod updater 注释。
              * 少了这三条：设置 → 更新 点「检查更新」没反应，且运行时才报
@@ -517,6 +542,36 @@ fn main() {
                 match fpx::mcp::serve(app.handle().clone(), port) {
                     Ok(addr) => eprintln!("[mcp] listening on http://{addr}/mcp"),
                     Err(e) => eprintln!("[mcp] 启动失败: {e}"),
+                }
+            }
+            /*
+             * MCP 网关（统一接入点）：内置工具全量注册 + 按配置自动启动。
+             * ------------------------------------------------------------------
+             * **注册与启动分开**：注册只动内存里的工具表，不起监听 ——
+             * 这样即使用户关掉网关，工具清单、开关状态在界面上依然看得到，
+             * 重新开启时也不用再注册一遍（register_native 同名覆盖，
+             * 重复注册是更新而非错误）。
+             *
+             * 自动启动默认开（GwConfig.auto_start 默认 true）：本功能的目的
+             * 就是「AI 客户端接入后直接可用」，再要用户手动开一次就前功尽弃。
+             * 暴露面与既有两个本机 server 相同（只绑回环 + 强制令牌）。
+             *
+             * 失败只记 stderr：**不能挡住界面**。与 register_clients 同一档。
+             */
+            {
+                let gw = app.state::<mcp_gate::GatewayState>();
+                mcp_gate::refresh_config(app.handle(), &gw);
+                mcp_gate::register_builtins(app.handle(), &gw);
+                let auto = gw
+                    .cfg
+                    .lock()
+                    .map(|g| g.auto_start)
+                    .unwrap_or(false);
+                if auto {
+                    match mcp_gate::start(app.handle(), &gw, None) {
+                        Ok(addr) => eprintln!("[mcp-gateway] listening on http://{addr}/mcp"),
+                        Err(e) => eprintln!("[mcp-gateway] 自动启动失败: {e}"),
+                    }
                 }
             }
             /*

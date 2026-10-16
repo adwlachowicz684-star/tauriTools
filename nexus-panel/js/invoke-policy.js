@@ -259,6 +259,20 @@ export const PLUGIN_COMMANDS = {
      */
     'fpx_rt_dep_list', 'fpx_rt_dep_install', 'fpx_rt_dep_remove', 'fpx_rt_dep_versions',
     'fpx_rt_dep_purge',
+    /*
+     * MCP 网关（「MCP 网关」页签）六条。
+     *
+     * 与 updater 不同，这里**直接给设置页**而不是走服务调用：
+     * 网关的启停 / 配置就是设置页自己的功能（它没有独立的插件 UI），
+     * 再包一层服务插件只是多一个转发点。
+     *
+     * 三条 M 类（start / stop / register）因此只到得了设置页这个
+     * 内置插件名下；第三方调它们会被 THIRD_DENY_CAPS 硬禁。
+     * 这与 fpx_mcp_start 只给 project-group 是同一条规矩：
+     * 开网络监听、改对外连接面的能力不扩散。
+     */
+    'mcp_gw_start', 'mcp_gw_stop', 'mcp_gw_status',
+    'mcp_gw_save_config', 'mcp_gw_register', 'mcp_gw_unregister',
   ],
 
   /* 色盘服务要用系统吸管 —— 与 fpx_pick_color 命令对应 */

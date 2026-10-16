@@ -536,7 +536,11 @@ fn dispatch(req: &Value, dir: &Path) -> Value {
     }
 }
 
-fn tools() -> Vec<Value> {
+/// 全部工具声明。
+///
+/// pub：MCP 网关（mcp_gate.rs）启动时按它逐个注册（handler 直调
+/// invoke_tool，不经过本文件的 HTTP 层）。
+pub fn tools() -> Vec<Value> {
     let tool = |name: &str, desc: &str, props: Value, required: Vec<&str>| json!({
         "name": name,
         "description": desc,
@@ -651,7 +655,10 @@ fn service_enabled(cfg: &super::model::FpxConfig) -> bool {
 }
 
 /// 单个工具是否暴露：config.mcpTools 里缺失视为开启（兼容旧配置）。
-fn tool_enabled(cfg: &super::model::FpxConfig, name: &str) -> bool {
+///
+/// pub：MCP 网关（mcp_gate.rs）的 tools/list 要实时读这个开关 ——
+/// 用户在设置里关掉的工具，网关里必须立刻消失。
+pub fn tool_enabled(cfg: &super::model::FpxConfig, name: &str) -> bool {
     cfg.mcp_tools.get(name).copied().unwrap_or(true)
 }
 
@@ -1707,6 +1714,27 @@ fn call_tool(req: &Value, dir: &Path) -> Result<Value, Value> {
         }
     };
     Ok(out)
+}
+
+/// 给 MCP 网关（mcp_gate.rs）用的薄封装：工具名 + 参数进，完整 result 出。
+///
+/// 为什么不直接调 `call_tool`：它的出入参都是 **JSON-RPC 报文形状**
+/// （进 `{params:{name,arguments}}`，出错回 `{code,message}`），
+/// 而网关的 handler 签名是 `Result<Value, String>` 且 `Ok(v)` 必须是
+/// **完整的 tools/call result**。两边形状对不上，转换只此一处 ——
+/// 放在这里而不是网关里拼报文，是为了让「别名归一化 / 参数校验 /
+/// 报错文案」永远只有 call_tool 一份真相源，网关侧不做任何拆解。
+///
+/// 错误信息取 err 对象的 message 字段（见 `err()`）：
+/// 直接 to_string 会把整个 JSON 序列化给 AI 读，多一层引号转义噪音。
+pub fn invoke_tool(name: &str, args: &Value, dir: &Path) -> Result<Value, String> {
+    let req = json!({ "params": { "name": name, "arguments": args } });
+    call_tool(&req, dir).map_err(|e| {
+        e.get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("工具调用失败")
+            .to_string()
+    })
 }
 
 /**

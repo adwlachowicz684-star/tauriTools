@@ -83,6 +83,39 @@ export const COMMAND_CAPS = {
   // 即会**在本机开一个 HTTP 监听**。这是网络暴露面，不是普通读写。
   fpx_mcp_start: 'M',
   fpx_mcp_stop: 'M',
+  /*
+   * MCP 网关（src-tauri/src/mcp_gate.rs）六条 —— 统一接入点。
+   *
+   * start / stop 定 **M**：与 fpx_mcp_start 同判据 —— 它就是一个
+   * 本机 HTTP 监听（默认 9910，只绑回环 + 强制令牌）。
+   * 单独列出来而不复用 fpx 那两条的注释：两者是**不同的 server**，
+   * 注释里写清端口与令牌来源，将来排查"哪个端口被占了"时对得上。
+   *
+   * register 定 **M**，不是 W：它把网关的调用面扩展到**任意 http://
+   * 端点**，且该端点的令牌会随每次转发发出去。也就是说拿到它 =
+   * 能让网关把带令牌的请求发往用户指定的任何本机/内网地址。
+   * 这比"写一条配置"更接近"改变网络行为"，按 M 管。
+   * （注册本身只动内存表、不落盘；落盘的是 save_config。）
+   */
+  mcp_gw_start: 'M',
+  mcp_gw_stop: 'M',
+  mcp_gw_register: 'M',
+  // 读运行态 / 配置 / 按 server 分组的工具清单。无副作用。
+  mcp_gw_status: 'R',
+  /*
+   * save_config 定 **W**：写 app_data_dir/mcp-gateway/config.json
+   * （端口 / 令牌 / 自动启动）。虽然写的是本程序自己的配置，
+   * 但令牌是网关的唯一鉴权凭据 —— 改错了等于把所有 AI 客户端
+   * 挡在门外（或反之）。定 W 让第三方拿不到（THIRD_DENY_CAPS
+   * 只禁 M，这条靠"settings 是内置插件"兜住）。
+   */
+  mcp_gw_save_config: 'W',
+  /*
+   * unregister 定 **W**：删网关注册表里的一个 server（及其全部工具）。
+   * 不碰网络、不提权，但确实改变服务行为（之后该 server 的工具从
+   * tools/list 消失、调用报未知工具）。与 save_config 同级。
+   */
+  mcp_gw_unregister: 'W',
   // 起停 webhook —— 同样是网络监听
   webhook_start: 'M',
   webhook_stop: 'M',

@@ -640,6 +640,14 @@ export default function App() {
   const triggersWithCanvas = allGlobalTriggers;
 
   /*
+   * 正在编辑的模块（null = 不在编辑）。模块编辑的完整设计见下方
+   * "模块：编辑模式"一节；声明必须放在这里，是因为下面的 buried
+   * 依赖数组要引用它 —— 放声明在使用点之后就是 TDZ，渲染到
+   * buried 时直接 ReferenceError，页面整个白屏。
+   */
+  const [editingModule, setEditingModule] = useState<string | null>(null);
+
+  /*
    * 埋在模块里的触发器：扫出来并明确说出来。
    *
    * canPack 只挡住**新建**的。判定加上之前就已经存进模块库的、
@@ -1399,8 +1407,10 @@ function reportSkipped(
    *
    * 代价是进入编辑期间必须锁住画布切换 —— 否则切换会把模块内容
    * 当成另一个画布的内容存走，模块库里的东西就丢了。
+   *
+   * （editingModule 的 useState 声明已上移至 buried 之前 ——
+   * buried 的依赖数组要引用它，放这里就是 TDZ。）
    */
-  const [editingModule, setEditingModule] = useState<string | null>(null);
   /** 拖拽开始时的位置快照，用于整体拖动与"拖开即解嵌"的判定 */
   const moduleBackup = useRef<{ nodes: FlowNode[]; edges: FlowEdge[] } | null>(null);
 
