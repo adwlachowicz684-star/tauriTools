@@ -14816,9 +14816,15 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
     const i = code.indexOf('async function deleteFile(id) {');
     const end = code.indexOf('\n  }\n', i);
     const body = code.slice(i, end);
-    ok(/await gcOrphanAssets\(\)/.test(body), 'deleteFile 必须调用 gcOrphanAssets（否则删文件留一堆孤儿）');
+    // 不写死参数（quiet 会变），只锚调用本身 —— 写死 `gcOrphanAssets()` 的话
+    // 改个参数就红了，而它想守的事（"删文件后要回收"）并没变。
+    ok(/await gcOrphanAssets\(/.test(body), 'deleteFile 必须调用 gcOrphanAssets（否则删文件留一堆孤儿）');
     // 顺序：必须在 switchToFile 之前（切换后 workbook 就换成别的文件了）
-    ok(body.indexOf('gcOrphanAssets()') < body.indexOf('switchToFile('),
+    // ⓘ 锚点只写 `gcOrphanAssets(` —— 早先带上了空的实参表 `gcOrphanAssets()`，
+    //   一加 quiet 参数就变 -1，而 `(-1 < …)` 恒真：断言从此空转（第 41 次）。
+    const atGc = body.indexOf('gcOrphanAssets(');
+    ok(atGc >= 0, '在 deleteFile 里定位到 gcOrphanAssets 调用（找不到就该红，不能拿 -1 去比大小）');
+    ok(atGc < body.indexOf('switchToFile('),
       'gcOrphanAssets 必须在 switchToFile 之前（晚一步基准就换成别的文件了）');
   }
 
@@ -14909,7 +14915,195 @@ group('移除附件无条件删资产，共享它的其它节点跟着失效（B
   // ④ gcOrphanAssets 支持 quiet —— 否则它写的状态会盖掉「已移除…」
   ok(/async function gcOrphanAssets\(quiet = false\)/.test(strip(idx)),
     'gcOrphanAssets 支持 quiet（调用方随后自己会写状态）');
-  ok(/if \(removed && !quiet\)/.test(strip(idx)), 'quiet 时才不写回收状态');
+  ok(/if \(!quiet && \(removed \|\| failed\)\)/.test(strip(idx)), 'quiet 时才不写回收状态');
+}
+
+/* ============================================================
+   BUG 159：「回收 / 收敛」里 store.del 的返回值没人接
+   ============================================================ */
+
+group('BUG 159：孤儿回收与快照收敛 —— del 删不掉必须说话');
+
+{
+  const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const strip = (t) => stripCommentsFlatJs(t.replace(/\r\n/g, '\n'));
+  const code = strip(idx);
+
+  /* ------------------------------------------------------------
+   * ① 行为级：把 gcOrphanAssets 的「动手删」那一段按真实代码切出来跑。
+   *    注入一个 del 恒为 false 的 store —— 看它究竟报了什么。
+   * ------------------------------------------------------------ */
+  {
+    // ⓘ 用 fnBody 按「下一个顶层函数声明」切，不能 `indexOf('\n  }\n')` ——
+    //   后者会切在函数内部那个 2 空格缩进的 `for` 块结尾，切出来根本没有删除循环
+    //   （第一版就栽在这：位置找错 → 断言全部空转）。
+    const body = fnBody(code, 'async function gcOrphanAssets(');
+    ok(body.length > 0, '找到 gcOrphanAssets');
+    ok(/if \(await store\.del\(k\)\)/.test(body),
+      'gcOrphanAssets 必须接住 store.del 的返回值（del 是吞异常返回 false）');
+    ok(/else failed\+\+/.test(body), '删不掉时计入 failed（不是静默跳过）');
+    ok(/return \{ removed, bytes, failed, aborted: false \}/.test(body),
+      '回话带上 failed（调用方要拿它说话）');
+    // bytes 只能在删成功时累加 —— 报的是"腾出来的空间"
+    ok(!/bytes \+= Number\(rec\?\.size\) \|\| 0;\s*\n\s*await store\.del/.test(body),
+      'bytes 不得在 del 之前无条件累加（那会虚报腾出的空间）');
+  }
+
+  /* ------------------------------------------------------------
+   * ② 行为级：真的跑一遍「del 全部失败」的回收循环。
+   *    早先 removed++ 无条件 —— 报「已回收 N 个（约 X KB）」，实际一个没删。
+   * ------------------------------------------------------------ */
+  {
+    const raw = fnBody(code, 'async function gcOrphanAssets(');
+    // 只取「动手删」那一段（for 循环本身），与真实代码同构。
+    // ⓘ 不能切到 `} catch (e) {` —— 那样会把 try 的 `{` 带进来、却不带它的 catch。
+    const s = raw.indexOf("for (const k of await store.keys('asset:')) {");
+    const e = raw.indexOf('\n    }\n', s);
+    ok(s > 0 && e > s, '定位到删除循环');
+    // e 落在闭合 `}` 的**前一个字符**，补上它才是一段完整的 for
+    const loopSrc = raw.slice(s, e) + '\n    }';
+
+    const mkStore = (delOk) => ({
+      keys: async () => ['asset:a1', 'asset:a2', 'asset:a3'],
+      get: async () => ({ size: 1024 }),
+      // ⓘ delOk 也可以是「每次结果不同」的函数（部分失败那例）
+      del: typeof delOk === 'function' ? delOk : async () => delOk,
+    });
+    // 循环里有 await，必须用 AsyncFunction（new Function 里 await 是语法错误）
+    const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+    const run = new AsyncFn('store', 'live', `
+      let removed = 0, bytes = 0, failed = 0;
+      ${loopSrc}
+      return { removed, bytes, failed };
+    `);
+
+    const allFail = await run(mkStore(false), new Set());
+    eq(allFail.removed, 0, '★ del 全失败时 removed 必须是 0（早先无条件 ++，虚报已回收）');
+    eq(allFail.failed, 3, '★ del 全失败时 failed 是 3');
+    eq(allFail.bytes, 0, '★ del 全失败时不得报出腾出的字节数');
+
+    const allOk = await run(mkStore(true), new Set());
+    eq(allOk.removed, 3, '★ 全删成功时 removed 是 3');
+    eq(allOk.failed, 0, '★ 全删成功时 failed 是 0');
+    eq(allOk.bytes, 3072, '★ 全删成功时才累加 bytes（3 × 1024）');
+
+    // 部分失败：一个被引用的不删，两个里成一个
+    // ⓘ 必须包成 store 对象再传 —— 早先直接把 `async () => …` 当 store 传进去，
+    //   于是 `store.keys is not a function` 当场崩，**前面六条断言一条都没跑到**
+    //   （第一版看到的就是"崩在探针"，而不是"断言失败"）。
+    const half = await run(mkStore((() => { let n = 0; return async () => (n++ === 0); })()), new Set(['a1']));
+    eq(half.removed + half.failed, 2, '★ 被引用的不算进去（只处理两个孤儿）');
+  }
+
+  /* ------------------------------------------------------------
+   * ③ deleteFile 必须把回收失败的后果带进自己那句话
+   * ------------------------------------------------------------ */
+  {
+    const body = fnBody(code, 'async function deleteFile(id) {');
+    ok(/const gc = await gcOrphanAssets\(true\)/.test(body),
+      '★ deleteFile 接住回收的回话（并传 quiet —— 它随后自己要写状态）');
+    // ⓘ 不能写成 `` `\$\{gc\.failed\} `` —— 那对反引号后紧跟 `${` 的要求太死：
+    //   真实文案是 `（${gc.failed} 个…`，反引号后还有个全角括号，
+    //   第一版就是漏了它 → 断言**恒假**（不是"抓不到"，是永远不匹配）。
+    ok(/gc\?\.failed \? `\D*\$\{gc\.failed\} 个附件本体未能删除/.test(body),
+      '★ 回收失败必须拼进「已删除：X」那句话（否则一个字都不提）');
+  }
+
+  /* ------------------------------------------------------------
+   * ④ gcAssets 走 toast —— status 会被侧栏那句「已移除…」盖掉
+   * ------------------------------------------------------------ */
+  {
+    const j = code.indexOf('gcAssets: guard(');
+    const seg = code.slice(j, j + 900);
+    ok(/const r = await gcOrphanAssets\(true\)/.test(seg), 'gcAssets 接住回话');
+    ok(/if \(r\?\.failed\) ctx\.toast\(/.test(seg),
+      '★ gcAssets 走 toast 报回收失败（status 会被「已移除…」盖掉）');
+  }
+
+  /* ------------------------------------------------------------
+   * ⑤ trimBackups：over-- 不得无条件，且必须回话
+   * ------------------------------------------------------------ */
+  {
+    const body = fnBody(code, 'async function trimBackups(');
+    ok(/if \(!\(await store\.del\(k\)\)\) failed\+\+;/.test(body),
+      '★ trimBackups 必须接住 del 返回值（删不掉要计数，不能当成功）');
+    // ⓘ over-- 必须**无条件**：over 是「打算删几份」的额度，不是「还剩几份」。
+    //   只在成功时减 → 失败的不占额度 → 循环继续往下删 → 超额删除
+    //   （10 份留 3、前 7 份失败就会一路删到 0，退路整个拆掉）。
+    ok(/\n\s*over--;\s*\n\s*\}/.test(body),
+      '★ over-- 必须无条件（额度按尝试次数走，失败也占额度）');
+    ok(/return \{ failed \}/.test(body), 'trimBackups 回话 failed');
+    ok(/return null;/.test(body), 'trimBackups 抛异常时回 null（那句红字由它自己写）');
+  }
+
+  /* ------------------------------------------------------------
+   * ⑥ 行为级：快照收敛在 del 全失败时不许"假装已收敛"
+   * ------------------------------------------------------------ */
+  {
+    const raw = fnBody(code, 'async function trimBackups(');
+    const s = raw.indexOf('let over = all.length - limit;');
+    const e = raw.indexOf('return { failed };');
+    // ⓘ 定位不到时**必须**就此打住：`raw.slice(s, -1)` 是空串，
+    //   AsyncFunction 拿到半截代码会抛 SyntaxError，**整个测试进程当场挂掉** ——
+    //   于是前面收集到的失败一条都打不出来（第一版 M7 就是这个表现：
+    //   看着"抓到了"，其实汇总行都没出来，后面的组一条没跑）。
+    ok(s > 0 && e > s, '定位到收敛循环');
+    if (s > 0 && e > s) {
+      const loopSrc = raw.slice(s, e);
+
+    const AsyncFn2 = Object.getPrototypeOf(async function () {}).constructor;
+    const run = new AsyncFn2('store', 'all', 'limit', 'keep', `
+      ${loopSrc}
+      return { over, failed };
+    `);
+
+    const counting = (fn) => { const c = { n: 0, keys: [] }; return { c, store: { del: async (k) => { c.n++; c.keys.push(k); return fn(k); } } }; };
+
+    const delFalse = { del: async () => false };
+    const r1 = await run(delFalse, ['b1', 'b2', 'b3', 'b4', 'b5'], 3, null);
+    eq(r1.failed, 2, '★ del 全失败：failed = 打算删的份数（2）');
+    eq(r1.over, 0, '★ del 全失败：over 归零（额度按**尝试次数**走）');
+
+    const delTrue = { del: async () => true };
+    const r2 = await run(delTrue, ['b1', 'b2', 'b3', 'b4', 'b5'], 3, null);
+    eq(r2.failed, 0, '全删成功：failed = 0');
+    eq(r2.over, 0, '全删成功：over 归零（已收敛）');
+
+    // ★★ 最关键的一条：失败**不得**导致超额删除。
+    //   若 over-- 只在成功时执行，失败的那份不占额度，循环会继续往下删 ——
+    //   10 份留 3、前 7 份失败时会一路删到 0，用户唯一的退路被整个拆掉。
+    {
+      const a = counting(() => false);
+      const r = await run(a.store, ['b1', 'b2', 'b3', 'b4', 'b5'], 3, null);
+      eq(a.c.n, 2, '★ 全失败时只尝试 2 次（额度内的份数），不得顺着列表删到底');
+      eq(a.c.keys.join(','), 'b1,b2', '★ 只动最旧的那 2 份');
+      eq(r.failed, 2, '★ 两份都记成失败');
+    }
+    {
+      // 先失败、后成功：额度仍是 2 次尝试，不因为头一份失败就多删一份
+      let n = 0;
+      const a = counting(() => (n++ > 0));
+      const r = await run(a.store, ['b1', 'b2', 'b3', 'b4', 'b5'], 3, null);
+      eq(a.c.n, 2, '★ 部分失败时尝试次数仍是额度（2），不得超额删除');
+      eq(r.failed, 1, '★ 失败的那份计入 failed');
+    }
+    }
+  }
+
+  /* ------------------------------------------------------------
+   * ⑦ setBackupMax 必须把「没清掉」说进那句话 ——
+   *    设置面板上明写「调小后立即清理超出部分」，那是明示承诺
+   * ------------------------------------------------------------ */
+  {
+    const j = code.indexOf('setBackupMax: guard(');
+    const seg = code.slice(j, j + 900);
+    ok(/const trim = await trimBackups\(\)/.test(seg), '★ setBackupMax 接住 trimBackups 的回话');
+    // 同上：真实文案是 `（${over} 份…`，反引号后是全角括号，不是直接 ${over}
+    ok(/over \? `\D*\$\{over\} 份超出部分未能清理/.test(seg),
+      '★ 超出部分没清掉必须说出来（界面不能只说「最多保留 N 份」）');
+    // 错误级参数是换行的（`,\n      over > 0`），不能写死一个空格
+    ok(/,\s*over > 0\)/.test(seg), '★ 没清掉时那句话是错误级');
+  }
 }
 
 group('Mermaid 根节点引号嵌套，往返损坏中心主题文字（BUG 49）');

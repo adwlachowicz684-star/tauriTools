@@ -1219,21 +1219,39 @@ async function gcOrphanAssets(quiet = false) {
    */
   let removed = 0;
   let bytes = 0;
+  let failed = 0;
   try {
     for (const k of await store.keys('asset:')) {
       const aid = k.slice('asset:'.length);
       if (!aid || live.has(aid)) continue;
       const rec = await store.get(k, null);
-      bytes += Number(rec?.size) || 0;
-      await store.del(k);
-      removed++;
+      const size = Number(rec?.size) || 0;
+      /*
+       * 必须接住 `del` 的返回值（与 BUG 158 的 clearBackups 同一条线）。
+       *
+       * `store.del` 是「吞异常、返回 false」，不接返回值就**完全不知道**
+       * 有没有删掉，于是 removed / bytes 一律照加 —— 而那句
+       * 「已回收 N 个未引用附件（约 X KB）」报的正是**腾出来的空间**。
+       * 一个都没删掉却报「已回收约 2 MB」，用户以为空间腾出来了，
+       * 配额却一点没松 —— 而这个函数的存在理由就是「孤儿会把配额吃满」。
+       *
+       * ⓘ bytes 只在**删成功**时才累加：报的是真正腾出来的字节数。
+       */
+      if (await store.del(k)) { removed++; bytes += size; }
+      else failed++;
     }
   } catch (e) {
     status('清理未引用附件失败：' + (e?.message || e), true);
   }
   // quiet：调用方随后自己会写一句状态（如「已移除…」），这里再写就被盖掉了
-  if (removed && !quiet) status(`已回收 ${removed} 个未引用附件（约 ${io.formatSize(bytes)}）`);
-  return { removed, bytes, aborted: false };
+  if (!quiet && (removed || failed)) {
+    const parts = [];
+    if (removed) parts.push(`已回收 ${removed} 个未引用附件（约 ${io.formatSize(bytes)}）`);
+    // 删不掉的必须说出来：本体还在库里占着空间，而回收就是为了腾空间
+    if (failed) parts.push(`${failed} 个未能删除（仍占用本地存储空间）`);
+    status(parts.join('，'), failed > 0);
+  }
+  return { removed, bytes, failed, aborted: false };
 }
 
   async function deleteFile(id) {
@@ -1274,7 +1292,12 @@ async function gcOrphanAssets(quiet = false) {
     // 回收这个脑图留下的附件本体。
     // 必须在 switchToFile **之前**调用：切换后 workbook 已是另一个文件的
     // 内容，而 gcOrphanAssets 拿 workbook 做「仍然在用」的基准，晚一步基准就错了。
-    await gcOrphanAssets();
+    //
+    // ⓘ 传 quiet：**下面**这句 `status('已删除：' + f.name)` 会盖掉它自己的
+    //   提示（回收失败那句也得靠 status，两条 status 后者赢）。所以这里要回话，
+    //   再把「N 个本体没删掉」拼进自己那句话 —— 否则删完文件界面只说
+    //   「已删除：X」，而附件字节一个都没腾出来，用户无从察觉。
+    const gc = await gcOrphanAssets(true);
     if (id === currentFileId) {
       if (fileIndex.length) remembered = (await switchToFile(fileIndex[0].id)).remembered;
       else await createFile(null);        // 删光了也要能继续用
@@ -1282,6 +1305,7 @@ async function gcOrphanAssets(quiet = false) {
     renderFiles();
     status('已删除：' + f.name
       + (docCleared ? '' : '（内容未能清除：仍占用本地存储空间）')
+      + (gc?.failed ? `（${gc.failed} 个附件本体未能删除：仍占用本地存储空间）` : '')
       + (remembered ? '' : '（未能记住：下次启动会回到上一个文件）'));
   }
 
@@ -1733,17 +1757,16 @@ async function gcOrphanAssets(quiet = false) {
       const ok = await store.putBackup({ ts: b.ts, sheets: b.sheets, activeId: b.activeId });
       if (ok) { added++; mine.add(b.ts); addedKeys.add(ok); } else failed++;
     }
-    await trimBackups(addedKeys);
+    const trim = await trimBackups(addedKeys);
+    const over = trim?.failed || 0;
     status(`已导入 ${added} 份快照`
       + (skipped ? `，跳过 ${skipped} 份（重复或格式不符）` : '')
-      + (failed ? `，${failed} 份未能写入本地库（可能是空间不足）` : ''),
-    failed > 0);
+      + (failed ? `，${failed} 份未能写入本地库（可能是空间不足）` : '')
+      // 超出上限的旧快照删不掉也要说：否则「最多保留 N 份」是句空话
+      + (over ? `，${over} 份超出上限的旧快照未能清理` : ''),
+    failed > 0 || over > 0);
   }
 
-  /**
-   * 按当前上限滚动清理旧快照。
-   * 份数调小后必须立刻收敛，否则要等到下次备份才生效 —— 期间快照数一直超上限。
-   */
   /**
    * 按当前上限滚动清理旧快照。
    *
@@ -1754,6 +1777,16 @@ async function gcOrphanAssets(quiet = false) {
    *   而清理是「最旧的先删」，于是刚导入的那几份会第一个被删掉 ——
    *   界面提示「已导入 N 份」，列表里却一份都没有。
    */
+  /**
+   * @returns {Promise<{failed:number}|null>}
+   *   failed —— `del` 返回 false 的份数（本体还在库里）；
+   *   null    —— 列举 / 删除抛异常（那句失败提示由本函数自己写）。
+   *
+   * ⓘ 早先这里 `await store.del(k)` 不接返回值、`over--` 无条件 —— 删不掉
+   *   也照样算"已经收敛"。于是界面说「最多保留 3 份快照」（设置面板还明写
+   *   「调小后立即清理超出部分」），列表里却仍是 10 份，且一句提示都没有。
+   *   与 BUG 158 的 clearBackups 同一条线：del 是「吞异常返回 false」。
+   */
   async function trimBackups(protect = null) {
     try {
       const n = Number(settings.backupMax);
@@ -1761,16 +1794,24 @@ async function gcOrphanAssets(quiet = false) {
       const all = (await store.keys('backup:')).sort();
       const keep = protect instanceof Set ? protect : null;
       let over = all.length - limit;
+      let failed = 0;
       // 不能写成 `for (i=0; i<over; i++) del(all[i])`：
       // 跳过的受保护快照不占额度，那个写法会少删或越界。
       for (const k of all) {
         if (over <= 0) break;
         if (keep && keep.has(k)) continue;
-        await store.del(k);
+        // ⓘ `over--` 必须在**每一次尝试**后执行，不能只在删成功时执行。
+        //   over 是「打算删掉几份」的额度，不是「还剩几份没删掉」。
+        //   只在成功时才减 → 失败的那份不占额度 → 循环会继续往下删，
+        //   10 份留 3 份、前 7 份都失败时就会一路删到底（一份不留），
+        //   比「没收敛」糟得多 —— 那是把用户的退路整个拆掉。
+        if (!(await store.del(k))) failed++;
         over--;
       }
+      return { failed };
     } catch (e) {
       status('清理旧快照失败：' + (e?.message || e), true);
+      return null;
     }
   }
 
@@ -3383,8 +3424,19 @@ async function gcOrphanAssets(quiet = false) {
       settings.backupMax = Number(n) || store.BACKUP_KEEP;
       const ok = await store.settings.save(settings);
       if (!ok) { status('设置保存失败', true); return; }
-      await trimBackups();
-      status(`最多保留 ${settings.backupMax} 份快照`);
+      const trim = await trimBackups();
+      /*
+       * 必须接回话（BUG 159）。
+       *
+       * 设置面板上明写着「调小后立即清理超出部分，无需等下次备份」——
+       * 那是**明示的承诺**。删不掉却不吭声，界面说「最多保留 3 份」、
+       * 列表里仍躺着 10 份，而配额正是被这些旧快照占着。
+       * trimBackups 抛异常时它自己已经写过一句红字，这里不再叠加。
+       */
+      const over = trim?.failed || 0;
+      status(`最多保留 ${settings.backupMax} 份快照`
+        + (over ? `（${over} 份超出部分未能清理，仍占用本地存储空间）` : ''),
+      over > 0);
     }),
     /**
      * PDF 导出通道（settings.pdfChannel）。
@@ -3540,7 +3592,17 @@ async function gcOrphanAssets(quiet = false) {
      */
     gcAssets: guard('回收附件', async () => {
       capture();
-      await gcOrphanAssets(true);
+      const r = await gcOrphanAssets(true);
+      /*
+       * 回收失败必须**看得见**，而这里不能走 status：
+       * 侧栏紧接着要写「已移除图片：X」，两条 status 后者赢，这句会被盖掉。
+       * 走 toast（与 status 是两条独立通道）才留得下来。
+       *
+       * 不说出来会怎样：用户移除附件是为了腾空间（这函数的存在理由就是
+       * 「孤儿把配额吃满」），字节一个都没删掉却毫无提示，配额照旧见底。
+       */
+      if (r?.failed) ctx.toast(`${r.failed} 个附件本体未能删除（仍占用本地存储空间）`, 'warn');
+      return r;
     }),
     onDropFiles: (files, nodeId) => { guard('拖放附加', () => handleDropFiles(files, nodeId))(); },
     onDropMiss: () => status('请拖到节点上（拖到空白处不会新建节点）'),
