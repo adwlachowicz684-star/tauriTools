@@ -3627,8 +3627,22 @@ async function gcOrphanAssets(quiet = false) {
       // 编辑器的 callHost 通道：saveAs 直接落成文件
       if (action === 'saveAs') {
         const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
-        await io.saveText(io.stampName('脑图', 'json'), text, 'application/json');
-        return { ok: true };
+        /*
+         * callHost 是**宿主**（WPF 外壳 / 嵌套页面）唯一能拿到结果的通道：
+         * 它只看这个返回值就弹「已保存」。而 saveText 有四种结果 ——
+         * 'ok'（用户选了位置）、'fallback'（已触发下载）、
+         * 'cancel'（用户在保存对话框点了取消）、'error'（下载一个字节都没出去）。
+         * 早先这里是 `await io.saveText(...)` + 无条件 `return { ok: true }`，
+         * 于是后两种根本没有文件，宿主照样说「已保存」——把人支到一个
+         * 不存在的文件上。与 BUG 70 / 77 / 125 / 126 同一类：
+         * 措辞不能盖掉失败本身。
+         *
+         * reason 一并带出去，好让宿主把「用户自己取消的」和「真失败了」分开说，
+         * 不至于把取消也报成保存失败。
+         */
+        const r = await io.saveText(io.stampName('脑图', 'json'), text, 'application/json');
+        if (r === 'error') status('导出失败：文件没能写入（保存被拒绝）', true);
+        return { ok: savedOk(r), reason: r };
       }
       if (action === 'log') { status(String(payload || '')); return { ok: true }; }
       /*

@@ -20850,6 +20850,80 @@ group('BUG 158：清空快照 —— 不能按「删之前数出来的份数」�
 }
 
 
+
+group('BUG 161：callHost 的 saveAs —— 宿主只看返回值，取消 / 失败不能说成成功');
+
+{
+  const Ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const balanced = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0, j = src.indexOf('{', i);
+    if (j < 0) return '';
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return '';
+  };
+
+  const blk = balanced(Ix, "if (action === 'saveAs') {");
+  ok(blk.length > 0, '★ 取得到 saveAs 分支', '长度：' + blk.length);
+  const body = blk.slice(blk.indexOf('{') + 1, blk.lastIndexOf('}'));
+
+  /* ============ ① 行为级：四种结果分别跑一遍 ============ */
+  const run = async (ret) => {
+    const io = { saveText: async () => ret, stampName: (b, e) => `${b}.${e}` };
+    const savedOk = (r) => r === 'ok' || r === 'fallback';
+    const log = [];
+    const status = (s, err) => log.push({ s, err });
+    const fn = new (Object.getPrototypeOf(async function () { }).constructor)(
+      'io', 'savedOk', 'status', 'payload', body);
+    const r = await fn(io, savedOk, status, '{"a":1}');
+    return { r, log };
+  };
+
+  for (const ret of ['ok', 'fallback']) {
+    const { r, log } = await run(ret);
+    eq(r?.ok, true, `★ saveText → ${ret}：ok 为真（确实产出了文件）`);
+    eq(r?.reason, ret, `★ saveText → ${ret}：reason 原样带出去，宿主能把「取消」和「失败」分开说`);
+    eq(log.length, 0, `★ saveText → ${ret}：不额外喊话（宿主会按返回值说话）`);
+  }
+  {
+    const { r, log } = await run('cancel');
+    eq(r?.ok, false, '★ 用户在保存对话框点了取消：ok 必须为假（文件根本没生成）');
+    eq(r?.reason, 'cancel', '★ 取消的 reason 是 cancel，好让宿主别报成「保存失败」');
+    eq(log.length, 0, '★ 取消不喊话（那是用户自己的选择）');
+  }
+  {
+    const { r, log } = await run('error');
+    eq(r?.ok, false, '★ 下载一个字节都没出去：ok 必须为假');
+    eq(r?.reason, 'error', '★ 失败的 reason 是 error');
+    /*
+     * ⚠️ 必须走可选链：变异（比如整个分支退化成旧写法）时 log 是空的，
+     *    裸取 log[0].err 会抛 TypeError —— 进程当场崩掉、后面的断言
+     *    一条都跑不到，于是"看着像抓到了、其实漏掉大半"。
+     */
+    ok(log.length === 1 && /导出失败/.test(log[0]?.s || ''),
+      '★ 失败必须在状态栏说出来（宿主可能不看返回值）', '实际：' + JSON.stringify(log));
+    eq(log[0]?.err, true, '★ 失败是错误级');
+  }
+
+  /* ============ ② 源码契约 ============ */
+  /*
+   * ⚠️ 必须先剥块注释：上面那段「早先这里是 … 无条件 return { ok: true }」的
+   *    注释里就写着旧写法，不剥的话「不得再出现」这条数到的是注释而不是代码
+   *    （本项目反复栽的"断言数到注释自身"）。
+   */
+  const code = blk.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(/const r = await io\.saveText\(/.test(code),
+    '★ 必须接住 saveText 的返回值（原先是裸 await，结果丢掉）');
+  ok(/return \{ ok: savedOk\(r\), reason: r \}/.test(code),
+    '★ 按 savedOk(r) 说话，并把 reason 带出去');
+  ok(!/return \{ ok: true \}/.test(code),
+    '★ 不得再无条件 return { ok: true }（宿主只看它就弹「已保存」）');
+}
+
 console.log('\n' + '─'.repeat(60));
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
