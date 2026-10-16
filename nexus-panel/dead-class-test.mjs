@@ -913,7 +913,7 @@ console.log('\n=== 8. 幽灵规则（CSS 定义了、代码没用）：只增不
   t('判据确能命中该模式（反面证据）',
     INLINE_ONCE.test('x/\\/\\*[\\s\\S]*?\\*\\/'), '换成含模式的样本应当命中');
 
-  const SKIP = new Set(['node_modules', '.git', 'target', 'dist', 'build', '.tauri', '__pycache__']);
+  const SKIP = new Set(['node_modules', '.git', 'target', 'dist', 'runtime-plugins', 'build', '.tauri', '__pycache__']);
   let total = 0;
   const walk = (d) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {

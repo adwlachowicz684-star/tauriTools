@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
-import { readStripped } from '../../test-scan-utils.mjs';
+import { readStripped } from '../../test-scan-fs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MOD = path.join(HERE, '../../src-tauri/src/fpx/mod.rs');

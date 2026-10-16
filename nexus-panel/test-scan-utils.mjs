@@ -89,9 +89,7 @@ export function stripCommentsFlatJs(code) {
   return stripCommentsFlat(code).replace(/(^|\s)\/\/.*$/gm, '$1');
 }
 
-/* ---- 便捷读文件 ---- */
-
-import { readFileSync } from 'node:fs';
+/* ---- 保偏移剥注释 ---- */
 
 /**
  * 剥块注释但**保持偏移**（注释内容除换行外一律换成空格，长度与原文一致）。
@@ -108,10 +106,13 @@ export function stripCommentsKeep(code) {
   return String(code).replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 }
 
-/** 读文件并直接剥注释 —— 覆盖 `stripComments(readFileSync(p,'utf8'))` 这个高频组合 */
-export function readStripped(path) {
-  return stripComments(readFileSync(path, 'utf8'));
-}
+/* ---- 便捷读文件 ----
+ * fs 依赖只在 Node 测试侧用，住在独立的 test-scan-fs.mjs。
+ * 本文件会被浏览器侧共享模块引用（js/style-audit.js 的 stripCommentsKeep、
+ * js/dead-class-scan.js 的 stripComments），顶层 import node:fs 会让
+ * Vite 浏览器构建直接失败：
+ *   "readFileSync" is not exported by "__vite-browser-external"
+ * 读文件 + 剥注释的高频组合请用 test-scan-fs.mjs 的 readStripped。 */
 
 /* ---- 汇总行解析 ---- */
 /**

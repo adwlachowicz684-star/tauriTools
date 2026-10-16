@@ -35,7 +35,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { readStripped } from './test-scan-utils.mjs';
+import { readStripped } from './test-scan-fs.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
