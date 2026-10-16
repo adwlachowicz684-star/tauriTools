@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { postJson } from '../lib/tauri';
 import {
   loadServers as loadMcpServers, saveServers as saveMcpServers,
-  migrateFromCanvases, toServerRefs, type GlobalMcpServer,
+  migrateFromCanvases, toServerRefs, serverRefSkips, type GlobalMcpServer,
 } from '../engine/mcpServers';
 import {
   collectServers, serversChanged, serversToDrop, type ServerRef,
@@ -218,6 +218,7 @@ export function useMcpRegistry({
    */
   const mcpTimerRef = useRef<number | null>(null);
   const mcpServersRef = useRef<ServerRef[]>(toServerRefs(mcpServers) as ServerRef[]);
+  const skipKeyRef = useRef<string>('');
 
   const scheduleMcpRefresh = useCallback((servers: ServerRef[]) => {
     if (mcpTimerRef.current !== null) window.clearTimeout(mcpTimerRef.current);
@@ -245,6 +246,20 @@ export function useMcpRegistry({
     if (!serversChanged(before, after)) return;
 
     mcpServersRef.current = after;
+    /*
+     * 没进刷新列表的服务要**说一声**。
+     *
+     * 不说的话，用户看到一个服务明明配着、工具却一个都没有，
+     * 会去查"服务是不是挂了"，而真正原因是他没填名字（或重名）。
+     *
+     * 用 ref 去重：这个 effect 每敲一个字符都会跑，每次都打日志会刷屏。
+     */
+    const skips = serverRefSkips(mcpServers);
+    const skipKey = skips.join(' | ');
+    if (skips.length > 0 && skipKey !== skipKeyRef.current) {
+      onLog(`⚠ MCP：${skips.join('；')}`);
+    }
+    skipKeyRef.current = skipKey;
     /*
      * 服务被删时**立刻**把它的工具标 stale ——
      * 不等刷新，免得侧栏还挂着已经不存在的服务。

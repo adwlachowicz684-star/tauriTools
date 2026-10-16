@@ -346,6 +346,38 @@ export type ServerRefLike = { name: string; command?: string; url?: string };
  * 停用的不转 —— 停用了就别去连它，也别为它生成节点。
  * 没名字的不转：节点按名字引用，没名字引用不了。
  */
+/**
+ * 有哪些服务**没能**进 `toServerRefs` —— 每条一句话，能直接给用户看。
+ *
+ * `toServerRefs` 对三类服务是静默丢弃的：没填名字、重名、停用。
+ * 丢弃本身是对的（名字是引用的依据，没名字没法引用），
+ * 但**丢了不说**的后果是：用户看到一个服务明明配着、工具却一个都没有，
+ * 而去查"服务是不是挂了"—— 真正原因是他根本没填名字。
+ */
+export function serverRefSkips(list: GlobalMcpServer[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of list ?? []) {
+    /*
+     * 不是对象的条目不是服务，不报 ——
+     * 判据与 loadServers 的过滤同一条（那里保证存盘里不会有这种东西）。
+     */
+    if (!s || typeof s !== 'object') continue;
+    if (s.disabled) continue;
+    const name = String(s?.name ?? '').trim();
+    if (!name) {
+      out.push('有一个服务没填名字 —— 名字是节点里引用的依据，没名字没法用');
+      continue;
+    }
+    if (seen.has(name)) {
+      out.push(`有 ${'多'} 个服务都叫「${name}」—— 后面的不会被连（名字分不清引用）`);
+      continue;
+    }
+    seen.add(name);
+  }
+  return out;
+}
+
 export function toServerRefs(list: GlobalMcpServer[]): ServerRefLike[] {
   const out: ServerRefLike[] = [];
   const seen = new Set<string>();
