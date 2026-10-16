@@ -57,6 +57,9 @@ export const plugins = [
     name: 'Agent Flow',
     icon: '⧉',
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/agent-flow/index.html',
     // React + TSX，需要 Vite；无构建模式下自动隐藏
     requiresBuild: true,
@@ -75,6 +78,9 @@ export const plugins = [
      * builtin: true —— 随仓库发布的内置插件，tb_* 文件命令全权限放行。
      */
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/task-board/index.html',
     requiresBuild: true,
     builtin: true,
@@ -86,6 +92,9 @@ export const plugins = [
     name: '示例·React 沙箱',
     icon: '◆',
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/demo-react/index.html',
     version: '1.0.0',
     /*
@@ -104,6 +113,9 @@ export const plugins = [
     name: '示例·订单面板',
     icon: '☀',
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/demo-light/index.html',
     version: '1.0.0',
     description: '第三方面板风格的数据页，配色走外壳主题变量',
@@ -134,6 +146,9 @@ export const plugins = [
     name: '示例·原生沙箱',
     icon: '◇',
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/demo-iframe/index.html',
     version: '1.0.0',
     description: '不依赖构建工具的 iframe 插件',
@@ -143,6 +158,9 @@ export const plugins = [
     name: '项目组分配',
     icon: '🗂',
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/project-group/index.html',
     // React + TSX，需要 Vite；无构建模式下自动隐藏
     requiresBuild: true,
@@ -153,6 +171,9 @@ export const plugins = [
     name: '思维导图',
     icon: '❖',
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/mindmap/index.html',
     version: '1.0.0',
     description: 'kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存',
@@ -165,6 +186,9 @@ export const plugins = [
     name: '组卷工具',
     icon: '⧈',
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/dupview/index.html',
     version: '1.0.0',
     /*
@@ -199,6 +223,9 @@ export const plugins = [
     kind: 'service',
     interactive: true,
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/color-picker/index.html',
     version: '2.0.0',
     // React + TSX（与 project-group 内联色盘共用同一份组件），需要 Vite
@@ -212,6 +239,9 @@ export const plugins = [
     kind: 'service',
     interactive: true,
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/icon-picker/index.html',
     version: '1.0.0',
     description: '内置 122 个预设图标的浏览与选择',
@@ -223,6 +253,9 @@ export const plugins = [
     kind: 'service',
     interactive: true,
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/md-editor/index.html',
     version: '1.0.0',
     description: '左编辑右预览的 md 编辑器，返回编辑后的文本',
@@ -360,6 +393,9 @@ export const plugins = [
     icon: '🎨',
     kind: 'service',
     type: 'iframe',
+    // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
+    // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
+    runtime: true,
     entry: './plugins/demo-service/index.html',
     version: '1.0.0',
     description: '示例服务插件：不进侧边栏，由其它插件通过 ctx.services.call 调用',

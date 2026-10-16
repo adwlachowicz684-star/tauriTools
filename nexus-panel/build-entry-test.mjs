@@ -324,8 +324,10 @@ t('名单里的插件确实在 plugins/ 下', (() => {
 
 console.log('\n=== 6. 文档化：原因必须写在代码里 ===');
 t('registry 头部说明了双实现', /各写了两份实现/.test(registry));
+/* 措辞随运行时加载改造更新过（vite.config.ts 的重写版），判据跟着走：
+   注释必须仍写清"为什么 PLAIN_PLUGINS 不能收有 index.html 的插件"。 */
 t('vite.config 注释说明了不能整目录拷贝普通插件',
-  /整目录原样拷贝会盖掉打包产物/.test(viteCfg));
+  /源码版盖掉打包版/.test(viteCfg));
 
 /* ---------------------------------------------------------------- */
 console.log('\n=== 7. 原样拷贝名单不得含 Vite 入口插件 ===');
@@ -341,6 +343,11 @@ console.log('\n=== 7. 原样拷贝名单不得含 Vite 入口插件 ===');
  *   在 dist 里指向不存在的 dist/js/plugin-sdk.js。
  * 脚本 404 → 从不执行 → 不发 ready → 等满 10s 才报握手超时。
  * 这类错**完全看不出是构建问题**，所以必须在构建期就拦住。
+ *
+ * 运行时加载改造后：有 index.html 的插件改由 scripts/build-plugins.mjs
+ * 独立构建（runtime-plugins/<id>/），主构建的 PLAIN_PLUGINS 只剩
+ * demo-module 一个无 index.html 的同页插件。上面那套失效路径依然成立
+ * （源码版盖打包版 → 404 → 握手超时），所以断言原地保留。
  */
 
 for (const id of ['demo-iframe', 'demo-light']) {
@@ -353,6 +360,17 @@ t('closeBundle 里有构建期断言（有 index.html 就报错）',
   '静默放过 = 把排查成本转嫁给下一次');
 t('断言错误信息点明后果（握手超时）', /握手超时/.test(src('vite.config.ts')),
   '报错里不写清后果，下一个人不知道为什么要拦');
+/* 主构建不再收 iframe 插件入口（独立构建到 runtime-plugins/）——
+   这两条钉住"迁移不是只加了脚本，主构建真的瘦身了"。
+   注意匹配的是**定义**（const NATIVE_SUBDIRS）而不是任何提及：
+   vite.config.ts 的注释里 legitimately 会提到这个名字（指引读者去
+   build-plugins.mjs），按字面匹配会把正常注释误判成没迁干净。 */
+t('buildInputs 只返回外壳入口', (() => {
+  const fn = cfg.match(/export function buildInputs[\s\S]*?\n}/);
+  return !!fn && !/plugins\/\$\{d\.name\}|readdirSync/.test(fn[0]);
+})(), '主构建若还收插件入口，独立构建就白做了');
+t('vite.config.ts 不再有 NATIVE_SUBDIRS 定义', !/const NATIVE_SUBDIRS/.test(viteCfg),
+  '原子目录拷贝已迁到 scripts/build-plugins.mjs');
 
 /* ---------------------------------------------------------------- */
 console.log('\n=== 8. iframe 插件必须自带样式来源 ===');

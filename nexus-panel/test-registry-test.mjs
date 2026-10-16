@@ -39,7 +39,7 @@ const t = (name, ok, info) => {
  * 这比"某个测试红了没人管"更隐蔽：整批测试根本不在视野里，
  * 报告却是绿的。所以下面另有一条断言专门守"判据没漏扫"。
  */
-const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'build', 'target', '.vite']);
+const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'runtime-plugins', 'build', 'target', '.vite']);
 const tests = [];
 const tsOnDisk = [];
 (function walk(dir) {

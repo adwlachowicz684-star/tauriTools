@@ -205,7 +205,7 @@ console.log('\n—— 5. 全量守卫：全仓 CSS 不许有 toast 挡板 ——
    * 于是守卫报「dist/assets/index-BP3R0Ce0.css → .nx-toasts>*」——
    * 报错指向一个**手改了也没用**的文件，真因（没重新构建）一个字没提。
    */
-  const isBuildOut = (name) => name === 'dist';
+  const isBuildOut = (name) => name === 'dist' || name === 'runtime-plugins';
   /* 扫全仓而不是只扫 css/ —— 插件自己的 styles.css 里也可能补一条
      `#toasts > *`，那同样会把提示条变成挡板。 */
   const files = [];

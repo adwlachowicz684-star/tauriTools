@@ -4,6 +4,11 @@ dist/
 dist-ssr/
 *.local
 
+# iframe 插件独立构建产物（scripts/build-plugins.mjs 生成，npm run build 内含）
+# 与 dist/ 同类：改插件前端只重跑插件构建，主程序零重编；正式版经
+# tauri.conf.json 的 bundle.resources 收进安装包，不入库
+runtime-plugins/
+
 # Vite 加载 TS 配置时生成的临时文件；构建被中断（Ctrl-C / 端口冲突）会残留，
 # 每次都污染 git status，还可能被误提交
 vite.config.ts.timestamp-*.mjs

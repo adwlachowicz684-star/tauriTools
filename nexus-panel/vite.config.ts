@@ -15,11 +15,11 @@ import {
   buildInputs,
 } from './config/nexus.config.mjs';
 
-// 多页应用：外壳 + 每个 iframe 插件各有一个 HTML 入口。
-// 构建后 dist/index.html（外壳）、dist/plugins/<id>/index.html（插件页面），
-// 与 Tauri 的 frontendDist 完美对应。
-//
-// 自动扫描 plugins/<id>/index.html —— 新增插件不用再来改这里。
+// 主构建只打**外壳**（index.react.html → dist/index.html）。
+// iframe 插件已全部迁到独立构建：scripts/build-plugins.mjs 产出
+// runtime-plugins/<id>/，生产态由 js/host.js 经 asset 协议运行时加载 ——
+// 改插件不再重编主程序（npm run plugins:build 单独跑）。
+// module 插件不在此列：走 js/plugin-entries.js 的 import.meta.glob。
 const inputs = buildInputs(PATHS.root);
 
 /**
@@ -65,42 +65,15 @@ function copyInto(src: string, dest: string): void {
 }
 
 /**
- * 原生（无构建）示例插件不参与打包，直接原样拷进 dist，
- * 这样 Vite 生产构建里它们依然可用。
+ * 主构建收尾：拷贝运行时动态加载的附属文件。
+ *
+ * 只剩两样东西（iframe 插件与原子目录拷贝已迁到 scripts/build-plugins.mjs，
+ * 见那里 NATIVE_SUBDIRS 的说明 —— 它们现在进 runtime-plugins/）：
+ *   1. registry.js —— 运行时动态加载（便于不改代码热插拔插件）；
+ *   2. PLAIN_PLUGINS —— 无 index.html 的 module 示例插件（demo-module），
+ *      源码直出，与 iframe 插件独立构建互不干涉。
  */
 function copyPlainPlugins(): Plugin {
-  // 走 Vite 打包的插件也可能夹带「不能交给 Vite 处理」的原生子目录。
-  // mindmap 的 editor/ 就是：kityminder 的 4 个原文件靠 <script src> 引用，
-  // 由编辑器 iframe 以 ./editor/index.html 直接加载（见 editor-bridge.js）。
-  // 少了它表现为「插件能开、画布一片空白」—— index.html 正常产出，
-  // 但 editor/index.html 404，kityminder 未定义（实测构建已确认）。
-  //
-  // 只补拷 editor/ 一层，不能把 mindmap 加进 PLAIN_PLUGINS：
-  // 它 index.js 里是 `import ... from '../../js/plugin-sdk.js'`，
-  // 必须靠 Vite 打包才解析得到；整目录原样拷贝会盖掉打包产物，
-  // 插件连开都开不了（比画布空白更糟）。两种产物的职责不能混。
-  /*
-   * 两个目录，成因**完全相同**：都是靠相对 URL 在运行时直接引用的原生资源，
-   * Vite 处理不了（见下方说明），必须在打包后原样拷过去。
-   *
-   * · mindmap/editor —— kityminder 的 4 个原文件，靠 <script src> 加载
-   * · project-group/preseticons —— **122 个 .ico**，靠 <img src> 加载
-   *
-   * preseticons 这一条是实测发现的真 bug：
-   *   dist 里 .ico 数量 = **0**，而产物 JS 里仍保留着
-   *   `./preseticons/${encodeURIComponent(t)}.ico` 这段引用。
-   *   于是 Vite 生产构建下 122 个预设图标**全部 404**
-   *   （<img> 走 error 分支隐藏，表现为「图标位一片空白」）。
-   *
-   * 同一个目录同时服务于两处引用，一条拷贝规则都覆盖：
-   *   · project-group 自己    → ./preseticons/x.ico
-   *   · icon-picker 服务      → ../project-group/preseticons/x.ico
-   * 两者解析到同一个 dist 路径，同 origin，都能访问。
-   */
-  const NATIVE_SUBDIRS = [
-    { plugin: 'mindmap', dir: 'editor' },
-    { plugin: 'project-group', dir: 'preseticons' },
-  ];
   return {
     name: 'nexus-copy-plain-plugins',
     apply: 'build',
@@ -119,23 +92,20 @@ function copyPlainPlugins(): Plugin {
          * 源码版 index.html 会盖掉打包版，插件脚本 404，最终表现为
          * 「iframe 插件握手超时（10s）」这种**完全看不出是构建配置问题**
          * 的运行时报错。静默放过等于把排查成本转嫁给下一次。
+         *
+         * 运行时加载时代里这条断言依然是护栏：有 index.html 的插件属于
+         * build-plugins.mjs 的辖区，误放进来只会拷出一份没人加载的死目录。
          */
         if (fsSync.existsSync(resolve(PATHS.plugins, name, 'index.html'))) {
           throw new Error(
-            `[nexus-copy-plain-plugins] 插件 "${name}" 有 index.html，` +
-            '已被 Vite 收为入口；放进 PLAIN_PLUGINS 会让源码版盖掉打包版，' +
-            '表现为「iframe 插件握手超时（10s）」。请从 PLAIN_PLUGINS 移除。');
+            `[nexus-copy-plain-plugins] 插件 "${name}" 有 index.html，`
+            + '已由 scripts/build-plugins.mjs 独立构建（runtime-plugins/）；'
+            + '放进 PLAIN_PLUGINS 会让源码版盖掉打包版，'
+            + '表现为「iframe 插件握手超时（10s）」。请从 PLAIN_PLUGINS 移除。');
         }
         const src = resolve(PATHS.plugins, name);
         if (fsSync.existsSync(src)) {
           copyInto(src, resolve(out, name));
-        }
-      }
-      // closeBundle 在打包产物落盘之后，这里补拷不会被覆盖
-      for (const { plugin, dir } of NATIVE_SUBDIRS) {
-        const src = resolve(PATHS.plugins, plugin, dir);
-        if (fsSync.existsSync(src)) {
-          copyInto(src, resolve(out, plugin, dir));
         }
       }
     },

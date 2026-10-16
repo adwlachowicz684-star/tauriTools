@@ -46,7 +46,7 @@ const t = (name, cond, extra = '') => {
 };
 
 /* 遍历源码树（跳过体积巨大且与本守卫无关的目录） */
-const SKIP_DIR = new Set(['node_modules', '.git', 'target', 'dist', 'build', '.tauri', '__pycache__', '.jd2']);
+const SKIP_DIR = new Set(['node_modules', '.git', 'target', 'dist', 'build', 'runtime-plugins', '.tauri', '__pycache__', '.jd2']);
 function walk(dir, out = []) {
   let ents = [];
   try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return out; }

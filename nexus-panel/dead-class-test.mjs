@@ -302,7 +302,7 @@ console.log('\n=== 5. CSS 结构完整性 ===');
     }
   };
 
-  const SKIP_DIR = new Set(['node_modules', '.git', 'target', 'dist', 'build', '.tauri', '__pycache__']);
+  const SKIP_DIR = new Set(['node_modules', '.git', 'target', 'dist', 'build', 'runtime-plugins', '.tauri', '__pycache__']);
   const cssAll = [];
   const walkCss = (d) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
@@ -348,7 +348,7 @@ console.log('\n=== 6. 反向校验：代码用了但 CSS 没定义 ===');
   const files = [];
   const walk = (d) => {
     for (const f of readdirSync(d)) {
-      if (['node_modules', '.git', 'dist', 'target', 'build'].includes(f)) continue;
+      if (['node_modules', '.git', 'dist', 'runtime-plugins', 'target', 'build'].includes(f)) continue;
       const p = join(d, f);
       if (statSync(p).isDirectory()) walk(p);
       else files.push(p);
@@ -430,7 +430,7 @@ console.log('\n=== 7. 死样式分类：档位类留用、真废弃清零 ===');
   const files = [];
   const walk = (d) => {
     for (const f of readdirSync(d)) {
-      if (['node_modules', '.git', 'dist', 'target', 'build'].includes(f)) continue;
+      if (['node_modules', '.git', 'dist', 'runtime-plugins', 'target', 'build'].includes(f)) continue;
       const p = join(d, f);
       if (statSync(p).isDirectory()) walk(p); else files.push(p);
     }

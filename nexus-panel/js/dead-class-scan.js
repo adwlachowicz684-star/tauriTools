@@ -26,7 +26,7 @@ import { join, dirname, extname, relative } from 'node:path';
 
 /** 扫目录时的排除项 */
 export const SKIP_DIRS = new Set([
-  'node_modules', '.git', 'target', 'dist', 'build',
+  'node_modules', '.git', 'target', 'dist', 'build', 'runtime-plugins',
   '.tauri', '__pycache__', '.venv', 'venv', 'coverage',
 ]);
 

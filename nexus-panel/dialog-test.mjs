@@ -168,7 +168,7 @@ t('尊重 prefers-reduced-motion', /prefers-reduced-motion/.test(css));
 /* 引了 JS 的地方必须也引了 CSS —— 插件是独立文档，漏引就是裸 div */
 const walk = (dir, out = []) => {
   for (const d of readdirSync(dir, { withFileTypes: true })) {
-    if (['node_modules', 'dist', '.git'].includes(d.name)) continue;
+    if (['node_modules', 'dist', 'runtime-plugins', '.git'].includes(d.name)) continue;
     const p = join(dir, d.name);
     if (d.isDirectory()) walk(p, out);
     else out.push(p);

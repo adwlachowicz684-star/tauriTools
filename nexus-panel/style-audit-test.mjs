@@ -271,7 +271,7 @@ console.log('\n=== 运行时注入变量（brushVars）不被误判 ===');
   const cssFiles = [];
   const walk = (dir) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
-      if (['node_modules', '.git', 'target', 'dist', 'build'].includes(e.name)) continue;
+      if (['node_modules', '.git', 'target', 'dist', 'runtime-plugins', 'build'].includes(e.name)) continue;
       const full = join(dir, e.name);
       if (e.isDirectory()) walk(full);
       else if (e.name.endsWith('.css')) cssFiles.push(full);

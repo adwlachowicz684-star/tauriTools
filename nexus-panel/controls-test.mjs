@@ -433,7 +433,7 @@ console.log('\n=== 6. 各文档都能拿到 controls.css ===');
 {
   const walk = (dir, out = []) => {
     for (const d of readdirSync(dir, { withFileTypes: true })) {
-      if (['node_modules', 'dist', '.git'].includes(d.name)) continue;
+      if (['node_modules', 'dist', 'runtime-plugins', '.git'].includes(d.name)) continue;
       const p = join(dir, d.name);
       if (d.isDirectory()) walk(p, out); else out.push(p);
     }
@@ -476,7 +476,7 @@ console.log('\n=== 7. 引用计数（说明统一的价值）===');
     let n = 0;
     const walk = (dir) => {
       for (const d of readdirSync(dir, { withFileTypes: true })) {
-        if (['node_modules', 'dist', '.git'].includes(d.name)) continue;
+        if (['node_modules', 'dist', 'runtime-plugins', '.git'].includes(d.name)) continue;
         const p = join(dir, d.name);
         if (d.isDirectory()) walk(p);
         else if (/\.(jsx?|tsx?|html)$/.test(p)) {
@@ -2173,7 +2173,7 @@ console.log('\n=== 36. 取色弹窗：跟随主题变量与不滚动 ===');
     const files = [];
     const walk = (d) => {
       for (const e of readdirSync(d, { withFileTypes: true })) {
-        if (['node_modules', 'dist', 'build'].includes(e.name)) continue;
+        if (['node_modules', 'dist', 'runtime-plugins', 'build'].includes(e.name)) continue;
         const f = join(d, e.name);
         if (e.isDirectory()) walk(f);
         else if (/\.tsx?$/.test(e.name)) files.push(f);

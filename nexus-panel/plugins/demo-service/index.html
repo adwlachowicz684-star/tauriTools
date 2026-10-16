@@ -25,8 +25,15 @@
        这里读外壳缓存的底色先铺上，读不到（隔离态抛 SecurityError、
        或首次运行）就交给宿主侧 .plugin-frame 的 --bg 底板兜底。 */
     try {
-      var _bg = localStorage.getItem('nexus:preload-bg');
-      var _base = localStorage.getItem('nexus:preload-base');
+      /* URL query 优先：运行时加载的插件页面在 asset.localhost 源下，
+         读不到外壳 localStorage 的缓存（跨源），底色由外壳在 iframe src 上
+         以 nexus-bg / nexus-base 参数现算带过来；同源时（dev / 无构建）
+         才回退到 localStorage 缓存。
+         注意：query 是外壳按当前主题拼的，只在打开插件那一刻准；
+         之后主题切换仍走 postMessage（init/theme 消息），与此处无关。 */
+      var _q = new URLSearchParams(location.search);
+      var _bg = _q.get('nexus-bg') || localStorage.getItem('nexus:preload-bg');
+      var _base = _q.get('nexus-base') || localStorage.getItem('nexus:preload-base');
       var _r = document.documentElement;
       if (_bg) { _r.style.setProperty('--bg', _bg); _r.style.background = _bg; }
       if (_base) _r.style.colorScheme = _base;

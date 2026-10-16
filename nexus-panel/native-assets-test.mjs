@@ -26,12 +26,14 @@
  *
  * 解法
  * ------------------------------------------------------------
- * vite.config.ts 的 `NATIVE_SUBDIRS` 就是为这种"不能交给 Vite 处理的
- * 原生子目录"准备的（原本只有 mindmap/editor）。加一条
- * `project-group/preseticons` 即可 —— 复用现成机制，
- * 不改任何引用路径，也不用新建 public 目录。
+ * `NATIVE_SUBDIRS` 就是为这种"不能交给 Vite 处理的原生子目录"准备的
+ * （原本只有 mindmap/editor，加一条 project-group/preseticons 即可）——
+ * 复用现成机制，不改任何引用路径，也不用新建 public 目录。
  *
- * 本测试钉住这条规则，防止将来有人删掉它而没人发现。
+ * 运行时加载改造后它的家在 **scripts/build-plugins.mjs**（iframe 插件
+ * 独立构建到 runtime-plugins/<id>/），拷贝目标从 dist/plugins/ 变成
+ * runtime-plugins/，机制与判据不变 —— 本测试钉住这条规则，
+ * 防止将来有人删掉它而没人发现。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -47,7 +49,8 @@ const t = (name, cond) => {
   else { fail += 1; console.log(`❌ ${name}`); }
 };
 
-const viteCfg = src('vite.config.ts');
+/* NATIVE_SUBDIRS 已随插件独立构建迁到 build-plugins.mjs */
+const buildPlugins = src('scripts/build-plugins.mjs');
 const iconPicker = src('plugins/icon-picker/index.js');
 const presetIcons = src('plugins/project-group/presetIcons.ts');
 
@@ -69,21 +72,31 @@ t('两处都确认是动态（不是可静态分析的常量）',
 
 console.log('\n=== 2. 解法：NATIVE_SUBDIRS 里必须有 preseticons ===');
 t('NATIVE_SUBDIRS 含 mindmap/editor（原有）',
-  /plugin: 'mindmap', dir: 'editor'/.test(viteCfg));
+  /plugin: 'mindmap', dir: 'editor'/.test(buildPlugins));
 t('NATIVE_SUBDIRS 含 project-group/preseticons（本轮新增）',
-  /plugin: 'project-group', dir: 'preseticons'/.test(viteCfg));
+  /plugin: 'project-group', dir: 'preseticons'/.test(buildPlugins));
 t('两条都在同一个数组里（不是各写一份拷贝逻辑）',
-  /const NATIVE_SUBDIRS = \[[\s\S]{0,200}mindmap[\s\S]{0,120}project-group/.test(viteCfg));
+  /const NATIVE_SUBDIRS = \[[\s\S]{0,200}mindmap[\s\S]{0,120}project-group/.test(buildPlugins));
 
 console.log('\n=== 3. 拷贝机制本身（复用，不是新造）===');
 t('遍历 NATIVE_SUBDIRS 做拷贝',
-  /for \(const \{ plugin, dir \} of NATIVE_SUBDIRS\)/.test(viteCfg));
-t('拷到 dist/plugins/<plugin>/<dir>',
-  /copyInto\(src, resolve\(out, plugin, dir\)\)/.test(viteCfg));
-t('在 closeBundle（打包之后，不会被覆盖）',
-  /apply: 'build'[\s\S]{0,120}closeBundle/.test(viteCfg));
+  /for \(const \{ plugin, dir \} of NATIVE_SUBDIRS\)/.test(buildPlugins));
+/* 目标从 dist/plugins/<plugin>/<dir> 变为 runtime-plugins/<plugin>/<dir>
+   （插件独立构建的产物目录，见 scripts/build-plugins.mjs 头部说明）。 */
+t('拷到 runtime-plugins/<plugin>/<dir>',
+  /copyInto\(src, resolve\(outDir, dir\)\)/.test(buildPlugins));
+/* 判据用**行号顺序**而不是字符距离：buildOne 里 await build({...}) 的
+   配置块有三十多行，任何固定字符窗口都会随配置增删而漂移；
+   "拷贝在打包之后"这件事的本质是调用顺序，行号比较才是稳的判据。 */
+t('拷贝发生在 vite build() 之后（打包之后，不会被覆盖）', (() => {
+  const lines = buildPlugins.split('\n');
+  const at = (re) => lines.findIndex((l) => re.test(l));
+  const buildAt = at(/await build\(\{/);
+  const copyAt = at(/for \(const \{ plugin, dir \} of NATIVE_SUBDIRS\)/);
+  return buildAt >= 0 && copyAt > buildAt;
+})());
 t('存在性判断（源目录没了也不报错）',
-  /if \(fsSync\.existsSync\(src\)\)/.test(viteCfg));
+  /if \(existsSync\(src\)\)/.test(buildPlugins));
 
 console.log('\n=== 4. 源码目录确实存在（否则拷贝规则是空转）===');
 const iconDir = path.join(HERE, 'plugins/project-group/preseticons');
@@ -96,12 +109,13 @@ t('mindmap/editor 目录也在', fs.existsSync(path.join(HERE, 'plugins/mindmap/
 
 console.log('\n=== 5. 一处拷贝覆盖两处引用（路径推算）===');
 /*
- * dist 结构：
- *   dist/plugins/project-group/index.html   → ./preseticons/x.ico
- *                                           = dist/plugins/project-group/preseticons/x.ico
- *   dist/plugins/icon-picker/index.html     → ../project-group/preseticons/x.ico
- *                                           = dist/plugins/project-group/preseticons/x.ico
- * 两者解析到**同一个** dist 路径 —— 所以一条拷贝规则同时解决。
+ * 产物结构（运行时加载后）：
+ *   runtime-plugins/project-group/index.html → ./preseticons/x.ico
+ *                                            = runtime-plugins/project-group/preseticons/x.ico
+ *   runtime-plugins/icon-picker/index.html   → ../project-group/preseticons/x.ico
+ *                                            = runtime-plugins/project-group/preseticons/x.ico
+ * 两者解析到**同一个** runtime-plugins 路径 —— 所以一条拷贝规则同时解决。
+ * （改造前这里是 dist/plugins/，同 origin 同路径，机制不变。）
  */
 const resolveFrom = (base, rel) => {
   const parts = base.split('/').slice(0, -1).concat(rel.split('/'));
@@ -113,17 +127,17 @@ const resolveFrom = (base, rel) => {
   }
   return out.join('/');
 };
-const fromPG = resolveFrom('dist/plugins/project-group/index.html', './preseticons/x.ico');
-const fromIP = resolveFrom('dist/plugins/icon-picker/index.html', '../project-group/preseticons/x.ico');
-t('project-group 自己解析到 dist/plugins/project-group/preseticons/x.ico',
-  fromPG === 'dist/plugins/project-group/preseticons/x.ico');
+const fromPG = resolveFrom('runtime-plugins/project-group/index.html', './preseticons/x.ico');
+const fromIP = resolveFrom('runtime-plugins/icon-picker/index.html', '../project-group/preseticons/x.ico');
+t('project-group 自己解析到 runtime-plugins/project-group/preseticons/x.ico',
+  fromPG === 'runtime-plugins/project-group/preseticons/x.ico');
 t('icon-picker 解析到同一路径（所以一条规则就够）', fromIP === fromPG);
 t('该路径正是拷贝规则写入的位置',
-  fromPG.startsWith('dist/plugins/project-group/preseticons/'));
+  fromPG.startsWith('runtime-plugins/project-group/preseticons/'));
 
 console.log('\n=== 6. 已知未覆盖的情况（不夸大）===');
-t('README/注释里说明了为什么 Vite 处理不了',
-  /动态|decodeURI|encodeURIComponent|处理不了|分析不了/.test(viteCfg));
+t('注释里说明了为什么 Vite 处理不了',
+  /动态|decodeURI|encodeURIComponent|处理不了|分析不了/.test(buildPlugins));
 /*
  * 这一条记的是**决定**：N22（服务该自带资源）经核实后**不改**，
  * 理由写在 icon-picker 的注释里（project-group 才是主用户、
@@ -141,10 +155,12 @@ console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 
 if (fail) {
   console.log(`
-修复要点：dist 里应有 plugins/project-group/preseticons/*.ico。
+修复要点：runtime-plugins/ 里应有 project-group/preseticons/*.ico。
 若构建后仍然没有，检查：
-  1. vite.config.ts 的 NATIVE_SUBDIRS 是否含 { plugin: 'project-group', dir: 'preseticons' }
-  2. copyInto 是否在 closeBundle 阶段执行（打包之后才不会被覆盖）
-  3. 源目录 plugins/project-group/preseticons/ 是否真实存在`);
+  1. scripts/build-plugins.mjs 的 NATIVE_SUBDIRS 是否含
+     { plugin: 'project-group', dir: 'preseticons' }
+  2. copyInto 是否在 vite build() 之后执行（打包之后才不会被覆盖）
+  3. 源目录 plugins/project-group/preseticons/ 是否真实存在
+  4. 该插件是否真的被构建过（npm run plugins:build -- --only project-group）`);
 }
 process.exit(fail ? 1 : 0);

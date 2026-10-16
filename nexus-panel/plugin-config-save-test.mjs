@@ -243,7 +243,7 @@ function buildSelect(prevVal, newVal, saved) {
  * ================================================================ */
 {
   const exts = ['.js', '.tsx', '.ts'];
-  const skip = ['node_modules', '.git', 'dist', 'build'];
+  const skip = ['node_modules', '.git', 'dist', 'runtime-plugins', 'build'];
   const files = [];
   (function walk(d) {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {

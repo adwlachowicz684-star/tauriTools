@@ -1007,7 +1007,10 @@ export function createHost(opts = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'plugin-wrap plugin-wrap-frame';
     const iframe = document.createElement('iframe');
-    iframe.src = resolveEntry(manifest.entry);
+    /* 运行时加载分流（dev / prod / 无构建三态，见 resolveFrameSrc 的说明）。
+       这里是 async 的：prod 态第一次打开 runtime 插件时要探测 resourceDir
+       并转换 asset 协议 URL，晚一帧赋值 src 不影响握手计时（从赋值起算）。 */
+    iframe.src = await resolveFrameSrc(manifest);
 
     /* 沙箱属性由插件设置里的「功能隔离」决定：
          关闭（默认）—— 带 allow-same-origin，插件与外壳同源，可直连，无需桥接
@@ -1845,6 +1848,143 @@ export function createHost(opts = {}) {
 export function resolveEntry(entry) {
   return new URL(entry, location.href).href;
 }
+
+/* -------------------- 运行时插件加载（runtime plugins） -------------------- */
+
+/**
+ * iframe 插件不再打主程序：scripts/build-plugins.mjs 把每个插件独立构建到
+ * runtime-plugins/<id>/，生产态经 Tauri asset 协议从 $RESOURCE 加载。
+ * 于是「改插件前端 = 重跑插件构建，主程序零重编」；已安装的正式版更新插件
+ * = 把 runtime-plugins/<id> 拷进安装目录后重启。module 插件与外壳同文档，
+ * 物理上无法运行时加载，仍随主程序构建（import.meta.glob）。
+ *
+ * 目录名与 config/nexus.config.mjs 的 RUNTIME_PLUGINS_DIR 一致 ——
+ * 浏览器侧不能 import 那个文件（它依赖 node:fs/node:path），
+ * 一致性由 runtime-plugin-test.mjs 钉住，别只改一边。
+ */
+const RUNTIME_PLUGINS_DIR = 'runtime-plugins';
+
+/**
+ * 当前 iframe 入口的解析模式：
+ *   'dev'   —— vite dev server：直指 /plugins/<id>/index.html，源码转换、
+ *             HMR 照旧，零额外构建；
+ *   'prod'  —— vite build 产物（dist）：runtime 插件走 asset 协议，
+ *             从 $RESOURCE/runtime-plugins/<id>/index.html 加载；
+ *   'plain' —— 无构建模式（原生 ESM 直出）：保持原相对路径行为。
+ *
+ * import.meta.env 只有被 Vite 打包过才存在；无构建模式下访问它是
+ * undefined（不抛错），正好用来区分后两态。
+ */
+function frameSrcMode() {
+  const env = import.meta.env;
+  if (env && env.DEV) return 'dev';
+  if (env && env.PROD) return 'prod';
+  return 'plain';
+}
+
+/**
+ * 探测 Tauri 资源目录（$RESOURCE，安装后位于安装目录内）。
+ *
+ * 三条来源依次尝试，失败返回 null（浏览器/无构建环境）：
+ *   ① window.__TAURI__.path.resourceDir()  —— withGlobalTauri 全局注入
+ *   ② 动态 import('@tauri-apps/api/path')  —— npm 包（vite 打包）
+ * 只缓存成功；失败不缓存，与 tauri-core.js 的 getTauri() 同一策略
+ * （首调时机可能早于 Tauri 注入完成，缓存失败会永久锁死降级态）。
+ */
+let _resourceDir; // undefined = 未探测；null = 探测失败；string = 成功
+export async function getResourceDir() {
+  if (_resourceDir !== undefined) return _resourceDir;
+  const w = typeof window !== 'undefined' ? window : globalThis;
+  try {
+    const p = w.__TAURI__ && w.__TAURI__.path;
+    if (p && typeof p.resourceDir === 'function') {
+      _resourceDir = await p.resourceDir();
+      return _resourceDir;
+    }
+  } catch { /* 继续下一条 */ }
+  try {
+    const mod = await import('@tauri-apps/api/path');
+    if (mod && typeof mod.resourceDir === 'function') {
+      _resourceDir = await mod.resourceDir();
+      return _resourceDir;
+    }
+  } catch { /* 无该依赖（无构建模式） */ }
+  _resourceDir = null;
+  return null;
+}
+
+/** 供测试/诊断：当前入口解析模式与资源目录探测状态 */
+export function runtimePluginState() {
+  return { mode: frameSrcMode(), resourceDir: _resourceDir ?? null };
+}
+
+/**
+ * 拼 runtime 插件的 asset 协议 URL（纯函数，便于测试）。
+ *
+ * 与 resolveFrameSrc 的分工：那边负责"取模式、取依赖"（import.meta.env、
+ * resourceDir、convertFileSrc —— 都带环境副作用），这里只做确定性的
+ * 路径拼接与参数序列化。测试 therefore 能直接覆盖拼接逻辑，
+ * 不必模拟整个 vite/Tauri 环境。
+ *
+ * @param {object} deps
+ * @param {(p: string) => string} deps.convertFileSrc  Tauri 的转换函数
+ * @param {string} deps.resourceDir                    $RESOURCE 绝对路径
+ * @param {string} id                                  插件 id
+ * @param {Record<string, string>} [vars]              当前主题变量（取 --bg）
+ * @param {string} [base]                              当前主题基调（light/dark）
+ * @returns {string} iframe src（带 nexus-bg / nexus-base 查询参数）
+ */
+export function runtimeFrameUrl({ convertFileSrc, resourceDir, id, vars, base }) {
+  // Windows 下 resourceDir 带反斜杠，统一成正斜杠再拼（convertFileSrc
+  // 内部会做 URL 编码，但混用分隔符在某些版本上会拼出坏路径）。
+  const root = String(resourceDir).replace(/\\/g, '/').replace(/\/+$/, '');
+  const url = convertFileSrc(`${root}/${RUNTIME_PLUGINS_DIR}/${id}/index.html`);
+  const q = new URLSearchParams();
+  const bg = vars && vars['--bg'];
+  if (bg) q.set('nexus-bg', bg);
+  if (base) q.set('nexus-base', base);
+  const qs = q.toString();
+  return qs ? `${url}?${qs}` : url;
+}
+
+/**
+ * 解析 iframe 插件的实际 src（三态分流，见 frameSrcMode）。
+ *
+ * prod 态下 runtime 插件经 convertFileSrc 走 asset 协议：iframe 在
+ * asset.localhost 源下，与外壳（tauri.localhost）跨源；桥接层
+ * （postMessage + hostOrigin 自报 + e.source 校验）本就按跨源设计，
+ * ctx.* API 一行不用改。URL 上带 nexus-bg / nexus-base 参数是为了
+ * 首帧底色 —— 跨源后插件页面读不到外壳 localStorage 里缓存的主题色，
+ * 深色面板下会先闪一帧白（插件侧 query 优先、localStorage 兜底）。
+ *
+ * 非 runtime 插件（registry 未标 runtime）或探测失败时退回 resolveEntry，
+ * 让加载失败以可读的形式暴露（404 / 握手超时带诊断），而不是拼一个
+ * convertFileSrc(undefined) 的怪 URL。
+ */
+export async function resolveFrameSrc(manifest) {
+  const mode = frameSrcMode();
+  if (!manifest || !manifest.runtime || mode !== 'prod') {
+    return resolveEntry(manifest.entry);
+  }
+  const dir = await getResourceDir();
+  if (!dir) {
+    console.error('[runtime-plugin] 取不到 resourceDir，退回相对路径加载', manifest.id);
+    return resolveEntry(manifest.entry);
+  }
+  const tauri = await getTauri();
+  if (!tauri || typeof tauri.convertFileSrc !== 'function') {
+    console.error('[runtime-plugin] convertFileSrc 不可用，退回相对路径加载', manifest.id);
+    return resolveEntry(manifest.entry);
+  }
+  let vars = {};
+  let base = null;
+  try {
+    vars = exportVars();
+    base = themeManager.getResolvedBase && themeManager.getResolvedBase();
+  } catch { /* 主题未初始化时不带参数，插件侧自有兜底 */ }
+  return runtimeFrameUrl({ convertFileSrc: tauri.convertFileSrc, resourceDir: dir, id: manifest.id, vars, base });
+}
+
 export function readTheme() {
   const cs = getComputedStyle(document.documentElement);
   const out = {};

@@ -46,7 +46,7 @@ function walk(dir, out = []) {
   let entries;
   try { entries = readdirSync(dir); } catch { return out; }
   for (const e of entries) {
-    if (e === 'node_modules' || e === '.git' || e === 'dist') continue;
+    if (e === 'node_modules' || e === '.git' || e === 'dist' || e === 'runtime-plugins') continue;
     const p = join(dir, e);
     try {
       if (statSync(p).isDirectory()) walk(p, out);

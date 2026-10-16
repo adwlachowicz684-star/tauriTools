@@ -15,7 +15,6 @@
  * 不依赖任何第三方包。
  */
 
-import { existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -106,9 +105,12 @@ export const BASE_CSP = {
   'style-src': ["'self'", "'unsafe-inline'"],
   'img-src': ["'self'", 'data:', 'asset:', 'http://asset.localhost', 'blob:'],
   'font-src': ["'self'", 'data:'],
-  'connect-src': ["'self'", 'ipc:', 'http://ipc.localhost'],
+  'connect-src': ["'self'", 'ipc:', 'http://ipc.localhost', 'http://127.0.0.1:*', 'http://localhost:*'],
   'media-src': ["'self'", 'asset:', 'http://asset.localhost', 'blob:'],
-  'frame-src': ["'self'"],
+  // frame-src 必须带 asset 源：运行时加载的 iframe 插件位于 asset.localhost 源
+  // （convertFileSrc 转出来的资源协议 URL），只有 'self' 会被整体拦掉，
+  // 表现为「侧边栏点了插件名，主区域一片空白且不报错」。
+  'frame-src': ["'self'", 'asset:', 'http://asset.localhost'],
 };
 
 /**
@@ -193,27 +195,44 @@ export function cspPolicies() {
  * ==========================================================================*/
 
 /**
- * 扫 plugins/<id>/index.html，返回 Vite rollupOptions.input 需要的映射。
- * 返回值已包含外壳入口（index -> index.react.html）。
+ * 主构建（vite build）的 rollup input。
+ *
+ * 只包含外壳入口 —— iframe 插件已全部迁到独立构建
+ * （scripts/build-plugins.mjs → runtime-plugins/<id>/，生产态经 asset
+ * 协议运行时加载，见 RUNTIME_PLUGINS_DIR 的说明）。
+ * module 插件不在此列：它们走 js/plugin-entries.js 的 import.meta.glob
+ * 生成 chunk，不是 rollup input。
  */
 export function buildInputs(root = PROJECT_ROOT) {
-  const inputs = { index: resolve(root, ENTRIES.react) };
-  const dir = resolve(root, 'plugins');
-  let entries = [];
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return inputs; // plugins 目录缺失时忽略
-  }
-  for (const d of entries) {
-    if (!d.isDirectory()) continue;
-    const html = resolve(dir, d.name, 'index.html');
-    if (existsSync(html)) inputs[`plugins/${d.name}/index`] = html;
-  }
-  return inputs;
+  return { index: resolve(root, ENTRIES.react) };
 }
 
 const r = (p) => resolve(PROJECT_ROOT, p);
+
+/* ============================================================================
+ * 运行时插件（runtime plugins）
+ * ==========================================================================*/
+
+/**
+ * 运行时插件的目录名与装配位置（单一事实源）。
+ *
+ * 背景：iframe 插件原先全部作为 rollup input 打主程序（dist/plugins/<id>/），
+ * 改任何插件前端都要重编主程序。现在改为「独立构建 + 运行时加载」：
+ *
+ *   · scripts/build-plugins.mjs 把每个 iframe 插件单独构建到
+ *     `<项目根>/runtime-plugins/<id>/`（dev 增量、单插件，秒级）；
+ *   · tauri.conf.json 的 bundle.resources 把整个 runtime-plugins/ 收进
+ *     安装包（$RESOURCE/runtime-plugins/）；
+ *   · js/host.js 在生产态用 convertFileSrc 加载
+ *     $RESOURCE/runtime-plugins/<id>/index.html，dev 态直指 dev server。
+ *
+ * 于是：改插件前端 = 重跑插件构建（主程序零重编）；
+ *       更新已安装的正式版 = 把 runtime-plugins/<id> 拷进安装目录，重启即可。
+ *
+ * 注意：module 类型插件（home/settings/md/toolbar-* 等）与外壳同文档，
+ * 物理上无法运行时加载，仍随主程序构建（走 import.meta.glob）。
+ */
+export const RUNTIME_PLUGINS_DIR = 'runtime-plugins';
 
 /** 需要原样拷进 dist 的「无构建」示例插件（不参与打包） */
 /*
@@ -244,6 +263,7 @@ export const PATHS = {
   indexReactHtml: r(ENTRIES.react),
   dist: r('dist'),
   plugins: r('plugins'),
+  runtimePlugins: r(RUNTIME_PLUGINS_DIR),
   registry: r('plugins/registry.js'),
   srcTauri: r('src-tauri'),
 };

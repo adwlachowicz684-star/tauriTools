@@ -13,11 +13,19 @@
  *
  * 所以把"构建后该确认什么"固化成脚本。它同时覆盖两个待验证项：
  *   · N54 —— home 在 Vite 下是否真走同页（嵌合是否成立）
- *   · N62 —— 122 个图标是否真的进了 dist
+ *   · N62 —— 122 个图标是否真的进了产物
+ *
+ * 运行时加载改造后（iframe 插件独立构建到 runtime-plugins/）：
+ *   · 主构建（vite build）只产外壳 → 查 dist/；
+ *   · 插件构建（build-plugins.mjs）→ 查 runtime-plugins/<id>/；
+ *   · 本脚本同时看两侧，并核对"runtime 标记完整性"——
+ *     registry 里 type:'iframe' 漏标 runtime:true 的插件，生产态会
+ *     找不到入口（404 → 握手超时），这是新架构唯一不能静默的字段。
  *
  * 用法
  * ------------------------------------------------------------
  *   npm run build && npm run check:dist
+ *   （npm run build 已内含 plugins:build，即 iframe 插件独立构建）
  *
  * 不跑构建直接检查的话，它会报"产物缺失"—— 那是**真实情况**，不是误报。
  */
@@ -35,6 +43,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = process.env.NEXUS_DIST
   ? path.resolve(process.env.NEXUS_DIST)
   : path.join(HERE, 'dist');
+/* iframe 插件的独立构建产物目录（与 config/nexus.config.mjs 的
+   RUNTIME_PLUGINS_DIR 同值；浏览器侧 host.js 里也有一份同名常量，
+   三处一致性由本文件第 8 节钉住）。 */
+const RT = process.env.NEXUS_RUNTIME_PLUGINS
+  ? path.resolve(process.env.NEXUS_RUNTIME_PLUGINS)
+  : path.join(HERE, 'runtime-plugins');
 
 let pass = 0;
 let fail = 0;
@@ -75,6 +89,8 @@ function parseRegistry() {
       viteEntry: tri ? tri[2] : (konst ? konst[1] : null),
       viteType: typeTri ? typeTri[2] : (typeConst ? typeConst[1] : null),
       kind: (blk.match(/kind:\s*'([^']+)'/) || [])[1] || 'app',
+      // 运行时加载标记：iframe 插件必须标（漏标 = 生产态 404 → 握手超时）
+      runtime: /^\s*runtime:\s*true/m.test(blk),
     });
   }
   return out;
@@ -110,11 +126,16 @@ if (!fs.existsSync(DIST) || !fs.existsSync(path.join(DIST, 'index.html'))) {
   process.exit(1);
 }
 const distMtime = fs.statSync(path.join(DIST, 'index.html')).mtimeMs;
-let newestSrc = 0;
-let newestFile = '';
-for (const dir of ['plugins', 'js', 'src', 'css']) {
-  const base = path.join(HERE, dir);
-  if (!fs.existsSync(base)) continue;
+/*
+ * 产物新鲜度拆成两侧（运行时加载改造后插件源码不再进 dist）：
+ *   · 外壳源码（js/src/css）→ 比 dist/index.html；
+ *   · 插件源码（plugins/）  → 比 runtime-plugins/<id>/index.html。
+ * 混在一起比会把"改了插件忘了 plugins:build"误报成 dist 旧，
+ * 也会把"改了外壳忘了 build"放过 —— 两边各自的时效各自判。
+ */
+const walkNewest = (base) => {
+  let newest = 0;
+  let file = '';
   const walk = (d) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       if (e.name === 'node_modules' || e.name === 'dist') continue;
@@ -122,54 +143,86 @@ for (const dir of ['plugins', 'js', 'src', 'css']) {
       if (e.isDirectory()) walk(p);
       else {
         const m = fs.statSync(p).mtimeMs;
-        if (m > newestSrc) { newestSrc = m; newestFile = path.relative(HERE, p); }
+        if (m > newest) { newest = m; file = path.relative(HERE, p); }
       }
     }
   };
-  walk(base);
+  if (fs.existsSync(base)) walk(base);
+  return { newest, file };
+};
+const shellParts = ['js', 'src', 'css']
+  .map((d) => ({ dir: d, ...walkNewest(path.join(HERE, d)) }));
+const shellSrc = Math.max(...shellParts.map((p) => p.newest));
+const shellNewestFile = shellParts.reduce((a, b) => (a.newest >= b.newest ? a : b)).file;
+const staleShell = shellSrc > distMtime;
+if (staleShell) {
+  warns.push(`外壳产物比源码旧（最新源码: ${shellNewestFile}）—— 请重新 npm run build 再检查`);
 }
-const stale = newestSrc > distMtime;
-if (stale) {
-  warns.push(`产物比源码旧（最新源码: ${newestFile}）—— 请重新 npm run build 再检查`);
-}
-t('dist/index.html 不早于最新源码（产物是新的）', !stale,
-  stale ? `最新源码 ${newestFile} 比产物新` : '');
+t('dist/index.html 不早于外壳源码（js/src/css 产物是新的）', !staleShell,
+  staleShell ? `最新源码 ${shellNewestFile} 比产物新` : '');
 
-console.log('\n=== 1. 每个 registry 插件的入口都在 dist 里 ===');
+/* 插件侧时效：逐个 runtime 插件比对。整体取"runtime-plugins 下最新
+   index.html"与"plugins/ 下最新源码"比 —— 单插件落后也会被抓住，
+   提示语里点名是哪个插件。 */
+const rtMtime = (() => {
+  if (!fs.existsSync(RT)) return 0;
+  let newest = 0;
+  for (const d of fs.readdirSync(RT, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const f = path.join(RT, d.name, 'index.html');
+    if (fs.existsSync(f)) newest = Math.max(newest, fs.statSync(f).mtimeMs);
+  }
+  return newest;
+})();
+const { newest: pluginSrcNewest, file: pluginNewestFile } = walkNewest(path.join(HERE, 'plugins'));
+const stalePlugins = rtMtime > 0 && pluginSrcNewest > rtMtime;
+if (stalePlugins) {
+  warns.push(`插件产物比源码旧（最新源码: ${pluginNewestFile}）—— 请重新 npm run plugins:build 再检查`);
+}
+t('runtime-plugins 不早于插件源码（plugins/<id> 产物是新的）', !stalePlugins,
+  stalePlugins ? `最新源码 ${pluginNewestFile} 比插件产物新` : (rtMtime === 0 ? 'runtime-plugins 还没有产物，先 npm run plugins:build' : ''));
+
+console.log('\n=== 1. 每个 registry 插件的入口都在产物里 ===');
 const plugins = parseRegistry();
 t('解析出插件清单', plugins.length > 0);
 for (const p of plugins) {
   if (!p.viteEntry) continue;
   const rel = p.viteEntry.replace(/^\.\//, '');
-  const abs = path.join(DIST, rel);
-  const ok = fs.existsSync(abs);
   /*
-   * Vite 模式下：
-   *   · iframe 插件 → entry 是 .html，由 rollup input 产出，应在 dist
-   *   · module 插件 → entry 是 module.tsx，由 import.meta.glob 产出 chunk，
-   *     **不会以原名出现在 dist**（chunk 名是哈希）
-   *
-   * 所以 module 类型不能用"文件存在"判断 —— 那是错的判据。
+   * 运行时加载改造后三类插件各有去处：
+   *   · module 插件 → import.meta.glob 产出 chunk，**不会以原名出现在
+   *     dist**（chunk 名是哈希），只能用约束判断，不能用"文件存在"；
+   *   · runtime iframe 插件 → scripts/build-plugins.mjs 独立构建，
+   *     入口在 runtime-plugins/<id>/index.html，**不在 dist**；
+   *   · （无第三类：registry 里 iframe 必须标 runtime，见第 8 节）
    */
   if (p.viteType === 'module') {
     skip(`${p.id}（同页 module）入口存在性`, 'glob 产出 chunk，不会以原名出现在 dist');
     continue;
   }
-  t(`${p.id} 的 ${rel} 存在于 dist`, ok, ok ? '' : 'Vite 模式 iframe 插件入口应是 rollup input');
+  if (p.runtime) {
+    const ok = fs.existsSync(path.join(RT, p.id, 'index.html'));
+    t(`${p.id} 的 runtime-plugins/${p.id}/index.html 存在`, ok,
+      ok ? '' : 'iframe 插件应由 scripts/build-plugins.mjs 独立构建（npm run plugins:build）');
+    continue;
+  }
+  /* 不该到达这里：iframe 不标 runtime 会被第 8 节抓出来。防御性报错，
+     避免将来第 8 节被改松时这里静默通过。 */
+  t(`${p.id}（iframe 但未标 runtime）`, false, '见第 8 节：iframe 插件必须 runtime:true');
 }
 
 console.log('\n=== 2. N62：122 个预设图标真的拷进去了 ===');
-const iconDir = path.join(DIST, 'plugins/project-group/preseticons');
+const iconDir = path.join(RT, 'project-group/preseticons');
 const icos = fs.existsSync(iconDir)
   ? fs.readdirSync(iconDir).filter((f) => f.endsWith('.ico'))
   : [];
-t('dist/plugins/project-group/preseticons/ 存在', fs.existsSync(iconDir));
+t('runtime-plugins/project-group/preseticons/ 存在', fs.existsSync(iconDir));
 t(`里面有 .ico（期望 ~122，实际 ${icos.length}）`, icos.length > 100,
   icos.length === 0 ? '**图标全没了**（N62 的 bug 回来了）' : '');
 
 console.log('\n=== 3. Mindmap 的 kity 内核（原生子目录另一条）===');
-const edDir = path.join(DIST, 'plugins/mindmap/editor');
-t('dist/plugins/mindmap/editor/ 存在', fs.existsSync(edDir));
+const edDir = path.join(RT, 'mindmap/editor');
+t('runtime-plugins/mindmap/editor/ 存在', fs.existsSync(edDir));
 if (fs.existsSync(edDir)) {
   const files = fs.readdirSync(edDir);
   t('含 kity.min.js', files.includes('kity.min.js'));
@@ -193,32 +246,69 @@ if (home) {
 }
 
 console.log('\n=== 5. 无构建示例插件（PLAIN_PLUGINS 整目录拷贝）===');
-for (const id of ['demo-iframe', 'demo-module', 'demo-light']) {
-  const dir = path.join(DIST, 'plugins', id);
-  t(`dist/plugins/${id}/ 存在`, fs.existsSync(dir));
+/*
+ * demo-module 没有 index.html → 不进 runtime-plugins，仍由主构建
+ * 整目录拷进 dist/plugins/demo-module/（无构建模式源码直出的兜底）。
+ * demo-iframe / demo-light 有 index.html → 被 build-plugins.mjs 收编，
+ * 产物在 runtime-plugins/ 下（改造前它们在 dist/plugins/，是 rollup input）。
+ */
+for (const id of ['demo-iframe', 'demo-light']) {
+  const dir = path.join(RT, id);
+  t(`runtime-plugins/${id}/ 存在`, fs.existsSync(dir));
 }
+t('dist/plugins/demo-module/ 存在', fs.existsSync(path.join(DIST, 'plugins/demo-module')));
 
 console.log('\n=== 6. 外壳入口 ===');
 t('dist/index.html 存在', fs.existsSync(path.join(DIST, 'index.html')));
 t('dist/assets/ 有产物', fs.existsSync(path.join(DIST, 'assets')));
+t('dist/plugins/registry.js 存在（运行时动态加载）',
+  fs.existsSync(path.join(DIST, 'plugins/registry.js')));
 
 console.log('\n=== 7. 反向检查：不该多出来的东西 ===');
 /*
- * .tsx/.ts 源文件**不该**原样出现在 dist ——
+ * .tsx/.ts 源文件**不该**原样出现在产物里 ——
  * 若出现，说明某处变成了"整目录拷贝"，那会盖掉打包产物
  * （vite.config 注释里明确警告过这一点）。
+ * 两侧产物都查：dist/plugins（PLAIN 拷贝）与 runtime-plugins/（插件构建）。
  */
 const strayTsx = [];
-const scanTs = (d) => {
+const scanTs = (base, d) => {
   for (const e of fs.readdirSync(d, { withFileTypes: true })) {
     const p = path.join(d, e.name);
-    if (e.isDirectory()) scanTs(p);
-    else if (/\.(tsx|ts)$/.test(e.name) && !e.name.endsWith('.d.ts')) strayTsx.push(path.relative(DIST, p));
+    if (e.isDirectory()) scanTs(base, p);
+    else if (/\.(tsx|ts)$/.test(e.name) && !e.name.endsWith('.d.ts')) {
+      strayTsx.push(path.relative(base, p));
+    }
   }
 };
-if (fs.existsSync(path.join(DIST, 'plugins'))) scanTs(path.join(DIST, 'plugins'));
-t('dist/plugins 下没有原样拷贝的 .ts/.tsx 源文件', strayTsx.length === 0,
+if (fs.existsSync(path.join(DIST, 'plugins'))) scanTs(DIST, path.join(DIST, 'plugins'));
+if (fs.existsSync(RT)) scanTs(RT, RT);
+t('产物里没有原样拷贝的 .ts/.tsx 源文件', strayTsx.length === 0,
   strayTsx.length ? `发现 ${strayTsx.length} 个: ${strayTsx.slice(0, 3).join(', ')}` : '');
+
+console.log('\n=== 8. runtime 标记完整性（运行时加载的护栏）===');
+/*
+ * registry 里 type:'iframe' 的插件必须标 runtime:true ——
+ * 漏标的表现是生产态 iframe src 走相对路径（dist 里没有插件页面）
+ * → 404 → 「握手超时（10s）」，且完全看不出是漏了一个字段。
+ * module 插件反过来不能标 runtime：同页插件与外壳同文档，
+ * 物理上无法独立构建（标了也不会有产物，纯误导）。
+ */
+const iframeNoRuntime = plugins.filter((p) => p.viteType === 'iframe' && !p.runtime);
+t('所有 iframe 插件都标了 runtime:true', iframeNoRuntime.length === 0,
+  iframeNoRuntime.length ? `漏标：${iframeNoRuntime.map((p) => p.id).join(', ')}` : '');
+const moduleRuntime = plugins.filter((p) => p.viteType === 'module' && p.runtime);
+t('没有 module 插件误标 runtime:true', moduleRuntime.length === 0,
+  moduleRuntime.length ? `误标：${moduleRuntime.map((p) => p.id).join(', ')}` : '');
+
+/* 目录名三处同源：config/nexus.config.mjs（RUNTIME_PLUGINS_DIR）、
+   js/host.js（浏览器侧常量，不能 import config）、本测试。 */
+const cfgSrc = fs.readFileSync(path.join(HERE, 'config/nexus.config.mjs'), 'utf8');
+const hostSrc = fs.readFileSync(path.join(HERE, 'js/host.js'), 'utf8');
+const cfgDir = (cfgSrc.match(/RUNTIME_PLUGINS_DIR\s*=\s*'([^']+)'/) || [])[1];
+const hostDir = (hostSrc.match(/const RUNTIME_PLUGINS_DIR\s*=\s*'([^']+)'/) || [])[1];
+t("config 与 host.js 的 RUNTIME_PLUGINS_DIR 一致", cfgDir === 'runtime-plugins' && hostDir === cfgDir,
+  `config=${cfgDir} host=${hostDir}`);
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (warns.length) {
@@ -229,7 +319,9 @@ if (fail) {
   console.log(`
 产物不完整。最常见的原因：
   1. 没跑构建，或跑的是旧产物 —— npm run build 后再 npm run check:dist
-  2. vite.config.ts 的 NATIVE_SUBDIRS 被改动 —— 它负责拷贝 preseticons 与 mindmap/editor
-  3. 新增了 iframe 插件但入口不是 index.html —— buildInputs 只扫 index.html`);
+     （iframe 插件是独立构建：npm run plugins:build，可 --only <id> 单跑）
+  2. scripts/build-plugins.mjs 的 NATIVE_SUBDIRS 被改动 —— 它负责拷贝
+     preseticons 与 mindmap/editor 到 runtime-plugins/
+  3. registry 新增了 iframe 插件但漏标 runtime:true —— 见第 8 节`);
 }
 process.exit(fail ? 1 : 0);

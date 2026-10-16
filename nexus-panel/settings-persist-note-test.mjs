@@ -192,7 +192,7 @@ console.log('\n— 第 5 节：全量守卫（设了值却没人读的死状态�
   const files = [];
   const walk = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (e.name === 'node_modules' || e.name === '.git' || e.name === 'dist') continue;
+      if (e.name === 'node_modules' || e.name === 'dist' || e.name === 'runtime-plugins' || e.name === '.git') continue;
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p);
       else if (/\.tsx$/.test(e.name)) files.push(p);

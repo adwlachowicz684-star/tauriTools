@@ -48,7 +48,7 @@ function walk(dir, out = []) {
   let ents;
   try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of ents) {
-    if (e.name === 'node_modules' || e.name === 'dist' || e.name === '.git') continue;
+    if (e.name === 'node_modules' || e.name === 'dist' || e.name === 'runtime-plugins' || e.name === '.git') continue;
     const p = join(dir, e.name);
     if (e.isDirectory()) walk(p, out);
     else if (/\.tsx?$/.test(e.name) && !e.name.endsWith('.d.ts')) out.push(p);

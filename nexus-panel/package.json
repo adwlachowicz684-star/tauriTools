@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Nexus Panel · 深色新拟态 Tauri 2.x 插件面板（React + Vite + TS 优先，兼容无构建原生模式）",
   "scripts": {
-    "build": "vite build",
+    "build": "node scripts/build-plugins.mjs && vite build",
+    "plugins:build": "node scripts/build-plugins.mjs",
     "check:dist": "node dist-integrity-test.mjs",
     "test:smoke": "node smoke-test.mjs",
     "test:dist-integrity": "node dist-integrity-test.mjs",
@@ -109,6 +110,7 @@
     "test:regression": "node regression-guard-test.mjs",
     "test:responsive": "node responsive-test.mjs",
     "test:rtdeps": "node runtime-deps-test.mjs",
+    "test:runtime-plugins": "node runtime-plugin-test.mjs",
     "test:service-available": "node service-available-test.mjs",
     "test:service-plugin": "node service-plugin-test.mjs",
     "test:settings": "node settings-test.mjs",

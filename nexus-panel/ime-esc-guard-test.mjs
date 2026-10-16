@@ -190,7 +190,7 @@ const NO_INPUT_OK = [
 ];
 
 const exts = new Set(['.ts', '.tsx', '.js']);
-const BAD = ['node_modules', '.git', 'dist', 'target', '.tool_output'];
+const BAD = ['node_modules', '.git', 'dist', 'runtime-plugins', 'target', '.tool_output'];
 const found = [];
 (function walk(d) {
   for (const e of readdirSync(d, { withFileTypes: true })) {

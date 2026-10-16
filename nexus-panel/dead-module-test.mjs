@@ -55,7 +55,7 @@ const ALLOW = {
 };
 
 /* ---------- 收集文件 ---------- */
-const SKIP = new Set(['node_modules', '.git', '.tool_output', 'dist', 'target', '.next']);
+const SKIP = new Set(['node_modules', '.git', '.tool_output', 'dist', 'runtime-plugins', 'target', '.next']);
 const EXTS = new Set(['.js', '.mjs', '.ts', '.tsx', '.html']);
 const isTestFile = (rel) => {
   const n = basename(rel);
