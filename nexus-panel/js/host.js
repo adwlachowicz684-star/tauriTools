@@ -13,6 +13,8 @@ import { checkInvoke, registerBuiltinIds, revokeAllGrants } from './invoke-polic
 import { snapshotGlobals, auditUnmount } from './unmount-audit.js';
 /* 文件清单制（D3）：插件产出文件的归属记账，账本在宿主侧。 */
 import { claimPath, readClaims, releasePath, clearClaims } from './plugin-fs.js';
+/* 工具栏三张表（隐藏/排序/额外入口）的按 id 除名 —— 卸载时清失效记录 */
+import { forgetPlugin as forgetToolbarPlugin } from './toolbar-plugin.js';
 /* 元素检查器：iframe 内的鼠标事件收不到（不跨文档冒泡），
    靠插件转发坐标回来，再由这两个函数去 iframe 自己的文档里命中。
    引入它们而不是走事件，是因为需要同步读取"检查器是否开着"。 */
@@ -505,6 +507,7 @@ export function createHost(opts = {}) {
         const box = document.createElement('div');
         box.style.cssText = 'width:100%;height:100%;';
         serviceHost.appendChild(box);
+        entry.box = box;   // 卸载时要连容器一起摘，只摘 wrap 会留个空壳
         const inst = manifest.type === 'iframe'
           ? await mountIframeView(box, manifest, null, 'service')
           : await mountModule(box, manifest, null);
@@ -513,9 +516,32 @@ export function createHost(opts = {}) {
         return inst;
       })(),
       instance: null,
+      box: null,
     };
     services.set(id, entry);
     return entry;
+  }
+
+  /**
+   * 拆掉一个已懒挂载的服务实例 —— **卸载时调**。
+   *
+   * 为什么必须有：services 表按 id 缓存实例，而 ensureService **先查缓存
+   * 再查清单**。卸载只把插件从 state.plugins 拿走，不碰这张表 —— 于是
+   * 已挂载过的服务插件在卸载后**重启前仍可被调用**（callService 走缓存
+   * 拿到还活着的 iframe/ctx），表现为"插件都卸了，它还在跑"。
+   *
+   * 挂在半路中的 promise 也处理：await 它再拆（挂载失败则没有实例可拆）。
+   * 拆完必须 services.delete —— 否则下一次调用又会把缓存还魂。
+   */
+  async function dropServiceInstance(id) {
+    const entry = services.get(id);
+    if (!entry) return;
+    services.delete(id);
+    try {
+      const inst = entry.instance ?? await entry.promise;
+      if (inst) await safeTeardown(inst);
+    } catch { /* 挂载就失败了：没有实例可拆 */ }
+    try { entry.box?.remove(); } catch { /* 已不在文档里 */ }
   }
 
   /** 供调试/面板使用：列出已声明的服务（未挂载的也列出） */
@@ -1821,15 +1847,26 @@ export function createHost(opts = {}) {
       return state.plugins;
     },
     /**
-     * 移除自定义插件。**返回有没有真的移除掉**。
+     * 移除自定义插件 —— **卸载残留的总收口**。
      *
-     * 没存下就不撤授权：插件其实还在清单里（重启后照样出现），
-     * 此时把授权先撤了，会留下"插件在、但外链全被拦"的半截状态，
-     * 比"没做成"更难解释。
+     * 返回 `{ ok, mcp }`：
+     *   ok  = 清单里真的移掉了。false = 没存下，插件还在，**不做任何清理** ——
+     *         先撤授权会留下"插件在、外链全被拦"的半截状态，比没做成更难解释
+     *   mcp = MCP 网关协作结果：{ status: 'none' | 'cleaned' | 'failed', error? }
+     *         none = 没注册代理服务；cleaned = 已一并注销；
+     *         failed = 注销失败（错误在 error 里，调用方要说清残留待手动清理）
+     *
+     * 为什么清理全放这一处（而不是各 UI 各清各的）：卸载入口会有多个
+     * （设置页、将来的原生壳插件面板……），漏一处就是"卸了没卸干净"。
+     * 与 owned 通道同一个思路 —— 让"卸载干净"成为结构性保证，不依赖
+     * 每个调用方记得调用。
+     *
+     * 每路清理都独立 try：一步失败不能挡住其余步骤（存储不可用、网关
+     * 没开都是常态），全部失败也只降级为"有残留"，卸载本身必须完成。
      */
-    removePlugin(id) {
+    async removePlugin(id) {
       const ok = saveCustomPlugins(getCustomPlugins().filter((p) => p.id !== id));
-      if (!ok) return false;
+      if (!ok) return { ok: false };
       /*
        * 卸载必须**连带撤销该插件的用户放行**。
        *
@@ -1839,9 +1876,79 @@ export function createHost(opts = {}) {
        * 而"谁放行过什么"本该随插件一起消失。
        */
       revokeAllGrants(id);
-      return true;
+      /* 外链信任决策同理：hosts 表按 host 记账但带归属，
+         不撤销的话新插件会继承上一个插件的 allow。 */
+      try { extPolicy.revokePluginHosts(id); } catch { /* 不影响卸载 */ }
+      /* 工具栏三张表除名（隐藏/排序/额外入口的失效 id） */
+      try { forgetToolbarPlugin(id); } catch { /* 不影响卸载 */ }
+      /* 已懒挂载的服务实例：缓存不拆的话，卸载后重启前仍可被调用 */
+      try { await dropServiceInstance(id); } catch { /* 不影响卸载 */ }
+      /* 本地数据：ctx.store 的 KV + 每插件配置。按 id 命名空间清，
+         误伤不到别人的键（fs 账本 nexus:fsclaim:<id> 前缀不同，
+         刻意不清 —— 文件不自动删，账本是将来手工清理的依据，N42）。 */
+      try { purgePluginStorage(id); } catch { /* 存储不可用：没有可清的东西 */ }
+      /* MCP 网关协作：注册表里躺着这个插件的代理服务就一并注销，
+         否则插件没了、工具还挂在网关里，AI 每次都调一个必失败的工具。 */
+      const mcp = await cleanupMcpForPlugin(id);
+      return { ok: true, mcp };
     },
   };
+}
+
+/**
+ * 清掉一个插件的本地存储（ctx.store KV + 每插件配置）。
+ *
+ * 为什么卸载要清：这些键按插件 id 命名空间存放，是插件**自己的**数据，
+ * 留着就是无限期的卸载残留（localStorage 不随任何操作自动回收）。
+ * 重装会是新的 custom-时间戳 id，不存在"留着以后用"的场景。
+ *
+ * 刻意不清的两样：
+ *   · `nexus:fsclaim:<id>` 文件账本 —— 账目是"将来手工清理"的依据（N42）；
+ *   · 外壳级键（nexus:sidebar-open 等）—— 不属于任何插件。
+ */
+function purgePluginStorage(id) {
+  const pid = String(id || '').trim();
+  if (!pid) return;
+  try {
+    const storePre = `nexus:${pid}:`;
+    const cfgKey = `nexus:plugin-cfg:${pid}`;
+    const doomed = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith(storePre) || k === cfgKey)) doomed.push(k);
+    }
+    for (const k of doomed) localStorage.removeItem(k);
+  } catch { /* 存储不可用：没有可清的东西 */ }
+}
+
+/**
+ * MCP 网关协作：卸载插件时注销它在网关里注册的代理服务。
+ *
+ * 匹配约定「服务名 = 插件 id」（代理注册表单的提示语就是这么建议的），
+ * 且只认 kind==='proxy' —— 内置服务名 register_proxy 本来就拒占，
+ * 不会误伤。
+ *
+ * 查网关失败（没开 / 命令不可用）**不炸不抛**：返回 none，
+ * 卸载本身必须完成，用户还能去「设置 → MCP 网关」手动移除。
+ *
+ * @returns {{status: 'none'|'cleaned'|'failed', error?: string}}
+ */
+async function cleanupMcpForPlugin(id) {
+  try {
+    const tauri = await getTauri();
+    if (!tauri) return { status: 'none' };
+    const gw = await tauri.invoke('mcp_gw_status');
+    const hit = (gw?.servers ?? []).find(
+      (s) => s?.name === id && s?.kind === 'proxy',
+    );
+    if (!hit) return { status: 'none' };
+    await tauri.invoke('mcp_gw_unregister', { server: id });
+    return { status: 'cleaned' };
+  } catch (e) {
+    /* 已经走到这一步说明服务确实在册，只是注销失败 ——
+       把错误带出去，让调用方说清"残留待手动清理" */
+    return { status: 'failed', error: String(e?.message || e) };
+  }
 }
 
 /* ---------------------------- 工具 ---------------------------- */

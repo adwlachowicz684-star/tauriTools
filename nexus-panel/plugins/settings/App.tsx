@@ -1207,10 +1207,11 @@ export default function Settings() {
    * 这里改成：先降级到 parent 找外壳；确实拿不到就显式报错，不再静默。
    *
    * MCP 协作：插件在网关里注册过服务时（约定「服务名 = 插件 id」，
-   * 见 MCP 网关页代理注册表单的提示），移除前先问清楚，
-   * 移除后**一并注销**那个服务 —— 否则插件没了、它的工具还挂在网关里，
-   * AI 照样能调（代理指向一个已不存在的端口，每次调用必失败），
-   * 而用户只会看到"卸载了但 AI 还在报那个插件的错"。
+   * 见 MCP 网关页代理注册表单的提示），移除前先问清楚。
+   * **注销动作在宿主侧**（host.removePlugin 的总收口）—— 卸载入口会有
+   * 多个，清理放在每个 UI 里就会漏；这里只负责"移除前把后果说清"。
+   * 否则插件没了、它的工具还挂在网关里，AI 照样能调（代理指向一个已不
+   * 存在的端口，每次调用必失败），而用户只会看到"卸载了但 AI 还在报错"。
    *
    * 查网关失败**不挡卸载**（网关没开 / 命令不在白名单都不该让插件卸不掉），
    * 只是没有自动清理那一档 —— 用户还能去「MCP 网关」页手动移除。
@@ -1242,21 +1243,28 @@ export default function Settings() {
       if (!ok) return;
     }
     try {
-      shell.removePlugin(p.id);
+      /* await 是必须的：__nexusRemovePlugin 内部要 init() + navigate()
+         （重载清单、把当前视图切走）才算完。不 await 的话下面
+         getPlugins() 读到的是还没重载的旧清单 —— 刚移除的插件
+         还列在表里，直到设置页下次挂载才消失。 */
+      const r: any = await shell.removePlugin(p.id);
+      if (!r?.ok) {
+        ctx.toast('移除失败：插件清单没能存下（浏览器存储不可用？）', 'err');
+        return;
+      }
       const list = shell.getPlugins?.();
       setPlugins(Array.isArray(list) ? list : []);
       setPluginsUnknown(!Array.isArray(list));
-      if (mcpServer) {
-        try {
-          await ctx.invoke('mcp_gw_unregister', { server: mcpServer });
-          ctx.toast(`已移除「${p.name}」，其 MCP 服务「${mcpServer}」已一并注销`, 'ok');
-        } catch (e: any) {
-          // 插件已经卸了，MCP 清理失败不能把成功说成失败 —— 说清残留和补救路径
-          ctx.toast(
-            `插件已移除，但 MCP 服务「${mcpServer}」注销失败：${String(e?.message ?? e)}。可去「设置 → MCP 网关」手动移除`,
-            'warn',
-          );
-        }
+      /* MCP 注销由宿主收口完成，这里只把结果说清楚 */
+      const mcp = r.mcp?.status;
+      if (mcp === 'cleaned') {
+        ctx.toast(`已移除「${p.name}」，其 MCP 服务「${mcpServer}」已一并注销`, 'ok');
+      } else if (mcp === 'failed') {
+        // 插件已经卸了，MCP 清理失败不能把成功说成失败 —— 说清残留和补救路径
+        ctx.toast(
+          `插件已移除，但 MCP 服务「${mcpServer}」注销失败：${String(r.mcp?.error ?? '')}。可去「设置 → MCP 网关」手动移除`,
+          'warn',
+        );
       } else {
         ctx.toast(`已移除「${p.name}」`, 'ok');
       }

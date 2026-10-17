@@ -593,7 +593,12 @@ console.log('\n=== 10. 清单条目不得是幽灵（登记了却全仓无人定
    等于给这两类写法发免死金牌。 */
 {
   const audit = await import('./js/style-audit.js');
-  const SKIP = new Set(['node_modules', '.git', 'dist', '.tool_output', 'target']);
+  /* 与第 6 节那个 walk 同一份跳过名单 —— runtime-plugins/ 与 dist/ 同类
+     （构建产物，.gitignore 里躺着）：里面的 CSS 是打包结果，
+     var() 兜底、压缩变量名全是机器生成的，扫进去只有假报。
+     两份名单各写一份迟早漂移（本次就是第 10 节漏了 runtime-plugins，
+     本地一构建就红）。 */
+  const SKIP = new Set(['node_modules', '.git', 'target', 'dist', 'runtime-plugins', 'build', '.tool_output']);
   const EXTS = ['.css', '.js', '.ts', '.tsx', '.mjs', '.html'];
   const files = [];
   (function walk(d) {

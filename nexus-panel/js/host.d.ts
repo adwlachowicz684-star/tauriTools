@@ -136,6 +136,10 @@ export function resolveEntry(entry: string): string;
 export function readTheme(): Record<string, string>;
 export function escapeHtml(s: string): string;
 export function isNoBuild(): boolean;
+/* 两个壳共用的存储键（nexus-panel 的 shell.js 与 React 壳 src/App.tsx
+   读同一份 localStorage，键名必须同源 —— 各自写裸字面量会"设了不认"） */
+export const KEY_LAST_PLUGIN: 'nexus:last-plugin';
+export const KEY_SIDEBAR_OPEN: 'nexus:sidebar-open';
 export function filterByRuntime(plugins: PluginManifest[]): PluginManifest[];
 /* 排除服务插件（kind:'service'）—— 侧边栏/恢复上次插件/快捷键切换都要用，
    所以单独导出，别在各处各写一遍 filter。 */

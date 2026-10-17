@@ -140,6 +140,7 @@
     "test:tray": "node tray-test.mjs",
     "test:toast-hittest": "node toast-hittest-test.mjs",
     "test:unmount-audit": "node unmount-audit-test.mjs",
+    "test:uninstall-residue": "node uninstall-residue-test.mjs",
     "test:updater": "node updater-test.mjs",
     "test:window-action": "node window-action-test.mjs",
     "test:xss": "node xss-test.mjs",

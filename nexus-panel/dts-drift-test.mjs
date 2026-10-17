@@ -33,6 +33,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -57,7 +58,12 @@ function walk(dir, out = []) {
 }
 
 /* 具名 import：`import { a, b } from './x.js'` / `import type { a } from '...'`
- * 具名里的 `type` 前缀（`import { type X, y }`）也要剥掉。 */
+ * 具名里的 `type` 前缀（`import { type X, y }`）也要剥掉。
+ *
+ * ⚠️ 剥注释必须在 split 之前：import 花括号里嵌多行注释是常见写法
+ * （说明"为什么这几个名字要同源"），不剥的话第一个"名字"会变成
+ * 「注释 + 换行 + 真名」，declaredIn 判不出 → 假漂移。
+ * 2026-10-17 实测：src/App.tsx 的存储键 import 就这么中过。 */
 const IMPORT_RE = /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"]([^'"]+)['"]/g;
 
 /** .d.ts 里"声明了 X"的判据：export 后面的各种形态都算 */
@@ -76,7 +82,7 @@ for (const f of files) {
   IMPORT_RE.lastIndex = 0;
   let m;
   while ((m = IMPORT_RE.exec(src))) {
-    const names = m[1].split(',')
+    const names = stripCommentsJs(m[1]).split(',')
       .map((s) => s.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim())
       .filter(Boolean);
     const spec = m[2];

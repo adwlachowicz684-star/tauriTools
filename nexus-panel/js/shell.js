@@ -596,13 +596,16 @@ function openAddDialog() {
 }
 
 window.__nexusRemovePlugin = async (id) => {
-  if (!host.removePlugin(id)) {
+  const r = await host.removePlugin(id);
+  if (!r?.ok) {
     toast(customPluginWriteFailMsg('移除', '', takeCustomPluginWriteError()), 'err');
-    return;
+    return r;
   }
   toast('已移除插件', 'ok');
   await init();
   navigate(host.getPlugins()[0]?.id || 'home');
+  /* 把 MCP 协作结果透出去：设置页要据此说"已一并注销"还是"残留待手动清理" */
+  return r;
 };
 
 /* ---------------------------- 启动 ---------------------------- */

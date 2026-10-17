@@ -132,6 +132,42 @@ export function orderIds() {
   return readArr(ORDER_KEY);
 }
 
+/**
+ * 把某个插件从三张表（隐藏 / 排序 / 额外入口）里除名 —— **卸载时调**。
+ *
+ * 为什么需要它：这三张表按 id 记账，而卸载只把插件从清单里拿走，
+ * 表里的 id 不会自己消失。运行时读取都有"按当前清单过滤"
+ * （sortIds / defs 重建），所以失效 id 不会让按钮复活 —— 但它们是
+ * 永久的惰性垃圾，且埋着一个理论隐患：自定义插件 id 是
+ * custom-时间戳，正常不会撞；可用户手工改配置复用同一个 id 时，
+ * 上一次的「隐藏 / 加入」状态会被继承，表现为"新装的插件没有按钮"。
+ *
+ * 除名要覆盖**两种 id 形态**：隐藏表与排序表里，工具栏插件（kind:
+ * 'toolbar'）记的是裸插件 id，而应用插件声明的/手动加入的入口记的是
+ * entryIdOf() 的 `tb-entry:<id>`；额外入口表记裸 id。只删一种形态
+ * 会留下另一形态的失效记录。
+ *
+ * 写不进去不抛：卸载主流程不能因为清一张附属表而失败。
+ *
+ * @returns {boolean} 是否真写成了（false = 存储不可用，调用方无需理会）
+ */
+export function forgetPlugin(pluginId) {
+  const id = String(pluginId || '').trim();
+  if (!id) return true;
+  const entryId = entryIdOf(id);
+  let ok = true;
+  for (const [key, arr] of [
+    [HIDDEN_KEY, readArr(HIDDEN_KEY)],
+    [ORDER_KEY, readArr(ORDER_KEY)],
+    [EXTRA_KEY, readArr(EXTRA_KEY)],
+  ]) {
+    const next = arr.filter((x) => x !== id && x !== entryId);
+    if (next.length === arr.length) continue;
+    if (!writeArr(key, next)) ok = false;
+  }
+  return ok;
+}
+
 /** 用户在设置里手动加进来的插件 id（"添加按钮入口"） */
 export function extraIds() {
   return readArr(EXTRA_KEY);

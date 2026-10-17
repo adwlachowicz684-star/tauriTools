@@ -172,6 +172,37 @@ export function removeHost(host) {
   return { policy: p, saved: savePolicy(p) };
 }
 
+/**
+ * 撤销**归属某插件**的外链信任决策 —— 卸载时调。
+ *
+ * 为什么需要：hosts 表按 host 记账（一个 host 只记一个归属插件），
+ * 而卸载只把插件从清单里拿走，表里 `status: 'allow'` 的记录不会消失。
+ * 留着的话：用户当年为插件 A 放行了 evil.com，卸载 A 后装上 B，
+ * B 访问同一个 host 时**继承 A 的放行** —— 「谁放行过什么」本该随
+ * 插件一起消失（与 invoke 授权的 revokeAllGrants 同一条道理）。
+ *
+ * 打回 `pending` 而不是删记录：host 本身仍是"这个面板接触过的东西"，
+ * firstSeen / kind / sample 有审计价值；丢掉的只是那份**信任**，
+ * 下次任何插件访问它都会重新询问。
+ *
+ * @returns {number} 被打回待决策的 host 数
+ */
+export function revokePluginHosts(pluginId) {
+  const id = String(pluginId || '').trim();
+  if (!id) return 0;
+  const p = loadPolicy();
+  let n = 0;
+  for (const rec of Object.values(p.hosts)) {
+    if (rec?.pluginId === id && rec.status !== 'pending') {
+      rec.status = 'pending';
+      delete rec.decidedAt;
+      n += 1;
+    }
+  }
+  if (n) savePolicy(p);
+  return n;
+}
+
 /** 登记扫描到的外链（不改变已有决策） */
 export function recordHosts(hosts, pluginId) {
   const p = loadPolicy();

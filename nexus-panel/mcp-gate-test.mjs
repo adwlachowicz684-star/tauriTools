@@ -32,6 +32,7 @@ const MAIN_RS = path.join(HERE, 'src-tauri/src/main.rs');
 const GATE_RS = path.join(HERE, 'src-tauri/src/mcp_gate.rs');
 const CARD = path.join(HERE, 'plugins/settings/McpGatewayCard.tsx');
 const APP = path.join(HERE, 'plugins/settings/App.tsx');
+const HOST = path.join(HERE, 'js/host.js');
 
 let pass = 0;
 let fail = 0;
@@ -69,6 +70,7 @@ const mainSrc = fs.readFileSync(MAIN_RS, 'utf8');
 const gateSrc = fs.readFileSync(GATE_RS, 'utf8');
 const cardSrc = fs.readFileSync(CARD, 'utf8');
 const appSrc = fs.readFileSync(APP, 'utf8');
+const hostSrc = fs.readFileSync(HOST, 'utf8');
 
 /* ================================================================== */
 section('1. Rust 侧接线：状态、模块、命令注册');
@@ -297,26 +299,58 @@ t(
   /建议直接用插件 id/.test(cardSrc),
 );
 
-/* ---- 卸载协作（设置页 removePlugin） ---- */
+/* ---- 卸载协作（设置页 confirm + 宿主 removePlugin 收口注销） ---- */
 t(
-  'removePlugin 移除前查 mcp_gw_status 找匹配的代理服务',
+  'removePlugin 移除前查 mcp_gw_status 找匹配的代理服务（只为把后果说清）',
   /mcp_gw_status/.test(appSrc) && /s\?\.name === p\.id && s\?\.kind === 'proxy'/.test(appSrc),
 );
 t(
   '命中 MCP 服务时先 confirm 说清后果（不是默默卸掉留一堆调不通的工具）',
   /confirm\(\{[\s\S]{0,600}?mcpServer/.test(appSrc) && /移除并注销 MCP 服务/.test(appSrc),
 );
+/*
+ * 注销动作在**宿主收口**（host.removePlugin），不在设置页 UI 里 ——
+ * 卸载入口会有多个，清理放在某个 UI 里就会漏（本轮审查的真实发现：
+ * 原先只在 App.tsx 里调，原生壳将来加移除按钮就会漏掉整段协作）。
+ */
 t(
-  '移除成功后一并 mcp_gw_unregister（插件没了，工具不能还挂在网关里）',
-  /mcp_gw_unregister/.test(appSrc),
+  '宿主 removePlugin 收口里一并 mcp_gw_unregister（插件没了，工具不能还挂在网关里）',
+  /cleanupMcpForPlugin/.test(hostSrc) && /mcp_gw_unregister/.test(hostSrc),
+);
+t(
+  '宿主按「服务名 = 插件 id 且 kind=proxy」匹配（不误伤内置服务）',
+  /s\?\.name === id && s\?\.kind === 'proxy'/.test(hostSrc),
+);
+t(
+  '查网关失败不挡卸载（返回 none，其余清理照走）',
+  /return \{ status: 'none' \}/.test(hostSrc) && /if \(!ok\) return \{ ok: false \}/.test(hostSrc),
 );
 t(
   'MCP 注销失败时把「插件已卸」与「残留待手动清理」分开说（不把成功说成失败）',
-  /插件已移除，但 MCP 服务/.test(appSrc),
+  /插件已移除，但 MCP 服务/.test(appSrc) && /status: 'failed', error:/.test(hostSrc),
 );
 t(
   'confirm 从 dialog.js 导入（项目统一弹窗，不另起炉灶）',
   /import \{ prompt, confirm \} from '\.\.\/\.\.\/js\/dialog\.js'/.test(appSrc),
+);
+/*
+ * 卸载残留总收口（本轮审查补）：本地 KV / 每插件配置 / 外链信任 /
+ * 工具栏三表 / 服务实例缓存，五路清理都在 removePlugin 里。
+ */
+t(
+  'removePlugin 收口清五路残留（本地 KV+配置 / 外链信任 / 工具栏 / 服务实例 / MCP）',
+  /purgePluginStorage/.test(hostSrc) && /revokePluginHosts/.test(hostSrc)
+  && /forgetToolbarPlugin/.test(hostSrc) && /dropServiceInstance/.test(hostSrc)
+  && /cleanupMcpForPlugin/.test(hostSrc),
+);
+t(
+  '本地存储清理只碰本插件命名空间（nexus:<id>: 与 nexus:plugin-cfg:<id>，不误伤 fs 账本）',
+  /nexus:\$\{pid\}:/.test(hostSrc) && /nexus:plugin-cfg:\$\{pid\}/.test(hostSrc)
+  && !/fsclaim/.test(hostSrc.match(/function purgePluginStorage[\s\S]*?\n}/)?.[0] || ''),
+);
+t(
+  '服务实例缓存卸载即拆（不拆的话重启前仍可调用已卸载的服务）',
+  /services\.delete\(id\)/.test(hostSrc) && /await safeTeardown\(inst\)/.test(hostSrc),
 );
 
 /* ================================================================== */
@@ -328,6 +362,7 @@ t('不存在的命令不在 settings 白名单（白名单断言不是恒真）'
 t('mcp_gate.rs 里没有 mcp_gw_bogus 定义（第 2 节的属性断言不是恒真）', !gateSrc.includes('mcp_gw_bogus'));
 t('App.tsx 里没有 mcp_gw_bogus 调用（第 5 节的 UI 断言不是恒真）', !appSrc.includes('mcp_gw_bogus'));
 t('McpGatewayCard 里没有 mcp_gw_bogus 调用（第 5 节的面板断言不是恒真）', !cardSrc.includes('mcp_gw_bogus'));
+t('host.js 里没有 mcp_gw_bogus 调用（第 5 节的宿主断言不是恒真）', !hostSrc.includes('mcp_gw_bogus'));
 t('command-caps.js 里没有 disabled_servers 之外的第八条网关命令（清单没被偷偷加长）',
   Object.keys(COMMAND_CAPS).filter((k) => k.startsWith('mcp_gw_')).length === NAMES.length,
   `实际 ${Object.keys(COMMAND_CAPS).filter((k) => k.startsWith('mcp_gw_')).length} 条`);
