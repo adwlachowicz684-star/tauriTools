@@ -2016,6 +2016,74 @@ console.log('\n=== 21. 两个外壳入口必须对用户看到的东西达成一
 
 }
 
+console.log('\n=== 23. 插件事件总线：emit 必须有订阅方 ===');
+/*
+ * 事件名是纯字符串，**两端对不上不会有任何报错**：
+ * emit 一个没人订阅的事件，代码照常跑、界面照常显示"已保存"，
+ * 而期望发生的那件事永远不发生。
+ *
+ * 实测就是这个形状（已修）：task-board/Settings.tsx 保存后
+ *   ctx.emit('task-board:config', next); // 通知主视图
+ * 而全仓没有任何一处 ctx.on('task-board:config') —— 那句是空喊。
+ * 后果：设置页改完 dataDir，主视图的 cfg 只在挂载时读过一次，
+ * 2s 轮询又读的是 cfgRef.current.dataDir（旧目录），
+ * 于是看板继续显示旧目录的任务，直到插件重开才切换。
+ *
+ * 判据取双向：既盯"空喊的 emit"，也盯"订阅了却没人 emit"
+ * （后者说明那句 on 是死代码，或 emit 侧改名了）。
+ */
+{
+  const isTestFile = (rel) => /(-test\.mjs|\.test\.tsx?)$/.test(rel) || rel.includes('/tests/');
+  const emitL = new Map(), emitT = new Map(), onL = new Map(), onT = new Map();
+  let scanned = 0;
+  for (const p of walk(HERE)) {
+    const rel = relativeTo(p);
+    if (isTestFile(rel)) continue;          // 测试里的事件名是探针，不算真用法
+    if (!/\.(ts|tsx|js|mjs|html)$/.test(p)) continue;
+    let src;
+    try { src = readFileSync(p, 'utf8'); } catch { continue; }
+    const s = stripJs(src);
+    scanned++;
+    const ON = String.raw`\b(?:ctx|api|bus)\.on(?:\?\.)?\(`;
+    const EM = String.raw`\b(?:ctx|api|bus)\.emit\(`;
+    for (const m of s.matchAll(new RegExp(ON + String.raw`\s*'([^']+)'`, 'g'))) onL.set(m[1], rel);
+    for (const m of s.matchAll(new RegExp(ON + String.raw`\s*` + '`([^`]+)`', 'g'))) onT.set(m[1], rel);
+    for (const m of s.matchAll(new RegExp(EM + String.raw`\s*'([^']+)'`, 'g'))) emitL.set(m[1], rel);
+    for (const m of s.matchAll(new RegExp(EM + String.raw`\s*` + '`([^`]+)`', 'g'))) emitT.set(m[1], rel);
+  }
+  t('扫描范围有效（扫到了非测试源文件）', scanned > 200, `${scanned} 个`);
+  t('判据没落空（确实扫到 emit 与 on）', emitL.size + emitT.size >= 5 && onL.size + onT.size >= 5,
+    `emit ${emitL.size}+${emitT.size} / on ${onL.size}+${onT.size}`);
+
+  /* 模板名（`plugin:open-args:${id}`）只取 ${ 之前的静态前缀比对 ——
+     模板与字面量互为收发方，按前缀认。 */
+  const prefix = (s) => s.split('${')[0];
+  const hasOn = (name) => {
+    if (onL.has(name)) return true;
+    return [...onT.keys()].some((t) => name.startsWith(prefix(t)));
+  };
+  const hasEmit = (name) => {
+    if (emitL.has(name)) return true;
+    return [...emitT.keys()].some((t) => name.startsWith(prefix(t)));
+  };
+
+  const orphanEmit = [...emitL].filter(([n]) => !hasOn(n)).map(([n, r]) => `${n} @ ${r}`);
+  t('没有空喊的 emit（每个都有订阅方）', orphanEmit.length === 0, orphanEmit.join(' | '));
+
+  const orphanOn = [...onL].filter(([n]) => !hasEmit(n)).map(([n, r]) => `${n} @ ${r}`);
+  t('没有死订阅（订阅的事件都有人 emit）', orphanOn.length === 0, orphanOn.join(' | '));
+
+  /* 模板侧的收发同样要成对（否则动态名永远对不上） */
+  const tplOrphan = [...emitT.keys()].filter(
+    (t) => ![...onT.keys()].some((u) => prefix(u) === prefix(t))
+       && ![...onL.keys()].some((n) => n.startsWith(prefix(t))));
+  t('模板事件名也成对', tplOrphan.length === 0, tplOrphan.join(', '));
+
+  /* 元断言：判据两头都灵 ——拼错的名字必须被判为无人订阅 */
+  t('判据本身有效（探针：拼错的事件名会被判为空喊）',
+    !hasOn('task-board:config-typo') && hasOn('task-board:config'));
+}
+
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

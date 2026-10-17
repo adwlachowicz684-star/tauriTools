@@ -138,6 +138,29 @@ export default function App() {
     };
   }, [ctx]);
 
+  /*
+   * 设置面板跑在另一个 view（独立 iframe），与主视图不共享内存：
+   * 它改的是同一份磁盘配置，但主视图内存里的 cfg 只在挂载时读了一次，
+   * 而 2s 轮询读的是 cfgRef.current.dataDir —— **旧目录**。
+   *
+   * 所以设置页改完 dataDir 保存后，看板会继续显示旧目录的任务，
+   * 直到插件被重新打开才切换 —— 不报错，也没有任何提示，
+   * 表现为「设置里改了、这边没反应」。
+   *
+   * Settings.tsx 早就 emit('task-board:config') 了（约定 <plugin-id>:config），
+   * 但此前**没有任何一处订阅**，那句 emit 是空喊。
+   */
+  useEffect(() => ctx.on('task-board:config', (next?: unknown) => {
+    const c = next as TbConfig | null | undefined;
+    if (!c || typeof c.dataDir !== 'string') return;
+    setCfg(c);
+    S.readStore(ctx, c.dataDir)
+      .then((st) => setStore(st))
+      /* 读不到新目录的任务不弹错：2s 轮询下一拍还会再试，
+         而这里正处在"设置刚改完"的时刻，弹错会盖掉"已保存"。 */
+      .catch(() => {});
+  }), [ctx]);
+
   /* ---------- 派生数据 ---------- */
   const tags = useMemo(() => (store ? allTags(store.tasks) : []), [store]);
   /* 四视图共用同一份筛选结果；统计视图例外（它看全量，语义是「账本」不是「查询」） */
