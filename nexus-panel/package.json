@@ -271,7 +271,8 @@
     "test:pg-segment-name-scope": "node plugins/project-group/segment-name-scope-test.mjs",
     "test:typecheck-guard": "node typecheck-guard-test.mjs",
     "test:custom-plugin-save": "node custom-plugin-save-test.mjs",
-    "test:credential-vault-persist": "node credential-vault-persist-test.mjs"
+    "test:credential-vault-persist": "node credential-vault-persist-test.mjs",
+    "test:preload-style": "node preload-style-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",

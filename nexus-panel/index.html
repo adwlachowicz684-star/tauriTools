@@ -32,8 +32,16 @@
        只在 overscroll、窗口拉伸、背景图未加载这些边缘时机露出来 ——
        正因为只在边缘露，排查时极难往"首屏脚本"上想。
 
-       <style> 标签里的规则参与**正常层叠**（只比选择器与顺序），
-       主题系统就绪后会被后加载的样式表正常覆盖，不会卡住。 */
+       <style> 标签里的规则参与**正常层叠**（只比选择器与顺序）——
+       但"参与层叠"不等于"会被覆盖"：appendChild 把它放到 <head> **末尾**，
+       即在本页 <link> 样式表**之后**；与 neumorphism.css 的
+       `body{background:var(--bg)}` 特异性相同，同特异性时**后来者胜**，
+       所以是它压住样式表，而不是被样式表盖掉。
+
+       因此主题就绪后**必须由 theme-manager 主动 remove 掉**
+       （applyTo 里按 id `nexus-preload-bg` 移除）。不移除的话，
+       applyTo 改的只是 --bg 变量，算出来的值被这只 style 的定值压住 →
+       **切完主题底色不变**，深色切浅色最明显，要刷新才看得到新配色。 */
     (function () {
       try {
         var bg = localStorage.getItem('nexus:preload-bg');

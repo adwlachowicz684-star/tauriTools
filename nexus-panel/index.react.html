@@ -18,7 +18,12 @@
        注意：这里用注入 <style> 而不是内联 style.background ——
        内联样式优先级最高，而 applyTo() 只清 THEME_VARS、不清 background，
        主题初始化后盖不掉它，首屏是深色、切到浅色后底色会卡在深色那一版。
-       （index.html 此前正是这个写法，本轮才同步过来。） */
+       （index.html 此前正是这个写法，本轮才同步过来。）
+
+       换成注入 <style> 只是让"盖不掉"变成"盖得掉"，**不等于会自动被盖掉**：
+       它 appendChild 在 <head> 末尾、位于样式表之后，同特异性时后来者胜 →
+       仍是它压住样式表。所以主题就绪后必须由 theme-manager 按 id
+       `nexus-preload-bg` 主动 remove（见 js/theme-manager.js 的 applyTo）。 */
     (function () {
       try {
         var bg = localStorage.getItem('nexus:preload-bg');

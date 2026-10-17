@@ -102,6 +102,15 @@ const KEY_PRELOAD_FG = 'nexus:preload-fg';
 /* 基调（dark / light）：iframe 内的独立文档要靠它设 color-scheme，
    否则里面的表单控件与滚动条永远按浏览器默认的浅色渲染 */
 const KEY_PRELOAD_BASE = 'nexus:preload-base';
+/*
+ * 首屏防闪脚本注入的那只 <style> 的 id。
+ *
+ * ⚠️ 与 index.html / index.react.html 里的字面量**必须一致** —— 那是独立
+ * 的首屏 <script>，import 不了本模块，只能各写一份。三处一旦岔开，
+ * applyTo 里的 remove 就找不到那只 style，底色继续卡住且不报错。
+ * 一致性由 preload-style-test 那节钉住（跨文件字面量，同 CSP / Rust 常量那族）。
+ */
+const PRELOAD_STYLE_ID = 'nexus-preload-bg';
 
 /* ---------------------------- 颜色工具 ---------------------------- */
 function parseHex(hex) {
@@ -1268,6 +1277,33 @@ function applyTo(rawTheme, accent, envColor) {
     if (vars['--text']) writeLS(KEY_PRELOAD_FG, vars['--text']);
     writeLS(KEY_PRELOAD_BASE, theme.base);
   } catch { /* 存储不可用时忽略 */ }
+
+  /*
+   * 主题就绪后**必须撤掉**首屏防闪那只 <style>。
+   * ------------------------------------------------------------------
+   * 那只 style 是 `html,body{background:<定值>;color:<定值>}`，由
+   * index.html / index.react.html 里的首屏脚本 appendChild 到 <head>。
+   *
+   * 它**不会被后加载的样式表覆盖** —— 恰恰相反：
+   *   · <link rel=stylesheet> 在 <head> 里、位于那段脚本**之前**；
+   *   · appendChild 把它放在 head **末尾**，即所有样式表之后；
+   *   · 与 neumorphism.css 的 `body{background:var(--bg);color:var(--text)}`
+   *     特异性相同（都是 0,0,1），同特异性时**后来者胜** → 是它压住样式表。
+   *
+   * 于是 applyTo 只改 --bg / --text 变量，而变量算出来的值被这只
+   * style 的定值压住 → **切完主题底色不变**，要刷新才看得到新配色。
+   * 深色切浅色最明显：背景卡在深色那一版，浅色文字压在深底上。
+   *
+   * （首屏脚本的注释曾写着"会被后加载的样式表正常覆盖，不会卡住"，
+   *   按上面的顺序推导这句话是错的，两处注释已一并改正。）
+   *
+   * 只 remove、不清 localStorage：那三个键下次启动还要用。
+   *
+   * 拿不到那只 style 是正常的（插件跑在 iframe 里时它压根不在本文档），
+   * 可选链就是为这种情况留的 —— 那时也没有底色需要撤。
+   */
+  document.getElementById(PRELOAD_STYLE_ID)?.remove();
+
   root.dataset.theme = theme.id;
   root.dataset.themeBase = theme.base;
   root.dataset.themeStyle = theme.style || 'neumorph';
