@@ -20925,6 +20925,79 @@ group('BUG 161：callHost 的 saveAs —— 宿主只看返回值，取消 / 失
 }
 
 console.log('\n' + '─'.repeat(60));
+
+/* ============================================================
+   BUG 162 · 图标批量导入：丢掉的不说 + 失败原因会说错
+   ============================================================ */
+
+group('BUG 162 · 图标批量导入：丢掉的必须说出来，原因必须是真实原因');
+
+{
+  const pn = await import('./panels.js');
+
+  /* ---------- ① 文案（纯函数，行为级） ---------- */
+
+  // 1) 全都进来了 —— 正常成功，不该报警
+  const a = pn.iconImportStatus(3, []);
+  eq(a.text, '已导入 3 个图标', '全部成功 → 只说成功数');
+  eq(a.warn, false, '全部成功不报警');
+
+  // 2) 部分失败 —— 成功数与失败数、失败原因都要在
+  const b = pn.iconImportStatus(2, ['「b.png」2.3 MB 超过单张上限 1.0 MB',
+    '「c.png」未能存入本地库（可能是空间不足）']);
+  ok(b.text.includes('已导入 2 个图标'), '部分失败 → 成功数照说');
+  ok(b.text.includes('2 个未导入'), '部分失败 → 失败数必须说出来（早先只说成功数）');
+  ok(b.text.includes('超过单张上限'), '部分失败 → 带上真实原因（早先只有一句被覆盖的 hint）');
+  ok(b.text.includes('未能存入本地库'), '部分失败 → 每一条原因都在，不是只留最后一条');
+  eq(b.warn, true, '部分失败是提醒级别（有东西没进来）');
+
+  // 3) 全军覆没 —— 说的一定是**这一条的真实原因**
+  const c = pn.iconImportStatus(0, ['「a.png」2.3 MB 超过单张上限 1.0 MB']);
+  eq(c.text, '「a.png」2.3 MB 超过单张上限 1.0 MB', '全部失败 → 说真实原因');
+  ok(!/未写入本地库/.test(c.text),
+    '★ 全部因体积超限时不得说「导入失败（未写入本地库）」——那指向错误的排查方向');
+  eq(c.warn, true, '全部失败是提醒级别');
+
+  // 4) 空原因要滤掉：不能把 undefined / 空串当一条失败拼进文案
+  const d = pn.iconImportStatus(1, ['', null, undefined]);
+  eq(d.text, '已导入 1 个图标', '空原因不算失败（否则会拼出「1 个未导入：」）');
+  eq(d.warn, false, '空原因不报警');
+
+  // 5) 一个都没成、也没记下原因 —— 必须有兜底，不能是空串
+  const e = pn.iconImportStatus(0, []);
+  ok(typeof e.text === 'string' && e.text.length > 0, '零成功零原因也有兜底文案');
+  eq(e.warn, true, '零成功是提醒级别');
+
+  // 6) 上限是同一份常量，不是散落的 1024 * 1024
+  eq(pn.ICON_MAX_BYTES, 1024 * 1024, '单个图标上限 1 MB');
+
+  /* ---------- ② 源码契约 ---------- */
+  /*
+   * ⚠️ 必须先剥块注释：新加的注释里就写着三种旧写法（hint.textContent / `if (!id) continue;` /
+   *    `导入失败（未写入本地库）`），不剥的话「不得再出现」数到的是注释而不是代码 ——
+   *    本项目反复栽的"断言数到注释自身"。
+   */
+  const psrc = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const st = psrc.indexOf('const addImageFiles = async (files) => {');
+  ok(st >= 0, '能定位到 addImageFiles');
+  const raw = st >= 0 ? psrc.slice(st, psrc.indexOf('\n  };', st)) : '';
+  const code = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+
+  ok(!/hint\.textContent\s*=/.test(code),
+    '★ 超限不再只写 hint（那行会被下一条覆盖，多张时只剩最后一张的名字）');
+  ok(/failed\.push\([\s\S]{0,120}ICON_MAX_BYTES/.test(code),
+    '★ 超限必须记进 failed（含文件名与体积）');
+  ok(/if \(!id\) \{ failed\.push\(/.test(code),
+    '★ putAsset 返回 null（配额触顶）必须记进 failed —— 早先是裸 continue');
+  ok(/else failed\.push\(/.test(code),
+    '★ addIcon 写不进图标库必须记进 failed —— 早先只 `if (r.ok) ok++`');
+  ok(/const st = iconImportStatus\(ok, failed\)/.test(code),
+    '★ 结果文案走同一个纯函数（与 searchStatusText 同一路子）');
+  ok(!/导入失败（未写入本地库）/.test(code),
+    '★ 不得再硬编码「导入失败（未写入本地库）」——真实原因可能是图太大');
+  ok(/io\.formatSize\(f\.size\)/.test(code), '失败原因带体积（用户据此决定换图还是清空间）');
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

@@ -86,6 +86,39 @@ export function searchStatusText(keyword, r) {
   return { text: `${r.index}/${r.total}`, warn: false };
 }
 
+/** 单个图标的体积上限（字节）。图标会常驻本地库并反复解码，1 MB 足够 */
+export const ICON_MAX_BYTES = 1024 * 1024;
+
+/**
+ * 图标批量导入的结果文案（纯函数，可测）。
+ *
+ * 早先是「成几个就说几个」：
+ *   `已导入 ${ok} 个图标` / `导入失败（未写入本地库）`
+ * 两个问题：
+ *   · **丢了的不说** —— 一次选 5 张、3 张超限，界面只说「已导入 2 个」，
+ *     另外 3 张凭空消失，而超限提示当时只写在一个会被下一条覆盖的 hint 里；
+ *   · **原因会说错** —— 全部是超限时那句「导入失败（未写入本地库）」指的是
+ *     存储写不进去，可真实原因是图太大。对准了错误方向排查（隐私模式 / 配额），
+ *     真正该做的（换张小图）反而想不到。
+ *
+ * 所以成功数要说、**失败数与失败原因也要说**，且失败原因必须是那一条的
+ * 真实原因（含文件名与体积，与拖放附加附件那一路同一口径）。
+ *
+ * @param {number} ok 成功入库的图标数
+ * @param {string[]} failed 每一条失败原因（已是完整短语，含文件名）
+ * @returns {{text:string, warn:boolean}}
+ */
+export function iconImportStatus(ok, failed = []) {
+  const n = Number(ok) || 0;
+  const bad = Array.isArray(failed) ? failed.filter(Boolean) : [];
+  if (n && !bad.length) return { text: `已导入 ${n} 个图标`, warn: false };
+  if (n && bad.length) {
+    return { text: `已导入 ${n} 个图标，${bad.length} 个未导入：${bad.join('；')}`, warn: true };
+  }
+  if (bad.length) return { text: bad[0], warn: true };
+  return { text: '没有可导入的图标', warn: true };
+}
+
 /**
  * A5 从剪贴板数据里挑出图片（纯函数，可测）。
  *
@@ -2806,7 +2839,9 @@ export async function openIconLibrary(app) {
 
   const grid = h('div.mm-icons', {});
   const groupList = h('div.mm-icon-groups', {});
-  const hint = h('div.mm-hint', {}, '');
+  // 静态说明：单张上限写在这里，导入结果（含哪张没进来、为什么）走状态栏 ——
+  // 早先超限提示是往这里覆盖写的，多张时只剩最后一张的名字
+  const hint = h('div.mm-hint', {}, `单个图标不超过 ${io.formatSize(ICON_MAX_BYTES)}`);
 
   const renderGroups = () => {
     groupList.innerHTML = '';
@@ -2955,15 +2990,33 @@ export async function openIconLibrary(app) {
     if (!g) return;
     if (g.builtin) { app.api.status('内置分组不可添加图标，请先新建一个分组', true); return; }
     let ok = 0;
+    /*
+     * 每一条失败都记下**这一条的真实原因**（含文件名与体积）。
+     *
+     * 早先三处失败是三种静默：
+     *   · 超限 —— 只往 hint 里写一行，而下一条会把它覆盖掉，最后只剩最后一张的名字；
+     *   · putAsset 返回 null（配额触顶） —— `if (!id) continue;` 一句不留；
+     *   · addIcon 写不进图标库 —— 只 `if (r.ok) ok++`，失败的不算也不说。
+     * 于是「一次选 5 张、只进来 2 张」时界面只说「已导入 2 个图标」，
+     * 另外 3 张凭空消失；而**全部**没进来时说的是「导入失败（未写入本地库）」——
+     * 真实原因可能是图太大，指向的是一个完全错误的排查方向。
+     */
+    const failed = [];
     for (const f of files) {
-      if (f.size > 1024 * 1024) { hint.textContent = `「${f.name}」超过 1MB，已跳过`; continue; }
+      const nm = f?.name || '（未命名）';
+      if (f.size > ICON_MAX_BYTES) {
+        failed.push(`「${nm}」${io.formatSize(f.size)} 超过单张上限 ${io.formatSize(ICON_MAX_BYTES)}`);
+        continue;
+      }
       const id = await io.putAsset(f);
-      if (!id) continue;
-      const r = await picons.addIcon(g.id, { kind: 'user', name: f.name.replace(/\.[^.]+$/, ''), assetId: id });
+      if (!id) { failed.push(`「${nm}」未能存入本地库（可能是空间不足）`); continue; }
+      const r = await picons.addIcon(g.id, { kind: 'user', name: nm.replace(/\.[^.]+$/, ''), assetId: id });
       if (r.ok) ok++;
+      else failed.push(`「${nm}」未能写入图标库${r?.error ? `：${r.error}` : ''}`);
     }
     await reload();
-    app.api.status(ok ? `已导入 ${ok} 个图标` : '导入失败（未写入本地库）', !ok);
+    const st = iconImportStatus(ok, failed);
+    app.api.status(st.text, st.warn);
   };
 
   /**
