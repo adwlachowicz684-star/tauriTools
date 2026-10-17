@@ -20623,8 +20623,22 @@ group('BUG 157：导入快照写不进本地库 —— 不能说成「重复或�
 
 {
   const idx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
-  const body = idx.slice(idx.indexOf('async function importBackups()'),
-    idx.indexOf('/**\n   * 按当前上限滚动清理旧快照。'));
+  /* 括号配平取整段 —— 不拿注释当终点锚点。
+     注释改一个字（哪怕只改标点），indexOf 就取到 -1，
+     `slice(start, -1)` 静默变成"截掉最后一个字符"：断言照样绿，
+     而取到的可能是大半个文件。注释是会随手写改的，代码签名不会。 */
+  const balancedFn = (src, sig) => {
+    const i = src.indexOf(sig);
+    if (i < 0) return '';
+    let d = 0, j = src.indexOf('{', i);
+    if (j < 0) return '';
+    for (let k = j; k < src.length; k++) {
+      if (src[k] === '{') d++;
+      else if (src[k] === '}') { d--; if (d === 0) return src.slice(i, k + 1); }
+    }
+    return '';
+  };
+  const body = balancedFn(idx, 'async function importBackups()');
   ok(body.length > 0 && /trimBackups\(addedKeys\)/.test(body),
     '★ 取得到 importBackups 的函数体', '长度：' + body.length);
 
