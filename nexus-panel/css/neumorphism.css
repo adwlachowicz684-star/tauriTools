@@ -987,6 +987,9 @@ body.nx-inspecting * { cursor: crosshair !important; }
  */
 .plugin-wrap-frame {
   border: 1px solid var(--border, rgba(255, 255, 255, .12));
+  /* --r-card 全仓零定义，10px 恒生效。圆角档位实际是 --r-xl/lg/md/sm/xs，
+     没有 card 这一档 —— 要么归到 --r-md，要么补一个 --r-card 令牌，
+     两者都会改观感，故维持现状并记在这里。 */
   border-radius: var(--r-card, 10px);
   overflow: hidden;
 }
@@ -2167,7 +2170,10 @@ html.theme-transition *:not(.spinner) {
   font-size: var(--fs-11);
   padding: 2px var(--sp-2, 8px);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm, 4px);
+  /* 原名写的是 --radius-sm（全仓零定义），兜底 4px 恒生效 —— 本文件的
+     圆角档位是 --r-sm / --r-xs 这套，没有 --radius-* 命名。改成 --r-sm 后
+     这枚按钮才跟随主题（--r-sm 现为 9px，此前恒为 4px）。 */
+  border-radius: var(--r-sm, 4px);
   background: transparent;
   color: var(--text-mute);
   cursor: pointer;
@@ -2816,7 +2822,10 @@ html.theme-transition *:not(.spinner) {
  * 比例字体下 l / 1 / I 分不清。
  */
 .dep-ver {
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  /* 原名 --mono（全仓零定义），兜底那串字体恒生效。设计系统的等宽变量是
+     --font-mono（tokens.css 定义，本文件第 96 行已 @import），
+     project-group 那边的代码块用的也是它 —— 改成同名才跟随设计系统。 */
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--fs-11, 11px);
 }
 

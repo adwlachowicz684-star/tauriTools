@@ -15,7 +15,10 @@
       background: var(--bg, transparent); }
     body {
       display: flex; align-items: center; justify-content: center;
-      color: var(--text-muted, #888);
+      /* 原名 --text-muted（全仓零定义）；文本色档位是 --text / --text-dim /
+         --text-soft / --text-mute，没有 muted 这一档。兜底 #888 保留不变，
+         所以在拿不到外壳变量的隔离 iframe 里观感与原来完全一致。 */
+      color: var(--text-mute, #888);
     }
     .hint { opacity: .6; text-align: center; padding: 12px; }
   </style>

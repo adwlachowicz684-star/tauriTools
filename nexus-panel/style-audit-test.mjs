@@ -578,6 +578,11 @@ console.log('\n=== 9. 块注释里不得再开一个块注释 ===');
 }
 
 
+/* 第 10 节要全仓扫一遍定义点（800+ 文件，约 40 秒），第 11 节要用同一份
+   结果 —— 扫两次太慢，故提到外层共享。 */
+let repoDefined = null;
+let repoFiles = null;
+
 console.log('\n=== 10. 清单条目不得是幽灵（登记了却全仓无人定义）===');
 /* 这三份清单是**免死金牌**：进了 SHELL_VARS / TOKEN_VARS / CONTROLS_VARS 的
    名字，E2 判据就对它闭嘴。所以里面躺着一个全仓无人定义的名字是危险的 ——
@@ -596,10 +601,17 @@ console.log('\n=== 10. 清单条目不得是幽灵（登记了却全仓无人定
       if (SKIP.has(e.name)) continue;
       const p = join(d, e.name);
       if (e.isDirectory()) { walk(p); continue; }
-      if (EXTS.some((x) => e.name.endsWith(x))) files.push(p);
+      if (!EXTS.some((x) => e.name.endsWith(x))) continue;
+      /* 测试文件里的 CSS 片段是**探针**（故意写错的 --surface-2、
+         --text-mute-typo 之类），不是真用法 —— 扫进去会假报。
+         插件 tests/ 目录同理。 */
+      if (/(-test\.mjs|\.test\.tsx?)$/.test(e.name)) continue;
+      if (/(^|\/)tests\//.test(p)) continue;
+      files.push(p);
     }
   })(HERE);
   t('扫描范围有效（全仓样式与脚本）', files.length >= 200, `${files.length} 个文件`);
+  repoFiles = files;
 
   const defined = new Set();
   /* 既认 CSS 的 `--x: v`，也认 JS 对象/内联样式里的 `'--x': v` ——
@@ -624,6 +636,87 @@ console.log('\n=== 10. 清单条目不得是幽灵（登记了却全仓无人定
   t('判据本身有效（探针：无人定义的名字必须被判幽灵）',
     !defined.has('--probe-ghost-zzz'));
   t('判据不误报（确有定义的名字不算幽灵）', defined.has('--text-mute'));
+
+  repoDefined = defined;
+}
+
+console.log('\n=== 11. 变量名拼错：存在近似令牌却全仓无人定义 ===');
+/*
+ * 这是"幽灵条目"的另一半：名字不在清单里，但**长得像某个真实令牌**
+ * （--warning ↔ --warn、--radius-sm ↔ --r-sm、--mono ↔ --font-mono）。
+ * 与幽灵条目相比它更隐蔽 —— 因为 var() 带字面兜底时**什么都不报**：
+ * 样式生效、界面正常，只是那个令牌从来没被用上，观感恒定等于兜底值。
+ * 实测三处都是这个形状：
+ *   --warning    → 兜底 --accent，警告色边框一直是强调色
+ *   --radius-sm  → 兜底 4px，圆角不跟随主题（--r-sm 实为 9px）
+ *   --mono       → 兜底字体串，等宽不跟随设计系统（--font-mono）
+ *
+ * 判据取"前缀/后缀近似"而不是编辑距离：上面三处的距离分别是 3 / 5 / 5，
+ * 任何距离阈值都卡不住；而它们都满足"与某个已定义名字首尾相接"。
+ * 实测 15 个未定义变量命中 10 个，其中 4 个是真拼错（另 4 个是预留钩子、
+ * 2 个是尚未定档的缺口），误报率可接受。
+ *
+ * ⚠️ 豁免项必须写明理由 —— 否则这份清单会变成"先报了再豁免"的垃圾桶。
+ */
+{
+  const defined = repoDefined;
+  t('复用第 10 节的定义点扫描结果', !!defined && defined.size > 100,
+    defined ? `${defined.size} 个变量` : 'null');
+
+  /* 动态拼名的变量（brushVars 的 --grp-* / inspector 的 --x/--y）在运行时注入，
+     静态扫不到定义点，必须先排除，否则全是假报。 */
+  const audit = await import('./js/style-audit.js');
+  const dynamic = new Set([...audit.BRUSH_VARS, ...audit.RUNTIME_POSITION_VARS]);
+  const isKnown = (v) => defined.has(v) || dynamic.has(v);
+
+  const EXEMPT = new Map([
+    /* agent-flow 的框体钩子：壳侧不注入，兜底恒生效是设计意图（见 styles.css） */
+    ['--af-frame-', '前缀：agent-flow 预留钩子，壳侧不注入'],
+    ['--dlg-edge', '弹窗的覆盖钩子（controls-test 第 2521 行钉着这个写法）'],
+    ['--md-code-bg', 'md/export.js 生成的独立 HTML，自带一套 --md-*，不引主题变量'],
+    /* 下面两条是**真缺口**（名字从来没被定义），不修是因为补了会改观感：
+       已在各自的定义处就地写明，这里只登记名字与去处。 */
+    ['--accent-soft', '缺口：补定义会让"已选"标签长出底色（css/neumorphism.css 已标注）'],
+    ['--r-card', '缺口：圆角档位里没有 card 这一档（css/neumorphism.css 已标注）'],
+  ]);
+  const exemptOf = (v) =>
+    EXEMPT.get(v) || [...EXEMPT.keys()].find((k) => k.endsWith('-') && v.startsWith(k));
+
+  /* 复用第 10 节的文件列表再取一遍使用点 */
+  const files = repoFiles;
+  t('复用第 10 节的文件列表', !!files && files.length >= 200, files ? `${files.length} 个` : 'null');
+  const used = new Map();
+  for (const p of files) {
+    const s = strip(readFileSync(p, 'utf8'));
+    for (const m of s.matchAll(/var\(\s*(--[a-z0-9-]+)/gi)) {
+      if (!used.has(m[1])) used.set(m[1], p);
+    }
+  }
+  const name = (v) => v.slice(2);
+  const suspects = [];
+  for (const [v, where] of used) {
+    if (isKnown(v)) continue;
+    if (exemptOf(v)) continue;
+    const nv = name(v);
+    const near = [...defined].filter((d) => {
+      const nd = name(d);
+      return d !== v && nd &&
+        (nv.startsWith(nd) || nv.endsWith(nd) || nd.startsWith(nv) || nd.endsWith(nv));
+    });
+    if (near.length) suspects.push(`${v}(近似 ${near.slice(0, 2).join('/')}) @ ${where}`);
+  }
+  t('没有拼错的变量名', suspects.length === 0, suspects.slice(0, 3).join(' | '));
+
+  /* 判据失明比报红危险：下面两条钉住它两端 */
+  const rel = (a, b) => {
+    const [x, y] = [name(a), name(b)];
+    return x.startsWith(y) || x.endsWith(y) || y.startsWith(x) || y.endsWith(x);
+  };
+  t('判据本身有效（探针：--warning 与 --warn 必须判为近似）',
+    rel('--warning', '--warn') && !rel('--bg', '--sh-dark'));
+  for (const k of ['--accent-soft', '--r-card']) {
+    t(`豁免项 ${k} 仍未定义（若已补上请移除豁免并删除就地标注）`, !defined.has(k));
+  }
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
