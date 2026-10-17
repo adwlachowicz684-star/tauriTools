@@ -21,6 +21,7 @@
  */
 
 import type { McpToolSchema } from './mcpTools';
+import { MCP_SINGLE_TIMEOUT_SEC, MCP_CALL_TIMEOUT_SEC } from './mcpTools';
 
 /** 注入的发送函数，方便测试替换 */
 export type HttpPost = (
@@ -127,7 +128,7 @@ export type McpSession = {
 export async function initialize(
   ref: McpServerRef,
   httpPost: HttpPost,
-  timeoutSec = 20,
+  timeoutSec = MCP_SINGLE_TIMEOUT_SEC,
 ): Promise<McpSession> {
   const url = String(ref.url ?? '').trim();
   if (!url) {
@@ -213,7 +214,7 @@ type RawTool = {
 export async function listTools(
   ref: McpServerRef,
   httpPost: HttpPost,
-  timeoutSec = 20,
+  timeoutSec = MCP_SINGLE_TIMEOUT_SEC,
 ): Promise<McpToolSchema[]> {
   const url = String(ref.url ?? '').trim();
   if (!url) {
@@ -315,7 +316,7 @@ export async function callTool(
   tool: string,
   args: Record<string, unknown>,
   httpPost: HttpPost,
-  timeoutSec = 60,
+  timeoutSec = MCP_CALL_TIMEOUT_SEC,
 ): Promise<McpCallResult> {
   const url = String(ref.url ?? '').trim();
   if (!url) {

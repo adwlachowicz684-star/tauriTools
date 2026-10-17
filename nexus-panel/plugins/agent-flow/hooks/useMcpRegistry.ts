@@ -9,6 +9,7 @@ import {
   type McpToolFetcher,
 } from '../engine/mcpStore';
 import { listTools, transportOf, stdioSupported } from '../engine/mcpClient';
+import { MCP_SINGLE_TIMEOUT_SEC } from '../engine/mcpTools';
 import { hydrateMcpNodes, bootRefresh } from '../engine/mcpRegistry';
 /*
  * 侧栏分组与计数来自 mcpTools 而不是 mcpRegistry ——
@@ -55,7 +56,7 @@ const mcpFetcher: McpToolFetcher = async (server) => {
   const tools = await listTools(
     { name: server.name, url: server.url, command: server.command },
     async (url, body, headers, timeoutSec) => await postJson(url, body, headers, timeoutSec),
-    20,
+    MCP_SINGLE_TIMEOUT_SEC,
   );
   return tools.map((t) => ({
     name: t.name,

@@ -26,6 +26,7 @@ import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 import {
   buildBlueprints, diffBlueprints, mergeBlueprints, isMcpType,
   type NodeBlueprint, type McpToolSchema,
+  MCP_SINGLE_TIMEOUT_SEC, MCP_HANDSHAKE_CALLS, MCP_TIMEOUT_MARGIN_SEC,
 } from './mcpTools';
 
 export const MCP_BP_KEY = 'agent-flow.mcpBlueprints.v1';
@@ -190,12 +191,17 @@ export async function bootRefresh(
 }
 
 /**
- * 单个服务的整体上限，默认 60 秒。
+ * 单个服务的整体上限，由**公式**算出来（见 mcpTools 里那三个常量）。
  *
- * 协议层单次请求是 20 秒，一次 listTools 发三次 —— 正常服务毫秒级就回来了，
- * 60 秒足够宽，同时它是一个**有限值**，这是关键。
+ * 以前这里写死 60_000，而协议层单次是 20 秒 × 3 次 = 正好 60 秒 ——
+ * **零余量**。实测：三次都慢到接近单次上限时，这道会在最后一次请求
+ * 返回前先触发，把一个完全正常的服务判成"迟迟不返回"。
+ *
+ * 现在它由单次上限推导，改单次不会把正常服务误伤成超时。
+ * 同时它必须是个**有限值**，这是关键 —— Infinity 等于没有上限。
  */
-export const SERVER_TIMEOUT_MS = 60_000;
+export const SERVER_TIMEOUT_MS =
+  (MCP_SINGLE_TIMEOUT_SEC * MCP_HANDSHAKE_CALLS + MCP_TIMEOUT_MARGIN_SEC) * 1000;
 
 /**
  * 给一个服务的抓取加上整体时限。

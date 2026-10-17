@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {
   refreshAll, withServerTimeout, SERVER_TIMEOUT_MS, type RefreshOptions,
 } from '../engine/mcpStore';
+import {
+  MCP_SINGLE_TIMEOUT_SEC, MCP_CALL_TIMEOUT_SEC, MCP_HANDSHAKE_CALLS, MCP_TIMEOUT_MARGIN_SEC,
+} from '../engine/mcpTools';
+import { listTools } from '../engine/mcpClient';
 import { readSrc } from './srcScan';
 
 const REF = (name: string) => ({ name, url: `http://${name}` });
@@ -89,6 +93,65 @@ test('正常服务不受影响（慢一点也照样成功）', async () => {
   assert.equal(r.failures.length, 0);
 });
 
+/*
+ * 本轮要修的那件事 —— 而且是我上一轮自己引入的。
+ *
+ * 我上一轮把 SERVER_TIMEOUT_MS 写成 60_000，理由是"单次 20 秒 × 3 次
+ * = 最坏 60 秒"。**正好相等，零余量**。
+ *
+ * 实测：单次 1 秒 × 3 次，整体设 3 秒 —— 一个每次都按时返回的
+ * 完全正常的服务，被判成"连上了但迟迟不返回"。
+ *
+ * 这类失效最气人：它只在服务慢到接近上限时才发作，
+ * 而发作的提示是"这个服务有问题"，把人支去查一个没坏的服务。
+ */
+test('整体上限必须严格大于"单次 × 握手次数" —— 相等就会误伤正常服务', () => {
+  const worst = MCP_SINGLE_TIMEOUT_SEC * MCP_HANDSHAKE_CALLS * 1000;
+  assert.ok(SERVER_TIMEOUT_MS > worst,
+    `整体 ${SERVER_TIMEOUT_MS} 必须大于最坏正常值 ${worst} —— 相等都不行`);
+  assert.ok(SERVER_TIMEOUT_MS - worst >= 10_000,
+    `余量 ${SERVER_TIMEOUT_MS - worst}ms 太小 —— 三次请求之间还有解析与调度开销`);
+});
+
+/*
+ * 这个慢服务每次都**按时返回**（各 60ms），是完好的。
+ *
+ * 注意：工具清单不能是空的 —— 空清单自己就是一条 failure
+ * （"返回了 0 个工具"），会让"有没有被超时误伤"这条断言
+ * 通过一个**错误的理由**。第一版我就这么错了。
+ */
+const slowOkPost = async (): Promise<{ status: number; text: string }> => {
+  await new Promise((r) => setTimeout(r, 60));
+  return {
+    status: 200,
+    text: JSON.stringify({
+      jsonrpc: '2.0', id: 1,
+      result: { protocolVersion: '2025-06-18', tools: [{ name: 't', description: 'd', inputSchema: {} }] },
+    }),
+  };
+};
+
+test('实测：整体正好等于"单次 × 次数"时，正常服务被误判超时', async () => {
+  const r = await refreshAll({
+    servers: [REF('slow')], previous: [],
+    serverTimeoutMs: 60 * MCP_HANDSHAKE_CALLS, // 正好等于最坏正常耗时
+    fetcher: (s) => listTools({ name: s.name, url: s.url }, slowOkPost, 60),
+  });
+  const f = r.failures[0];
+  assert.ok(f, '零余量时应该失败');
+  assert.ok(f.reason.includes('不返回'), `必须是超时那条，实际：${f.reason}`);
+});
+
+test('实测：留了余量后，同一个慢服务正常通过', async () => {
+  const r = await refreshAll({
+    servers: [REF('slow')], previous: [],
+    serverTimeoutMs: 60 * MCP_HANDSHAKE_CALLS + 1500,
+    fetcher: (s) => listTools({ name: s.name, url: s.url }, slowOkPost, 60),
+  });
+  assert.deepEqual(r.failures.map((x) => x.reason), [], '留余量后不该再误伤');
+  assert.equal(r.ok, true);
+});
+
 test('默认上限是有限值，且比单次请求的大', () => {
   assert.ok(Number.isFinite(SERVER_TIMEOUT_MS), '必须是有限值 —— Infinity 等于没有上限');
   assert.ok(SERVER_TIMEOUT_MS > 20_000,
@@ -138,3 +201,52 @@ test('源码守卫：别处不要用裸 fetcher（同一个坑不能有两份）
 });
 
 const _o: RefreshOptions = { servers: [], previous: [] };
+
+/*
+ * 三个常量散在三处的字面量 —— 改一处漏一处就是两种失效：
+ *   · 只改小单次 → 整体相对变宽，卡住的服务要多等很久
+ *   · 只改大单次 → 整体相对变窄，正常服务被误伤
+ * 所以整体必须**由公式算出来**，不许写死。
+ */
+test('源码守卫：整体上限必须是公式，不许写死数字', () => {
+  const src = readSrc('engine/mcpStore.ts');
+  const i = src.indexOf('export const SERVER_TIMEOUT_MS');
+  assert.ok(i >= 0);
+  const decl = src.slice(i, src.indexOf(';', i));
+  assert.ok(/MCP_SINGLE_TIMEOUT_SEC/.test(decl) && /MCP_HANDSHAKE_CALLS/.test(decl),
+    `必须由单次上限推导出来，实际：${decl.replace(/\s+/g, ' ')}`);
+  /*
+   * 只看"除了 ×1000 这个秒→毫秒转换系数之外还有没有裸数字"。
+   * 第一版我写成 !/\b\d{4,}\b/ —— 它把 1000 也算进去了，
+   * 于是公式写法也被判违规。报红了，但报的是我的正则太宽。
+   */
+  const nums = (decl.match(/\b\d+\b/g) ?? []).filter((x) => x !== '1000');
+  assert.deepEqual(nums, [], `不许出现写死的毫秒数字：${decl.replace(/\s+/g, ' ')}`);
+});
+
+test('源码守卫：协议层与 hook 不许再写死超时字面量', () => {
+  const cl = readSrc('engine/mcpClient.ts');
+  assert.ok(!/timeoutSec = \d/.test(cl),
+    'listTools / callTool 的默认参数要用共享常量 —— 写死了改一处漏一处');
+  /*
+   * callTool 调工具本来就比拉清单慢，所以它该有**自己**的常量，
+   * 而不是共用 MCP_SINGLE_TIMEOUT_SEC ——
+   * 共用的话，将来按"单次 × 次数"给调用算整体上限就会算错。
+   */
+  const ci = cl.indexOf('export async function callTool');
+  assert.ok(/MCP_CALL_TIMEOUT_SEC/.test(cl.slice(ci, ci + 900)),
+    'callTool 要用它自己的常量');
+  const hk = readSrc('hooks/useMcpRegistry.ts');
+  const i = hk.indexOf('listTools(');
+  const call = hk.slice(i, i + 400);
+  assert.ok(/MCP_SINGLE_TIMEOUT_SEC/.test(call), 'hook 里同样要用共享常量');
+});
+
+test('源码守卫：握手次数与协议实现一致（说三次就别发四次）', () => {
+  const src = readSrc('engine/mcpClient.ts');
+  const i = src.indexOf('export async function listTools');
+  const body = src.slice(i, src.indexOf('\n}\n', i));
+  const calls = (body.match(/await httpPost\(/g) ?? []).length;
+  assert.equal(calls, MCP_HANDSHAKE_CALLS,
+    `声明 ${MCP_HANDSHAKE_CALLS} 次，实际发了 ${calls} 次 —— 余量就白算了`);
+});
