@@ -61,6 +61,10 @@ use crate::task_board;
 ///
 /// 用双下划线而不是单下划线：工具名自己大量使用单下划线
 /// （tb_list_tasks），单下划线会让「哪个 server」变得不确定。
+///
+/// 与 js/host.js 里同名的 SEP 分属不同域（那边是插件作用域存储键的
+/// 分隔符 \u0000）—— regression-guard-test 的 NAME_EXEMPT 里记了这条，
+/// 这边改名反而会让那条豁免变成占位、被「豁免项不得空转」抓到。
 pub const SEP: &str = "__";
 
 /// 内置 server 名。代理注册**不许**占用这两个名字 ——
@@ -149,6 +153,17 @@ pub struct GwConfig {
     /// 暴露面与既有两个本机 server 相同。
     #[serde(default = "default_autostart")]
     pub auto_start: bool,
+    /// 被整体关闭的 server（插件 MCP 总开关的「关」态）。
+    ///
+    /// 为什么记「关闭清单」而不是「开启清单」：新注册的 server 必须
+    /// **默认可见**，用开启清单的话每加一个服务都要先记得去清单里补名，
+    /// 漏补的后果是「注册成功但工具不出现」—— 比没有开关更难排查。
+    /// 关闭清单天然满足「不在名单里就是开的」。
+    ///
+    /// 只记 server 名，不存工具明细：工具清单是注册表的事，配置里再抄一份
+    /// 必然漂移（对端改了工具表，配置里还是旧的）。
+    #[serde(default)]
+    pub disabled_servers: Vec<String>,
 }
 
 fn default_autostart() -> bool {
@@ -157,8 +172,23 @@ fn default_autostart() -> bool {
 
 impl Default for GwConfig {
     fn default() -> Self {
-        Self { port: DEFAULT_PORT, token: String::new(), auto_start: true }
+        Self {
+            port: DEFAULT_PORT,
+            token: String::new(),
+            auto_start: true,
+            disabled_servers: Vec::new(),
+        }
     }
+}
+
+/// 某 server 当前是否对 AI 客户端可见。
+///
+/// 与 fpx 自己的 `mcp_enabled` / `tool_enabled` 是**两层**：
+/// 那边管「这个工具/服务在不在 project-group 自己的端点上暴露」，
+/// 这里管「在不在统一网关里暴露」。用户在网关里关掉 project-group，
+/// 只影响网关这一层 —— 它自己 9905 上的端点照旧，两个入口互不替代。
+pub fn server_enabled(cfg: &GwConfig, server: &str) -> bool {
+    !cfg.disabled_servers.iter().any(|s| s == server)
 }
 
 /// 网关共享状态（main.rs 里 .manage）。
@@ -523,6 +553,18 @@ fn call_tool(full: &str, args: &Value, state: &GatewayState) -> Result<Value, St
              可先调 tools/list 看完整清单"
         )
     })?;
+    let cfg = match state.cfg.lock() {
+        Ok(g) => g.clone(),
+        Err(e) => e.into_inner().clone(),
+    };
+    if !server_enabled(&cfg, server) {
+        // 关掉的 server 报「被关闭」而不是「没有这个工具」：
+        // 后者会让 AI 以为名字写错了去改调用，而问题在面板设置里。
+        return Err(format!(
+            "服务「{server}」已在网关中整体关闭（设置 → MCP 网关里重新打开），\
+             其全部工具当前不可调用"
+        ));
+    }
     let guard = match state.tools.lock() {
         Ok(g) => g,
         Err(e) => e.into_inner(),
@@ -540,16 +582,28 @@ fn call_tool(full: &str, args: &Value, state: &GatewayState) -> Result<Value, St
 /// 网关里要立刻消失 —— 否则「关了还能调」，那个开关就白设计了。
 /// 配置读不到时不过滤（让 handler 自己去报「服务已关闭」），
 /// 宁可多列几个调用会失败的工具，也不因为读配置失败把整个清单弄没。
+///
+/// 网关自己的 disabled_servers 同理：关掉的 server 整个不列。
+/// 双过滤（list 隐藏 + call 拒绝）都要有 —— 只做 list 的话，
+/// AI 可能拿着旧清单（客户端会缓存 tools/list）来调，得到「未知工具」，
+/// 而真相是「被关了」；只做 call 的话，清单里躺着个调用必失败的工具。
 fn list_tools(app: &AppHandle, state: &GatewayState) -> Vec<Value> {
     let fpx_cfg = fpx::store::resolve_data_dir(app)
         .ok()
         .map(|dir| fpx::store::load_config(&dir));
+    let gw_cfg = match state.cfg.lock() {
+        Ok(g) => g.clone(),
+        Err(e) => e.into_inner().clone(),
+    };
     let guard = match state.tools.lock() {
         Ok(g) => g,
         Err(e) => e.into_inner(),
     };
     let mut out = Vec::with_capacity(guard.len());
     for t in guard.iter() {
+        if !server_enabled(&gw_cfg, &t.server) {
+            continue;
+        }
         if t.server == SERVER_FPX {
             if let Some(cfg) = &fpx_cfg {
                 if !cfg.mcp_enabled || !fpx::mcp::tool_enabled(cfg, &t.name) {
@@ -1099,7 +1153,15 @@ pub fn mcp_gw_status(state: State<'_, GatewayState>) -> Value {
         .iter()
         .map(|s| {
             let (kind, url, tools) = &grouped[s];
-            json!({ "name": s, "kind": kind, "url": url, "tools": tools })
+            json!({
+                "name": s,
+                "kind": kind,
+                "url": url,
+                "tools": tools,
+                // 总开关状态（disabled_servers 里没有 = 开着）。
+                // 界面据此画开关；AI 侧见不到已关闭的 server（list 过滤）。
+                "enabled": server_enabled(&cfg, s),
+            })
         })
         .collect();
 
@@ -1118,6 +1180,11 @@ pub fn mcp_gw_status(state: State<'_, GatewayState>) -> Value {
 ///
 /// 运行中改端口或令牌**不热生效**（监听和鉴权用的是启动时那一份）——
 /// 返回 needRestart 让界面说明白，而不是"保存了但没变化"。
+///
+/// disabled_servers（各插件的 MCP 总开关）不走这里：它由
+/// mcp_gw_set_server_enabled 单独改、即时生效，与端口令牌的
+/// 「要重启才生效」不是一回事，混在一个保存里会让 needRestart
+/// 把开关的变化也一起冤枉了。
 #[tauri::command(rename_all = "snake_case")]
 pub fn mcp_gw_save_config(
     app: AppHandle,
@@ -1137,6 +1204,8 @@ pub fn mcp_gw_save_config(
         port,
         token: token.trim().to_string(),
         auto_start,
+        // 保留总开关状态：这个表单改不到它，不能因为保存端口就把开关重置
+        disabled_servers: old.disabled_servers.clone(),
     };
     save_config(&app, &cfg)?;
     if let Ok(mut g) = state.cfg.lock() {
@@ -1147,23 +1216,90 @@ pub fn mcp_gw_save_config(
     Ok(json!({ "saved": true, "needRestart": need_restart }))
 }
 
+/// 插件 MCP 总开关：打开 / 关闭某个 server 的全部工具。
+///
+/// 与 save_config 分开的原因见那里的注释：这个开关**即时生效**
+/// （tools/list 与 tools/call 都现读 disabled_servers），不用重启网关。
+///
+/// 为什么要一个专门的命令而不是让前端拼整个配置保存：
+/// 总开关是高频小操作（在服务清单里逐个拨），拼整个配置意味着前端
+/// 得先读、改一个字段、再整份写回 —— 多一次读写竞态，且保存端口
+/// 那个表单的 needRestart 语义会被带过来。
+#[tauri::command(rename_all = "snake_case")]
+pub fn mcp_gw_set_server_enabled(
+    app: AppHandle,
+    state: State<'_, GatewayState>,
+    server: String,
+    enabled: bool,
+) -> Result<Value, String> {
+    let name = server.trim();
+    validate_server_name(name)?;
+    let mut cfg = match state.cfg.lock() {
+        Ok(g) => g.clone(),
+        Err(e) => e.into_inner().clone(),
+    };
+    cfg.disabled_servers.retain(|s| s != name);
+    if !enabled {
+        cfg.disabled_servers.push(name.to_string());
+    }
+    save_config(&app, &cfg)?;
+    if let Ok(mut g) = state.cfg.lock() {
+        *g = cfg;
+    }
+    Ok(json!({ "server": name, "enabled": enabled }))
+}
+
 /// 注册代理服务（拉取对方 tools/list 后登记）。返回登记到的工具数。
 #[tauri::command(rename_all = "snake_case")]
 pub fn mcp_gw_register(
+    app: AppHandle,
     state: State<'_, GatewayState>,
     server: String,
     url: String,
     token: String,
 ) -> Result<Value, String> {
     let n = register_proxy(&state, &server, &url, &token)?;
-    Ok(json!({ "server": server.trim(), "tools": n }))
+    /* 新注册的服务默认就该是开的 —— 清掉可能残留的旧关闭记录
+       （关过 → 移除 → 重新注册同一个名字，不清理的话它会以「关着」
+       的状态回来，用户看到的是「注册成功但工具不出现」）。 */
+    let name = server.trim().to_string();
+    let mut cfg = match state.cfg.lock() {
+        Ok(g) => g.clone(),
+        Err(e) => e.into_inner().clone(),
+    };
+    if cfg.disabled_servers.iter().any(|s| *s == name) {
+        cfg.disabled_servers.retain(|s| *s != name);
+        save_config(&app, &cfg)?;
+        if let Ok(mut g) = state.cfg.lock() {
+            *g = cfg;
+        }
+    }
+    Ok(json!({ "server": name, "tools": n }))
 }
 
 /// 移除代理服务。返回移除的工具数。内置服务不可移除。
 #[tauri::command(rename_all = "snake_case")]
-pub fn mcp_gw_unregister(state: State<'_, GatewayState>, server: String) -> Result<Value, String> {
+pub fn mcp_gw_unregister(
+    app: AppHandle,
+    state: State<'_, GatewayState>,
+    server: String,
+) -> Result<Value, String> {
     let n = unregister_server(&state, &server)?;
-    Ok(json!({ "server": server.trim(), "removed": n }))
+    /* 关闭记录跟着服务一起走：留着的话，将来同名服务再注册
+       （见 mcp_gw_register 的清理）会踩到它，且清单会无界增长。 */
+    let name = server.trim().to_string();
+    let mut cfg = match state.cfg.lock() {
+        Ok(g) => g.clone(),
+        Err(e) => e.into_inner().clone(),
+    };
+    if cfg.disabled_servers.iter().any(|s| *s == name) {
+        cfg.disabled_servers.retain(|s| *s != name);
+        save_config(&app, &cfg)?;
+        if let Ok(mut g) = state.cfg.lock() {
+            *g = cfg;
+        }
+    }
+    Ok(json!({ "server": name, "removed": n }))
 }
 
 /* ================================================================== */
@@ -1364,5 +1500,60 @@ mod tests {
         assert_eq!(cfg.port, DEFAULT_PORT);
         assert!(cfg.auto_start, "默认自动启动：功能目的就是免手动开启");
         assert!(cfg.token.is_empty(), "令牌首次启动才生成");
+        assert!(cfg.disabled_servers.is_empty(), "默认不关任何 server");
+    }
+
+    /* ---------- 插件 MCP 总开关 ---------- */
+
+    #[test]
+    fn server_enabled_defaults_on() {
+        let cfg = GwConfig::default();
+        assert!(server_enabled(&cfg, "task-board"));
+        assert!(server_enabled(&cfg, "anything"));
+    }
+
+    #[test]
+    fn server_enabled_reflects_disabled_list() {
+        let cfg = GwConfig { disabled_servers: vec!["xmind".into()], ..GwConfig::default() };
+        assert!(!server_enabled(&cfg, "xmind"));
+        assert!(server_enabled(&cfg, "task-board"), "只关列着的那个");
+    }
+
+    #[test]
+    fn old_config_without_disabled_field_still_loads() {
+        // 升级兼容：旧 config.json 没有 disabled_servers 字段，
+        // 反序列化必须成功且按「全开」处理（serde default）。
+        let cfg: GwConfig = serde_json::from_str(r#"{"port":9910,"token":"t","auto_start":true}"#)
+            .expect("旧配置必须能读");
+        assert!(cfg.disabled_servers.is_empty());
+        assert!(server_enabled(&cfg, "task-board"));
+    }
+
+    #[test]
+    fn disabled_server_tools_rejected_with_reason() {
+        let st = state_with(vec![
+            native_tool("xmind", "list_maps"),
+            native_tool("other", "do_thing"),
+        ]);
+        {
+            let mut cfg = st.cfg.lock().unwrap();
+            cfg.disabled_servers.push("xmind".into());
+        }
+        // 调用要报「被关闭」并指路设置，而不是「没有这个工具」——
+        // 后者会让 AI 改调用方式，而问题在面板里。
+        let e = call_tool("xmind__list_maps", &json!({}), &st).unwrap_err();
+        assert!(e.contains("整体关闭"), "应说明是整体关闭：{e}");
+        assert!(e.contains("设置"), "应指路设置页：{e}");
+        // 对照组：没被关的 server 照常可调（证明拒绝确实来自开关，不是全瘫）
+        let r = call_tool("other__do_thing", &json!({}), &st);
+        assert!(r.is_ok(), "没被关的 server 不该被牵连：{:?}", r.err());
+    }
+
+    #[test]
+    fn enabled_server_calls_normally() {
+        let st = state_with(vec![native_tool("xmind", "list_maps")]);
+        // 自检：开关没拨动时调用照常（上一条的拒绝确实是开关导致的）
+        let r = call_tool("xmind__list_maps", &json!({ "a": 1 }), &st);
+        assert!(r.is_ok(), "开着的 server 不该被拦：{:?}", r.err());
     }
 }

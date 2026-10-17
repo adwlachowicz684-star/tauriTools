@@ -25,6 +25,8 @@ type GwServer = {
   kind: 'native' | 'proxy';
   url: string;
   tools: string[];
+  /** 总开关状态：false = 该 server 的全部工具对 AI 客户端不可见 */
+  enabled: boolean;
 };
 type GwStatus = {
   running: boolean;
@@ -45,7 +47,7 @@ export default function McpGatewayCard() {
   const ctx = useNexus();
   const [st, setSt] = useState<GwStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | 'start' | 'stop' | 'save' | 'register'>(null);
+  const [busy, setBusy] = useState<null | 'start' | 'stop' | 'save' | 'register' | 'toggle'>(null);
   /* 配置草稿：拉到时初始化；没拉到（加载中 / 失败）时禁用保存，
      否则会把空端口当成 0 写进去。 */
   const [portDraft, setPortDraft] = useState('');
@@ -159,6 +161,29 @@ export default function McpGatewayCard() {
     }
   }, [ctx, refresh]);
 
+  /*
+   * 插件 MCP 总开关：整体打开 / 关闭某个 server 的工具。
+   *
+   * 与「移除」的区别：这个**不碰注册表** —— 服务还在，工具还登记着，
+   * 只是对 AI 客户端整体隐身（tools/list 不列、调用报「已关闭」）。
+   * 拨回来立刻恢复。适合这些场景：
+   *   · 暂时不想让 AI 看到某个插件的全部工具（比如在改那个插件）；
+   *   · 插件卸载了 / 打算卸载，先把它的工具关掉（移除会连注册一起删）。
+   * 即时生效，不用重启网关（Rust 侧现读 disabled_servers）。
+   */
+  const toggleServer = useCallback(async (server: string, enabled: boolean) => {
+    setBusy('toggle');
+    try {
+      await ctx.invoke('mcp_gw_set_server_enabled', { server, enabled });
+      ctx.toast(enabled ? `已开启「${server}」的全部工具` : `已关闭「${server}」的全部工具`, 'ok');
+      await refresh();
+    } catch (e: any) {
+      ctx.toast(`操作失败：${String(e?.message ?? e)}`, 'err');
+    } finally {
+      setBusy(null);
+    }
+  }, [ctx, refresh]);
+
   const regenToken = useCallback(async () => {
     /*
      * 令牌由 Rust 生成（32 位 hex）。这里借一次保存流程写进去：
@@ -182,6 +207,13 @@ export default function McpGatewayCard() {
   const cfgText = st
     ? `{\n  "mcpServers": {\n    "nexus-panel": {\n      "url": "http://127.0.0.1:${st.port}/mcp",\n      "headers": { "Authorization": "Bearer ${st.token || '<令牌>'}" }\n    }\n  }\n}`
     : '';
+
+  /* 关掉的 server 的工具不进 AI 的视线 —— 统计区要把这笔账算出来，
+     否则"工具总数"和客户端里实际能调的数对不上。 */
+  const hiddenServers = st ? st.servers.filter((s) => !s.enabled).length : 0;
+  const hiddenTools = st
+    ? st.servers.filter((s) => !s.enabled).reduce((n, s) => n + s.tools.length, 0)
+    : 0;
 
   return (
     <div className="p-card">
@@ -244,10 +276,22 @@ export default function McpGatewayCard() {
             <div className="p-stat">
               <div className="k">工具总数</div>
               <div className="v" style={{ fontSize: 'var(--fs-15, 15px)' }}>{st.toolCount}</div>
+              {/* 关掉 server 后两个数会不一致 —— 不显示"AI 可见"的话，
+                  用户按"工具总数"去客户端里找，找不到的那几个像坏了。 */}
+              {hiddenTools > 0 ? (
+                <div className="k" style={{ marginTop: 'var(--sp-1, 2px)', color: 'var(--warn)' }}>
+                  AI 可见 {st.toolCount - hiddenTools}
+                </div>
+              ) : null}
             </div>
             <div className="p-stat">
               <div className="k">服务数</div>
               <div className="v" style={{ fontSize: 'var(--fs-15, 15px)' }}>{st.servers.length}</div>
+              {hiddenServers > 0 ? (
+                <div className="k" style={{ marginTop: 'var(--sp-1, 2px)', color: 'var(--warn)' }}>
+                  已关闭 {hiddenServers}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -328,6 +372,10 @@ export default function McpGatewayCard() {
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>
             已接入的服务 · {st.servers.length}
           </div>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-1, 2px)', fontSize: 'var(--fs-11, 11px)', lineHeight: 1.8 }}>
+            每行前面的勾选框是**插件 MCP 总开关**：取消勾选，该插件的全部工具立即从
+            AI 客户端消失（服务本身还在，勾回来即刻恢复）—— 插件卸载前后用它临时关停。
+          </div>
           {st.servers.length === 0 ? (
             <div className="p-muted" style={{ marginTop: 'var(--sp-4, 8px)' }}>
               一个都没有 —— 内置工具应在启动时自动注册，这不该发生。
@@ -339,9 +387,26 @@ export default function McpGatewayCard() {
                 marginTop: 'var(--sp-4, 8px)', padding: '10px 12px', borderRadius: 'var(--r-sm)',
                 background: 'var(--surface-sunk)',
                 boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
+                // 关掉的 server 整行压暗：一眼看出"这个插件的工具现在不在网关里"
+                opacity: s.enabled ? 1 : 0.55,
               }}
             >
               <div className="p-row" style={{ gap: 'var(--sp-4, 8px)' }}>
+                <label
+                  className="p-row"
+                  style={{ gap: 'var(--sp-2, 4px)', cursor: busy === 'toggle' ? 'default' : 'pointer', flex: 'none' }}
+                  title={s.enabled ? '取消勾选 = 关闭这个插件的全部 MCP 工具' : '勾选 = 恢复这个插件的全部 MCP 工具'}
+                >
+                  <input
+                    type="checkbox"
+                    checked={s.enabled}
+                    disabled={busy !== null}
+                    onChange={(e) => toggleServer(s.name, e.target.checked)}
+                  />
+                  <span className="p-muted" style={{ fontSize: 'var(--fs-11, 11px)' }}>
+                    {s.enabled ? '已开启' : '已关闭'}
+                  </span>
+                </label>
                 <span className="p-mono" style={{ fontSize: 'var(--fs-12, 12px)', color: 'var(--text)' }}>
                   {s.name}
                 </span>
@@ -366,17 +431,20 @@ export default function McpGatewayCard() {
                 className="p-mono p-muted"
                 style={{ marginTop: 'var(--sp-3, 6px)', fontSize: 'var(--fs-11, 11px)', wordBreak: 'break-all', lineHeight: 1.8 }}
               >
-                {s.tools.join('  ·  ')}
+                {s.enabled ? s.tools.join('  ·  ') : `（已整体关闭，${s.tools.length} 个工具暂不在 AI 客户端列出）`}
               </div>
             </div>
           ))}
 
           {/* ---------------- 代理注册 ---------------- */}
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>接入第三方 MCP 服务</div>
-          <div className="p-muted" style={{ marginTop: '2px', fontSize: 'var(--fs-11, 11px)', lineHeight: 1.8 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-1, 2px)', fontSize: 'var(--fs-11, 11px)', lineHeight: 1.8 }}>
             本机跑的其它 MCP server（http://）可以代理进来：填服务名与地址，
             网关会拉取它的工具清单并冠上 <span className="p-mono">服务名__</span> 前缀。
             内置插件不需要这一步 —— 它们的工具启动时已自动注册。
+            <br />
+            服务名**建议直接用插件 id**（如 <span className="p-mono">xmind</span>）：
+            卸载该插件时，设置页会按这个名字自动清理网关里的服务。
           </div>
           <div className="p-row" style={{ marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' }}>
             <input
@@ -418,7 +486,7 @@ export default function McpGatewayCard() {
 
           {/* ---------------- 客户端配置示例 ---------------- */}
           <div className="p-muted" style={{ marginTop: 'var(--sp-7, 14px)' }}>AI 客户端配置示例</div>
-          <div className="p-muted" style={{ marginTop: '2px', fontSize: 'var(--fs-11, 11px)', lineHeight: 1.8 }}>
+          <div className="p-muted" style={{ marginTop: 'var(--sp-1, 2px)', fontSize: 'var(--fs-11, 11px)', lineHeight: 1.8 }}>
             把下面这段并进客户端的 mcpServers（WorkBuddy / Claude 等）——
             只需配**一个**端点，全部插件工具都在里面。
           </div>

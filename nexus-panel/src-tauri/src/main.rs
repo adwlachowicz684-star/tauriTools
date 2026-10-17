@@ -417,13 +417,19 @@ fn main() {
             task_board::tb_read_store, task_board::tb_write_store,
             task_board::tb_http_start, task_board::tb_http_stop,
             /*
-             * MCP 网关六条 —— 统一接入点（{server}__{tool} 前缀聚合）的
-             * 起停 / 状态 / 配置 / 代理注册。前端在「设置 → MCP 网关」页。
-             * 少了它们：网关面板里每个按钮点了都没反应，且运行时才报
-             * "command not found"（与 rt_dep 同类的漏注册，扫描器第 ⑦ 组会抓）。
+             * MCP 网关七条 —— 统一接入点（{server}__{tool} 前缀聚合）的
+             * 起停 / 状态 / 配置 / 代理注册 + 插件 MCP 总开关。
+             * 前端在「设置 → MCP 网关」页。少了它们：网关面板里每个按钮
+             * 点了都没反应，且运行时才报 "command not found"
+             * （与 rt_dep 同类的漏注册，扫描器第 ⑦ 组会抓）。
+             *
+             * set_server_enabled 单独列在 save_config 之外：它即时生效
+             * （tools/list 与 tools/call 现读 disabled_servers），
+             * 与端口令牌「要重启才生效」不是一回事，见该命令的注释。
              */
             mcp_gate::mcp_gw_start, mcp_gate::mcp_gw_stop, mcp_gate::mcp_gw_status,
             mcp_gate::mcp_gw_save_config, mcp_gate::mcp_gw_register, mcp_gate::mcp_gw_unregister,
+            mcp_gate::mcp_gw_set_server_enabled,
             /*
              * updater（应用自更新）三条 —— 见上面的 mod updater 注释。
              * 少了这三条：设置 → 更新 点「检查更新」没反应，且运行时才报

@@ -92,7 +92,7 @@ import { STYLE_LABELS as THEME_STYLE_LABELS } from '../../js/themes.js';
    原先只画在插件设置抽屉里，这里复用同一份组件 —— 两处行为必须一致，
    各写一份迟早漂移（一边加了开关另一边没有）。 */
 import SandboxSection from '../../src/components/SandboxSection';
-import { prompt } from '../../js/dialog.js';
+import { prompt, confirm } from '../../js/dialog.js';
 import { SHELL_SHORTCUT_SPECS, shellComboSet, normCombo } from '../../js/shell-shortcuts.js';
 
 type TabKey = 'theme' | 'plugins' | 'mcpgw' | 'deps' | 'external' | 'files' | 'shortcuts' | 'favdirs' | 'window' | 'update' | 'about';
@@ -1200,24 +1200,66 @@ export default function Settings() {
   }, [tab, plugins]);
 
   /**
-   * 移除插件。
+   * 移除插件（带 MCP 网关协作）。
    *
    * 原来直接 `window.__NEXUS__?.removePlugin?.(p.id)`：沙箱下取不到方法，
    * `?.` 静默跳过 —— 用户点了「移除」却什么都没发生、也没有任何提示。
    * 这里改成：先降级到 parent 找外壳；确实拿不到就显式报错，不再静默。
+   *
+   * MCP 协作：插件在网关里注册过服务时（约定「服务名 = 插件 id」，
+   * 见 MCP 网关页代理注册表单的提示），移除前先问清楚，
+   * 移除后**一并注销**那个服务 —— 否则插件没了、它的工具还挂在网关里，
+   * AI 照样能调（代理指向一个已不存在的端口，每次调用必失败），
+   * 而用户只会看到"卸载了但 AI 还在报那个插件的错"。
+   *
+   * 查网关失败**不挡卸载**（网关没开 / 命令不在白名单都不该让插件卸不掉），
+   * 只是没有自动清理那一档 —— 用户还能去「MCP 网关」页手动移除。
    */
-  const removePlugin = (p: PluginManifest) => {
+  const removePlugin = async (p: PluginManifest) => {
     const shell = shellGlobal();
     if (typeof shell?.removePlugin !== 'function') {
       ctx.toast('移除失败：未连接到外壳，请用侧栏的插件管理操作', 'err');
       return;
+    }
+    let mcpServer: string | null = null;
+    try {
+      const gw: any = await ctx.invoke('mcp_gw_status');
+      const hit = (gw?.servers ?? []).find(
+        (s: any) => s?.name === p.id && s?.kind === 'proxy',
+      );
+      if (hit) mcpServer = p.id;
+    } catch { /* 网关不可用：跳过自动清理，不挡卸载本身 */ }
+    if (mcpServer) {
+      const ok = await confirm({
+        title: '移除插件',
+        message:
+          `「${p.name}」在 MCP 网关里注册了服务「${mcpServer}」。\n` +
+          `移除插件后将一并注销该服务 —— 它的全部工具会从 AI 客户端消失。\n\n` +
+          `如果只是想临时关停：点「取消」，去「设置 → MCP 网关」取消它的勾选即可（可随时恢复）。`,
+        okText: '移除并注销 MCP 服务',
+        danger: true,
+      });
+      if (!ok) return;
     }
     try {
       shell.removePlugin(p.id);
       const list = shell.getPlugins?.();
       setPlugins(Array.isArray(list) ? list : []);
       setPluginsUnknown(!Array.isArray(list));
-      ctx.toast(`已移除「${p.name}」`, 'ok');
+      if (mcpServer) {
+        try {
+          await ctx.invoke('mcp_gw_unregister', { server: mcpServer });
+          ctx.toast(`已移除「${p.name}」，其 MCP 服务「${mcpServer}」已一并注销`, 'ok');
+        } catch (e: any) {
+          // 插件已经卸了，MCP 清理失败不能把成功说成失败 —— 说清残留和补救路径
+          ctx.toast(
+            `插件已移除，但 MCP 服务「${mcpServer}」注销失败：${String(e?.message ?? e)}。可去「设置 → MCP 网关」手动移除`,
+            'warn',
+          );
+        }
+      } else {
+        ctx.toast(`已移除「${p.name}」`, 'ok');
+      }
     } catch (e: any) {
       ctx.toast('移除失败：' + String(e?.message ?? e), 'err');
     }

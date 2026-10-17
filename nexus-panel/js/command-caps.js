@@ -116,6 +116,15 @@ export const COMMAND_CAPS = {
    * tools/list 消失、调用报未知工具）。与 save_config 同级。
    */
   mcp_gw_unregister: 'W',
+  /*
+   * set_server_enabled 定 **W**：插件 MCP 总开关，改的是
+   * disabled_servers（哪个 server 的工具对 AI 客户端可见）。
+   * 与 unregister 同一档——两者都是"让某 server 的工具从
+   * tools/list 消失"，区别只在这个可逆（拨回来就恢复），
+   * 且不动注册表（配置独立持久化）。定 W 让第三方拿不到
+   * （THIRD_DENY_CAPS 只禁 M，这条靠"settings 是内置插件"兜住）。
+   */
+  mcp_gw_set_server_enabled: 'W',
   // 起停 webhook —— 同样是网络监听
   webhook_start: 'M',
   webhook_stop: 'M',

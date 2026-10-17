@@ -110,8 +110,13 @@ t('main.rs 声明 mod updater', /\bmod\s+updater;/.test(mainRs));
 t('main.rs 注册了插件', /\.plugin\(\s*tauri_plugin_updater::Builder::new\(\)/.test(mainRs));
 
 /* generate_handler! 里缺一条 = 运行时 "command not found"，编译不报错 ——
-   这正是 command-consistency 扫描器要抓的那类缺口。 */
-const handler = mainRs.slice(mainRs.indexOf('generate_handler!['), mainRs.indexOf('generate_handler![') + 4000);
+   这正是 command-consistency 扫描器要抓的那类缺口。
+   窗口取到宏结束的 `])` 为止：曾经写死 +4000 字，注释一长就把
+   后面的命令挤出窗口（MCP 网关注释扩容时真实发生过），假失败。 */
+const hStart = mainRs.indexOf('generate_handler![');
+const hRest = mainRs.slice(hStart);
+const hEnd = hRest.search(/\n\s*\]\s*\)/);
+const handler = hEnd >= 0 ? hRest.slice(0, hEnd) : hRest;
 for (const c of ['updater::updater_check', 'updater::updater_install', 'updater::updater_relaunch']) {
   t(`generate_handler! 里有 ${c}`, handler.includes(c));
 }

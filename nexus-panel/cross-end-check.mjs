@@ -90,7 +90,12 @@ function parseRustCommands() {
 function parseRegistered() {
   const src = readFileSync(join(SRC, 'main.rs'), 'utf8');
   const i = src.indexOf('invoke_handler');
-  const seg = src.slice(i, i + 5000);
+  const rest = src.slice(i);
+  /* 窗口取到宏结束的 `])` 为止。曾经写死 +5000 字：handler 里
+     注释一长（MCP 网关那次扩容），后面的命令被挤出窗口，
+     报出「已定义但没注册」的假阳性 —— 而它们明明注册着。 */
+  const end = rest.search(/\n\s*\]\s*\)/);
+  const seg = end >= 0 ? rest.slice(0, end) : rest;
   return new Set([...seg.matchAll(/fpx::(fpx_\w+)/g)].map((m) => m[1]));
 }
 

@@ -217,6 +217,7 @@ export default definePlugin({
     const pages = {
       theme: h('div', {}),
       plugins: h('div', {}),
+      mcpgw: h('div', {}),
       deps: h('div', {}),
       external: h('div', {}),
       files: h('div', {}),
@@ -228,6 +229,7 @@ export default definePlugin({
     const TABS = [
       ['theme', '主题'],
       ['plugins', '插件'],
+      ['mcpgw', 'MCP 网关'],
       ['deps', '依赖'],
       ['external', '外链'],
       ['files', '文件'],
@@ -677,6 +679,419 @@ export default definePlugin({
           plugins ? '暂无可管理的插件' : '未连接到外壳（沙箱隔离态），读不到插件列表，移除功能不可用'),
       ),
     );
+
+    /* ============ 3.1 MCP 网关 ============ */
+    /*
+     * 与 React 版（McpGatewayCard.tsx）同一套能力、同一套命令 ——
+     * 两版行为不同会很难解释，而 controls-test 也钉了两版页签一致。
+     *
+     * 实现方式与文件授权、常用文件夹两节相同：闭包状态 + 整块重画。
+     * 草稿（端口/令牌/代理表单）放在闭包里而不是 DOM 里，
+     * 重画后从闭包回填 —— 否则每刷新一次表单就被清空。
+     */
+    {
+      const BUILTIN = ['project-group', 'task-board'];
+      const card = h('div.p-card', {},
+        h('h2', {}, 'MCP 网关'),
+        h('div.p-muted', { style: { marginBottom: '12px', lineHeight: '1.9' } },
+          '统一接入点：AI 客户端只配这一个端点，全部插件的 MCP 工具都在里面',
+          '（工具名带 ', h('span.p-mono', {}, '插件名__工具名'), ' 前缀）。',
+          '新插件的工具注册进网关后即可直接使用，不需要再改客户端配置。'),
+      );
+      pages.mcpgw.appendChild(card);
+      const body = h('div', {});
+      card.appendChild(body);
+
+      let st = null;
+      let loadErr = null;
+      let busy = false;
+      /* 配置草稿：拉到时初始化；没拉到（加载中 / 失败）时禁用保存，
+         否则会把空端口当成 0 写进去。 */
+      let portDraft = '';
+      let tokenDraft = '';
+      let autoDraft = true;
+      /* 保存后若改了运行中的端口/令牌，Rust 返回 needRestart ——
+         必须显示出来，否则"保存了但没变化"看起来像功能坏了。 */
+      let needRestart = false;
+      let showToken = false;
+      const proxy = { server: '', url: '', token: '' };
+
+      const refresh = async () => {
+        try {
+          const r = await ctx.invoke('mcp_gw_status');
+          st = r;
+          portDraft = String(r.port ?? '');
+          tokenDraft = r.token ?? '';
+          autoDraft = !!r.autoStart;
+          needRestart = false;
+          loadErr = null;
+        } catch (e) {
+          st = null;
+          loadErr = String(e?.message || e);
+        }
+        paint();
+      };
+
+      const start = async () => {
+        busy = true; paint();
+        try {
+          await ctx.invoke('mcp_gw_start', {});
+          ctx.toast('MCP 网关已启动', 'ok');
+        } catch (e) {
+          ctx.toast(`启动失败：${String(e?.message || e)}`, 'err');
+        }
+        busy = false;
+        await refresh();
+      };
+
+      const stop = async () => {
+        busy = true; paint();
+        try {
+          const clean = await ctx.invoke('mcp_gw_stop', {});
+          ctx.toast(clean ? 'MCP 网关已停止' : '已发出停止指令，但端口可能仍在监听', clean ? 'ok' : 'warn');
+        } catch (e) {
+          ctx.toast(`停止失败：${String(e?.message || e)}`, 'err');
+        }
+        busy = false;
+        await refresh();
+      };
+
+      const save = async () => {
+        const port = Number(portDraft);
+        if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+          ctx.toast('端口需在 1024–65535 之间', 'err');
+          return;
+        }
+        busy = true; paint();
+        try {
+          const r = await ctx.invoke('mcp_gw_save_config', {
+            port, token: tokenDraft.trim(), autoStart: autoDraft,
+          });
+          needRestart = !!r?.needRestart;
+          ctx.toast(r?.needRestart ? '已保存，但端口/令牌要重启网关才生效' : '配置已保存',
+            r?.needRestart ? 'warn' : 'ok');
+        } catch (e) {
+          ctx.toast(`保存失败：${String(e?.message || e)}`, 'err');
+        }
+        busy = false;
+        await refresh();
+      };
+
+      const register = async () => {
+        const name = proxy.server.trim();
+        const url = proxy.url.trim();
+        if (!name || !url) { ctx.toast('服务名与地址都要填', 'err'); return; }
+        busy = true; paint();
+        try {
+          const r = await ctx.invoke('mcp_gw_register', {
+            server: name, url, token: proxy.token.trim(),
+          });
+          ctx.toast(`已注册「${r?.server ?? name}」，纳入 ${r?.tools ?? 0} 个工具`, 'ok');
+          proxy.server = ''; proxy.url = ''; proxy.token = '';
+        } catch (e) {
+          ctx.toast(`注册失败：${String(e?.message || e)}`, 'err');
+        }
+        busy = false;
+        await refresh();
+      };
+
+      const unregister = async (server) => {
+        busy = true; paint();
+        try {
+          await ctx.invoke('mcp_gw_unregister', { server });
+          ctx.toast(`已移除「${server}」`, 'ok');
+        } catch (e) {
+          ctx.toast(`移除失败：${String(e?.message || e)}`, 'err');
+        }
+        busy = false;
+        await refresh();
+      };
+
+      /*
+       * 插件 MCP 总开关：整体打开 / 关闭某个 server 的工具。
+       * 与「移除」的区别：不碰注册表 —— 服务还在，工具还登记着，
+       * 只是对 AI 客户端整体隐身（tools/list 不列、调用报「已关闭」）。
+       * 拨回来立刻恢复。卸载插件前后用它临时关停。
+       * 即时生效，不用重启网关（Rust 侧现读 disabled_servers）。
+       */
+      const toggleServer = async (server, enabled) => {
+        busy = true; paint();
+        try {
+          await ctx.invoke('mcp_gw_set_server_enabled', { server, enabled });
+          ctx.toast(enabled ? `已开启「${server}」的全部工具` : `已关闭「${server}」的全部工具`, 'ok');
+        } catch (e) {
+          ctx.toast(`操作失败：${String(e?.message || e)}`, 'err');
+        }
+        busy = false;
+        await refresh();
+      };
+
+      /*
+       * 令牌由前端生成（crypto.getRandomValues，32 位 hex），
+       * 与 Rust 侧同强度；点「保存配置」后生效。
+       * 保存空令牌时 Rust 只在启动时补，save_config 对空令牌原样写空，
+       * 所以不能依赖"存一个空让它自己补"。
+       */
+      const regenToken = () => {
+        const bytes = new Uint8Array(16);
+        (globalThis.crypto ?? window.crypto)?.getRandomValues?.(bytes);
+        const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+        if (hex.length !== 32) {
+          ctx.toast('当前环境无法生成随机令牌，请手动粘贴一个', 'err');
+          return;
+        }
+        tokenDraft = hex;
+        showToken = true;
+        ctx.toast('已生成新令牌（点「保存配置」后生效）', 'ok');
+        paint();
+      };
+
+      const paint = () => {
+        body.textContent = '';
+        if (loadErr) {
+          body.appendChild(h('div.p-muted',
+            { style: { padding: '12px 0', color: 'var(--danger)' } },
+            `读取网关状态失败：${loadErr}`));
+          return;
+        }
+        if (!st) {
+          body.appendChild(h('div.p-muted', { style: { padding: '12px 0' } }, '载入中…'));
+          return;
+        }
+
+        /* 关掉的 server 的工具不进 AI 的视线 —— 统计区要把这笔账算出来，
+           否则"工具总数"和客户端里实际能调的数对不上。 */
+        const hiddenServers = st.servers.filter((s) => !s.enabled).length;
+        const hiddenTools = st.servers.filter((s) => !s.enabled)
+          .reduce((n, s) => n + s.tools.length, 0);
+
+        /* ---------------- 运行状态 ---------------- */
+        body.appendChild(h('div.p-row', { style: { gap: '8px' } },
+          h('span', {
+            style: {
+              fontSize: 'var(--fs-12, 12px)',
+              color: st.running ? 'var(--ok)' : 'var(--text-mute)',
+            },
+          }, `● ${st.running ? `运行中 http://${st.addr}/mcp` : '未启动'}`),
+          h('span', { style: { flex: '1' } }),
+          h('button.p-btn', {
+            style: { flex: 'none', fontSize: 'var(--fs-11, 11px)', padding: '2px 8px' },
+            disabled: busy,
+            title: '重新拉取状态',
+            onclick: () => { refresh(); },
+          }, '↻'),
+          st.running
+            ? h('button.p-btn', {
+              style: { flex: 'none', fontSize: 'var(--fs-12, 12px)' },
+              disabled: busy,
+              onclick: stop,
+            }, busy ? '停止中…' : '停止')
+            : h('button.p-btn.primary', {
+              style: { flex: 'none', fontSize: 'var(--fs-12, 12px)' },
+              disabled: busy,
+              onclick: start,
+            }, busy ? '启动中…' : '启动'),
+        ));
+
+        /* ---------------- 统计 ---------------- */
+        body.appendChild(h('div.p-grid', { style: { marginTop: 'var(--sp-6, 12px)' } },
+          h('div.p-stat', {},
+            h('div.k', {}, '工具总数'),
+            h('div.v', { style: { fontSize: 'var(--fs-15, 15px)' } }, String(st.toolCount)),
+            hiddenTools > 0
+              ? h('div.k', { style: { marginTop: 'var(--sp-1, 2px)', color: 'var(--warn)' } },
+                `AI 可见 ${st.toolCount - hiddenTools}`)
+              : null),
+          h('div.p-stat', {},
+            h('div.k', {}, '服务数'),
+            h('div.v', { style: { fontSize: 'var(--fs-15, 15px)' } }, String(st.servers.length)),
+            hiddenServers > 0
+              ? h('div.k', { style: { marginTop: 'var(--sp-1, 2px)', color: 'var(--warn)' } },
+                `已关闭 ${hiddenServers}`)
+              : null),
+        ));
+
+        /* ---------------- 配置 ---------------- */
+        body.appendChild(h('div.p-muted', { style: { marginTop: 'var(--sp-7, 14px)' } }, '配置'));
+        body.appendChild(h('div.p-row', { style: { marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' } },
+          h('span.p-muted', { style: { width: '56px', flex: 'none', fontSize: 'var(--fs-12, 12px)' } }, '端口'),
+          h('input.p-input.sm', {
+            type: 'number', min: '1024', max: '65535',
+            style: { width: '90px', flex: 'none', fontSize: 'var(--fs-12, 12px)', padding: '0 10px' },
+            value: portDraft,
+            oninput: (e) => { portDraft = e.target.value; },
+            onkeydown: (e) => { if (isComposing(e)) return; if (e.key === 'Enter') save(); },
+          }),
+          h('span.p-muted', { style: { flex: '1', fontSize: 'var(--fs-11, 11px)' } },
+            '只监听 127.0.0.1；与 project-group（9905 起）、task-board（9911 起）错开即可'),
+        ));
+        body.appendChild(h('div.p-row', { style: { marginTop: 'var(--sp-3, 6px)', gap: 'var(--sp-4, 8px)' } },
+          h('span.p-muted', { style: { width: '56px', flex: 'none', fontSize: 'var(--fs-12, 12px)' } }, '令牌'),
+          h('input.p-input.sm.p-mono', {
+            type: showToken ? 'text' : 'password',
+            placeholder: '客户端要用它鉴权',
+            style: { flex: '1', fontSize: 'var(--fs-12, 12px)', padding: '0 10px', minWidth: '0' },
+            value: tokenDraft,
+            oninput: (e) => { tokenDraft = e.target.value; },
+            onkeydown: (e) => { if (isComposing(e)) return; if (e.key === 'Enter') save(); },
+          }),
+          h('button.p-btn.sm', {
+            style: { flex: 'none', fontSize: 'var(--fs-11, 11px)', padding: '2px 8px' },
+            title: showToken ? '隐藏令牌' : '显示令牌',
+            onclick: () => { showToken = !showToken; paint(); },
+          }, showToken ? '隐藏' : '显示'),
+          h('button.p-btn.sm', {
+            style: { flex: 'none', fontSize: 'var(--fs-11, 11px)', padding: '2px 8px' },
+            title: '生成一个新的随机令牌（保存后生效）',
+            onclick: regenToken,
+          }, '重新生成'),
+        ));
+        body.appendChild(h('div.p-row', { style: { marginTop: 'var(--sp-3, 6px)', gap: 'var(--sp-4, 8px)' } },
+          h('span.p-muted', { style: { width: '56px', flex: 'none', fontSize: 'var(--fs-12, 12px)' } }, '启动'),
+          h('label.p-row', {
+            style: { gap: 'var(--sp-2, 4px)', fontSize: 'var(--fs-12, 12px)', cursor: 'pointer' },
+          },
+            h('input', {
+              type: 'checkbox',
+              checked: autoDraft,
+              onchange: (e) => { autoDraft = e.target.checked; },
+            }),
+            h('span', {}, '随应用自动启动')),
+          h('span', { style: { flex: '1' } }),
+          h('button.p-btn.primary', {
+            style: { flex: 'none', fontSize: 'var(--fs-12, 12px)' },
+            disabled: busy,
+            onclick: save,
+          }, busy ? '保存中…' : '保存配置'),
+        ));
+        if (needRestart) {
+          body.appendChild(h('div.p-muted', {
+            style: { marginTop: 'var(--sp-3, 6px)', color: 'var(--warn)', lineHeight: '1.8' },
+          }, '端口/令牌改了不会热生效（监听与鉴权用的是启动时那一份）—— 点上面的「停止」再「启动」即可让新配置生效。'));
+        }
+
+        /* ---------------- 服务清单 ---------------- */
+        body.appendChild(h('div.p-muted', { style: { marginTop: 'var(--sp-7, 14px)' } },
+          `已接入的服务 · ${st.servers.length}`));
+        body.appendChild(h('div.p-muted', {
+          style: { marginTop: 'var(--sp-1, 2px)', fontSize: 'var(--fs-11, 11px)', lineHeight: '1.8' },
+        }, '每行前面的勾选框是**插件 MCP 总开关**：取消勾选，该插件的全部工具立即从 AI 客户端消失（服务本身还在，勾回来即刻恢复）—— 插件卸载前后用它临时关停。'));
+        if (st.servers.length === 0) {
+          body.appendChild(h('div.p-muted', { style: { marginTop: 'var(--sp-4, 8px)' } },
+            '一个都没有 —— 内置工具应在启动时自动注册，这不该发生。'));
+        }
+        for (const s of st.servers) {
+          const isBuiltin = BUILTIN.includes(s.name);
+          body.appendChild(h('div', {
+            style: {
+              marginTop: 'var(--sp-4, 8px)', padding: '10px 12px', borderRadius: 'var(--r-sm)',
+              background: 'var(--surface-sunk)',
+              boxShadow: 'inset 2px 2px 5px var(--sh-dark), inset -2px -2px 5px var(--sh-light)',
+              // 关掉的 server 整行压暗：一眼看出"这个插件的工具现在不在网关里"
+              opacity: s.enabled ? '1' : '0.55',
+            },
+          },
+            h('div.p-row', { style: { gap: 'var(--sp-4, 8px)' } },
+              h('label.p-row', {
+                style: {
+                  gap: 'var(--sp-2, 4px)', flex: 'none',
+                  cursor: busy ? 'default' : 'pointer',
+                },
+                title: s.enabled ? '取消勾选 = 关闭这个插件的全部 MCP 工具' : '勾选 = 恢复这个插件的全部 MCP 工具',
+              },
+                h('input', {
+                  type: 'checkbox',
+                  checked: s.enabled,
+                  disabled: busy,
+                  onchange: (e) => toggleServer(s.name, e.target.checked),
+                }),
+                h('span.p-muted', { style: { fontSize: 'var(--fs-11, 11px)' } },
+                  s.enabled ? '已开启' : '已关闭')),
+              h('span.p-mono', { style: { fontSize: 'var(--fs-12, 12px)', color: 'var(--text)' } }, s.name),
+              h('span.p-tag', { style: { flex: 'none' } },
+                isBuiltin ? '内置' : (s.kind === 'proxy' ? '代理' : '原生')),
+              h('span.p-muted', { style: { flex: '1', fontSize: 'var(--fs-11, 11px)' } },
+                `${s.kind === 'proxy' ? s.url : '进程内直调'} · ${s.tools.length} 个工具`),
+              !isBuiltin
+                ? h('button.p-btn.sm', {
+                  style: { flex: 'none', fontSize: 'var(--fs-11, 11px)', padding: '2px 8px' },
+                  title: '从网关移除这个服务（内置服务不可移除）',
+                  disabled: busy,
+                  onclick: () => unregister(s.name),
+                }, '移除')
+                : null),
+            h('div.p-mono.p-muted', {
+              style: {
+                marginTop: 'var(--sp-3, 6px)', fontSize: 'var(--fs-11, 11px)',
+                wordBreak: 'break-all', lineHeight: '1.8',
+              },
+            }, s.enabled ? s.tools.join('  ·  ') : `（已整体关闭，${s.tools.length} 个工具暂不在 AI 客户端列出）`),
+          ));
+        }
+
+        /* ---------------- 代理注册 ---------------- */
+        body.appendChild(h('div.p-muted', { style: { marginTop: 'var(--sp-7, 14px)' } }, '接入第三方 MCP 服务'));
+        body.appendChild(h('div.p-muted', {
+          style: { marginTop: 'var(--sp-1, 2px)', fontSize: 'var(--fs-11, 11px)', lineHeight: '1.8' },
+        },
+          '本机跑的其它 MCP server（http://）可以代理进来：填服务名与地址，网关会拉取它的工具清单并冠上 ',
+          h('span.p-mono', {}, '服务名__'), ' 前缀。内置插件不需要这一步 —— 它们的工具启动时已自动注册。',
+          h('br'),
+          '服务名**建议直接用插件 id**（如 ', h('span.p-mono', {}, 'xmind'), '）：卸载该插件时，设置页会按这个名字自动清理网关里的服务。'));
+        body.appendChild(h('div.p-row', { style: { marginTop: 'var(--sp-4, 8px)', gap: 'var(--sp-4, 8px)' } },
+          h('input.p-input.sm', {
+            type: 'text',
+            placeholder: '服务名（小写字母/数字/连字符）',
+            style: { width: '180px', flex: 'none', fontSize: 'var(--fs-12, 12px)', padding: '0 10px' },
+            value: proxy.server,
+            oninput: (e) => { proxy.server = e.target.value; },
+            onkeydown: (e) => { if (isComposing(e)) return; if (e.key === 'Enter') register(); },
+          }),
+          h('input.p-input.sm.p-mono', {
+            type: 'text',
+            placeholder: 'http://127.0.0.1:端口/mcp',
+            style: { flex: '1', fontSize: 'var(--fs-12, 12px)', padding: '0 10px', minWidth: '0' },
+            value: proxy.url,
+            oninput: (e) => { proxy.url = e.target.value; },
+            onkeydown: (e) => { if (isComposing(e)) return; if (e.key === 'Enter') register(); },
+          }),
+          h('input.p-input.sm.p-mono', {
+            type: 'text',
+            placeholder: '对方令牌（没有可留空）',
+            style: { width: '150px', flex: 'none', fontSize: 'var(--fs-12, 12px)', padding: '0 10px' },
+            value: proxy.token,
+            oninput: (e) => { proxy.token = e.target.value; },
+            onkeydown: (e) => { if (isComposing(e)) return; if (e.key === 'Enter') register(); },
+          }),
+          h('button.p-btn.primary', {
+            style: { flex: 'none', fontSize: 'var(--fs-12, 12px)' },
+            disabled: busy,
+            onclick: register,
+          }, busy ? '注册中…' : '注册'),
+        ));
+
+        /* ---------------- 客户端配置示例 ---------------- */
+        body.appendChild(h('div.p-muted', { style: { marginTop: 'var(--sp-7, 14px)' } }, 'AI 客户端配置示例'));
+        body.appendChild(h('div.p-muted', {
+          style: { marginTop: 'var(--sp-1, 2px)', fontSize: 'var(--fs-11, 11px)', lineHeight: '1.8' },
+        }, '把下面这段并进客户端的 mcpServers（WorkBuddy / Claude 等）—— 只需配**一个**端点，全部插件工具都在里面。'));
+        body.appendChild(h('pre.p-mono', {
+          style: {
+            marginTop: 'var(--sp-4, 8px)', padding: '10px 12px', borderRadius: 'var(--r-sm)',
+            background: 'var(--surface-sunk)', fontSize: 'var(--fs-11, 11px)',
+            color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: '1.8',
+          },
+        }, `{\n  "mcpServers": {\n    "nexus-panel": {\n      "url": "http://127.0.0.1:${st.port}/mcp",\n      "headers": { "Authorization": "Bearer ${st.token || '<令牌>'}" }\n    }\n  }\n}`));
+
+        body.appendChild(h('div.p-muted', {
+          style: { marginTop: 'var(--sp-7, 14px)', lineHeight: '1.9', fontSize: 'var(--fs-12, 12px)' },
+        },
+          '工具名规则：', h('span.p-mono', {}, '服务名__工具名'), '（双下划线）。例如 ',
+          h('span.p-mono', {}, 'task-board__tb_list_tasks'), '。调用时不带前缀、或前缀不存在，回包里会写明完整清单的查法。'));
+      };
+
+      refresh();
+    }
 
     /* ============ 3.2 快捷键总览 ============ */
     /*

@@ -17,9 +17,9 @@
  *   这些断点分散在 Rust、JS 治理表、插件 UI 三处，各自看都对、
  *   合起来才能用。所以在这里**跨文件**钉住整条接线。
  *
- * 判据同源：命令名六条在四处出现（main.rs / command-caps.js /
+ * 判据同源：命令名七条在四处出现（main.rs / command-caps.js /
  * invoke-policy.js / McpGatewayCard.tsx），本测试从同一份清单出发
- * 逐个核对接点，不各写一份字面量 —— 那样加第七条命令时会漏改测试。
+ * 逐个核对接点，不各写一份字面量 —— 那样加第八条命令时会漏改测试。
  */
 
 import fs from 'node:fs';
@@ -51,7 +51,7 @@ function section(s) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 唯一真相源：网关的六条命令                                            */
+/* 唯一真相源：网关的七条命令                                            */
 /* 等级是设计决策（见 command-caps.js 里的逐条注释），这里连等级一起钉住    */
 /* ------------------------------------------------------------------ */
 const CMDS = [
@@ -61,6 +61,7 @@ const CMDS = [
   ['mcp_gw_save_config', 'W'],
   ['mcp_gw_register', 'M'],
   ['mcp_gw_unregister', 'W'],
+  ['mcp_gw_set_server_enabled', 'W'],
 ];
 const NAMES = CMDS.map(([n]) => n);
 
@@ -99,7 +100,7 @@ t(
 );
 
 /* ================================================================== */
-section('2. Rust 侧实现：六条命令、内置注册、命名空间');
+section('2. Rust 侧实现：七条命令、内置注册、命名空间、总开关');
 /* ================================================================== */
 
 for (const n of NAMES) {
@@ -138,6 +139,37 @@ t(
   /mcp_call_tool/.test(gateSrc) && /Ok\(result\)/.test(gateSrc),
 );
 
+/* ---- 插件 MCP 总开关（disabled_servers） ---- */
+t(
+  'GwConfig 有 disabled_servers 字段且 serde 默认（旧配置无此字段也能读）',
+  /disabled_servers: Vec<String>/.test(gateSrc) && /#\[serde\(default\)\]\s*\n\s*pub disabled_servers/.test(gateSrc),
+);
+t(
+  'server_enabled 判据是「不在关闭清单里就是开的」',
+  /pub fn server_enabled\(cfg: &GwConfig, server: &str\) -> bool/.test(gateSrc)
+    && /!cfg\.disabled_servers\.iter\(\)\.any\(\|s\| s == server\)/.test(gateSrc),
+);
+t(
+  'list_tools 过滤关闭的 server（关了就不该出现在 AI 的工具清单里）',
+  /for t in guard\.iter\(\) \{[\s\S]{0,400}?if !server_enabled\(&gw_cfg, &t\.server\)/.test(gateSrc),
+);
+t(
+  'call_tool 对关闭的 server 报「整体关闭」并指路设置（不是「没有这个工具」）',
+  /if !server_enabled\(&cfg, server\) \{/.test(gateSrc) && /整体关闭/.test(gateSrc),
+);
+t(
+  'save_config 保留 disabled_servers（保存端口不能把总开关重置）',
+  /disabled_servers: old\.disabled_servers\.clone\(\)/.test(gateSrc),
+);
+t(
+  'set_server_enabled 校验服务名（与注册同一套规矩，防写入怪名字）',
+  /pub fn mcp_gw_set_server_enabled\([\s\S]{0,300}?validate_server_name\(name\)\?/.test(gateSrc),
+);
+t(
+  'register / unregister 时清理失效的关闭记录（重新注册同名服务不带着旧关态回来）',
+  (gateSrc.match(/disabled_servers\.retain\(\|s\| \*s != name\)/g) || []).length >= 2,
+);
+
 /* ================================================================== */
 section('3. 命令治理四件套：定级 + 白名单（真代码调用）');
 /* ================================================================== */
@@ -153,11 +185,11 @@ for (const [n, lv] of CMDS) {
 
 /* ③b：没有命令留在 unknown —— unknown 对所有防护隐身（见源码注释 ②） */
 const unknown = NAMES.filter((n) => capOf(n) === 'unknown');
-t('六条没有一条挂 unknown（否则扫描器第 ⑰ 组红且防护隐身）', unknown.length === 0, unknown.join(','));
+t('七条没有一条挂 unknown（否则扫描器第 ⑰ 组红且防护隐身）', unknown.length === 0, unknown.join(','));
 
 /* HARD_DENY 必须保持空集（command-consistency-test.mjs 已全局钉住，
    这里只确认新命令没被顺手塞进去） */
-t('六条都没被塞进 HARD_DENY', NAMES.every((n) => !HARD_DENY.has(n)));
+t('七条都没被塞进 HARD_DENY', NAMES.every((n) => !HARD_DENY.has(n)));
 
 /* 真代码跑一遍拦截：settings 是内置插件全放行；第三方连声明带授权也拿不到 M 类 */
 resetBuiltinIds();
@@ -181,6 +213,19 @@ t(
     return r.ok === false && !String(r.reason).includes('不给第三方');
   }),
   nonM.map((n) => `${n}:${JSON.stringify(checkInvoke('third-party', n, { id: 'third-party', commands: [n] }))}`).join(' '),
+);
+/* 总开关是 W 类：第三方**不声明**时照样被拦（默认拒绝），
+   但拦它的是声明层不是能力层 —— 与 save_config / unregister 同一条路。
+   这里钉住「未声明即拒」，防止将来有人把它挪进 THIRD_DENY_CAPS
+   （那是 M 的待遇，W 一刀切会让第三方连正常配置都读不了）。 */
+t(
+  '第三方未声明调 mcp_gw_set_server_enabled 被拒（默认拒绝，不靠能力层）',
+  checkInvoke('third-party', 'mcp_gw_set_server_enabled', null).ok === false,
+);
+t(
+  '（自检）这条拒绝不是能力层误伤（W 不在 THIRD_DENY_CAPS）',
+  !checkInvoke('third-party', 'mcp_gw_set_server_enabled', { id: 'third-party', commands: ['mcp_gw_set_server_enabled'] })
+    .reason?.includes('不给第三方'),
 );
 
 /* ================================================================== */
@@ -226,6 +271,54 @@ t(
   /'mcp_gw_save_config'/.test(cardSrc) && /needRestart/.test(cardSrc),
 );
 
+/* ---- 插件 MCP 总开关（服务清单每行的勾选框） ---- */
+t(
+  '总开关走 mcp_gw_set_server_enabled（即时生效，不走 save_config）',
+  /'mcp_gw_set_server_enabled'/.test(cardSrc) && /toggleServer/.test(cardSrc),
+);
+t(
+  'GwServer 类型带 enabled 字段（与 mcp_gw_status 的返回对齐）',
+  /enabled: boolean/.test(cardSrc),
+);
+t(
+  '服务行有 checkbox 且 checked 绑 enabled（关掉的 server 一眼可辨）',
+  /type="checkbox"[\s\S]{0,200}?checked=\{s\.enabled\}/.test(cardSrc),
+);
+t(
+  '关闭态整行压暗 + 工具清单换成「暂不列出」说明（不是干脆消失）',
+  /opacity: s\.enabled \? 1 : 0\.55/.test(cardSrc) && /暂不在 AI 客户端列出/.test(cardSrc),
+);
+t(
+  '统计区显示「AI 可见」计数（关掉后工具总数与客户端实际能调的数对不上，会像功能坏了）',
+  /AI 可见/.test(cardSrc) && /hiddenTools/.test(cardSrc),
+);
+t(
+  '代理注册表单提示「服务名建议用插件 id」（卸载自动清理按这个约定匹配）',
+  /建议直接用插件 id/.test(cardSrc),
+);
+
+/* ---- 卸载协作（设置页 removePlugin） ---- */
+t(
+  'removePlugin 移除前查 mcp_gw_status 找匹配的代理服务',
+  /mcp_gw_status/.test(appSrc) && /s\?\.name === p\.id && s\?\.kind === 'proxy'/.test(appSrc),
+);
+t(
+  '命中 MCP 服务时先 confirm 说清后果（不是默默卸掉留一堆调不通的工具）',
+  /confirm\(\{[\s\S]{0,600}?mcpServer/.test(appSrc) && /移除并注销 MCP 服务/.test(appSrc),
+);
+t(
+  '移除成功后一并 mcp_gw_unregister（插件没了，工具不能还挂在网关里）',
+  /mcp_gw_unregister/.test(appSrc),
+);
+t(
+  'MCP 注销失败时把「插件已卸」与「残留待手动清理」分开说（不把成功说成失败）',
+  /插件已移除，但 MCP 服务/.test(appSrc),
+);
+t(
+  'confirm 从 dialog.js 导入（项目统一弹窗，不另起炉灶）',
+  /import \{ prompt, confirm \} from '\.\.\/\.\.\/js\/dialog\.js'/.test(appSrc),
+);
+
 /* ================================================================== */
 section('6. 负向自检：断言不会永远为真');
 /* ================================================================== */
@@ -234,6 +327,10 @@ t('不存在的命令判 unknown（第 3 节的定级断言不是恒真）', cap
 t('不存在的命令不在 settings 白名单（白名单断言不是恒真）', PLUGIN_COMMANDS.settings?.includes('mcp_gw_bogus') !== true);
 t('mcp_gate.rs 里没有 mcp_gw_bogus 定义（第 2 节的属性断言不是恒真）', !gateSrc.includes('mcp_gw_bogus'));
 t('App.tsx 里没有 mcp_gw_bogus 调用（第 5 节的 UI 断言不是恒真）', !appSrc.includes('mcp_gw_bogus'));
+t('McpGatewayCard 里没有 mcp_gw_bogus 调用（第 5 节的面板断言不是恒真）', !cardSrc.includes('mcp_gw_bogus'));
+t('command-caps.js 里没有 disabled_servers 之外的第八条网关命令（清单没被偷偷加长）',
+  Object.keys(COMMAND_CAPS).filter((k) => k.startsWith('mcp_gw_')).length === NAMES.length,
+  `实际 ${Object.keys(COMMAND_CAPS).filter((k) => k.startsWith('mcp_gw_')).length} 条`);
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 if (fail) {
