@@ -114,6 +114,15 @@ export type RefreshOptions = {
   fetcher?: McpToolFetcher;
   /** 已有快照 */
   previous?: NodeBlueprint[];
+  /**
+   * 单个服务的**整体**上限（毫秒）。默认见 SERVER_TIMEOUT_MS。
+   *
+   * 注意它与协议层那个 timeoutSec 不是一回事：
+   * 那边是"单次请求"的上限，这里是"这个服务从开始到返回"的上限。
+   * 一次 listTools 要发三次请求（initialize / initialized / tools/list），
+   * 所以这里必须比单次的大，否则正常服务也会被判超时。
+   */
+  serverTimeoutMs?: number;
 };
 
 /**
@@ -180,6 +189,59 @@ export async function bootRefresh(
   return { outcome: { ...outcome, list: pruned }, message };
 }
 
+/**
+ * 单个服务的整体上限，默认 60 秒。
+ *
+ * 协议层单次请求是 20 秒，一次 listTools 发三次 —— 正常服务毫秒级就回来了，
+ * 60 秒足够宽，同时它是一个**有限值**，这是关键。
+ */
+export const SERVER_TIMEOUT_MS = 60_000;
+
+/**
+ * 给一个服务的抓取加上整体时限。
+ *
+ * ================= 为什么必须加 =================
+ *
+ * 刷新是**串行**的（refreshAll 里 for + await）。一个服务迟迟不返回，
+ * 后面所有服务的工具就都拿不到 —— 而 `setMcpRefreshing(true)` 还挂着，
+ * 界面就是一直转圈，没有任何"卡住了"的提示。
+ *
+ * 协议层那个 timeoutSec 兜不住这件事：它是**单次请求**的上限，
+ * 而 Tauri 通道走 connectTimeout（只管连接阶段），
+ * 服务端连上了不返回的情况没有整体上限。
+ *
+ * ================= 为什么超时后不取消原请求 =================
+ *
+ * 取消不了 —— fetcher 是个不透明 Promise。所以这里只是**不再等它**，
+ * 并挂一个 handler 吞掉它晚到的结果或异常：
+ * 不吞的话会冒出"未处理的 Promise 拒绝"，
+ * 表现为控制台里一条跟本次操作对不上的红字。
+ *
+ * 超时按**这一个服务失败**处理（保留它的旧快照，继续刷别的），
+ * 不整批失败 —— 一个服务卡住不该让其它服务的工具全部消失。
+ */
+export async function withServerTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  server: string,
+): Promise<T> {
+  work.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const sec = Math.max(1, Math.round(ms / 1000));
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(
+          `MCP 服务「${server}」连上了但迟迟不返回（超过 ${sec} 秒）—— 已跳过它，继续刷新其它服务`,
+        )), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function refreshAll(opts: RefreshOptions): Promise<RefreshOutcome> {
   const previous = opts.previous ?? [];
   const servers = opts.servers ?? [];
@@ -227,7 +289,15 @@ export async function refreshAll(opts: RefreshOptions): Promise<RefreshOutcome> 
     }
 
     try {
-      const tools = await opts.fetcher(s);
+      /*
+       * 加整体上限 —— 不加的话一个卡住的服务会把整批刷新拖死
+       * （串行 for + await），界面就是一直转圈。
+       */
+      const tools = await withServerTimeout(
+        Promise.resolve(opts.fetcher(s)),
+        opts.serverTimeoutMs ?? SERVER_TIMEOUT_MS,
+        name,
+      );
       const { list, skipped } = buildBlueprints(name, tools ?? []);
       for (const b of list) fresh.push(b);
       for (const sk of skipped) {
