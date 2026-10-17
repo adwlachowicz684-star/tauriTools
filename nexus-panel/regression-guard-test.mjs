@@ -1464,8 +1464,18 @@ console.log('\n=== 17. 跨语言常量一致 ===');
   }
   t('扫到了 Rust 常量（判据没失明）', rsN > 5 && rs.size > 20, `Rust 文件 ${rsN} 个，常量 ${rs.size} 个`);
 
-  const both = [...rs.keys()].filter((k) => ts.has(k)).sort();
+  /* 碰巧同名、实则无关的常量（跨语言扫名字必然会撞上这类）。
+     每条必须写明两侧各是什么 —— 否则这份清单会变成"先报了再豁免"的垃圾桶。
+     · SEP：Rust 侧是 MCP 工具名的分隔符 "__"（src-tauri/src/mcp_gate.rs）；
+       js/host.js 侧是插件作用域存储键的分隔符 "\u0000"（收在 keyOf() 里用）。
+       两者分属不同域，不存在"两边必须一致"的约束。 */
+  const NAME_EXEMPT = new Map([['SEP', '两侧各是不同域的分隔符，非同一常量']]);
+  const both = [...rs.keys()].filter((k) => ts.has(k) && !NAME_EXEMPT.has(k)).sort();
   t('至少扫到 10 对同名常量（判据没失明）', both.length >= 10, `实测 ${both.length} 对`);
+
+  /* 豁免项必须**确实**两侧都存在（否则这条豁免就是占位的，该删） */
+  t('豁免项两侧都真实存在（不是占位）',
+    [...NAME_EXEMPT.keys()].every((k) => rs.has(k) && ts.has(k)));
 
   const bad = [];
   for (const k of both) {
