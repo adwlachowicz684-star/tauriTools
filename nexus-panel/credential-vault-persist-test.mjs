@@ -22,6 +22,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+/* 剥注释走共用模块：内联副本的行注释判据是 `(^|[^:])\/\/`，会把 `a//b`
+   整行后半截吞掉，断言其实在检查一段被截断的文本。共用模块用 `(^|\s)`。 */
+import { stripCommentsFlatJs } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const VAULT = path.join(HERE, 'plugins/agent-flow/hooks/useCredentialVault.ts');
@@ -42,9 +45,7 @@ function ok(cond, name, extra) {
 
 /* 去掉注释再判：注释里会原样举出反例（"早先是空 catch"），
    不剥掉的话"已改掉"会被判成"还在"。 */
-function stripComments(s) {
-  return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
+const stripComments = stripCommentsFlatJs;
 const code = stripComments(src);
 
 /* 取 changeVaultMode 整段：从函数头到它结尾（下一个顶层 export/注释块之前） */

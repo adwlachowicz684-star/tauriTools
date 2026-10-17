@@ -24,11 +24,14 @@
 import { readFileSync } from 'node:fs';
 import { join as pjoin } from 'node:path';
 import { fileURLToPath } from 'node:url';
+/* 剥注释走共用模块：内联副本的行注释判据是 `(^|[^:])\/\/`，会把 `a//b`
+   （路径拼接、协议头）从斜杠处起整行后半截吞掉 —— 断言其实在检查一段
+   被截断的文本，可能假绿。共用模块用 `(^|\s)`，只认真注释形态。 */
+import { stripCommentsFlatJs as strip } from './test-scan-utils.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const tc = await import(new URL('js/theme-color.js', import.meta.url).href);
 const read = (p) => readFileSync(pjoin(HERE, p), 'utf8').replace(/\r\n/g, '\n');
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
 let pass = 0;
 const fails = [];

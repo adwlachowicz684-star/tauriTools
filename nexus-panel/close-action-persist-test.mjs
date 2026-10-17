@@ -24,6 +24,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+/* 剥注释走共用模块：内联副本的行注释判据是 `(^|[^:])\/\/`，会把 `a//b`
+   整行后半截吞掉，断言其实在检查一段被截断的文本。共用模块用 `(^|\s)`。 */
+import { stripCommentsFlatJs as stripShared } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = path.join(HERE, 'js/host.js');
@@ -67,9 +70,7 @@ function sliceBalanced(src, startMark, label) {
 }
 
 /** 剥注释：注释里写的"没存成/回滚"这类字会把意图判成反的 */
-function strip(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
+const strip = stripShared;
 
 /* ==================== ① 判据跑真身 ==================== */
 group('① saveCloseAction：存不进去必须如实回答，并回滚内存值');

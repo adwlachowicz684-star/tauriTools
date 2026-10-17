@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createHost, loadRegistry, filterByRuntime, visiblePlugins, saveCustomPlugins, getCustomPlugins, isInsideTauri,
   takeCustomPluginWriteError, customPluginWriteFailMsg,
+  /* 两个壳共用的存储键：必须来自 host.js 的常量，不能各写裸字面量 ——
+     两个壳跑在同一份 localStorage 上，谁改了一侧拼写，
+     另一侧就开始读另一个键，"在 A 壳设的状态 B 壳不认"且不报错。 */
+  KEY_LAST_PLUGIN, KEY_SIDEBAR_OPEN,
   type Host, type PluginManifest,
 } from '../js/host.js';
 import * as extPolicy from '../js/external-policy.js';
@@ -224,12 +228,12 @@ export default function App() {
       host.state.plugins = list;          // 宿主持有完整列表（服务插件也要挂）
       setPlugins(visiblePlugins(list));   // 侧边栏只显示非服务插件
 
-      const saved = localStorage.getItem('nexus:sidebar-open');
+      const saved = localStorage.getItem(KEY_SIDEBAR_OPEN);
       setSidebarOpen(saved === null ? true : saved === '1');
       const accent = localStorage.getItem('nexus:accent');
       if (accent) document.documentElement.style.setProperty('--accent', accent);
 
-      const last = localStorage.getItem('nexus:last-plugin');
+      const last = localStorage.getItem(KEY_LAST_PLUGIN);
       const initial = last && list.some((p) => p.id === last) ? last : list[0]?.id ?? null;
       setActiveId(initial);
     })();
@@ -244,7 +248,7 @@ export default function App() {
   /* ---------- 切换 / 重载插件 ---------- */
   useEffect(() => {
     if (!activeId) return;
-    localStorage.setItem('nexus:last-plugin', activeId);
+    localStorage.setItem(KEY_LAST_PLUGIN, activeId);
     setSettingsOpen(false);          // 切插件就收起上一个插件的设置抽屉
     hostRef.current?.mount(activeId);
   }, [activeId, reloadKey]);
@@ -335,7 +339,7 @@ export default function App() {
       if (k === 'b') {
         e.preventDefault();
         setSidebarOpen((v) => {
-          localStorage.setItem('nexus:sidebar-open', !v ? '1' : '0');
+          localStorage.setItem(KEY_SIDEBAR_OPEN, !v ? '1' : '0');
           return !v;
         });
       }
@@ -421,7 +425,7 @@ export default function App() {
           badges={badges}
           onToggle={() =>
             setSidebarOpen((v) => {
-              localStorage.setItem('nexus:sidebar-open', !v ? '1' : '0');
+              localStorage.setItem(KEY_SIDEBAR_OPEN, !v ? '1' : '0');
               return !v;
             })
           }

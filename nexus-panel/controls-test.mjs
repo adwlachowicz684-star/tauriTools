@@ -2911,7 +2911,10 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
       dataset: {},
       classList: { add() {}, remove() {}, contains: () => false },
     };
-    globalThis.document = { documentElement: el, body: el };
+    /* 桩必须带上 getElementById：applyTo 里按 id 撤掉首屏防闪 style 会调它。
+       缺了这一项，那行直接 TypeError —— 而报错说的是"跑不起来"，
+       看报告的人只会以为被测功能坏了，不会想到是桩少了个方法。 */
+    globalThis.document = { documentElement: el, body: el, getElementById: () => null };
     globalThis.localStorage = {
       getItem: (k) => (store44[k] !== undefined ? store44[k] : null),
       setItem: (k, v) => { store44[k] = String(v); },
@@ -3081,7 +3084,10 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
       dataset: {},
       classList: { add() {}, remove() {}, contains: () => false },
     };
-    globalThis.document = { documentElement: el, body: el };
+    /* 桩必须带上 getElementById：applyTo 里按 id 撤掉首屏防闪 style 会调它。
+       缺了这一项，那行直接 TypeError —— 而报错说的是"跑不起来"，
+       看报告的人只会以为被测功能坏了，不会想到是桩少了个方法。 */
+    globalThis.document = { documentElement: el, body: el, getElementById: () => null };
     globalThis.localStorage = {
       getItem: (k) => (store47[k] !== undefined ? store47[k] : null),
       setItem: (k, v) => { store47[k] = String(v); },

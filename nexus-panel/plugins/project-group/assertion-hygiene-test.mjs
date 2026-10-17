@@ -335,14 +335,32 @@ const fixedScratchDirs = (src) => {
   const out = [];
   const declRe = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:path\.)?join\(\s*([A-Za-z_$][\w$]*)\s*,\s*['"`]([^'"`]+)['"`]\s*\)/g;
   for (const l of lines) {
-    /* 每行新建正则：/g 的 lastIndex 会跨行残留（第 6 节那个坑） */
-    for (let m; (m = new RegExp(declRe.source, 'g').exec(l));) {
+    /*
+     * 每行新建正则：/g 的 lastIndex 会跨行残留（第 6 节那个坑）。
+     *
+     * ⚠️ 但"新建"必须发生在**每行一次**（循环外），不能每次 exec 都新建：
+     *    `for (let m; (m = new RegExp(re.source,'g').exec(l));)` 里，
+     *    每个新对象的 lastIndex 都从 0 起，于是永远命中同一处、
+     *    m 永不为 null —— 死循环。实测：同一行被命中第 6 次仍不停止。
+     *
+     *    后果是整节判据从未真正跑完过：扫到第一个含
+     *    `const x = join(ROOT,'_xxx')` 的测试就挂住，进程不崩、不报错、
+     *    就是一直转 —— 报告上表现为"这一节没输出"，
+     *    而不是"这里有红"，于是第 7 节守的东西（写死临时产物目录）
+     *    实际上一直是失明的。
+     *
+     *    改成循环外新建一次、循环内复用同一对象：exec 自己推进 lastIndex，
+     *    命中完返回 null 结束，且 lastIndex 不会带到下一行。
+     */
+    const declEach = new RegExp(declRe.source, 'g');
+    for (let m; (m = declEach.exec(l));) {
       if (!roots.has(m[2]) || !SCRATCH.test(m[3])) continue;
       const used = new RegExp(`(?:rmSync|mkdirSync|writeFileSync|appendFileSync|cpSync)\\(\\s*${m[1]}\\b`).test(text);
       if (used) out.push(`${m[1]} = join(${m[2]}, '${m[3]}')`);
     }
     const callRe = /(?:mkdirSync|rmSync|writeFileSync|appendFileSync|cpSync|mkdtempSync)\(\s*(?:path\.)?join\(\s*([A-Za-z_$][\w$]*)\s*,\s*['"`]([^'"`]+)['"`]\s*\)/g;
-    for (let m; (m = new RegExp(callRe.source, 'g').exec(l));) {
+    const callEach = new RegExp(callRe.source, 'g');
+    for (let m; (m = callEach.exec(l));) {
       if (!roots.has(m[1]) || !SCRATCH.test(m[2])) continue;
       out.push(`${m[1]}:${m[2]}`);
     }
@@ -414,13 +432,34 @@ console.log('\n=== 2. 只匹配到注释的断言必须诚实改名 ===');
    * 放行"运行时 subject"是个**有代价的让步**：写宽一点就会把真问题一起放过。
    * 所以两头都钉住 —— 少了这几条，把 RUNTIME_SUBJECT 改成恒真也是绿的。
    */
+  /*
+   * 用**合成样本**验，不依赖全仓里恰好存在某句注释。
+   *
+   * 此前用 '\d+ × \d+' 当样本，两头都踩在真实代码上：
+   *   · 它得先在某个注释里出现（等 mindmap 那条注释锚点被修掉，样本就没了）；
+   *   · 又得**不**出现在任何真断言名字里 —— 而 "3 × 1024" 恰恰写进了
+   *     一条断言的名字（剥注释后仍在），于是 `!test(strippedAll)` 为假。
+   *
+   * 结果是这条自检假红，看上去像"放行空转了"，其实样本自己先失了效。
+   * **自检依赖真实代码里的反例，反例被修掉后自检就失明** —— 与第 7 节
+   * 那个死循环同族：挂住的、假红的，都比真红更难看出是判据本身出了问题。
+   */
+  const PROBE = 'ZQ_COMMENT_ONLY_PROBE';
   const RT_PAT = '\\d+ × \\d+';
+  const savedFull = fullAll;
+  const savedStripped = strippedAll;
+  fullAll += '/* ' + PROBE + ' */';   // 只活在注释里
   t('放行前那条确实会被判"只活在注释里"（放行不是空转）',
-    new RegExp(RT_PAT).test(fullAll) && !new RegExp(RT_PAT).test(strippedAll));
-  t('运行时 subject 被放行（护栏不逼人把真断言改名）',
-    commentOnlyHit('信息条显示尺寸', RT_PAT, '.test(badge.textContent), badge.textContent.trim());') === false);
+    commentOnlyHit('尺寸信息条', PROBE, '.test(x));') === true);
   t('源码 subject 仍被抓（放行没把真问题一起放过）',
-    commentOnlyHit('取消不 reject', '取消\\*\\*不 reject\\*\\*', '.test(mod));') === true);
+    commentOnlyHit('取消不 reject', PROBE, '.test(mod));') === true);
+  t('运行时 subject 被放行（护栏不逼人把真断言改名）',
+    commentOnlyHit('信息条显示尺寸', PROBE, '.test(badge.textContent), badge.textContent.trim());') === false);
+  fullAll = savedFull;
+  strippedAll = savedStripped;
+  /* 复原必须真的复原：漏了的话上面三条的样本会污染后面第 3 节起的全部判据 */
+  t('自检样本用完即撤（不污染后续各节的全文）',
+    fullAll === savedFull && strippedAll === savedStripped && !fullAll.includes(PROBE));
 }
 
 console.log('\n=== 3. 顺序断言的"空跑那一端"必须判存在 ===');
@@ -710,6 +749,50 @@ console.log('\n=== 6. 断言不能拿带 g / y 标志的正则做 .test() ===');
   t('同一个绑定的两次 test 仍被抓（让步没把真问题放过）',
     gyTestVars("const RX = /ab/g;\nt('命中', RX.test(s));\nt('不误伤', !RX.test(x));")
       .includes('RX'));
+
+  /*
+   * 同一族的**反面**：为了躲开上面那条"复用 lastIndex"而改成的
+   * "每次都新建" —— 新对象 lastIndex 恒为 0，exec 永远命中同一处，
+   * for 条件永不为假 → **死循环**。
+   *
+   * 本项目实测（第 7 节 fixedScratchDirs）：正是这条注释上面那行
+   * `for (let m; (m = new RegExp(re.source,'g').exec(l));)`。
+   * 死循环的表现不是报错、不是红 —— 是**进程一直挂着不返回**，
+   * 报告上只看到"这一节没输出"，于是整节判据从未真正跑完过，
+   * 它守的东西实际是失明的。比"写错的断言"更隐蔽：错的会红，
+   * 挂住的只是没结果。
+   */
+  const loopNewRegex = (src) => {
+    const out = [];
+    for (const l of stripComments(src).split('\n')) {
+      /* 条件里新建正则 + exec：新对象 lastIndex 恒 0，永不推进 → 死循环 */
+      if (/(?:for|while)\s*\(/.test(l)
+        && /new\s+RegExp\s*\([^;]*?\)\s*\.exec\s*\(/.test(l)
+        && /=\s*new\s+RegExp/.test(l)) {
+        out.push(l.trim().slice(0, 70));
+      }
+    }
+    return out;
+  };
+  const loopBad = [];
+  for (const p of all) {
+    let src = '';
+    try { src = fs.readFileSync(p, 'utf8'); } catch { continue; }
+    for (const h of loopNewRegex(src)) {
+      loopBad.push(`${path.relative(ROOT, p)}:${h}`);
+    }
+  }
+  t('没有在循环条件里新建正则做 exec（lastIndex 恒 0 → 死循环）',
+    loopBad.length === 0, loopBad.slice(0, 4).join(' | ') || '干净');
+  /* 反面证据：判据清空后上面那条照样绿，只有这三条会喊 */
+  t('死循环写法判据确能命中（反面证据）',
+    loopNewRegex("for (let m; (m = new RegExp(re.source, 'g').exec(l));) {}").length === 1,
+    '循环内新建命中');
+  t('循环外新建一次、循环内复用不算（正确写法不误报）',
+    loopNewRegex("const re = new RegExp(src, 'g');\nfor (let m; (m = re.exec(l));) {}")
+      .length === 0);
+  t('matchAll 写法不误报',
+    loopNewRegex("for (const m of l.matchAll(new RegExp(src, 'g'))) {}").length === 0);
 }
 
 console.log('\n=== 7. 临时产物目录不得写死名字（并发会互相删） ===');
