@@ -84,7 +84,7 @@
     "test:md-pipeline": "node md-pipeline-test.mjs",
     "test:md-puml": "node md-puml-test.mjs",
     "test:md-recent": "node md-recent-test.mjs",
-  "test:md-recent-persist": "node md-recent-persist-test.mjs",
+    "test:md-recent-persist": "node md-recent-persist-test.mjs",
     "test:md-render": "node md-render-test.mjs",
     "test:md-service": "node md-service-test.mjs",
     "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
@@ -273,7 +273,8 @@
     "test:typecheck-guard": "node typecheck-guard-test.mjs",
     "test:custom-plugin-save": "node custom-plugin-save-test.mjs",
     "test:credential-vault-persist": "node credential-vault-persist-test.mjs",
-    "test:preload-style": "node preload-style-test.mjs"
+    "test:preload-style": "node preload-style-test.mjs",
+    "test:ctx-contract": "node ctx-contract-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",
