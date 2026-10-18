@@ -828,6 +828,24 @@ export function createHost(opts = {}) {
       isActive: () => state.shortcutsPaused === true,
       /* 与主线同形状：同一个 API 一处有、一处没有，是调用方最难排查的那类坑 */
       openPlugin: (targetId, args2) => openWithArgsFor(manifest, targetId, args2),
+      /*
+       * services 与主视图那只**必须同形状**（同一句原则的另一半）。
+       *
+       * 原先这里没传，于是走 SDK 的桥接兜底 —— 而同页插件的 transport
+       * 只认 invoke / listen / store.* / fs.*，default 直接 throw
+       * '未知请求: service.call'。也就是"在设置面板里调服务当场抛错，
+       * 主视图里同样的调用却是好的"。
+       *
+       * 当前无插件中招（只有 demo-module 实现了 settings，且它没用
+       * services），所以是休眠的雷：谁在设置面板里加一次取色/目录选择
+       * 就会炸。守卫：regression-guard-test.mjs 第 25 节。
+       */
+      services: {
+        call: (id, method, args) => callService(id, method, args),
+        list: () => listServices(),
+        /* 与主视图同形状：刻意返回 Promise，两种模式写法一致（见那边注释） */
+        available: (id) => Promise.resolve(!!serviceManifest(id)),
+      },
     });
 
     const result = await def.settings(ctx);
