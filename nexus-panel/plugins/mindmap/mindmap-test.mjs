@@ -21012,6 +21012,118 @@ group('BUG 162 · 图标批量导入：丢掉的必须说出来，原因必须�
   ok(/io\.formatSize\(f\.size\)/.test(code), '失败原因带体积（用户据此决定换图还是清空间）');
 }
 
+
+/* ============================================================
+   BUG 163 · 首次迁移的两处写入不接返回值 —— 写失败时静默丢内容
+   ============================================================ */
+
+/**
+ * ⓘ 为什么是 BUG：
+ *
+ *   初始化那段跑在**状态栏元素还没建出来**的时候（`statusEl` 是后面才 const
+ *   出来的，TDZ）—— 所以早先这里是两行裸 `await`，连 status() 都调不了：
+ *
+ *   · `doc(id).save` 失败 → 内容没进本地库，紧接着 `store.doc(currentFileId)
+ *     .load()` 读到 null，workbook 退化成**空工作簿** —— 用户看到一片空白，
+ *     而旧内容还留在旧键 'workbook' 里，成了永远读不回来的孤儿；
+ *   · `files.save` 失败 → **本次会话一切正常**（索引在内存里），但下次启动
+ *     索引仍为空 → 重新迁移出一个**新的 id** → 本次所有编辑都留在旧 id 的
+ *     doc 键下成了孤儿。而**下次启动没有任何报错**，用户只会觉得
+ *     "昨天明明编辑过，今天怎么回到旧版本了"。
+ *
+ *   saveStore 那一族（新建 / 重命名 / 移动 / 删除文件）早就接住返回值了，
+ *   这里漏掉就是同一条规矩只修了一半。
+ */
+group('BUG 163 · 首次迁移的两处写入必须接住返回值（写失败不能静默）');
+{
+  const raw = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+
+  /* ---------- ① 源码契约 ---------- */
+  const s = raw.indexOf('if (!Array.isArray(fileIndex) || !fileIndex.length) {');
+  ok(s > 0, '定位到首次迁移那一块');
+  const e = raw.indexOf('\n  }\n', s);
+  ok(e > s, '切出迁移块（以 2 空格缩进的收尾括号为准）');
+  const blockSrc = (s > 0 && e > s) ? raw.slice(s, e) + '\n  }' : '';
+  // ⓘ 剥注释再判：新加的注释里就写着那两行旧写法，不剥的话「不得再出现」
+  //   数到的是注释而不是代码（本项目反复栽的这个坑）。
+  const bare = blockSrc.replace(/\/\*[\s\S]*?\*\//g, '');
+  ok(bare.length > 0, '迁移块非空');
+  // ⓘ 判据必须是「行首就是 await」（裸调用），不能写成 `/await store\.doc\(id\)\.save\(/` ——
+  //   后者会被 `const docOk = await store.doc(id).save(...)` 命中，断言**恒假**
+  //   （不是"抓不到"，是永远为真地报错）。
+  ok(!/^\s*await store\.doc\(id\)\.save\(/m.test(bare),
+    '★ doc(id).save 不得是裸 await（写没写进去完全不知道）');
+  ok(!/^\s*await store\.files\.save\(fileIndex\);/m.test(bare),
+    '★ files.save 不得是裸 await');
+  ok(/const docOk = await store\.doc\(id\)\.save\(/.test(bare), 'doc 写入结果记下来');
+  ok(/const idxOk = await store\.files\.save\(fileIndex\)/.test(bare), '索引写入结果记下来');
+  ok(/bootWarn = /.test(bare),
+    '★ 失败要记进 bootWarn（此时 statusEl 还没建好，调 status 会抛 TDZ 错误）');
+
+  // 摆上去的那一处：必须在 flushStoreError() **之后**
+  const f = raw.indexOf('flushStoreError();');
+  ok(f > 0, '定位到 flushStoreError()');
+  const tail = raw.slice(f, f + 800);
+  ok(/if \(bootWarn\) status\(bootWarn, true\);/.test(tail),
+    '★ 启动期攒下的警告必须摆到状态栏（否则只是记下来、没人看）');
+  ok(raw.indexOf('if (bootWarn) status(bootWarn, true);') > f,
+    '★ bootWarn 排在 flushStoreError() 之后 —— 具体的那句要盖住通用的');
+
+  /* ---------- ② 行为级：真跑一遍四种成败组合 ---------- */
+  // ⓘ 必须包成 store 对象再传：早先直接把裸函数当 store 传进去，
+  //   于是 `store.workbook.load is not a function` 当场崩，前面一条都没跑到。
+  const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFn('store', 'wb', 'newFileId', `
+    let fileIndex = null;
+    let bootWarn = '';
+    ${blockSrc}
+    return { fileIndex, bootWarn };
+  `);
+  const mkStore = (docOk, idxOk) => ({
+    workbook: { load: async () => ({ sheets: [{ id: 's1', root: { data: { text: '旧内容' } } }] }) },
+    doc: () => ({ save: async () => docOk }),
+    files: { save: async () => idxOk },
+  });
+  const wbStub = { newWorkbook: () => ({ sheets: [], activeId: null }) };
+
+  /*
+   * ⓘ 必须包一层 try/catch：把 `const docOk = …` 那一行改回裸 await 之后，
+   *   块里的 `if (!docOk && …)` 会抛 ReferenceError —— 而 AsyncFunction 抛出的
+   *   异常是**未捕获的**，整个测试进程当场挂掉、汇总行都打不出来。
+   *   于是"看着抓到了"，其实后面的断言一条都没跑（本项目反复栽的这个坑）。
+   *   包起来之后它退化成一条普通的失败，汇总照常出。
+   */
+  const runSafe = async (docOk, idxOk) => {
+    try {
+      return { ...(await run(mkStore(docOk, idxOk), wbStub, () => 'id-A')), threw: '' };
+    } catch (e) {
+      return { fileIndex: null, bootWarn: '', threw: String(e?.message || e) };
+    }
+  };
+
+  const okok = await runSafe(true, true);
+  ok(!okok.threw, '★ 迁移块要跑得起来（docOk / idxOk 必须在块内有定义）' + okok.threw);
+  eq(okok.bootWarn, '', '★ 两次都成功时不得误报（bootWarn 必须为空）');
+  ok(Array.isArray(okok.fileIndex) && okok.fileIndex.length === 1,
+    '★ 成功时索引照旧建出来（改动不能影响正常路径）');
+
+  const docFail = await runSafe(false, true);
+  ok(!docFail.threw, 'doc 写失败这条路径也要跑得起来' + docFail.threw);
+  ok(docFail.bootWarn.includes('脑图内容'), '★ doc 写失败 → 说的是「脑图内容」');
+  ok(!docFail.bootWarn.includes('文件列表'), '★ doc 写失败时不牵连文件列表的说法（不能虚报）');
+
+  const idxFail = await runSafe(true, false);
+  ok(!idxFail.threw, '索引写失败这条路径也要跑得起来' + idxFail.threw);
+  ok(idxFail.bootWarn.includes('文件列表'), '★ 索引写失败 → 说的是「文件列表」');
+  // 这一句真正要紧的是**后果**，不是「写入失败」四个字
+  ok(/下次启动|重新生成/.test(idxFail.bootWarn),
+    '★ 索引写失败必须说出后果：下次启动会重新生成、本次的修改会找不到');
+
+  const bothFail = await runSafe(false, false);
+  ok(bothFail.bootWarn.includes('脑图内容') && bothFail.bootWarn.includes('文件列表'),
+    '★ 两次都失败时两边都要说到');
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

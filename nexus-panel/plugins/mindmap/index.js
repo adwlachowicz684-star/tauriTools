@@ -55,18 +55,48 @@ bootIframePlugin(async (ctx) => {
   // 点 📚 展开。老配置里没有这个字段时 undefined 会走 falsy 分支，正是想要的默认收起。
   if (settings.filesOpen === undefined) settings.filesOpen = false;
 
+  /*
+   * 启动期攒下的警告（BUG 163）。
+   *
+   * 初始化这一段跑在**状态栏元素还没建出来**的时候 —— `statusEl` 是下面
+   * 才 const 出来的（TDZ），此时调 status() 会直接抛 ReferenceError。
+   * 所以这里只能先记下来，等 UI 建好再摆上去（见文末 flushBootWarn）。
+   */
+  let bootWarn = '';
+
   /* --------------------- 文件库（多文档） ---------------------
    * 旧版本整个插件只有一份工作簿（存在 workbook 键下）。
    * 有了左侧文件列表后改为「一个文件 = 一份工作簿」，各存 doc:<id>。
-   * 首次进入把旧数据迁移成第一个文件，老用户不会丢内容。 */
+   * 首次进入把旧数据迁移成第一个文件，老用户不会丢内容。
+   *
+   * ⓘ **这两处写入必须接住返回值**（BUG 163）。store.set 是吞异常返回 false，
+   *   早先这里是两行裸 `await`：
+   *
+   *   · `doc(id).save` 失败 → 内容没进本地库。紧接着 `store.doc(currentFileId)
+   *     .load()` 读到 null，workbook 退化成**空工作簿** —— 用户看到一片空白，
+   *     而旧内容还留在旧键 'workbook' 里，成了永远读不回来的孤儿；
+   *   · `files.save` 失败 → **本次会话一切正常**（索引在内存里），但下次启动
+   *     索引仍为空 → 重新迁移出一个**新的 id** → 本次所有编辑都在旧 id 的
+   *     doc 键下，成了没人引用的孤儿。**下次启动没有任何报错**，用户只会
+   *     发现"昨天明明编辑过，今天怎么回到旧版本了"。
+   *
+   *   与 saveStore 那一族（新建 / 重命名 / 移动 / 删除文件）同一条规矩，
+   *   只是这里不能调 status()，所以改成记进 bootWarn。 */
   let foldersList = (await store.folders.load()) || [];
   let fileIndex = await store.files.load();
   if (!Array.isArray(fileIndex) || !fileIndex.length) {
     const id = newFileId();
     const legacy = await store.workbook.load();
-    await store.doc(id).save(legacy || wb.newWorkbook());
+    const docOk = await store.doc(id).save(legacy || wb.newWorkbook());
     fileIndex = [{ id, name: '我的脑图', folderId: null }];
-    await store.files.save(fileIndex);
+    const idxOk = await store.files.save(fileIndex);
+    if (!docOk && !idxOk) {
+      bootWarn = '初始化失败：脑图内容与文件列表都没能写入本地库（可能是空间不足）';
+    } else if (!docOk) {
+      bootWarn = '初始化失败：脑图内容未能写入本地库（可能是空间不足），当前画布是空的';
+    } else if (!idxOk) {
+      bootWarn = '初始化失败：文件列表未能写入本地库，下次启动会重新生成，本次的修改会找不到';
+    }
   }
   let currentFileId = fileIndex.some((f) => f.id === settings.lastFileId)
     ? settings.lastFileId
@@ -3688,6 +3718,14 @@ async function gcOrphanAssets(quiet = false) {
   // 初始化期间所有的 store 读都跑完了：若中途有失败（IndexedDB 被禁用 / 损坏），
   // 在这里一次性摆到状态栏 —— 否则用户只看到「脑图是空的」。
   flushStoreError();
+  /*
+   * BUG 163：启动期攒下的警告在这里摆上去。
+   *
+   * ⓘ 必须排在 flushStoreError() **之后** —— 那句通用文案是「…（当前显示的
+   *   可能不是最新内容）」，套在初始化写入失败上会指错方向（真正要紧的是
+   *   "下次启动会重新生成、本次的修改会找不到"）。具体的那句要盖住通用的。
+   */
+  if (bootWarn) status(bootWarn, true);
 
   function updateBadge() {
     ctx.setBadge(workbook.sheets.length > 1 ? workbook.sheets.length : 0);
