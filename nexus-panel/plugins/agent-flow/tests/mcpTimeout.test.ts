@@ -242,11 +242,21 @@ test('源码守卫：协议层与 hook 不许再写死超时字面量', () => {
   assert.ok(/MCP_SINGLE_TIMEOUT_SEC/.test(call), 'hook 里同样要用共享常量');
 });
 
+/*
+ * 以前握手内联在 listTools 里，数它一个函数体的 httpPost 就行。
+ * 收成 handshake 之后，一次调用 = handshake 两次 + 真正那一步一次 ——
+ * 再只数 listTools 会数成 1，**报红了但报的是我的数法旧了**。
+ *
+ * 余量是按"总请求数"算的，所以这里必须数**整条链路**。
+ */
 test('源码守卫：握手次数与协议实现一致（说三次就别发四次）', () => {
   const src = readSrc('engine/mcpClient.ts');
-  const i = src.indexOf('export async function listTools');
-  const body = src.slice(i, src.indexOf('\n}\n', i));
-  const calls = (body.match(/await httpPost\(/g) ?? []).length;
-  assert.equal(calls, MCP_HANDSHAKE_CALLS,
-    `声明 ${MCP_HANDSHAKE_CALLS} 次，实际发了 ${calls} 次 —— 余量就白算了`);
+  const i = src.indexOf('async function handshake');
+  const hs = src.slice(i, src.indexOf('\n}\n', i));
+  const hsCalls = (hs.match(/await httpPost\(/g) ?? []).length;
+  const j = src.indexOf('export async function listTools');
+  const lt = src.slice(j, src.indexOf('\n}\n', j));
+  const ltCalls = (lt.match(/await httpPost\(/g) ?? []).length;
+  assert.equal(hsCalls + ltCalls, MCP_HANDSHAKE_CALLS,
+    `握手 ${hsCalls} + 真正那一步 ${ltCalls} 应等于声明的 ${MCP_HANDSHAKE_CALLS} —— 余量是按总数算的`);
 });

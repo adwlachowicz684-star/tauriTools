@@ -148,25 +148,42 @@ export function parseRpcBody(text: string): RpcResponse | null {
 /* 会话                                                                */
 /* ------------------------------------------------------------------ */
 
-export type McpSession = {
-  server: string;
-  transport: Transport;
-  url: string;
-  sessionId?: string;
-};
+/** 日志/提示里截断长文本，避免把整页 HTML 塞进报错里 */
+function trimText(t: string): string {
+  const s = String(t ?? '').trim().replace(/\s+/g, ' ');
+  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+}
 
 /**
- * 握手。
+ * 握手（initialize → notifications/initialized）。
  *
- * 返回会话信息（含 session id）。
- * MCP 要求先 initialize 才能调其它方法，跳过握手直接 tools/list
- * 会被拒绝 —— 而且拒绝信息往往只有一句 "no session"，很难定位。
+ * ================= 为什么必须收成这一处 =================
+ *
+ * 以前握手有**三份**实现，各写各的：
+ *   1. `initialize()` —— 只发 initialize，**没发** notifications/initialized
+ *   2. `listTools` 内联 —— 发了两步，且检查 status / 读不懂 / error
+ *   3. `callTool` 内联 —— 发了两步，但**完全不看 initialize 的响应**
+ *
+ * 第 1 份最坑：它叫 initialize、返回 McpSession，看着像"官方握手"，
+ * 而它自己上面的注释就写着 notifications/initialized「必须发，
+ * 否则部分 server 拒绝后续调用」—— **它偏偏没发**。
+ * 于是谁按它的返回值去调后续方法，谁就会拿到一句
+ * 「no session」—— 正是那段注释说"很难定位"的那句。
+ * （它没有调用点，但一直 export 着，等着将来有人接。）
+ *
+ * 第 3 份是**活的**问题（协议通道接上后就发作）：
+ * `await httpPost(initialize)` **连返回值都没接**，于是握手被拒了也继续
+ * 发 tools/call。实测：initialize 返回 JSON-RPC 错误时，callTool 照样
+ * 返回 `{ ok: true, text: '', isError: false }` ——
+ * **绿着成功、输出为空、什么都没做**。
+ *
+ * 所以收成这一处，两个调用方共用 —— 各写一份必然漂移。
  */
-export async function initialize(
+async function handshake(
   ref: McpServerRef,
   httpPost: HttpPost,
-  timeoutSec = MCP_SINGLE_TIMEOUT_SEC,
-): Promise<McpSession> {
+  timeoutSec: number,
+): Promise<void> {
   const url = String(ref.url ?? '').trim();
   if (!url) {
     throw new McpError(
@@ -194,6 +211,11 @@ export async function initialize(
     },
   }, headers, timeoutSec);
 
+  /*
+   * HTTP 错误、读不懂、协议 error —— 三类**分开说**。
+   * 合成一句（`连不上：${body?.error?.message ?? 'HTTP ' + status}`）时，
+   * 状态码 200 而响应读不懂会退化成「连不上：HTTP 200」—— 自相矛盾。
+   */
   if (res.status >= 400) {
     throw new McpError(
       `连不上 MCP 服务「${ref.name}」（HTTP ${res.status}）`,
@@ -201,11 +223,10 @@ export async function initialize(
       trimText(res.text),
     );
   }
-
   const body = parseRpcBody(res.text);
   if (!body) {
     throw new McpError(
-      `MCP 服务「${ref.name}」返回的内容读不懂`,
+      `MCP 服务「${ref.name}」返回的内容读不懂 —— 地址可能填错了（对方返回的不是 MCP 响应）`,
       ref.name,
       trimText(res.text),
     );
@@ -217,17 +238,14 @@ export async function initialize(
     );
   }
 
-  return {
-    server: ref.name,
-    transport: 'http',
-    url,
-    sessionId: undefined, // 由调用方从响应头取；这里拿不到头，故留空
-  };
-}
-
-function trimText(t: string): string {
-  const s = String(t ?? '').trim().replace(/\s+/g, ' ');
-  return s.length > 200 ? `${s.slice(0, 200)}…` : s;
+  /*
+   * 通知已初始化：不需要响应，但**必须发** ——
+   * 部分 server 不发就拒绝后续调用，而那种拒绝往往只有一句
+   * "no session"，很难定位。所以这一步不放在调用方各写一遍。
+   */
+  await httpPost(url, {
+    jsonrpc: '2.0', method: 'notifications/initialized',
+  }, headers, timeoutSec).catch(() => undefined);
 }
 
 /* ------------------------------------------------------------------ */
@@ -253,72 +271,16 @@ export async function listTools(
   httpPost: HttpPost,
   timeoutSec = MCP_SINGLE_TIMEOUT_SEC,
 ): Promise<McpToolSchema[]> {
-  const url = String(ref.url ?? '').trim();
-  if (!url) {
-    throw new McpError(
-      `MCP 服务「${ref.name}」没有填 HTTP 地址`,
-      ref.name,
-      'stdio 传输还没接上，目前只能连 HTTP 的 MCP 服务',
-    );
-  }
+  // 握手用唯一那份（见 handshake 的说明）—— 这里不再内联一套
+  await handshake(ref, httpPost, timeoutSec);
 
+  const url = String(ref.url ?? '').trim();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
   };
 
-  // 1. initialize
-  const initRes = await httpPost(url, {
-    jsonrpc: '2.0', id: nextId(), method: 'initialize',
-    params: {
-      protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: { name: 'nexus-panel-agent-flow', version: '1.0.0' },
-    },
-  }, headers, timeoutSec);
-
-  /*
-   * HTTP 错误与"读不懂"必须**分开说** ——
-   *
-   * 以前合成一句 `连不上：${body?.error?.message ?? 'HTTP ' + status}`：
-   * 状态码是 200 而响应读不懂时（`body` 为 null），
-   * 那句会退化成「**连不上**：HTTP **200**」—— 自相矛盾。
-   *
-   * 实测：把地址填成一个网页，就会拿到这一句。用户看到 200 却说连不上，
-   * 只会以为程序坏了。而真实情况恰恰相反：**连上了**，
-   * 只是对方返回的不是 MCP 响应（多半是地址填错了、或是登录页）。
-   *
-   * 下面 initialize() 那一份本来就是分开写的（对的），
-   * 这里内联的这份是第二套实现 —— 于是两套口径不一致。
-   */
-  if (initRes.status >= 400) {
-    throw new McpError(
-      `连不上 MCP 服务「${ref.name}」（HTTP ${initRes.status}）`,
-      ref.name,
-      trimText(initRes.text),
-    );
-  }
-  const initBody = parseRpcBody(initRes.text);
-  if (!initBody) {
-    throw new McpError(
-      `MCP 服务「${ref.name}」返回的内容读不懂 —— 地址可能填错了（对方返回的不是 MCP 响应）`,
-      ref.name,
-      trimText(initRes.text),
-    );
-  }
-  if (initBody.error) {
-    throw new McpError(
-      `MCP 服务「${ref.name}」握手失败：${initBody.error.message ?? '未知错误'}`,
-      ref.name,
-    );
-  }
-
-  // 2. 通知已初始化（不需要响应，但必须发，否则部分 server 拒绝后续调用）
-  await httpPost(url, {
-    jsonrpc: '2.0', method: 'notifications/initialized',
-  }, headers, timeoutSec).catch(() => undefined);
-
-  // 3. tools/list
+  // tools/list
   const listRes = await httpPost(url, {
     jsonrpc: '2.0', id: nextId(), method: 'tools/list', params: {},
   }, headers, timeoutSec);
@@ -397,29 +359,21 @@ export async function callTool(
   httpPost: HttpPost,
   timeoutSec = MCP_CALL_TIMEOUT_SEC,
 ): Promise<McpCallResult> {
-  const url = String(ref.url ?? '').trim();
-  if (!url) {
-    throw new McpError(
-      `MCP 服务「${ref.name}」没有填 HTTP 地址`, ref.name,
-    );
-  }
+  /*
+   * 握手用唯一那份 ——
+   *
+   * 以前这里是内联的第二份，而且**连 initialize 的返回值都没接**：
+   * 握手被拒也照样发 tools/call。实测：initialize 返回 JSON-RPC 错误时，
+   * callTool 返回 `{ ok: true, text: '', isError: false }` ——
+   * 绿着成功、输出为空。
+   */
+  await handshake(ref, httpPost, timeoutSec);
 
+  const url = String(ref.url ?? '').trim();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
   };
-
-  await httpPost(url, {
-    jsonrpc: '2.0', id: nextId(), method: 'initialize',
-    params: {
-      protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: { name: 'nexus-panel-agent-flow', version: '1.0.0' },
-    },
-  }, headers, timeoutSec);
-  await httpPost(url, {
-    jsonrpc: '2.0', method: 'notifications/initialized',
-  }, headers, timeoutSec).catch(() => undefined);
 
   const res = await httpPost(url, {
     jsonrpc: '2.0', id: nextId(), method: 'tools/call',

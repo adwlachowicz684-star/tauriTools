@@ -147,13 +147,23 @@ test('源码守卫：parseRpcBody 两条路径都要走收窄（JSON 与 SSE）'
   assert.ok(uses >= 2, `JSON 与 SSE 两条路径都要收窄，实际只用了 ${uses} 次`);
 });
 
-test('源码守卫：listTools 不许把"HTTP 错误"和"读不懂"合成一句', () => {
+/*
+ * 判据现在在**唯一的 handshake** 里，不在 listTools 体内 ——
+ *
+ * 这条守卫原本截取 listTools 函数体去找 `!initBody` / `!listBody`。
+ * 收口之后那两个变量不在那里了，**报红了，但报的是我的锚点旧了** ——
+ * 照着那条红去改，就会去动 listTools 而不是真正的判据。
+ *
+ * 行为测试（HTML → 说"读不懂"）本来就是绿的，所以这条红纯粹是守卫的问题。
+ */
+test('源码守卫：握手不许把"HTTP 错误"和"读不懂"合成一句', () => {
   const src = readSrc('engine/mcpClient.ts');
-  const i = src.indexOf('export async function listTools');
+  const i = src.indexOf('async function handshake');
+  assert.ok(i >= 0, '握手要收在 handshake 里');
   const body = src.slice(i, src.indexOf('\n}\n', i));
-  assert.ok(!/status >= 400 \|\| !\w+Body/.test(body),
+  assert.ok(!/status >= 400 \|\|/.test(body),
     '合成一句就会说出「连不上：HTTP 200」这种自相矛盾的话');
-  // 两类都要有
   assert.ok(/status >= 400/.test(body), '要有 HTTP 错误这条');
-  assert.ok(/!initBody/.test(body) && /!listBody/.test(body), '两步各自都要查"读不懂"');
+  assert.ok(/!body\b/.test(body), '要有"读不懂"这条');
+  assert.ok(/body\.error/.test(body), '要有协议 error 这条');
 });
