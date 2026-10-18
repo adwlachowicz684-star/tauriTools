@@ -239,6 +239,34 @@ async function handshake(
   }
 
   /*
+   * 版本协商 —— 握手通过≠能说话。
+   *
+   * MCP 的流程是：客户端报一个版本，服务端回**它自己**用的那个。
+   * 两边不一致时规范允许两种做法：按服务端版本继续，或断开。
+   * 我们只实现了一个版本，所以只能选后者 ——
+   * 但**必须说出来**，否则就是：
+   *
+   *   握手成功 → 工具清单也拿到了 → 一到真正调用就莫名失败
+   *
+   * 那种失败完全看不出跟版本有关，用户会去查工具参数、查网络。
+   * 静默继续的代价是把人支到完全错的方向上，所以这里明确失败。
+   *
+   * 服务端没回版本时**不报错** —— 规范里这一项是必填，
+   * 但现实中有 server 不填；为它把整个服务判掉属于误伤，
+   * 与"静默继续"相反方向的错。
+   */
+  const negotiated = String(
+    (body.result as { protocolVersion?: unknown } | undefined)?.protocolVersion ?? '',
+  ).trim();
+  if (negotiated && negotiated !== MCP_PROTOCOL_VERSION) {
+    throw new McpError(
+      `MCP 服务「${ref.name}」的协议版本不一致（本端 ${MCP_PROTOCOL_VERSION}，服务端 ${negotiated}）`,
+      ref.name,
+      '握手通过了，但后续调用会失败 —— 请升级服务端或本端，让两边用同一个版本',
+    );
+  }
+
+  /*
    * 通知已初始化：不需要响应，但**必须发** ——
    * 部分 server 不发就拒绝后续调用，而那种拒绝往往只有一句
    * "no session"，很难定位。所以这一步不放在调用方各写一遍。
