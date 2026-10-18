@@ -1221,14 +1221,31 @@ async function gcOrphanAssets(quiet = false) {
     if (fit.id === currentFileId) continue;         // ① 已覆盖
     let doc = null;
     try { doc = await store.doc(fit.id).load(); } catch { doc = null; }
-    if (!doc?.sheets) return { removed: 0, bytes: 0, aborted: true };
+    if (!doc?.sheets) return { removed: 0, bytes: 0, failed: 0, aborted: true };
     addRefs(doc.sheets);
   }
 
   // ③ 历史快照：删文件后从快照恢复时，附件必须还在
+  /*
+   * ⓘ 读不全就**必须中止**，不能「能读多少算多少」（BUG 164）。
+   *
+   * 早先这里用的是 `store.listBackups()`，而它内部 `get(k, null)` 读失败时
+   * `if (v)` 直接跳过 —— 那份快照从列表里**凭空消失**，调用方拿到的仍是
+   * 一个数组，看不出少了。于是那份快照引用的资产不在 live 里，被当成
+   * "没人引用"删掉：**用户删文件 → 从快照恢复，发现附件全没了**，而字节
+   * 已经不可恢复。列举失败（keys 返回 []）更彻底 —— 一层保护都没有。
+   *
+   * 这与 ②「读不出就整体中止」是同一条规矩：只要有可能漏掉某个引用源，
+   * 就一个字节都不许删。② 守住了脑图文件，③ 却写成了"少一层保护而已"，
+   * 注释里那句「只要任何一个脑图文件读不出来就中止」等于只对一半成立。
+   */
   try {
-    for (const b of await store.listBackups()) addRefs(b?.sheets);
-  } catch { /* 列举失败只是少一层保护，不中止 */ }
+    const snap = await store.listBackupsStrict();
+    if (snap.enumFailed || snap.failed) return { removed: 0, bytes: 0, failed: 0, aborted: true };
+    for (const b of snap.list) addRefs(b?.sheets);
+  } catch (e) {
+    return { removed: 0, bytes: 0, failed: 0, aborted: true };
+  }
 
   // ④ 用户图标也用 asset:<id> 存本体，不在任何画布里，必须显式排除
   try {
@@ -1336,6 +1353,7 @@ async function gcOrphanAssets(quiet = false) {
     status('已删除：' + f.name
       + (docCleared ? '' : '（内容未能清除：仍占用本地存储空间）')
       + (gc?.failed ? `（${gc.failed} 个附件本体未能删除：仍占用本地存储空间）` : '')
+      + (gc?.aborted ? '（本次未回收附件：快照读取不完整，怕误删仍在使用的附件）' : '')
       + (remembered ? '' : '（未能记住：下次启动会回到上一个文件）'));
   }
 
@@ -3644,6 +3662,9 @@ async function gcOrphanAssets(quiet = false) {
        * 「孤儿把配额吃满」），字节一个都没删掉却毫无提示，配额照旧见底。
        */
       if (r?.failed) ctx.toast(`${r.failed} 个附件本体未能删除（仍占用本地存储空间）`, 'warn');
+      // 中止也要说：那不是"没删掉"，是"压根没敢删"—— 不说的话用户点了一次
+      // 「移除附件」、配额一点没松，只会以为这功能坏了
+      if (r?.aborted) ctx.toast('本次未回收附件：快照读取不完整，为避免误删仍在使用的附件已跳过清理', 'warn');
       return r;
     }),
     onDropFiles: (files, nodeId) => { guard('拖放附加', () => handleDropFiles(files, nodeId))(); },

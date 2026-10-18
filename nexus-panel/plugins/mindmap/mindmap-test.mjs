@@ -1008,6 +1008,72 @@ group('回归 · 备份滚动窗口');
   await store.clearBackups();
 }
 
+
+/* ============================================================
+   回收孤儿附件 · 快照读不全就不许动手（BUG 164）
+   ============================================================ */
+
+group('回收孤儿附件 · 快照读不全就不许动手（BUG 164）');
+
+{
+  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+
+  await store.clearBackups();
+  await store.pushBackup({ sheets: [{ id: 's1' }] }, 10);
+  await new Promise((r) => setTimeout(r, 2));
+
+  // ① 正常情况不许误报
+  const fine = await store.listBackupsStrict();
+  eq(fine.enumFailed, false, '正常情况 enumFailed=false');
+  eq(fine.failed, 0, '正常情况 failed=0（不许误报）');
+  eq(fine.list.length, 1, '正常情况列表有 1 份');
+
+  // ② 单份读不出来：宽松版**静默缺席**，严格版必须报 failed
+  ctl.failGetPrefix = 'backup:';
+  const loose = await store.listBackups();
+  const strict = await store.listBackupsStrict();
+  ctl.failGetPrefix = '';
+  eq(loose.length, 0, '★（对照）宽松版 listBackups 读不出来时静默返回空数组');
+  eq(strict.failed, 1, '★ 严格版报出 failed=1（这份列表不完整）');
+  eq(strict.enumFailed, false, '列举本身是成功的，只是那一读不出来');
+  {
+    // 关键：库里那份快照**确实还在**。字节在、引用却被判成"没人用"，
+    // 于是它引用的附件会被当成孤儿删掉 —— 用户"删文件 → 从快照恢复"
+    // 后发现附件全没了，且字节不可恢复。
+    const left = [...rawDb().keys()].filter((k) => String(k).startsWith('backup:'));
+    eq(left.length, 1, '★（对照）库里其实还有 1 份快照 —— 静默缺席就是误删的入口');
+  }
+
+  // ③ 连 key 都列举不出来：list 必须是 null，不能是空数组
+  ctl.failTx = true;
+  const noEnum = await store.listBackupsStrict();
+  ctl.failTx = false;
+  eq(noEnum.enumFailed, true, '★ 列举失败时 enumFailed=true');
+  eq(noEnum.list, null, '★ 列举失败时 list 是 null（空数组会被当成「真的没有快照」）');
+
+  // ④ index.js 的 ③ 必须走严格版，且读不全就中止（剥注释后再判：注释里提到旧写法）
+  const seg = idx.slice(idx.indexOf('// ③ 历史快照'), idx.indexOf('// ④ 用户图标'));
+  ok(seg.length > 100, '定位到 ③ 那一段');
+  const code = stripCommentsFlatJs(seg);
+  ok(/listBackupsStrict\(\)/.test(code), '★ ③ 走 listBackupsStrict（不是会静默缺席的 listBackups）');
+  ok(!/listBackups\(\)/.test(code), '★ ③ 不再用宽松版 listBackups');
+  ok(/snap\.enumFailed \|\| snap\.failed/.test(code), '★ 列举失败或读不全时都要中止');
+  ok(/aborted: true/.test(code), '★ 中止时回 aborted:true（调用方据此说话）');
+
+  // ⑤ ② 与 ③ 口径一致：脑图文件读不出是中止，快照读不出同样必须是中止
+  const seg2 = idx.slice(idx.indexOf('// ② 其余仍在列表里的文件'), idx.indexOf('// ③ 历史快照'));
+  ok(/aborted: true/.test(stripCommentsFlatJs(seg2)), '② 读不出就中止（与 ③ 同一条规矩）');
+
+  // ⑥ 中止要说出来：deleteFile / gcAssets 两处调用方
+  // 起点用那句 status 本身，长度固定 —— 用「后面的某一句」当终点会在它先于此处出现时切成空串
+  const delSeg = stripCommentsFlatJs(idx.slice(idx.indexOf("status('已删除：' + f.name"), idx.indexOf("status('已删除：' + f.name") + 600));
+  ok(/gc\?\.aborted/.test(delSeg), '★ 删文件时把「本次未回收」拼进那句话');
+  const gcSeg = idx.slice(idx.indexOf('个附件本体未能删除（仍占用本地存储空间）'), idx.indexOf('个附件本体未能删除（仍占用本地存储空间）') + 400);
+  ok(/r\?\.aborted/.test(gcSeg), '★ 侧栏回收中止时也要 toast（不走 status：会被「已移除…」盖掉）');
+
+  await store.clearBackups();
+}
+
 /* ============================================================
    八、Tab 建下级节点（焦点被工具栏按钮抢走时）
    ============================================================ */
@@ -14883,10 +14949,17 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
     ok(/fileIndex\.some\(\(fi\)\s*=>\s*fi\.id === currentFileId\)/.test(body),
       '① 当前 workbook 只有仍在文件列表里时才算 live（否则删当前文件时回收恒不生效）');
     // ② 其余文件读不出来就整体中止，宁可留着也不能误删
-    ok(/return \{ removed: 0, bytes: 0, aborted: true \}/.test(body),
+    ok(/return \{ removed: 0, bytes: 0, failed: 0, aborted: true \}/.test(body),
       '② 任一文件读不出来必须整体中止（读不全就等于可能误删）');
     // ③ 快照：删文件后从快照恢复，附件必须还在
-    ok(/store\.listBackups\(\)/.test(body), '③ 历史快照的引用必须算 live（否则恢复后附件全丢）');
+    ok(/store\.listBackupsStrict\(\)/.test(body), '③ 历史快照的引用必须算 live（否则恢复后附件全丢）');
+    /*
+     * ⓘ 必须用**严格版**，且读不全就中止（BUG 164）。
+     *   宽松版 listBackups 内部 `get(k, null)` 读失败时 `if (v)` 直接跳过 ——
+     *   那份快照从列表里静默缺席，它引用的资产不在 live 里，被当成孤儿删掉。
+     *   只判"有没有调"抓不到这个：宽松版也是"调了"。
+     */
+    ok(/snap\.enumFailed \|\| snap\.failed/.test(body), '③ 快照读不全就中止（宽松版会静默缺席 → 误删）');
     // ④ 图标：用户图标也用 asset:<id> 存，不在任何画布里
     ok(/picons\.loadLibrary\(\)/.test(body), '④ 用户图标的资产必须算 live（否则图标全被删）');
     // 判定方式是扫全量 asset 键，而不是拿一份 sheets 去清

@@ -148,12 +148,40 @@ export async function del(key) {
 
 /** 列出带前缀的 key（用于清理备份）；失败返回空数组并记错误 */
 export async function keys(prefix = '') {
+  const all = await keysRaw(prefix);
+  return all || [];
+}
+
+/**
+ * 列出带前缀的 key（**严格版**）：失败返回 **null**，不是空数组。
+ *
+ * ⓘ 空数组有两个含义（"本来就没有" 与 "列举失败了"），调用方分不开 ——
+ *   而这两种情况的处理方式往往**必须不同**。备份列表就是典型：
+ *   列举失败时"没有快照"是假的，照着它去回收孤儿附件会把快照里
+ *   仍在使用的资产当成没人引用删掉（BUG 164）。需要区分的调用方用这个版本。
+ */
+async function keysRaw(prefix = '') {
   try {
     const all = await tx('readonly', (s) => s.getAllKeys());
     return (all || []).filter((k) => typeof k === 'string' && k.startsWith(prefix));
   } catch (e) {
     noteError('列举', prefix + '*', e);
-    return [];
+    return null;
+  }
+}
+
+/**
+ * 读取（**严格版**）：不把失败降级成"没数据"。
+ *
+ * @returns {Promise<{ok:boolean, value:*}>} ok=false 表示**读失败**（不是"没有"）
+ */
+async function getRaw(key) {
+  try {
+    const v = await tx('readonly', (s) => s.get(key));
+    return { ok: true, value: v === undefined ? null : v };
+  } catch (e) {
+    noteError('读取', key, e);
+    return { ok: false, value: null };
   }
 }
 
@@ -288,15 +316,40 @@ export async function putBackup(snapshot) {
   return (await set(key, snapshot)) ? key : null;
 }
 
-/** 备份列表（新→旧） */
+/** 备份列表（新→旧）。读不到的个别快照会**静默缺席**，需要保证"读全了"的调用方请用 listBackupsStrict */
 export async function listBackups() {
-  const all = (await keys(K_BACKUP)).sort().reverse();
+  const { list } = await listBackupsStrict();
+  return list || [];
+}
+
+/**
+ * 备份列表（**严格版**，新→旧）。
+ *
+ * ⓘ 早先只有 listBackups：它内部 `get(k, null)` 失败（或值为空）时 `if (v)`
+ *   直接跳过 —— 那份快照从列表里**凭空消失**，而调用方拿到的仍是"一个数组"，
+ *   看不出少了。列举失败（keys 返回 []）同样是空数组，分不开。
+ *
+ *   这对「回收孤儿附件」是致命的：那份快照引用的资产不在 live 里，
+ *   于是被当成没人引用删掉 —— 用户"删文件 → 从快照恢复"后发现附件全没了，
+ *   而且字节已经不可恢复（BUG 164）。
+ *
+ * @returns {Promise<{list:Array|null, failed:number, enumFailed:boolean}>}
+ *   list —— 快照列表；**列举失败时为 null**（不是空数组，空数组 = 真的没有）。
+ *   failed —— 读不出来 / 值为空的份数。>0 表示这份列表**不完整**。
+ *   enumFailed —— 连 key 都没列举出来。
+ */
+export async function listBackupsStrict() {
+  const all = await keysRaw(K_BACKUP);
+  if (!all) return { list: null, failed: 0, enumFailed: true };
   const out = [];
-  for (const k of all) {
-    const v = await get(k, null);
-    if (v) out.push({ key: k, ...v });
+  let failed = 0;
+  for (const k of all.slice().sort().reverse()) {
+    const r = await getRaw(k);
+    // 读失败与"值为空"都算不完整：那份快照引用的资产无从得知，只能保守处理
+    if (!r.ok || !r.value) { failed++; continue; }
+    out.push({ key: k, ...r.value });
   }
-  return out;
+  return { list: out, failed, enumFailed: false };
 }
 
 /**
