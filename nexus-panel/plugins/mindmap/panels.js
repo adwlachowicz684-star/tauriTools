@@ -2955,7 +2955,8 @@ export async function openIconLibrary(app) {
     const name = await askText({ label: '新分组名称', defaultValue: '新分组' });
     if (name == null) return;
     const g = await picons.addGroup(name);
-    if (!g) { app.api.status('新建分组失败', true); return; }
+    // 读不出来时 addGroup 返回 null 且**一个字节都没写**（写回去会清空现有分组）
+    if (!g) { app.api.status('新建分组失败（未写入本地库）', true); return; }
     activeId = g.id;
     await reload();
     app.api.status('已新建分组：' + g.name);

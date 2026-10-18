@@ -1148,6 +1148,118 @@ group('回收孤儿附件 · 图标库读不全就不许动手（BUG 165）');
 }
 
 /* ============================================================
+   图标库写路径：读不出来就不许落盘（BUG 166）
+   ============================================================ */
+
+group('图标库写路径 · 读不出来就不许落盘（BUG 166）');
+
+{
+  // 块内自取：本组位于文件靠前处，外层的这两个 import 还在 TDZ 里
+  const picons = await import('./preset-icons.js');
+  const io = await import('./io.js');
+  const psrc = fs.readFileSync(path.join(HERE, 'preset-icons.js'), 'utf8').replace(/\r\n/g, '\n');
+
+  // 造两个用户分组，其中一个带用户图标
+  for (const g of (await picons.loadLibrary()).filter((x) => !x.builtin)) await picons.deleteGroup(g.id);
+  const gA = await picons.addGroup('甲组');
+  const gB = await picons.addGroup('乙组');
+  const aid = await io.putAsset(new Blob(['png-x'], { type: 'image/png' }));
+  await picons.addIcon(gA.id, { kind: 'user', name: '图标1', assetId: aid });
+
+  const names = async () => (await picons.loadLibrary()).filter((x) => !x.builtin).map((x) => x.name).sort().join('/');
+  const iconCount = async () => (await picons.loadLibrary()).find((x) => x.id === gA.id)?.icons?.length ?? -1;
+  const firstIconId = async () => (await picons.loadLibrary()).find((x) => x.id === gA.id)?.icons?.[0]?.id;
+
+  // ---- ① 对照组：正常情况下九条写路径照旧成功（不许误伤） ----
+  eq(await names(), '乙组/甲组', '（对照）正常情况读得到两个用户分组');
+  eq(await iconCount(), 1, '（对照）正常情况甲组里有 1 个图标');
+  {
+    const gg = await picons.addGroup('丙组');
+    ok(!!gg, '（对照）正常情况 addGroup 返回分组对象');
+    ok(await picons.renameGroup(gg.id, '丙改名'), '（对照）正常情况 renameGroup 成功');
+    ok(await picons.deleteGroup(gg.id), '（对照）正常情况 deleteGroup 成功');
+    const ic = await picons.addIcon(gA.id, { kind: 'user', name: '图标2', assetId: aid });
+    ok(ic.ok, '（对照）正常情况 addIcon 成功');
+    ok((await picons.renameIcon(gA.id, ic.icon.id, '图标2改名')).ok, '（对照）正常情况 renameIcon 成功');
+    ok((await picons.moveIcon(gA.id, ic.icon.id, gB.id)).ok, '（对照）正常情况 moveIcon 成功');
+    ok((await picons.removeIcon(gB.id, ic.icon.id)).ok, '（对照）正常情况 removeIcon 成功');
+    const pm = await picons.pruneMissing({ dryRun: false });
+    eq(pm.aborted, false, '（对照）正常情况 pruneMissing 不中止');
+  }
+
+  // ---- ② 读不出来：九条写路径必须全部中止，且一个字节都不许写 ----
+  const before = await names();
+  const beforeIcons = await iconCount();
+  const withFail = async (fn) => {
+    ctl.failGetPrefix = 'iconlib';
+    try { return await fn(); } finally { ctl.failGetPrefix = ''; store.resetStoreError(); }
+  };
+
+  eq(await withFail(() => picons.addGroup('丁组')), null,
+    '★ addGroup 读不出来时返回 null（不是分组对象 —— 否则界面会说「已新建分组」）');
+  eq((await withFail(() => picons.renameGroup(gA.id, '改名X'))).ok, false, '★ renameGroup 读不出来时中止');
+  {
+    const r = await withFail(() => picons.deleteGroup(gB.id));
+    eq(r.ok, false, '★ deleteGroup 读不出来时中止');
+    ok(/未写入/.test(r.error || ''), '★ deleteGroup 中止文案说明未写入（不能说成「分组不存在」）');
+  }
+  eq(await withFail(() => picons.moveGroup(0, 1)), false, '★ moveGroup 读不出来时中止');
+  {
+    const r = await withFail(() => picons.addIcon(gA.id, { kind: 'user', name: 'x', assetId: aid }));
+    eq(r.ok, false, '★ addIcon 读不出来时中止');
+    ok(/未写入/.test(r.error || ''), '★ addIcon 中止文案说明未写入（不能说成「分组不存在」）');
+  }
+  {
+    const iid = await firstIconId();
+    const r1 = await withFail(() => picons.removeIcon(gA.id, iid));
+    eq(r1.ok, false, '★ removeIcon 读不出来时中止');
+    ok(/未写入/.test(r1.error || ''), '★ removeIcon 中止文案说明未写入（不能说成「图标不存在」）');
+    const r2 = await withFail(() => picons.renameIcon(gA.id, iid, 'n'));
+    eq(r2.ok, false, '★ renameIcon 读不出来时中止');
+    ok(/未写入/.test(r2.error || ''), '★ renameIcon 中止文案说明未写入（不能说成「图标不存在」）');
+    const r3 = await withFail(() => picons.moveIcon(gA.id, iid, gB.id));
+    eq(r3.ok, false, '★ moveIcon 读不出来时中止');
+    ok(/未写入/.test(r3.error || ''), '★ moveIcon 中止文案说明未写入（不能说成「图标不存在」）');
+  }
+  eq((await withFail(() => picons.pruneMissing({ dryRun: false }))).aborted, true,
+    '★ pruneMissing 读不出来时中止（宁可留着空白占位）');
+
+  // 关键：九条写路径之后，用户分组与图标**原样还在**
+  eq(await names(), before, '★ 九条写路径跑完，用户分组一个都没少（不会被写成空库）');
+  eq(await iconCount(), beforeIcons, '★ 图标条目也还在');
+  {
+    // 中止文案要说清"未写入"，不能只说一个含糊的失败
+    const r = await withFail(() => picons.renameGroup(gA.id, '改名Y'));
+    ok(/读取失败/.test(r.error || ''), '★ 中止文案说明是读取失败');
+    ok(/未写入/.test(r.error || ''), '★ 中止文案说明此次修改未写入');
+  }
+
+  // ---- ③ 源码契约：写路径不得再用会静默缺席的宽松版 ----
+  ok(!/await loadLibrary\(\)/.test(psrc), '★ preset-icons.js 不再有 await loadLibrary()（它会静默只剩内置分组）');
+  for (const fn of ['addGroup', 'renameGroup', 'deleteGroup', 'moveGroup', 'addIcon',
+    'removeIcon', 'renameIcon', 'moveIcon', 'pruneMissing']) {
+    const i = psrc.indexOf(`export async function ${fn}(`);
+    ok(i >= 0, `定位到 ${fn}`);
+    const seg = psrc.slice(i, i + 700);
+    ok(/loadLibraryForWrite\(\)/.test(seg), `★ ${fn} 走 loadLibraryForWrite（写路径专用严格版）`);
+  }
+  ok(/loadLibraryStrict\(\)/.test(psrc.slice(psrc.indexOf('export async function loadLibraryForWrite'),
+    psrc.indexOf('export async function loadLibraryForWrite') + 400)),
+    '★ loadLibraryForWrite 内部走 loadLibraryStrict（不是宽松版）');
+
+  // ---- ④ 界面侧：新建分组失败要说「未写入」，不能只说「新建分组失败」 ----
+  {
+    const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
+    const seg = pn.slice(pn.indexOf('const newGroup = async () => {'),
+      pn.indexOf('const newGroup = async () => {') + 500);
+    ok(/未写入/.test(seg), '★ 新建分组失败时说「未写入本地库」（不是一句含糊的「新建分组失败」）');
+  }
+
+  for (const gg of (await picons.loadLibrary()).filter((x) => !x.builtin)) await picons.deleteGroup(gg.id);
+  await store.del('asset:' + aid);
+}
+
+/* ============================================================
    八、Tab 建下级节点（焦点被工具栏按钮抢走时）
    ============================================================ */
 

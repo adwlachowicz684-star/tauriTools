@@ -160,6 +160,31 @@ async function saveUserGroups(groups) {
 
 const newId = (p) => p + Math.random().toString(36).slice(2, 10);
 
+/**
+ * 读取图标库 —— **写路径专用**（会落盘的那几处一律用这个）。
+ *
+ * ⓘ 早先写路径用的是宽松版 `loadLibrary()`：它读不出来时返回**只有内置分组**
+ *   的列表，而紧接着的 `saveUserGroups` 又会把这份残缺列表**原样写回去**
+ *   ——于是「读不出来」变成「删掉用户的所有分组与图标」。而图标库没有撤销，
+ *   删掉就是永久的（BUG 166）。
+ *
+ *   一进一出的组合最阴：新建分组那一步**自己成功了**（返回了分组对象），
+ *   界面说「已新建分组：X」，用户看到的却是整个图标库被清空。
+ *
+ *   与 BUG 165 同一条规矩：那条只堵了**读**路径（回收孤儿附件 / 浮层首读），
+ *   写路径一条都没堵 —— 同一条规矩只修一半，是本项目反复撞的模式。
+ *
+ * @returns {Promise<{ok:boolean, groups?:Array, error?:string}>}
+ */
+/** 读不出来时给调用方的统一文案（写路径一律据此中止，绝不落盘） */
+export const ICON_READ_ERR = '图标库读取失败：此次修改未写入（写回去会清空现有分组）。';
+
+export async function loadLibraryForWrite() {
+  const r = await loadLibraryStrict();
+  if (!r.ok) return { ok: false, error: ICON_READ_ERR };
+  return { ok: true, groups: r.groups };
+}
+
 /* ------------------------------------------------------------
    分组管理（A3 / A7）
    ------------------------------------------------------------ */
@@ -184,14 +209,18 @@ export function validateGroupName(groups, name) {
 }
 
 export async function addGroup(name) {
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  if (!ld.ok) return null;                  // 契约不变：失败返回 null
+  const groups = ld.groups;
   const g = { id: newId('g'), name: uniqueGroupName(groups, name), icons: [] };
   groups.push(g);
   return (await saveUserGroups(groups)) ? g : null;
 }
 
 export async function renameGroup(id, name) {
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  if (!ld.ok) return { ok: false, error: ld.error };
+  const groups = ld.groups;
   const i = groups.findIndex((g) => g.id === id);
   if (i < 0) return { ok: false, error: '分组不存在。' };
   if (groups[i].builtin) return { ok: false, error: '内置分组不可重命名。' };
@@ -206,7 +235,9 @@ export async function renameGroup(id, name) {
  * 内置分组不可删。组内用户图标的资产记录一并清掉，否则会留在库里变成孤儿。
  */
 export async function deleteGroup(id) {
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  if (!ld.ok) return { ok: false, error: ld.error };
+  const groups = ld.groups;
   const i = groups.findIndex((g) => g.id === id);
   if (i < 0) return { ok: false, error: '分组不存在。' };
   if (groups[i].builtin) return { ok: false, error: '内置分组不可删除。' };
@@ -223,7 +254,9 @@ export async function deleteGroup(id) {
 
 /** 调整分组顺序（对齐 WPF `MoveGroup`） */
 export async function moveGroup(fromIdx, toIdx) {
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  if (!ld.ok) return false;
+  const groups = ld.groups;
   const n = groups.length;
   if (fromIdx < 0 || fromIdx >= n || toIdx < 0 || toIdx >= n || fromIdx === toIdx) return false;
   // 内置分组恒在最前，不允许被用户分组挤到后面去
@@ -246,7 +279,9 @@ export async function moveGroup(fromIdx, toIdx) {
  * @param {{kind:'user', name:string, assetId:string}} icon
  */
 export async function addIcon(groupId, icon) {
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  if (!ld.ok) return { ok: false, error: ld.error };
+  const groups = ld.groups;
   const g = groups.find((x) => x.id === groupId);
   if (!g) return { ok: false, error: '分组不存在。' };
   if (g.builtin) return { ok: false, error: '内置分组不可添加图标。' };
@@ -261,7 +296,9 @@ export async function addIcon(groupId, icon) {
 }
 
 export async function removeIcon(groupId, iconId) {
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  if (!ld.ok) return { ok: false, error: ld.error };
+  const groups = ld.groups;
   const g = groups.find((x) => x.id === groupId);
   if (!g) return { ok: false, error: '分组不存在。' };
   const i = (g.icons || []).findIndex((x) => x.id === iconId);
@@ -275,7 +312,9 @@ export async function removeIcon(groupId, iconId) {
 
 /** 重命名图标：同名则加序号（对齐 WPF `RenameIcon` 的冲突处理） */
 export async function renameIcon(groupId, iconId, name) {
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  if (!ld.ok) return { ok: false, error: ld.error };
+  const groups = ld.groups;
   const g = groups.find((x) => x.id === groupId);
   if (!g) return { ok: false, error: '分组不存在。' };
   const ic = (g.icons || []).find((x) => x.id === iconId);
@@ -294,7 +333,9 @@ export async function renameIcon(groupId, iconId, name) {
  * 要用内置图标当模板，应先复制成用户图标。
  */
 export async function moveIcon(fromGroupId, iconId, toGroupId) {
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  if (!ld.ok) return { ok: false, error: ld.error };
+  const groups = ld.groups;
   const from = groups.find((x) => x.id === fromGroupId);
   const to = groups.find((x) => x.id === toGroupId);
   if (!from || !to) return { ok: false, error: '分组不存在。' };
@@ -356,7 +397,10 @@ export function partitionMissing(icons = [], live = new Set()) {
  */
 export async function pruneMissing(opts = {}) {
   const dryRun = !!(opts && opts.dryRun);
-  const groups = await loadLibrary();
+  const ld = await loadLibraryForWrite();
+  // 读不出来就中止：宁可留着几个空白占位，也不能把残缺列表写回去
+  if (!ld.ok) return { removed: 0, groups: 0, aborted: true, saved: false };
+  const groups = ld.groups;
   let removed = 0;
   let touched = 0;
 
