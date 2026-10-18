@@ -173,9 +173,13 @@ async function keysRaw(prefix = '') {
 /**
  * 读取（**严格版**）：不把失败降级成"没数据"。
  *
+ * ⓘ `get` 失败时返回默认值 —— "没有" 与 "读不出来" **长得一模一样**。
+ *   对图标库这类数据，后者意味着用户自定义图标凭空消失：条目还在、
+ *   字节还在，只是这一刻没读出来（BUG 165）。需要区分的调用方用这个版本。
+ *
  * @returns {Promise<{ok:boolean, value:*}>} ok=false 表示**读失败**（不是"没有"）
  */
-async function getRaw(key) {
+export async function getStrict(key) {
   try {
     const v = await tx('readonly', (s) => s.get(key));
     return { ok: true, value: v === undefined ? null : v };
@@ -344,7 +348,7 @@ export async function listBackupsStrict() {
   const out = [];
   let failed = 0;
   for (const k of all.slice().sort().reverse()) {
-    const r = await getRaw(k);
+    const r = await getStrict(k);
     // 读失败与"值为空"都算不完整：那份快照引用的资产无从得知，只能保守处理
     if (!r.ok || !r.value) { failed++; continue; }
     out.push({ key: k, ...r.value });

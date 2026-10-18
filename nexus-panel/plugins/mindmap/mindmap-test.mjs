@@ -1074,6 +1074,79 @@ group('回收孤儿附件 · 快照读不全就不许动手（BUG 164）');
   await store.clearBackups();
 }
 
+
+/* ============================================================
+   回收孤儿附件 · 用户图标库读不全就不许动手（BUG 165）
+   ============================================================ */
+
+group('回收孤儿附件 · 图标库读不全就不许动手（BUG 165）');
+
+{
+  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const psrc = (fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8')).replace(/\r\n/g, '\n');
+  // 块内自取：本组位于文件靠前处，外层的这两个 import 还在 TDZ 里
+  const picons = await import('./preset-icons.js');
+  const io = await import('./io.js');
+
+  // 造一个用户分组 + 一个用户图标（本体用 asset:<id> 存）
+  let lib = await picons.loadLibrary();
+  for (const g of lib.filter((x) => !x.builtin)) await picons.deleteGroup(g.id);
+  const g = await picons.addGroup('孤儿测试组');
+  const aid = await io.putAsset(new Blob(['png-x'], { type: 'image/png' }));
+  await picons.addIcon(g.id, { kind: 'user', name: 'ui1', assetId: aid });
+
+  // ① 正常情况不许误报
+  const fine = await picons.loadLibraryStrict();
+  eq(fine.ok, true, '正常情况 ok=true');
+  ok(fine.groups.some((x) => x.id === g.id), '正常情况读得到用户分组（不许误报）');
+
+  // ② 读不出来：宽松版**静默只返回内置分组**，严格版必须报 ok=false
+  ctl.failGetPrefix = 'iconlib';
+  const loose = await picons.loadLibrary();
+  const strict = await picons.loadLibraryStrict();
+  ctl.failGetPrefix = '';
+  store.resetStoreError();
+  eq(loose.filter((x) => !x.builtin).length, 0,
+    '★（对照）宽松版 loadLibrary 读不出来时静默只剩内置分组');
+  eq(strict.ok, false, '★ 严格版报出 ok=false（这份图标库不完整）');
+  {
+    // 关键：库里那条 iconlib **确实还在**。条目在、字节在，只是这一刻没读出来 ——
+    // 于是它引用的 asset 被判成"没人用"删掉，图标变成永久空白。
+    const left = [...rawDb().keys()].filter((k) => String(k) === 'iconlib');
+    eq(left.length, 1, '★（对照）库里其实还有 iconlib —— 静默缺席就是误删的入口');
+    const stillThere = await store.get('asset:' + aid, null);
+    ok(!!stillThere, '★（对照）图标的资产字节也还在');
+  }
+
+  // ③ ④ 必须走严格版，且读不出来就中止（剥注释再判：注释里提到旧写法）
+  const seg = idx.slice(idx.indexOf('// ④ 用户图标'), idx.indexOf('// ④ 用户图标') + 1400);
+  ok(seg.length > 200, '定位到 ④ 那一段');
+  const code = stripCommentsFlatJs(seg);
+  ok(/loadLibraryStrict\(\)/.test(code), '★ ④ 走 loadLibraryStrict（不是会静默缺席的 loadLibrary）');
+  ok(!/loadLibrary\(\)/.test(code), '★ ④ 不再用宽松版 loadLibrary');
+  ok(/!lib\.ok/.test(code), '★ 图标库读不出来时判 !lib.ok');
+  ok(/aborted: true/.test(code), '★ 读不出来就中止（宁可让孤儿继续留着）');
+  ok(/ic\.assetId/.test(code), '④ 仍要把用户图标的 assetId 算进 live');
+
+  // ④ 与 ③ 口径一致：快照读不出是中止，图标库读不出同样必须是中止
+  const seg3 = idx.slice(idx.indexOf('// ③ 历史快照'), idx.indexOf('// ④ 用户图标'));
+  ok(/aborted: true/.test(stripCommentsFlatJs(seg3)), '③ 读不全就中止（与 ④ 同一条规矩）');
+
+  // ⑤ 界面侧也要说：图标库浮层读失败不能让自定义图标默默消失
+  const openSeg = psrc.slice(psrc.indexOf('export async function openIconLibrary'),
+    psrc.indexOf('export async function openIconLibrary') + 1200);
+  ok(/loadLibraryStrict\(\)/.test(openSeg), '★ 图标库浮层走严格版');
+  ok(/!lib0\.ok/.test(openSeg), '★ 浮层首读失败要说出来');
+  ok(/图标库读取失败/.test(openSeg), '★ 浮层首读失败的文案说清「自定义图标可能没显示出来」');
+  const rlSeg = psrc.slice(psrc.indexOf('const reload = async () => {'),
+    psrc.indexOf('const reload = async () => {') + 500);
+  ok(/loadLibraryStrict\(\)/.test(rlSeg), '★ reload 也走严格版（改完分组后读不出来同样要说）');
+  ok(/!rl\.ok/.test(rlSeg), '★ reload 读失败要说出来');
+
+  for (const gg of (await picons.loadLibrary()).filter((x) => !x.builtin)) await picons.deleteGroup(gg.id);
+  await store.del('asset:' + aid);
+}
+
 /* ============================================================
    八、Tab 建下级节点（焦点被工具栏按钮抢走时）
    ============================================================ */
@@ -14961,7 +15034,12 @@ group('删除脑图后附件本体变成孤儿（BUG 47）');
      */
     ok(/snap\.enumFailed \|\| snap\.failed/.test(body), '③ 快照读不全就中止（宽松版会静默缺席 → 误删）');
     // ④ 图标：用户图标也用 asset:<id> 存，不在任何画布里
-    ok(/picons\.loadLibrary\(\)/.test(body), '④ 用户图标的资产必须算 live（否则图标全被删）');
+    /*
+     * 想守的事没变：④ 必须把用户图标的资产算进 live。
+     * 锚点要跟着走 —— 现在是严格版，且读不出来要中止（BUG 165）。
+     */
+    ok(/picons\.loadLibraryStrict\(\)/.test(body), '④ 用户图标的资产必须算 live（否则图标全被删）');
+    ok(/!lib\.ok/.test(body), '④ 图标库读不出来也要中止（宽松版会静默缺席 → 误删）');
     // 判定方式是扫全量 asset 键，而不是拿一份 sheets 去清
     ok(/store\.keys\('asset:'\)/.test(body), '必须扫全量 asset: 键判定孤儿（不能只清某份 sheets）');
   }

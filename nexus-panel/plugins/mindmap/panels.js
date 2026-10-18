@@ -2834,7 +2834,14 @@ export async function openBackups(app) {
  * 这里保留窗口开着 —— 连续给多个节点配图标是常见操作，关了又开很烦。
  */
 export async function openIconLibrary(app) {
-  let groups = await picons.loadLibrary();
+  /*
+   * ⓘ 读不出来必须说出来（BUG 165）：宽松版会把读失败降级成「没有用户分组」，
+   *   于是自定义图标**凭空消失**而界面一声不吭 —— 用户只会以为是自己删过，
+   *   甚至可能在这个状态下又去建一遍同名分组。
+   */
+  const lib0 = await picons.loadLibraryStrict();
+  if (!lib0.ok) app.api.status('图标库读取失败：自定义图标可能没有显示出来', true);
+  let groups = lib0.groups;
   let activeId = groups[0]?.id || null;
 
   const grid = h('div.mm-icons', {});
@@ -2934,7 +2941,10 @@ export async function openIconLibrary(app) {
   };
 
   const reload = async () => {
-    groups = await picons.loadLibrary();
+    // 同上：读失败要说出来，不能让自定义图标默默消失（BUG 165）
+    const rl = await picons.loadLibraryStrict();
+    if (!rl.ok) app.api.status('图标库读取失败：自定义图标可能没有显示出来', true);
+    groups = rl.groups;
     if (!groups.some((g) => g.id === activeId)) activeId = groups[0]?.id || null;
     renderGroups();
     await renderGrid();

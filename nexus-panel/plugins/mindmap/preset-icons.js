@@ -120,11 +120,34 @@ function builtinGroups() {
 /**
  * 读取完整图标库：内置分组 + 用户分组。
  * 内置分组**始终排在最前**，用户分组保持自己存下来的顺序。
+ *
+ * ⓘ 读不出来时返回**只有内置分组**的列表 —— 用户自定义图标静默缺席。
+ *   需要保证「读全了」的调用方（回收孤儿附件要据此排除图标资产，BUG 165）
+ *   请用 loadLibraryStrict()。
  */
 export async function loadLibrary() {
-  const user = (await store.get(K_ICONLIB, null)) || { groups: [] };
+  return (await loadLibraryStrict()).groups;
+}
+
+/**
+ * 读取完整图标库（**严格版**）。
+ *
+ * ⓘ 宽松版内部 `store.get(K_ICONLIB, null)` 读失败时返回 null → 当成
+ *   `{ groups: [] }` → **用户分组凭空消失**，而返回值仍是一个数组，看不出少了。
+ *
+ *   这对「回收孤儿附件」是致命的：用户图标的本体用 `asset:<id>` 存，
+ *   不在任何画布里，全靠这一处显式排除。读不出来时那些 assetId 不在
+ *   live 集合里，于是被当成"没人引用"删掉 —— 图标条目还在、字节没了，
+ *   变成永久空白的图标；而图标库没有撤销，删掉就是永久的（BUG 165）。
+ *
+ * @returns {Promise<{ok:boolean, groups:Array}>} ok=false 表示**读失败**（不是"没有"）
+ */
+export async function loadLibraryStrict() {
+  const r = await store.getStrict(K_ICONLIB);
+  if (!r.ok) return { ok: false, groups: [...builtinGroups()] };
+  const user = r.value || { groups: [] };
   const ug = Array.isArray(user.groups) ? user.groups : [];
-  return [...builtinGroups(), ...ug.map((g) => ({ ...g, builtin: false }))];
+  return { ok: true, groups: [...builtinGroups(), ...ug.map((g) => ({ ...g, builtin: false }))] };
 }
 
 /** 只持久化用户分组（内置不落盘，见文件头说明） */

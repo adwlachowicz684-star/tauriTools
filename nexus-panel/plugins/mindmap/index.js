@@ -1248,13 +1248,26 @@ async function gcOrphanAssets(quiet = false) {
   }
 
   // ④ 用户图标也用 asset:<id> 存本体，不在任何画布里，必须显式排除
+  /*
+   * ⓘ 读不出来就**必须中止**，不能「当成没有用户图标」（BUG 165）。
+   *
+   * 早先这里用的是 `picons.loadLibrary()`，而它内部 `store.get(K_ICONLIB, null)`
+   * 读失败时返回 null → 当成 `{ groups: [] }` —— 用户分组凭空消失，返回的
+   * 仍是一个数组，看不出少了。于是那些图标的 assetId 不在 live 里，被当成
+   * "没人引用"删掉：**图标库条目还在、字节没了**，用户图标变成永久空白，
+   * 而图标库没有撤销。③ 已经改成读不全就中止，④ 却还是"少一层保护而已"。
+   */
   try {
-    for (const g of await picons.loadLibrary()) {
+    const lib = await picons.loadLibraryStrict();
+    if (!lib.ok) return { removed: 0, bytes: 0, failed: 0, aborted: true };
+    for (const g of lib.groups) {
       for (const ic of g?.icons || []) {
         if (ic?.kind === 'user' && ic.assetId) live.add(ic.assetId);
       }
     }
-  } catch { /* 同上 */ }
+  } catch {
+    return { removed: 0, bytes: 0, failed: 0, aborted: true };
+  }
 
   /*
    * 上面四步都跑完、且没有中止，才敢动手删。
