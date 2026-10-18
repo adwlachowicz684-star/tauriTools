@@ -2085,5 +2085,65 @@ console.log('\n=== 23. 插件事件总线：emit 必须有订阅方 ===');
 }
 
 
+console.log('\n=== 24. SDK 服务快捷包装 → 目标服务必须真的提供该方法 ===');
+/*
+ * js/plugin-sdk.js 的 withBuiltinShortcuts 把服务调用包成
+ *   ctx.services.color.normalize(c)  →  call('color-picker', 'normalize')
+ * 这些**方法名是字符串**，两端对不上不会有任何编译错误 ——
+ * 快捷方法照常存在、照常返回 undefined，调用方拿到空值。
+ *
+ * 实测现状（已登记）：color-picker 有个孤儿入口 index.js，它广告的是
+ * normalizeHex 且没有 hsv —— 与 SDK 调用的名字对不上。它现在没人加载所以
+ * 不发作；但"SDK 按名字调"这件事本身是硬约束，于是**只按在跑的入口判定**
+ * （孤儿入口排除，避免它替在跑入口蒙混过关）。
+ *
+ * 同理也盯反方向：服务广告了但 SDK 快捷包装没接的，只是"没包装"，
+ * 调用方仍可 ctx.services.call 直调 —— 不是问题，故不判。
+ */
+{
+  const sdk = stripJs(read('js/plugin-sdk.js'));
+  const want = new Map();
+  for (const m of sdk.matchAll(/call\(\s*'([A-Za-z0-9_\-]+)'\s*,\s*'([A-Za-z0-9_\-]+)'/g)) {
+    if (!want.has(m[1])) want.set(m[1], new Set());
+    want.get(m[1]).add(m[2]);
+  }
+  t('扫描到 SDK 的服务快捷包装', want.size >= 3 && [...want.values()].every((s) => s.size >= 2),
+    `${want.size} 个服务 / ${[...want.values()].reduce((a, s) => a + s.size, 0)} 个方法`);
+
+  const ORPHAN = new Set(['plugins/color-picker/index.js']); // 与 1.6 的已知孤儿清单同源
+  const NAMES = ['index.js', 'index.tsx', 'main.js', 'main.tsx', 'module.js', 'module.mjs', 'module.tsx'];
+  const advertised = new Map(); // svc -> Set
+  for (const svc of want.keys()) {
+    const set = new Set();
+    for (const n of NAMES) {
+      const f = `plugins/${svc}/${n}`;
+      if (ORPHAN.has(f)) continue;
+      let src;
+      try { src = read(f); } catch { continue; }
+      const s = stripJs(src);
+      for (const m of s.matchAll(/methods\s*[:=]\s*\[([^\]]*)\]/g)) {
+        for (const q of m[1].matchAll(/'([^']+)'/g)) set.add(q[1]);
+      }
+      /* methods: { xxx(){...} } 的对象写法也算广告 */
+      for (const m of s.matchAll(/^\s{2,}([A-Za-z_]\w*)\s*\(/gm)) set.add(m[1]);
+    }
+    advertised.set(svc, set);
+  }
+  const bad = [];
+  for (const [svc, ms] of want) {
+    const adv = advertised.get(svc);
+    if (!adv || adv.size === 0) { bad.push(`${svc}: 没扫到任何广告（判据落空）`); continue; }
+    const miss = [...ms].filter((m) => !adv.has(m));
+    if (miss.length) bad.push(`${svc} 缺 ${miss.join('/')}（实际广告 ${[...adv].length} 项）`);
+  }
+  t('SDK 调用的每个服务方法，目标服务的在跑入口都提供了', bad.length === 0, bad.join(' | '));
+
+  /* 元断言：判据两头都灵 */
+  t('判据本身有效（探针：拼错的方法名会被判缺失）',
+    (advertised.get('color-picker') || new Set()).has('normalize')
+    && !(advertised.get('color-picker') || new Set()).has('normalizeHexx'));
+}
+
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
