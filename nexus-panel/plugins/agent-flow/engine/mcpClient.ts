@@ -77,6 +77,38 @@ const nextId = (): number => {
  * "Unexpected token d" 这种完全看不懂的错误 ——
  * 用户会以为是 server 坏了，其实是传输格式没处理。
  */
+/**
+ * 判断这是不是一条**单条** JSON-RPC 响应 —— 只认对象。
+ *
+ * ================= 为什么必须排除数组 =================
+ *
+ * JSON-RPC 的**批处理**响应是数组（`[{...}, {...}]`）。
+ * 而这一层的每个函数都是"发一个请求、收一个响应"，
+ * 从来没发过批处理请求，所以收到数组就意味着"格式不认识"。
+ *
+ * 以前 `JSON.parse(src) as RpcResponse` 直接返回了数组 ——
+ * `as` 是断言，不做检查，于是数组一路被当成合法响应：
+ *
+ *   listBody.result  → undefined（数组没有这个属性）
+ *   raw = []         → 抛「返回了 0 个工具」
+ *
+ * 报错了，但**说错了原因**：真问题是格式不认识，而提示让人去查
+ * "server 为什么没暴露工具"。
+ *
+ * callTool 那条路更糟 —— 它不查 result 是不是 undefined：
+ *
+ *   body.result → undefined → blocks = [] → text = ''
+ *   return { ok: true, text: '', isError: false }
+ *
+ * **绿着成功、输出为空、什么都没做。** 与 runMcp 里那段注释说的是
+ * 同一类失效：不报错、日志干净、界面上一切正常。
+ *
+ * 所以这里只认对象 —— 批处理数组按"读不懂"处理，让上层报出真原因。
+ */
+function isRpcObject(v: unknown): v is RpcResponse {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
 export function parseRpcBody(text: string): RpcResponse | null {
   const src = String(text ?? '').trim();
   if (!src) return null;
@@ -84,7 +116,9 @@ export function parseRpcBody(text: string): RpcResponse | null {
   // 先按 JSON 试 —— 大多数 server 走这条路
   if (src.startsWith('{') || src.startsWith('[')) {
     try {
-      return JSON.parse(src) as RpcResponse;
+      const one = JSON.parse(src) as unknown;
+      // 数组（批处理）不算 —— 见上面 isRpcObject 的说明
+      if (isRpcObject(one)) return one as RpcResponse;
     } catch {
       /* 落到 SSE 解析 */
     }
@@ -98,8 +132,11 @@ export function parseRpcBody(text: string): RpcResponse | null {
     const payload = t.slice(5).trim();
     if (!payload || payload === '[DONE]') continue;
     try {
-      const obj = JSON.parse(payload) as RpcResponse;
-      if (obj && (obj.result !== undefined || obj.error !== undefined)) last = obj;
+      const obj = JSON.parse(payload) as unknown;
+      if (isRpcObject(obj)
+        && (obj.result !== undefined || obj.error !== undefined)) {
+        last = obj as RpcResponse;
+      }
     } catch {
       /* 忽略心跳等无法解析的行 */
     }
@@ -240,12 +277,39 @@ export async function listTools(
     },
   }, headers, timeoutSec);
 
-  const initBody = parseRpcBody(initRes.text);
-  if (initRes.status >= 400 || !initBody || initBody.error) {
+  /*
+   * HTTP 错误与"读不懂"必须**分开说** ——
+   *
+   * 以前合成一句 `连不上：${body?.error?.message ?? 'HTTP ' + status}`：
+   * 状态码是 200 而响应读不懂时（`body` 为 null），
+   * 那句会退化成「**连不上**：HTTP **200**」—— 自相矛盾。
+   *
+   * 实测：把地址填成一个网页，就会拿到这一句。用户看到 200 却说连不上，
+   * 只会以为程序坏了。而真实情况恰恰相反：**连上了**，
+   * 只是对方返回的不是 MCP 响应（多半是地址填错了、或是登录页）。
+   *
+   * 下面 initialize() 那一份本来就是分开写的（对的），
+   * 这里内联的这份是第二套实现 —— 于是两套口径不一致。
+   */
+  if (initRes.status >= 400) {
     throw new McpError(
-      `连不上 MCP 服务「${ref.name}」：${initBody?.error?.message ?? `HTTP ${initRes.status}`}`,
+      `连不上 MCP 服务「${ref.name}」（HTTP ${initRes.status}）`,
       ref.name,
       trimText(initRes.text),
+    );
+  }
+  const initBody = parseRpcBody(initRes.text);
+  if (!initBody) {
+    throw new McpError(
+      `MCP 服务「${ref.name}」返回的内容读不懂 —— 地址可能填错了（对方返回的不是 MCP 响应）`,
+      ref.name,
+      trimText(initRes.text),
+    );
+  }
+  if (initBody.error) {
+    throw new McpError(
+      `MCP 服务「${ref.name}」握手失败：${initBody.error.message ?? '未知错误'}`,
+      ref.name,
     );
   }
 
@@ -259,10 +323,25 @@ export async function listTools(
     jsonrpc: '2.0', id: nextId(), method: 'tools/list', params: {},
   }, headers, timeoutSec);
 
-  const listBody = parseRpcBody(listRes.text);
-  if (listRes.status >= 400 || !listBody || listBody.error) {
+  // 同上：HTTP 错误与"读不懂"分开，否则会说成「没返回工具清单：HTTP 200」
+  if (listRes.status >= 400) {
     throw new McpError(
-      `MCP 服务「${ref.name}」没返回工具清单：${listBody?.error?.message ?? `HTTP ${listRes.status}`}`,
+      `MCP 服务「${ref.name}」没返回工具清单（HTTP ${listRes.status}）`,
+      ref.name,
+      trimText(listRes.text),
+    );
+  }
+  const listBody = parseRpcBody(listRes.text);
+  if (!listBody) {
+    throw new McpError(
+      `MCP 服务「${ref.name}」的工具清单读不懂 —— 响应不是单条 JSON-RPC 响应`,
+      ref.name,
+      trimText(listRes.text),
+    );
+  }
+  if (listBody.error) {
+    throw new McpError(
+      `MCP 服务「${ref.name}」没返回工具清单：${listBody.error.message ?? '未知错误'}`,
       ref.name,
       trimText(listRes.text),
     );
