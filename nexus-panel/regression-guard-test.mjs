@@ -2145,5 +2145,47 @@ console.log('\n=== 24. SDK 服务快捷包装 → 目标服务必须真的提供
 }
 
 
+console.log('\n=== 25. 同页 ctx 的两处建法必须注入同一套 services ===');
+/*
+ * js/host.js 有两处建同页（module）ctx：主视图（mount）和设置弹窗。
+ * 两者拿到的是**同一个 ctx 形状**，插件不区分自己在哪一侧。
+ *
+ * 实测：主视图那只传了 services（宿主直连，见 createModuleContext 的
+ * services 入参），设置弹窗那只**没传**。于是后者走 SDK 的桥接兜底 ——
+ * 而同页插件的 transport 只有 invoke / listen / store.* / fs.* 几个 case，
+ * default 直接 throw '未知请求: ' + method。也就是在设置面板里
+ * ctx.services.call(...) 会当场抛错，而主视图里同样的调用是好的。
+ *
+ * 这与该文件自己写的原则冲突（原话就在 openPlugin 那行上方）：
+ *   「同一个 API 一处有、一处没有，是调用方最难排查的那类坑」
+ * —— openPlugin 照做了，services 漏了。
+ *
+ * 当前无现存 BUG：全仓只有 demo-module 实现了 settings(ctx)，且它没用
+ * services。但这是"休眠"的：谁在设置面板里加一次取色/目录选择就当场炸。
+ */
+{
+  const h = stripJs(read('js/host.js'));
+  const calls = [];
+  /* 取 createModuleContext({...}) 的实参块：靠花括号配对，不吃换行 */
+  for (const m of h.matchAll(/createModuleContext\(\s*\{/g)) {
+    const from = m.index + m[0].length;
+    let d = 1; let i = from;
+    while (i < h.length && d > 0) {
+      if (h[i] === '{') d++; else if (h[i] === '}') d--;
+      i++;
+    }
+    calls.push(h.slice(from, i - 1));
+  }
+  t('扫到两处同页 ctx 建法', calls.length === 2, `实测 ${calls.length} 处`);
+  const withSvc = calls.filter((b) => /^\s*services\s*:/m.test(b));
+  t('每处都注入了 services（否则设置面板里的服务调用会抛"未知请求"）',
+    calls.length > 0 && withSvc.length === calls.length,
+    `${withSvc.length} / ${calls.length} 处注入`);
+  /* 元断言：判据不是靠"扫不到调用"蒙混过关 */
+  t('判据本身有效（探针：能识别出没写 services 的实参块）',
+    !/^\s*services\s*:/m.test('manifest, container: el, bus,\n  theme: readTheme(),'));
+}
+
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
