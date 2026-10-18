@@ -2060,9 +2060,13 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .field-head { display: flex; align-items: center; gap: var(--sp-4); }
 .field-head > span { flex: 1; }
 
-/* 引用 chip 里文件相关的用另一种颜色，和输出区分开 */
+/* 引用 chip 里文件相关的用另一种颜色，和输出区分开。
+   文字色必须走 --af-t-file：它是 --af-t-* 两档色之一（暗 #7dd3fc / 浅 #0b6e8f），
+   写死暗档的话 follow 模式切到浅色主题时不跟着换 —— 实测 #7dd3fc 落在
+   浅底（#e6e9ef）上对比度只有 1.37，等于看不见；换令牌后是 4.74。
+   边框那条本来就用着令牌，只有这两处漏了 */
 .chip.file {
-  border-color: var(--af-t-cond-s); color: #7dd3fc;
+  border-color: var(--af-t-cond-s); color: var(--af-t-file);
 }
 .chip.file:hover { background: rgba(56, 189, 248, .12); }
 

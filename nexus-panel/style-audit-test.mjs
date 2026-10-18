@@ -724,5 +724,66 @@ console.log('\n=== 11. 变量名拼错：存在近似令牌却全仓无人定义
   }
 }
 
+console.log('\n=== 12. 文本色不得写死成两档令牌的任一档值 ===');
+/*
+ * agent-flow 的 --af-t-* 是**按基调两档切换**的色板（依据见 styles.css 里
+ * 那段注释）：暗档 = 原值，浅档 = 加深版本。原因写得很直白 —— 暗档那些色
+ * 在浅底上对比度掉到 1.1~2.5，"基本看不见"。
+ * 所以任何写死的用法都会绕过切换：深色下一切正常，切到浅色主题才露馅，
+ * 且不报错 —— 与"变量名拼错"是同一个形状（值本身就是字面量，没有兜底可查）。
+ *
+ * 实测一处：.chip.file 的 color 写死 #7dd3fc（= --af-t-file 的暗档值），
+ * 而同一条规则里的 border-color 用的是令牌 —— 说明本意就是要两档，
+ * 只是文字那一半漏了。它在浅底 #e6e9ef 上对比度只有 1.37（换令牌后 4.74）。
+ *
+ * 只盯**文本色**（属性恰好是 color，不含 -color 结尾的边框/背景属性）：
+ * 节点左边框那批（loop / fs / ocr / translate）也写死了同样的值，但它们是
+ * 装饰性品牌色，且另一批节点（cond / trigger / parallel / update / llm-chat）
+ * 压根没有对应令牌 —— 一并纳入只会逼出白名单，而白名单越长守卫越瞎
+ * （与第 11 节"族判据"同一个死法）。那一批单独报给 agent-flow 那边定。
+ */
+{
+  const af = join(HERE, 'plugins', 'agent-flow', 'styles.css');
+  t('agent-flow 样式表在扫描范围内', existsSync(af));
+
+  const src = strip(readFileSync(af, 'utf8'));
+  /* 两档令牌 = 浅色覆盖块里重新赋过值的 --af-t-*；暗档值取它首次出现处 */
+  const lightBlock = src.match(
+    /:root\[data-af-mode="follow"\]\[data-nexus-base="light"\]\s*\{([\s\S]*?)\n\}/);
+  t('找得到浅色覆盖块', !!lightBlock);
+
+  const twoTier = new Set();
+  if (lightBlock) {
+    for (const m of lightBlock[1].matchAll(/(--af-t-[\w-]+)\s*:/g)) twoTier.add(m[1]);
+  }
+  t('两档令牌数量合理', twoTier.size >= 8, `${twoTier.size} 个`);
+
+  /* 两档的**全部取值**（暗 + 浅）都算"不该被写死的值" */
+  const banned = new Set();
+  for (const m of src.matchAll(/(--af-t-[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\b/g)) {
+    if (twoTier.has(m[1])) banned.add(m[2].toLowerCase());
+  }
+  t('取到两档色值', banned.size >= 16, `${banned.size} 个`);
+
+  const TEXT_COLOR_RE = /(?<![\w-])color\s*:\s*(#[0-9a-fA-F]{6})\b/g;
+  const cssFiles = (repoFiles || []).filter((p) => p.endsWith('.css'));
+  t('复用到 CSS 文件列表', cssFiles.length >= 5, `${cssFiles.length} 个`);
+
+  const hits = [];
+  for (const p of cssFiles) {
+    const s = strip(readFileSync(p, 'utf8'));
+    for (const m of s.matchAll(TEXT_COLOR_RE)) {
+      if (banned.has(m[1].toLowerCase())) hits.push(`${m[1]} @ ${p.replace(HERE, '.')}`);
+    }
+  }
+  t('文本色没有写死成两档令牌的值', hits.length === 0, hits.slice(0, 3).join(' | '));
+
+  /* 判据失明比报红危险：两端各钉一条 */
+  t('判据本身有效（探针：写死 #7dd3fc 必须被判出来）',
+    banned.has('#7dd3fc') && [...'color: #7dd3fc'.matchAll(TEXT_COLOR_RE)].length === 1);
+  t('判据不误报（节点边框的 -color 不算文本色）',
+    [...'border-left-color: #f472b6'.matchAll(TEXT_COLOR_RE)].length === 0);
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
