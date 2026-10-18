@@ -9,9 +9,9 @@
  * 已经漂移 —— 对照如下（2026-10 核对）：
  *
  *   · version      本文件 1.0.0            main.tsx 3.0.0
- *   · methods      漏了 presets；且**广告 normalize
- *                  却实现成 normalizeHex**    五项齐全（normalize 名实相符），
- *                                              另有 implementation
+ *   · methods      4 项：normalizeHex（对
+ *                  面叫 normalize）、**缺
+ *                  hsv**                   5 项齐全（normalize / hsv 都在）
  *   · 起始色       硬编码 #3E63DD          共享常量 DEFAULT_COLOR #7C8CFF
  *   · pick 返回    **颜色字符串**          **{ hex, custom } 对象**
  *   · 取消         reject(已取消)          resolve({ hex: null, custom })
@@ -22,7 +22,17 @@
  * 静默拿错值。取消那条更糟：契约是 resolve，这里是 reject。
  *
  * 结论：**别直接把它接上无构建**（registry 加 noBuild 分支之类）。
- * 要启用就得先把上面七项与 main.tsx 对齐，尤其是 pick 的返回形态。
+ * 要启用就得先把上面各项与 main.tsx 对齐，尤其是 pick 的返回形态。
+ *
+ * methods 那一行为什么算"危险项" —— 因为它不只是文档约定，
+ * js/plugin-sdk.js 的 withBuiltinShortcuts 就是照着名字调的：
+ *     ctx.services.color.normalize(c) → call('color-picker', 'normalize')
+ *     ctx.services.color.hsv(c)       → call('color-picker', 'hsv')
+ * 本文件广告的是 normalizeHex、且**根本没有 hsv**，所以一旦启用，
+ * 这两个 SDK 快捷方法会同时失效（而底层 ./color 其实是有 hexToHsv 的，
+ * 差的就是把名字对齐、把 hsv 挂出去）。
+ * 同理 icon-picker / md-editor 的 SDK 包装也各按名字调 browse/list/url、
+ * edit/render —— 那两个是**在跑**的无构建入口，实测名实相符，无此问题。
  *
  * 关于 methods：下面这行已改成**只广告真正实现的四个**。
  * 原先广告 normalize 而实现叫 normalizeHex —— 服务调用按广告名找方法，
