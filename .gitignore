@@ -1,0 +1,28 @@
+# ⛔ 根 .gitignore —— 防止把本地产物误推上远端
+#
+# 为什么必须有：push_api.py 的 --scope 曾把 `nexus-panel/node_modules`
+# 列成 LOCAL_ONLY（"远端还没有 → 推送即新增"）。谁照着推一次，
+# 整个 node_modules 就上远端了，且此后每次 scope 都会多出上千条噪声。
+# nexus-panel/.gitignore 里那行不够 —— 它管不到仓库根与其它目录。
+
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+
+# 本地构建产物（远端不存 dist，源码才是真源）
+dist/
+build/
+target/
+
+# 推送/同步工具的状态与日志（含基线，绝不能入库）
+.push-sync*.json
+.push-sync*.json.lock
+push-audit.jsonl
+_scope_probe.log
+*.log
+
+# 沙盒残留
+.DS_Store
+.gh_token
+.git_token
