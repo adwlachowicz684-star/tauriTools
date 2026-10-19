@@ -5,14 +5,26 @@
 # 整个 node_modules 就上远端了，且此后每次 scope 都会多出上千条噪声。
 # nexus-panel/.gitignore 里那行不够 —— 它管不到仓库根与其它目录。
 
+# ⛔ 每种都写**两种形式**（带斜杠 + 不带斜杠），不是冗余：
+#    实测 nexus-panel/node_modules 是**软链**（→ /usr/local/lib/node_modules），
+#    而 gitignore 里 `node_modules/` 带斜杠**只匹配目录**，匹配不到软链 ——
+#       git check-ignore nexus-panel/node_modules  → rc=1（未命中！）
+#       git check-ignore nexus-panel/node_modules/react → fatal: beyond a symbolic link
+#    后果：git 自己也把它当未跟踪文件（git status 里冒出来），
+#    push_api.py 的 --scope 同样列成 LOCAL_ONLY。补上不带斜杠的形式才拦得住。
+node_modules
 node_modules/
+__pycache__
 __pycache__/
 *.pyc
 *.pyo
 
 # 本地构建产物（远端不存 dist，源码才是真源）
+dist
 dist/
+build
 build/
+target
 target/
 
 # 推送/同步工具的状态与日志（含基线，绝不能入库）
