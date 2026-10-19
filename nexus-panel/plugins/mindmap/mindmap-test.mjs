@@ -11402,6 +11402,31 @@ group('布局：文件库浮层 + 画布假描边让位 + 控件档位');
   ok(/canvasFrameEl\.style\.left\s*=/.test(syncFn),
     'syncCanvasInset 真的写入 left（不是空函数）');
 
+  // 挂载点必须在 .mm-body 上，不能挂在 .mm-canvas 里：
+  // 画布有 overflow:hidden，而假框靠 box-shadow（**外**投影）描边 ——
+  // 挂进画布会被整圈裁掉，只剩左边缘一条竖线，上/右/下三边全没了
+  // （那三边正是画布本体的边界，缺了就没有"画布区域"的轮廓感）。
+  ok(/body\.appendChild\(canvasFrameEl\)/.test(idxNC),
+    '假框挂在 .mm-body 上（画布之外，投影不会被裁）');
+  ok(!/canvasEl\.appendChild\(canvasFrameEl\)/.test(idxNC),
+    '假框不挂在 .mm-canvas 里（overflow:hidden 会裁掉外投影）');
+  {
+    const cvBlk = css.slice(css.indexOf('.mm-canvas {'),
+      css.indexOf('}', css.indexOf('.mm-canvas {')) + 1);
+    const frBlk = css.slice(css.indexOf('.mm-canvas-frame {'),
+      css.indexOf('}', css.indexOf('.mm-canvas-frame {')) + 1);
+    ok(/overflow:\s*hidden/.test(cvBlk), '.mm-canvas 确实 overflow:hidden（所以不能挂里面）');
+    ok(/box-shadow/.test(frBlk) && !/box-shadow/.test(cvBlk),
+      '描边只由假框承担（画布自己不投影，否则两个嵌套圆角）');
+  }
+
+  // 挂在 body 上就得自己写四边：画布只是 body 中间一列（右边坐着属性侧栏），
+  // CSS 里的 top/bottom/right:0 会框到侧栏底下。
+  for (const edge of ['top', 'right', 'bottom']) {
+    ok(new RegExp('canvasFrameEl\\.style\\.' + edge + '\\s*=').test(syncFn),
+      `假框的 ${edge} 边按画布实测写入（挂在 body 上必须自己定位）`);
+  }
+
   // 至少 4 个调用点：初始化 / 开合 / 搜索出结果 / 清除搜索，都要让位
   const calls = (idxNC.match(/syncCanvasInset\(\)/g) || []).length;
   ok(calls >= 2, `syncCanvasInset 在宿主侧有调用（实测 ${calls} 处）`);
