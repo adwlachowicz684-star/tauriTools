@@ -239,7 +239,11 @@ bootIframePlugin(async (ctx) => {
    * （"只有样式没有元素"的幽灵规则，不报错、肉眼才看得出）。
    */
   const canvasFrameEl = h('div.mm-canvas-frame', {});
-  canvasEl.appendChild(canvasFrameEl);
+  // ⚠️ 挂到 .mm-body 而不是 .mm-canvas：画布有 overflow:hidden，假框的
+  // box-shadow 是**外投影**，挂进画布里会被整圈裁掉，只剩左边缘那条竖线。
+  // 挂在 body 上（画布之外）投影才有地方展开。代价是四边都要 JS 实测写入
+  // —— 画布不贴着 body 的上下右（右侧还坐着属性侧栏），写死就会错位。
+  // 挂载放在 body 建好之后（见下方 body.appendChild）。
   const loadingEl = h('div.mm-loading', {}, '编辑器加载中…');
   canvasEl.appendChild(loadingEl);
 
@@ -269,6 +273,22 @@ bootIframePlugin(async (ctx) => {
     } catch { /* 量不到就沿用 CSS 默认，不至于让面板消失 */ }
     let visible = false;
     try { visible = getComputedStyle(filesEl).display !== 'none'; } catch { return; }
+
+    /*
+     * 假框挂在 .mm-body 上，而画布只是 body 中间的一列（右边还坐着属性
+     * 侧栏），所以上/右/下三条边必须对齐**画布**实测位置，不能沿用 CSS 的
+     * 0 —— 否则框会比画布宽出一块，看着像画布伸到了侧栏底下。
+     */
+    try {
+      const b = body.getBoundingClientRect();
+      const c = canvasEl.getBoundingClientRect();
+      canvasFrameEl.style.top = `${Math.round(c.top - b.top)}px`;
+      canvasFrameEl.style.right = `${Math.round(b.right - c.right)}px`;
+      canvasFrameEl.style.bottom = `${Math.round(b.bottom - c.bottom)}px`;
+    } catch { /* 量不到就沿用 CSS 初值 */ }
+
+    // 左边缘：收起时贴画布左缘（就是整块画布），展开时让到文件库右缘
+    // —— 于是看上去画布被挤窄了，而画布元素本身一动没动。
     if (!visible) { canvasFrameEl.style.left = ''; return; }
     try {
       const a = filesEl.getBoundingClientRect();
@@ -317,6 +337,7 @@ bootIframePlugin(async (ctx) => {
   const rail = h('div.mm-rail', {});
   const toolbar = h('div.mm-toolbar', {});
   const body = h('div.mm-body', {}, rail, canvasEl);
+  body.appendChild(canvasFrameEl);
 
   const root = h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%', gap: '10px' } },
     toolbar, body, foot, statusBar);

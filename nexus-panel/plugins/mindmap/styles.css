@@ -301,10 +301,14 @@ html, body {
    那道边，观感会退化成"面板浮在画布上"。 */
 .mm-canvas-frame {
   position: absolute;
+  /* ⚠️ 挂在 .mm-body 上（不是 .mm-canvas）：画布 overflow:hidden 会把外投影
+     整圈裁掉，只剩左边缘一条线。挂在 body 上投影才有地方展开。
+     代价是四边都得由 JS 按画布实测位置写入（见 syncCanvasInset）——
+     画布不贴着 body 的上下右，CSS 里写 0 会框到侧栏底下。 */
   top: 0;
   bottom: 0;
   right: 0;
-  left: 0;              /* 初值：底框收起时铺满；展开后由 JS 改写 */
+  left: 0;              /* 初值；之后由 JS 改写 */
   border-radius: var(--r, 14px);
   box-shadow: var(--sh-out-md);
   pointer-events: none;
