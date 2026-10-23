@@ -1,0 +1,186 @@
+<UserControl x:Class="FenPeiXiangMuZu.Views.TipsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              mc:Ignorable="d"
+              d:DesignWidth="960" d:DesignHeight="800">
+    <UserControl.Resources>
+        <Style x:Key="TipBox" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#3A4250"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="16,12"/>
+            <Setter Property="Background" Value="#161B22"/>
+            <Setter Property="Margin" Value="0,8,0,16"/>
+        </Style>
+        <!-- 移到框外的小标题：作为段落标题，基于全局 SectionTitle（低调银白浮雕），仅叠加局部外边距 -->
+        <Style x:Key="TipSectionTitle" TargetType="TextBlock" BasedOn="{StaticResource SectionTitle}">
+            <Setter Property="Margin" Value="2,20,0,2"/>
+        </Style>
+        <!-- 框内重新提取出的小标题：基于全局 ItemTitle，仅叠加局部外边距 -->
+        <Style x:Key="TipItemTitle" TargetType="TextBlock" BasedOn="{StaticResource ItemTitle}">
+            <Setter Property="Margin" Value="0,4,0,4"/>
+        </Style>
+        <!-- 框内正文：基于全局 SectionDesc，仅叠加局部外边距 -->
+        <Style x:Key="TipItemBody" TargetType="TextBlock" BasedOn="{StaticResource SectionDesc}">
+            <Setter Property="Margin" Value="0,4,0,4"/>
+        </Style>
+    </UserControl.Resources>
+    <DockPanel LastChildFill="True">
+        <Grid DockPanel.Dock="Top" Margin="18,16,18,8">
+            <TextBlock Text="使用说明"
+                       Style="{StaticResource PanelTitle}"/>
+            <Button Content="&#xE894;" Style="{StaticResource IconBtn}"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                    ToolTip="关闭" Click="OnCloseClick"/>
+        </Grid>
+        <RichTextBox IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                     Background="Transparent" BorderThickness="0"
+                     Padding="0" Margin="18,6,18,16" FontSize="13.5"
+                     VerticalScrollBarVisibility="Auto" IsDocumentEnabled="True">
+            <FlowDocument PagePadding="12,4,12,12" Foreground="#EAECEF" FontFamily="Microsoft YaHei UI">
+
+                <BlockUIContainer>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TipSectionTitle}" Text="基础功能"/>
+                        <Border Style="{StaticResource TipBox}">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="收藏页签"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：切换到「收藏」页签查看按名称整理的常用项，可点击行右侧按钮直接复制 / 打开 / 定位，减少在目录树中翻找；收藏项与项目组增删互不影响。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="分配项目"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：将左侧选中项拖入右侧项目组集群区域即可归入对应组，可选择复制（独立副本）或创建链接（节省存储、改动即时同步）。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="快速链接"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：开启「设置」中的快速链接后，拖拽直接生成链接而非复制，适合需双向同步引用的场景。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="拖动"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：支持从资源管理器直接拖文件 / 文件夹到本窗口，也支持内部清单间互拖；相同来源重复拖入自动去重并写日志。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="图标"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：条目前小图标表示对象类型（文件夹 / 脚本 / 配置 / agent / skill），悬停给出完整来源路径。"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </BlockUIContainer>
+
+                <BlockUIContainer>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TipSectionTitle}" Text="按钮功能"/>
+                        <Border Style="{StaticResource TipBox}">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="标题栏"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：TIPS（使用说明）/ MCP（工具开关）/ 设置 / 侧边栏展开收起 / 最小化·最大化·关闭。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="卡片操作"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：切换⇄（设为当前）、✎重命名、✕删除、＋添加项目组集群。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="部署"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：扫描（读取 agents / skills）、部署选中、部署全部。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="设置项"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：快速链接开关、目录类资源用 junction 部署等开关。"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="ACL 锁定"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：对选中文件夹做系统级 ACL 保护（Ctrl+L）。账面固定为强制基础项；防删除档拦截删除/改名（读写不受影响）；防写入档目录只读；档位按钮一键设置组合。受保护的卡片显示暗金盾牌标记；再次打开弹窗可调整强度或解除全部保护。"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </BlockUIContainer>
+
+                <BlockUIContainer>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TipSectionTitle}" Text="MCP 工具"/>
+                        <Border Style="{StaticResource TipBox}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource TipItemBody}" Text="本程序兼作 MCP 服务，向 AI 客户端（如 opencode）暴露下列能力；点标题栏 MCP 按钮可总开关 / 逐项启停，改动即时生效。"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="基础信息"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：get_manual（手册）/ get_status（状态）"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="目录与选择"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：list_groups / list_projects / select_folder / get_selection"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="内容读取"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：list_agents / list_skills / refresh_content"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="链接管理"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：create_link / remove_link / list_links"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="部署"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：deploy_skill"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="截图"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：capture_screen / capture_window / list_windows"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="备份"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：backup_now（按当前设置立即执行一次全量增量备份）"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource TipItemTitle}" Text="保护"/>
+                                    <TextBlock Style="{StaticResource TipItemBody}" Text="：lock_status（读取保护清单与 ACL 生效状态）/ lock_set（设置或解除某文件夹的 ACL 保护）。受保护目录中的删除/改名会被系统拒绝，AI 如需删除应请示用户在 GUI 中临时解除。"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </BlockUIContainer>
+
+                <BlockUIContainer>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TipSectionTitle}" Text="其他：Agent-Skill 部署"/>
+                        <Border Style="{StaticResource TipBox}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource TipItemBody}" Text="在「部署」面板选定来源项目组与目标 opencode 项目后点「扫描」，即可把 agents / skills 部署到约定目录；重装或迁移环境时务必选中【目录类资源用 junction 部署】以保持一致。"/>
+                                <TextBlock Style="{StaticResource TipItemBody}" Text="命名约定：skill 名称中的下划线 _ 表示层级分隔（如 code_review 显示为 code/review 两级）。目录名含 _ 时也会按此约定展示为嵌套层级，属预期行为；预览/打开不受影响。"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </BlockUIContainer>
+
+                <BlockUIContainer>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TipSectionTitle}" Text="ACL 文件夹保护与自救"/>
+                        <Border Style="{StaticResource TipBox}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource TipItemBody}" Text="「ACL 锁定」通过 Windows 拒绝访问控制项（Everyone Deny）实现系统级拦截：防删除档下任何程序（含 AI 会话）删除/改名受保护目录内容都会收到「拒绝访问」；junction 穿透访问同样被拦截。定位是防呆不防黑客——主动改 ACL 可绕过，但监控告警会留下痕迹。"/>
+                                <TextBlock Style="{StaticResource TipItemBody}" Text="自救五层：① 工具自身操作走临时解锁窗口，中途崩溃只会变回未锁（绝不反锁死）；② 启动时自动清扫残留的拒绝条目并按配置重建；③ 弹窗内「解除全部保护」一键全解；④ 极端情况可用手动命令 icacls &quot;目录&quot; /remove:d *S-1-1-0 移除全部 Everyone 拒绝条目；⑤ 保护永不触碰读取/改权限/所有权，所有者永远能进得去改得回来。"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </BlockUIContainer>
+
+                <BlockUIContainer>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource TipSectionTitle}" Text="思维导图插件（kityminder）"/>
+                        <Border Style="{StaticResource TipBox}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource TipItemBody}" Text="侧边栏「思维导图」入口常显。首次使用点开面板，点「立即安装」把内置离线包解压到 数据/plugins/kityminder 后进入编辑器；已安装时直接打开，工具栏提供 导入 / 导出 / 刷新。"/>
+                                <TextBlock Style="{StaticResource TipItemBody}" Text="随时装卸：点「卸载」把运行期目录回收为离线包并保留用户数据，再点「安装」可无损还原，实现随时安装/卸载/重装。导出 / 导入为 JSON 文件，可跨机器迁移脑图。"/>
+                                <TextBlock Style="{StaticResource TipItemBody}" Text="依赖：需系统 WebView2 Runtime（Windows 11 自带；Windows 10 大概率已装）。编辑器不支持图片上传（上游需 PHP 后端，已禁用，属预期）。"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </BlockUIContainer>
+            </FlowDocument>
+        </RichTextBox>
+    </DockPanel>
+</UserControl>

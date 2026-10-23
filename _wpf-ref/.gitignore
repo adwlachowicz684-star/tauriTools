@@ -1,0 +1,7 @@
+# WPF 原版源码参照目录：只收源码与资源，不收构建产物
+bin/
+obj/
+__pycache__/
+*.user
+*.suo
+.vs/

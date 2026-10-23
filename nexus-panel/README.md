@@ -1496,12 +1496,16 @@ task-board 一个），端口、令牌、客户端配置各一份 —— AI 客�
 
 ### 工具名规则：`server__工具`
 
-工具名一律带 `server__` 前缀，如 `project-group__list_cards`、`task-board__claim_task`。
-**不做裸名兼容**：两个插件都提供 `list_items` 时，裸名路由只能靠顺序挑一个 ——
+工具名一律带 `server__` 前缀，如 `project-group__list_projects`、`task-board__tb_list_tasks`。
+**不做裸名兼容**：两个插件都提供同名工具时，裸名路由只能靠顺序挑一个 ——
 挑错不报错，读的是另一个服务的数据。前缀是命名空间，拆分取**第一个** `__`。
 
 server 名约束（`validate_server_name`）：非空、≤32 字符、只含小写字母/数字/连字符、
 不能含 `__`、不能占用内置名（`project-group` / `task-board`）。
+
+内置两个 server 共 31 个工具：`project-group` 25 个（fpx 的 `tools()`）+
+`task-board` 6 个（`tb_*`）。完整清单走网关的 `tools/list` 或 `project-group__get_manual`，
+**不要手抄** —— `get_manual` 由 `tools()` 推导，手写必脱节。
 
 ### 新插件的工具怎么进网关
 
@@ -1543,10 +1547,16 @@ for t in my_plugin::mcp_tools() {
 
 ### 治理
 
-六条命令（`mcp_gw_start/stop/status/save_config/register/unregister`）已按四件套登记：
-`js/command-caps.js` 定级（start/stop/register 为 **M** —— 改对外连接面的能力不扩散）、
-`js/invoke-policy.js` 的 settings 白名单、`mcp-gate-test.mjs` 跨文件钉住整条接线
-（`npm run test:mcp-gate`）。
+七条命令（`mcp_gw_start/stop/status/save_config/register/unregister/set_server_enabled`）
+已按四件套登记：`js/command-caps.js` 定级（start/stop/register 为 **M** ——
+改对外连接面的能力不扩散；set_server_enabled 为 **W**）、`js/invoke-policy.js` 的
+settings 白名单、`mcp-gate-test.mjs` 跨文件钉住整条接线（`npm run test:mcp-gate`）、
+`main.rs` 的 `generate_handler!`。
+
+**插件 MCP 总开关**：服务清单每行一个勾选框（`mcp_gw_set_server_enabled`，即时生效）。
+关掉的 server 不进 `tools/list`（AI 根本看不到），调用时报「整体关闭」并指路设置
+而不是「没有这个工具」。统计区显示「AI 可见」计数 —— 关掉后工具总数与客户端实际
+能调的数对不上，会像功能坏了。
 
 ## 十一、打包
 
