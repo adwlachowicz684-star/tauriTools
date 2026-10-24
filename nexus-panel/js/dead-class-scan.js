@@ -125,8 +125,15 @@ export function collectUsedClasses(src) {
   //       · ${} 外的静态部分 → fpx-link-arrow
   //       · ${} 内三元里的字符串 → open（这是**真实会挂上的状态类**，
   //         只取外面会导致 .open 被误报成死类名）
-  for (const m of src.matchAll(/class(?:Name)?\s*=\s*\{`([^`]*)`\}/g)) {
-    const body = m[1];
+  /*
+   * 模板串 → 类名。两个方向都要取，缺一个就会漏报：
+   *   · ${} 外的静态部分 → fpx-link-arrow / ttb-pop
+   *   · ${} 内三元分支里的字符串 → open / is-right（真实会挂上的状态类）
+   *
+   * ⛔ 抽成函数是为了给 2d（类名常量）复用 —— 分着写两份必然各改各的，
+   *    一边认得出一边认不出，守卫就只有一半可信。
+   */
+  const addTpl = (body) => {
     for (const part of body.split(/\$\{[^}]*\}/)) addTokens(part);
     for (const inner of body.matchAll(/\$\{([^}]*)\}/g)) {
       /*
@@ -161,7 +168,8 @@ export function collectUsedClasses(src) {
         addTokens(s[1]);
       }
     }
-  }
+  };
+  for (const m of src.matchAll(/class(?:Name)?\s*=\s*\{`([^`]*)`\}/g)) addTpl(m[1]);
   /*
    * 2c: 裸三元 —— className={x.isError ? 'fpx-log-line err' : 'fpx-log-line'}
    *
@@ -190,11 +198,23 @@ export function collectUsedClasses(src) {
    * 类名被抽成常量后，DOM 上挂的是标识符而不是字面量串，
    * 于是 CSS 里那个类永远"没人用" → 被判成死样式。
    * 只认名字里带 CLASS/CLS 的常量，避免把普通字符串常量也当类名。
+   *
+   * ⛔ 常量也可以是**模板串**：
+   *      const popCls = `ttb-pop${anchorRight ? ' is-right' : ''}`;
+   *      <div className={popCls}>
+   *    老正则 `['"`]([^'"`]+)['"`]` 会把捕获组吃到 `${` 之后的第一个引号为止，
+   *    取出来的是 `ttb-pop${anchorRight ? ` 这种带 `${` 的碎片，
+   *    addTokens 因不合法字符整条丢弃 → **ttb-pop 被判成幽灵规则**。
+   *    而它明明在挂：照着守卫去"清理"就会删掉正在用的样式（静默丢失）。
+   *    所以模板串走 addTpl（剥 ${} 取静态部分 + 取三元分支），
+   *    纯字面量仍走 addTokens —— 两者都要，缺一个就漏。
    */
   for (const m of src.matchAll(
-    /\bconst\s+[A-Za-z_$][\w$]*(?:CLASS|CLS|Cls|Class)[\w$]*\s*=\s*['"`]([^'"`]+)['"`]/g,
+    /\bconst\s+[A-Za-z_$][\w$]*(?:CLASS|CLS|Cls|Class)[\w$]*\s*=\s*(?:'([^']*)'|"([^"]*)"|`([^`]*)`)/g,
   )) {
-    addTokens(m[1]);
+    const lit = m[1] ?? m[2];
+    if (lit != null) { addTokens(lit); continue; }
+    addTpl(m[3] ?? '');
   }
   /*
    * 3: hyperscript 简写 —— 任意创建辅助函数的 'tag.class' 形式
