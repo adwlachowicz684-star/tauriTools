@@ -15,7 +15,7 @@
  */
 
 import {
-  readBoardFile, writeBoardFile,
+  readBoardFile, writeBoardFile, isParseableJson,
 } from './taskBoardFile';
 import { safeFilePart, joinPath } from './exportDir';
 import {
@@ -32,6 +32,12 @@ import {
   一旦分叉，同一个文件在任务板和附件两处会给出不同的结果。
 */
 export { readBoardFile as readTextFile, writeBoardFile as writeTextFile } from './taskBoardFile';
+
+/*
+ * 与任务板**同一份**判据（实现在 taskBoardFile.ts，不另抄）。
+ * 两份清单并排放，口径分叉的后果见那边注释里的说明。
+ */
+export { isParseableJson } from './taskBoardFile';
 
 export function attachmentFileName(projectKey: string, projectName: string): string {
   const label = safeFilePart(projectName || projectKey || 'all', 'all');
@@ -51,6 +57,10 @@ export type AttachSave = {
 /**
  * 落盘。写前**重读一次磁盘**做三方合并 ——
  * 不重读就写会把 AI 刚写进文件的内容无声吞掉（理由见 taskBoardFile）。
+ *
+ * ⛔ 写前先看文件坏没坏：坏的直接抛错、**一个字节都不写**。
+ *    理由与 commitBoard 完全相同（损坏的 JSON 被解成空清单，
+ *    合并结果只剩 mine，写回即整份覆盖）。
  */
 export async function commitAttachments(
   path: string,
@@ -58,13 +68,22 @@ export async function commitAttachments(
   mine: AttachmentFile,
 ): Promise<AttachSave> {
   const raw = await readBoardFile(path);
+  if (!isParseableJson(raw)) {
+    throw new Error(`清单文件已损坏，已中止写入（原文件未改动）：${path}`);
+  }
   const theirs = parseAttachments(raw || null, mine.project, mine.projectName);
   const merged = mergeAttachments(base, mine, theirs);
   await writeBoardFile(path, serializeAttachments(merged.file));
   return merged;
 }
 
-/** 载入：读不到就当空清单（第一次用） */
+/**
+ * 载入：读不到就当空清单（第一次用）。
+ *
+ * ⛔ 与 loadBoard 同一口径：文件在但内容坏了不能当空清单 ——
+ *    那等于告诉用户「没有附件」，而磁盘上其实有一整份，
+ *    照着"空的"加第一条就把还能救的 JSON 整份盖掉了。
+ */
 export async function loadAttachments(
   path: string,
   project: string,
@@ -72,5 +91,8 @@ export async function loadAttachments(
 ): Promise<AttachmentFile> {
   const raw = await readBoardFile(path);
   if (!raw.trim()) return emptyAttachments(project, projectName);
+  if (!isParseableJson(raw)) {
+    throw new Error(`清单文件已损坏（未读取，原文件未改动）：${path}`);
+  }
   return parseAttachments(raw, project, projectName);
 }

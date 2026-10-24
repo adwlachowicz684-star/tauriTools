@@ -102,6 +102,7 @@
     "test:owned": "node owned-test.mjs",
     "test:owned-iframe": "node owned-iframe-test.mjs",
     "test:tb-ui-guard": "node task-board-ui-guard-test.mjs",
+    "test:tb-corrupt-guard": "node task-board-corrupt-guard-test.mjs",
     "test:owned-timer": "node owned-timer-test.mjs",
     "test:pg": "node plugins/project-group/drag-payload-test.mjs",
     "test:pg-backup-report-truth": "node plugins/project-group/backup-report-truth-test.mjs",

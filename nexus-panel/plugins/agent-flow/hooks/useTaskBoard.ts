@@ -106,7 +106,13 @@ export function useTaskBoard(opts: {
    */
   const apply = useCallback((next: (b: TaskBoard) => TaskBoard) => {
     if (!canWrite || !path) return;
-    // 从同步副本算：写盘与界面用的是同一个值，不会差一次操作
+    /*
+      从同步副本算：写盘与界面用的是同一个值，不会差一次操作。
+      prev 是失败时要退回的值 —— 与 useAttachments 同一形状：
+      不退回的话界面停在"没落盘的值"上，报错归报错，
+      板子上那条新任务照样在，看着像"报了错但其实加上了"。
+    */
+    const prev = boardRef.current;
     const target = next(boardRef.current);
     setBoardBoth(target);
     const run = queueRef.current.then(async () => {
@@ -129,6 +135,7 @@ export function useTaskBoard(opts: {
           ? { kind: 'overwritten', ids: out.overwritten }
           : { kind: 'saved', at: Date.now() });
       } catch (e: unknown) {
+        setBoardBoth(prev);
         setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
       }
     });

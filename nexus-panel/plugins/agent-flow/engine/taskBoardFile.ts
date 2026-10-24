@@ -37,6 +37,34 @@ export function boardPathOf(dir: string, projectKey: string, projectName: string
 
 export type FsResult = { ok: boolean; text: string };
 
+/*
+ * 清单文件"坏没坏"的判据。任务板（tasks-*.json）与附件（attachments-*.json）
+ * 共用这一份 —— 两份清单并排放在同一个导出目录里，一旦口径分叉，
+ * 同一个损坏的文件在两个面板里一个报"读不出来"、一个当"没有"，
+ * 是最难自查的那类不一致（attachmentFile.ts 从本文件 re-export 它）。
+ *
+ * ⛔ 为什么不能靠 parseBoard / parseAttachments 自己判断：
+ *    那两个函数的契约是"解析不出来就退成空清单"（既有测试钉住了这个行为：
+ *    `parseBoard('不是 json').nodes` 必须是 {}）。这个契约对**单条解析**
+ *    是对的 —— 手改坏了也不至于让整个面板崩掉。
+ *    但 commit 路径拿这个"空"当"磁盘上是空的"去三方合并，
+ *    合并结果就只剩本地这一份，写回去**把损坏的文件整份盖掉**——
+ *    而损坏的 JSON 往往手改几行就能救回来，一盖就永远没了。
+ *    所以"能不能解析"必须是一个**独立于解析结果**的 observable 信号。
+ *
+ * 空文件**不算损坏**（第一次用它本来就是空的），返回 true。
+ */
+export function isParseableJson(raw: string): boolean {
+  const s = String(raw ?? '');
+  if (!s.trim()) return true;
+  try {
+    const v = JSON.parse(s);
+    return !!v && typeof v === 'object';
+  } catch {
+    return false;
+  }
+}
+
 /** "不存在"的几种说法。Rust 侧与浏览器侧措辞不同，都要认 */
 const NOT_FOUND = /不存在|not found|no such|ENOENT/i;
 
@@ -103,6 +131,10 @@ export type SaveOutcome = {
  * 合并判据见 mergeBoards：两边都动了同一条时**外部优先**。
  *
  * base 是"上次读到的内容"，由调用方持有（hook 里存着）。
+ *
+ * ⛔ 写前先看文件坏没坏：坏的直接抛错、**一个字节都不写**。
+ *    坏文件被 parseBoard 解成空清单 → theirs 是空 → 合并结果只剩 mine
+ *    → 写回即整份覆盖，手改能救回来的内容永远没了。
  */
 export async function commitBoard(
   path: string,
@@ -110,13 +142,23 @@ export async function commitBoard(
   mine: TaskBoard,
 ): Promise<SaveOutcome> {
   const raw = await readBoardFile(path);
+  if (!isParseableJson(raw)) {
+    throw new Error(`清单文件已损坏，已中止写入（原文件未改动）：${path}`);
+  }
   const theirs = parseBoard(raw || null, mine.project, mine.projectName);
   const merged = mergeBoards(base, mine, theirs);
   await writeBoardFile(path, serializeBoard(merged.board));
   return merged;
 }
 
-/** 载入：读不到就当空板（第一次用） */
+/**
+ * 载入：读不到就当空板（第一次用）。
+ *
+ * ⛔ 但"文件在、内容是坏的"不能也当空板 —— 那等于告诉用户
+ *    「这个项目的任务板是空的」，而磁盘上其实有一整板任务。
+ *    用户照着"空的"去添加第一条，就把那份还能救的 JSON 整份盖掉了。
+ *    文件不存在（空串）才算第一次用。
+ */
 export async function loadBoard(
   path: string,
   project: string,
@@ -124,5 +166,8 @@ export async function loadBoard(
 ): Promise<TaskBoard> {
   const raw = await readBoardFile(path);
   if (!raw.trim()) return emptyBoard(project, projectName);
+  if (!isParseableJson(raw)) {
+    throw new Error(`清单文件已损坏（未读取，原文件未改动）：${path}`);
+  }
   return parseBoard(raw, project, projectName);
 }

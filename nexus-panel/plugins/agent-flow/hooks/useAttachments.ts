@@ -75,6 +75,9 @@ export function useAttachments(opts: {
 
   const apply = useCallback((next: (f: AttachmentFile) => AttachmentFile) => {
     if (!canWrite || !path) return;
+    // 失败时要退回这个值：不退回的话界面停在"没落盘的值"上 ——
+    // 报错归报错，列表里那条新附件照样在，看着像"报了错但其实加上了"。
+    const prev = fileRef.current;
     const target = next(fileRef.current);
     setBoth(target);
     const run = queueRef.current.then(async () => {
@@ -87,6 +90,7 @@ export function useAttachments(opts: {
           ? { kind: 'overwritten', ids: out.overwritten }
           : { kind: 'saved', at: Date.now() });
       } catch (e: unknown) {
+        setBoth(prev);
         setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
       }
     });
