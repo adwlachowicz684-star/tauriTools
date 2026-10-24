@@ -9,7 +9,7 @@
 // 用法：node scripts/restore-deps.mjs [--check]
 //   --check  只核对并打印缺失，不安装（CI / 体检用）
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -21,10 +21,39 @@ const all = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
 
 const missing = Object.keys(all).filter(
   (k) => !existsSync(join(ROOT, 'node_modules', k)));
+function cleanNestedReact() {
+  /*
+   * ⛔ 光"装齐"不够：还要清掉 npm 顺手装出来的**嵌套 react 副本**。
+   * 实测因果链（这轮完整复现过一次）：
+   *   补依赖 → 装出 node_modules/react-markdown/node_modules/react@19.3.1
+   *   → 顶层仍是 18.3.1（所以 deps 守卫绿、dup-react 第 1 节也绿）
+   *   → 但 md 三套直接崩：
+   *     Objects are not valid as a React child (found: object with keys {$$typeof,…})
+   *     两份 react 的元素符号不同族，渲染器认不出对方造的元素。
+   *   删掉那个嵌套副本 → dup-react 13/0、md-render 30/0 立刻恢复。
+   * 也就是说：**依赖"齐了"和"能用"是两回事**，这里必须做掉收尾。
+   */
+  const nm = join(ROOT, 'node_modules');
+  const nested = [];
+  for (const scope of readdirSync(nm)) {
+    if (scope.startsWith('.')) continue;
+    const inner = join(nm, scope, 'node_modules');
+    if (!existsSync(inner)) continue;
+    for (const name of ['react', 'react-dom']) {
+      if (existsSync(join(inner, name))) nested.push(join(nm, scope, 'node_modules', name));
+    }
+  }
+  for (const dir of nested) {
+    console.log(`清掉嵌套副本 ${dir.replace(ROOT + '/', '')}（混用会让 md 三套崩）`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 const installed = Object.keys(all).length - missing.length;
 
 if (!missing.length) {
   console.log(`依赖齐备：${installed}/${Object.keys(all).length} 个声明包均在位`);
+  cleanNestedReact(); // ⛔ 齐了不等于能用：嵌套副本照样让 md 三套崩
   process.exit(0);
 }
 console.log(`缺失 ${missing.length} 个：` + missing.join(' '));
