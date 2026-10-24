@@ -14,6 +14,7 @@ import {
 const task = (title: string, patch: Record<string, unknown> = {}): BoardNode => ({
   kind: 'task', title, status: 'todo', deps: [], assignee: '', note: '',
   desc: '', tags: [], createdAt: 0, updatedAt: 0, due: 0, priority: 0,
+  session: '', prevSession: '', tookAt: 0,
   ...patch,
 } as BoardNode);
 

@@ -135,6 +135,25 @@ export type BoardTask = {
    * "高/中/低"按字典序排会排出"低 < 高 < 中"这种荒唐顺序。
    */
   priority: number;
+  /**
+   * 认领者的**窗口号**（sessionID）。空 = 没人领。
+   *
+   * 与 assignee 并存不合并：
+   *   · assignee —— 人填的名字（"张三"），两个窗口可以填同一个
+   *   · session  —— 机器身份，由面板生成，不可改
+   * 合并的话，"这条是不是我自己认领的"就判断不了了 ——
+   * 而"接手别人的任务"这个功能完全依赖这个区分。
+   */
+  session: string;
+  /**
+   * 上一个认领者的窗口号。**接手时**才写。
+   *
+   * 为什么要留痕：接手是不可逆的 —— 不留痕的话，改完就再也看不出
+   * "这条原来是窗口乙的"，事后复盘只能看到"现在是甲的"。
+   */
+  prevSession: string;
+  /** 接手发生的时间。0 = 没接过手 */
+  tookAt: number;
 };
 
 export type BoardNode = BoardGroup | BoardTask;
@@ -241,6 +260,9 @@ export function parseBoard(raw: string | null, project = '', projectName = ''): 
         updatedAt: updatedAtRaw || createdAt,
         due: typeof n.due === 'number' && isFinite(n.due) ? n.due : 0,
         priority: typeof n.priority === 'number' && isFinite(n.priority) ? n.priority : 0,
+        session: typeof n.session === 'string' ? n.session : '',
+        prevSession: typeof n.prevSession === 'string' ? n.prevSession : '',
+        tookAt: typeof n.tookAt === 'number' && isFinite(n.tookAt) ? n.tookAt : 0,
       };
     }
   }
@@ -702,6 +724,8 @@ export function splitTask(board: TaskBoard, id: string, titles: string[]): OpRes
       const r = addNode(b, id, {
         kind: 'task', title: t, status: DEFAULT_STATUS, deps: [...deps], assignee, note: '',
         desc: '', tags: [], createdAt: now, updatedAt: now, due: 0, priority: 0,
+        // 拆出来的子任务**不继承** session：原任务是谁的，不等于拆出来的每一块都归他
+        session: '', prevSession: '', tookAt: 0,
       });
       b = r.board;
     }
@@ -714,6 +738,7 @@ export function splitTask(board: TaskBoard, id: string, titles: string[]): OpRes
       const r = addNode(b, id, {
         kind: 'task', title: t, status: DEFAULT_STATUS, deps: [], assignee: '', note: '',
         desc: '', tags: [], createdAt: now, updatedAt: now, due: 0, priority: 0,
+        session: '', prevSession: '', tookAt: 0,
       });
       b = r.board;
     }
@@ -727,7 +752,7 @@ export function splitTask(board: TaskBoard, id: string, titles: string[]): OpRes
 /* ------------------------------------------------------------------ */
 
 /**
- * 领取。
+ * 认领。
  *
  * **不硬挡**被前置卡住的任务 —— 返回警告，由调用方决定要不要继续。
  *
@@ -737,12 +762,54 @@ export function splitTask(board: TaskBoard, id: string, titles: string[]): OpRes
  *
  * 但**必须**返回点什么 —— 静默让 AI 领走一个被卡住的任务，
  * 它会照着做下去，做完了才发现上游还没定稿。
+ *
+ * @param who   认领者名字（人填的，可随意）
+ * @param session 认领者的窗口号。不给就只改名字不动窗口身份
  */
-export function claimTask(board: TaskBoard, id: string, who: string): OpResult {
+export function claimTask(
+  board: TaskBoard,
+  id: string,
+  who: string,
+  session?: string,
+): OpResult {
+  return claimAs(board, id, who, session);
+}
+
+/**
+ * 接手 —— 认领一条**已经被别的窗口领了**的任务。
+ *
+ * 与 claimTask 的区别是这里**明确要求**传窗口号：
+ * 接手必须留痕（记下原来是谁的），没有窗口号就无从留痕，
+ * 那种"接手"等于把历史抹掉，不该被允许悄悄发生。
+ */
+export function takeOver(board: TaskBoard, id: string, who: string, session: string): OpResult {
+  return claimAs(board, id, who, session, true);
+}
+
+function claimAs(
+  board: TaskBoard,
+  id: string,
+  who: string,
+  session?: string,
+  /** 允许覆盖别人已认领的（接手） */
+  force = false,
+): OpResult {
+  return doClaim(board, id, who, session ?? '', force);
+}
+
+function doClaim(
+  board: TaskBoard,
+  id: string,
+  who: string,
+  session: string,
+  force: boolean,
+): OpResult {
   const n = board.nodes[id];
   const warnings: string[] = [];
   if (!n) return { board, id, warnings: ['节点不存在'] };
   if (isGroup(n)) return { board, id, warnings: ['任务组不能领取 —— 要领就领它下面的具体任务'] };
+  const t = n as BoardTask;
+
   const lock = lockOf(board, id);
   if (lock.cyclic) warnings.push('⚠ 前置任务互相依赖成环，这条永远等不到解锁');
   if (lock.missing.length > 0) {
@@ -752,19 +819,85 @@ export function claimTask(board: TaskBoard, id: string, who: string): OpResult {
     const names = lock.pending.map((p) => board.nodes[p]?.title || p);
     warnings.push(`⚠ 有 ${lock.pending.length} 个前置任务未完成：${names.join('、')}`);
   }
-  if (n.assignee && n.assignee !== who) {
-    warnings.push(`⚠ 已被「${n.assignee}」领取`);
+
+  /*
+    已认领的判断**按窗口号**，不按名字。
+
+    名字是手填的，两个窗口可能填同一个名字（比如都填 "codebuddy"）。
+    按名字判的话，窗口甲自己再点一次认领会误判成"抢别人的"。
+  */
+  const takenByOther = !!t.session && session !== '' && t.session !== session;
+  if (takenByOther && !force) {
+    warnings.push(`⚠ 已被另一个窗口认领（${t.session}）—— 要接手请先确认`);
   }
+  if (t.assignee && t.assignee !== who) {
+    warnings.push(`⚠ 已被「${t.assignee}」领取`);
+  }
+
   const b = clone(board);
-  b.nodes[id] = {
-    ...n,
+  const next: BoardTask = {
+    ...t,
     assignee: who,
-    status: n.status === 'todo' ? 'doing' : n.status,
+    status: t.status === DEFAULT_STATUS ? 'doing' : t.status,
     updatedAt: Date.now(),
   };
+
+  if (session) {
+    /*
+      接手留痕：只在**换人**时记。
+      同一个窗口重复认领不该覆盖 prevSession ——
+      那会把"原来是谁"冲掉，只留下自己。
+    */
+    if (t.session && t.session !== session) {
+      next.prevSession = t.session;
+      next.tookAt = Date.now();
+      if (!force) warnings.push(`已从 ${t.session} 接手（原认领者已记录）`);
+    }
+    next.session = session;
+  }
+
+  b.nodes[id] = next;
   b.updatedAt = Date.now();
   return { board: b, id, warnings };
 }
+
+/** 放回（取消认领）。窗口号与名字一起清，但**保留** prevSession 供追溯 */
+export function releaseTask(board: TaskBoard, id: string): OpResult {
+  const n = board.nodes[id];
+  if (!isTask(n)) return { board, id, warnings: ['只有任务能放回'] };
+  const b = clone(board);
+  b.nodes[id] = {
+    ...n,
+    assignee: '',
+    session: '',
+    updatedAt: Date.now(),
+  };
+  b.updatedAt = Date.now();
+  return { board: b, id, warnings: [] };
+}
+
+/**
+ * 这条是不是某个窗口认领的。
+ *
+ * 传空串表示"没人认领的"。判断按 raw 值比，不做任何规范化 ——
+ * 窗口号是机器生成的，要么完全相同要么不同，没有模糊匹配。
+ */
+export function isClaimedBy(n: BoardNode | undefined, session: string): boolean {
+  if (!isTask(n)) return false;
+  return (n.session || '') === session;
+}
+
+/** 原认领者发生过接手时的一句话说明 */
+export function takeOverNote(n: BoardNode | undefined): string {
+  if (!isTask(n)) return '';
+  if (!n.prevSession) return '';
+  const when = n.tookAt ? new Date(n.tookAt).toLocaleString('zh-CN') : '未知时间';
+  return `接手自 ${n.prevSession}（${when}）`;
+}
+
+/* ------------------------------------------------------------------ */
+/* 领取与标记                                                          */
+/* ------------------------------------------------------------------ */
 
 /** 标记状态。与领取同理：被卡住只给警告，不硬挡 */
 export function setTaskStatus(

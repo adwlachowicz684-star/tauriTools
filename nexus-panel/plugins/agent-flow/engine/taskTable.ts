@@ -113,7 +113,7 @@ export type TableColumnId =
   | 'started' | 'ended' | 'elapsed' | 'progress' | 'nodes'
   /* 下面这些是**任务级**列：值在任务板条目上，运行记录行没有 */
   | 'planStatus' | 'desc' | 'note' | 'tags' | 'created' | 'updated' | 'attach'
-  | 'priority' | 'assignee';
+  | 'priority' | 'assignee' | 'session';
 
 /**
  * 列的取值类型，决定它配什么样的筛选控件与排序方式：
@@ -144,7 +144,7 @@ export type TableColumn = {
    *    塞进去就得在每次改配置时重建整个列数组，
    *    而"列顺序"与"选项"是两件事，绑一起会让改个标签名连带列的顺序重置。
    */
-  dynamic?: 'status' | 'tags' | 'assignee';
+  dynamic?: 'status' | 'tags' | 'assignee' | 'session';
   /** enum 列的排序权重。不按字典序 —— "运行中"该排在"成功"前面 */
   rank?: Record<string, number>;
   /** 数字列的单位提示，写在区间输入框的 placeholder 上 */
@@ -228,6 +228,14 @@ export const TABLE_COLUMNS: TableColumn[] = [
     id: 'assignee', label: '认领', kind: 'enum', width: 96,
     dynamic: 'assignee',
   },
+  /*
+    窗口号：既有任务上的（谁负责），也有运行记录上的（谁跑的）——
+    同一列显示"这条归谁 / 谁跑的"，因为两种行不会同时有值。
+  */
+  {
+    id: 'session', label: '窗口', kind: 'enum', width: 96,
+    dynamic: 'session',
+  },
 ];
 
 export const TABLE_TOTAL_WIDTH = TABLE_COLUMNS.reduce((s, c) => s + c.width, 0);
@@ -282,6 +290,8 @@ export function cellValue(
     case 'attach': return counts ? attachCountOf(row, counts) : 0;
     case 'priority': return k ? priorityLabel(k.priority) : '';
     case 'assignee': return k ? (k.assignee || '未认领') : '';
+    // 任务行取"谁负责"，运行行取"谁跑的"
+    case 'session': return k ? (k.session || '') : (t ? (t.session || '') : '');
     default: return '';
   }
 }
@@ -308,8 +318,28 @@ export function rawValues(row: TableRow, id: TableColumnId): string[] {
     // 空串 = 没人领。它要能单独筛出来（"找没人认领的"是很常用的查询），
     // 所以不能返回空数组 —— 空数组在 matchesColumn 里表示"这行没有值，不匹配任何选项"。
     case 'assignee': return row.task ? [row.task.assignee || ''] : [];
+    case 'session': return row.task ? [row.task.session || '']
+      : row.record ? [row.record.session || ''] : [];
     default: return [];
   }
+}
+
+/**
+ * 从一批行里算出「窗口」列的选项。
+ *
+ * 与认领同理：窗口号没有注册表，只能从数据里去重。
+ * 空串（没人认领 / 外部触发）单独作为"未知"一项 ——
+ * 它占相当比例（外部 webhook、老数据），不能让它无处可选。
+ */
+export function sessionOptionsOf(rows: TableRow[]): { v: string; label: string }[] {
+  const seen = new Map<string, string>();
+  for (const r of rows) {
+    const raw = r.task ? (r.task.session || '') : r.record ? (r.record.session || '') : '';
+    if (!seen.has(raw)) seen.set(raw, raw || '未知');
+  }
+  return [...seen.entries()]
+    .map(([v, label]) => ({ v, label }))
+    .sort((a, b) => (a.v === '' ? 1 : b.v === '' ? -1 : a.label.localeCompare(b.label, 'zh')));
 }
 
 /**

@@ -29,13 +29,15 @@ import {
 const STATUS_FLOW: BoardStatus[] = ['todo', 'doing', 'done', 'cancelled'];
 
 export function TaskBoardDetail({
-  board, selectedId, onApply, canWrite,
+  board, selectedId, onApply, canWrite, sessionId = '',
 }: {
   board: TaskBoard;
   selectedId: string | null;
   /** 传一个纯函数进来，由外层负责写盘 */
   onApply: (next: (b: TaskBoard) => TaskBoard) => void;
   canWrite: boolean;
+  /** 本窗口的 sessionID。认领时写进任务，用于"认出自己"与接手留痕 */
+  sessionId?: string;
 }) {
   const node = selectedId ? board.nodes[selectedId] : undefined;
   const [titleDraft, setTitleDraft] = useState('');
@@ -90,8 +92,8 @@ export function TaskBoardDetail({
     if (!isTask(node)) return;
     const who = whoDraft.trim();
     if (!who) return;
-    void guard(warnOf(() => claimTask(board, selectedId, who)), () => {
-      onApply((b) => claimTask(b, selectedId, who).board);
+    void guard(warnOf(() => claimTask(board, selectedId, who, sessionId)), () => {
+      onApply((b) => claimTask(b, selectedId, who, sessionId).board);
     });
   };
 

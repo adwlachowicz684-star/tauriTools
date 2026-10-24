@@ -4762,3 +4762,20 @@ input.mono, textarea.mono {
 
 .bmp-add { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding-top: 4px; }
 .bmp-add-input { flex: 1 1 110px; min-width: 90px; font-size: var(--fs-note, 11px); padding: 2px 5px; }
+
+/* ---------- 窗口号（sessionID）---------- */
+.ttb-sid {
+  font-family: var(--af-font-mono, ui-monospace, monospace);
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-mute);
+  white-space: nowrap;
+}
+/*
+  自己那条标出来。
+  窗口号是 w_3f2a91 这种编号，几十行里靠肉眼找"哪个是我的"根本找不到 ——
+  没有这个锚点，"只看我的"等于没有实现。
+*/
+.ttb-sid.is-mine {
+  color: var(--af-accent);
+  font-weight: var(--fw-strong, 600);
+}

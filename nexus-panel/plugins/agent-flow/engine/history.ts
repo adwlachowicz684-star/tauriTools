@@ -148,6 +148,12 @@ export function parseHistory(raw: string | null): HistoryFile {
       status: (['running', 'success', 'failed', 'cancelled'].indexOf(e.status as string) >= 0
         ? e.status : 'cancelled') as TaskRecord['status'],
       source: (typeof e.source === 'string' ? e.source : 'unknown') as TaskRecord['source'],
+      /*
+        老归档里没有这个字段 —— 那时还没有窗口号概念。
+        给空串而不是"编一个"：空串表示"未知"，
+        编一个号会让老记录谎报自己是某个窗口跑的。
+      */
+      session: typeof e.session === 'string' ? e.session : '',
       order: Array.isArray(e.order) ? e.order.filter((x2): x2 is string => typeof x2 === 'string') : Object.keys(nodes),
       nodes,
       logs: Array.isArray(e.logs) ? e.logs.filter((l): l is { at: number; text: string; nodeId?: string } =>

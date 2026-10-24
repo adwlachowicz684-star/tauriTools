@@ -89,6 +89,16 @@ export type TaskRecord = {
   /** 总节点数，用于算进度 */
   total: number;
   /**
+   * 发起这次运行的**窗口号**（sessionID）。空 = 未知（老数据或外部触发）。
+   *
+   * 与任务条目上的 session 是两件不同的事：
+   *   · 任务上的 —— 谁**负责**（排期归属）
+   *   · 这里的   —— 谁**跑的**（这次执行是谁发起的）
+   * 两者可以不同（窗口甲排的任务、窗口乙跑的）。
+   * 合成一个字段的话，"我跑过哪几次"这个查询就没了。
+   */
+  session: string;
+  /**
    * 建任务那一刻的连线（含嵌合展开出来的）。
    *
    * 没有它，流程图就只能按执行顺序排成一列 ——
@@ -138,6 +148,8 @@ export function makeTask(init: {
   source?: TaskSource;
   total?: number;
   now?: number;
+  /** 发起者窗口号 */
+  session?: string;
   /** 节点标题，画流程图用；没有就退回 id */
   labels?: Record<string, string>;
   /** 建任务那一刻的连线，含嵌合展开出来的 */
@@ -162,6 +174,7 @@ export function makeTask(init: {
     layerNow: 0,
     layerTotal: 0,
     total: init.total ?? 0,
+    session: init.session ?? '',
     ...(init.edges && init.edges.length > 0 ? { edges: init.edges } : {}),
     ...(init.labels && Object.keys(init.labels).length > 0 ? { labels: init.labels } : {}),
     ...(init.positions && Object.keys(init.positions).length > 0 ? { positions: init.positions } : {}),
