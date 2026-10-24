@@ -22049,6 +22049,182 @@ group('Mermaid 字面 <br/> 被 unescMermaid 并成空格，往返改内容（BU
 }
 
 
+
+/* ============================================================
+   BUG 175 · 启动那三处读走的是宽松版 —— 读失败被当成「没有」，
+            于是立刻跑迁移覆盖索引 / 给出空画布并在首次编辑时覆盖真内容
+   ============================================================ */
+
+/**
+ * ⓘ 为什么是 BUG：
+ *
+ *   启动时三处读都是宽松版，读失败时返回默认值（null / []），
+ *   与「本来就没有」**长得一模一样** —— 而这三个默认值各自对应一个破坏性动作：
+ *
+ *   · 文件索引读成 null → 首次迁移那段立刻跑起来，`files.save` 把真索引
+ *     **覆盖**成一个新文件（实测：3 个文件的索引被写成 1 个，其余全成孤儿
+ *     doc 键）。而写路径往往是好的（单条记录损坏只坏那一条），于是
+ *     两次写入都成功、bootWarn 为空 —— **一句提示都没有**；
+ *   · 内容读成 null → `|| wb.newWorkbook()` 给出空画布，用户一编辑
+ *     persist() 就把真内容**覆盖成空的**（永久丢一整份脑图）；
+ *   · 文件夹读成 [] → 文件夹凭空消失。
+ *
+ *   `openFile`（切文件）早就在读失败时拒绝切换 —— 同一条规矩在启动这一处
+ *   漏掉，就是本项目反复撞的「只修一半」。
+ */
+group('BUG 175 · 启动读取必须走严格版：读不出来不得当成「没有」');
+{
+  const rawIdx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const rawStore = fs.readFileSync(path.join(HERE, 'store.js'), 'utf8').replace(/\r\n/g, '\n');
+
+  /* ---------- ① 源码契约：启动不得再有宽松读取 ---------- */
+  const bareIdx = stripCommentsFlatJs(rawIdx);
+  ok(!/await store\.files\.load\(\)/.test(bareIdx),
+    '★ 启动不得再用宽松版 files.load()（读失败会被当成"没有索引"）');
+  ok(!/await store\.folders\.load\(\)/.test(bareIdx),
+    '★ 启动不得再用宽松版 folders.load()');
+  ok(!/await store\.doc\(currentFileId\)\.load\(\)/.test(bareIdx),
+    '★ 启动不得再用宽松版 doc(currentFileId).load()');
+  ok(/const fr = await store\.files\.loadStrict\(\)/.test(bareIdx), '文件索引走严格版');
+  ok(/const foldr = await store\.folders\.loadStrict\(\)/.test(bareIdx), '文件夹走严格版');
+  ok(/const dr = await store\.doc\(currentFileId\)\.loadStrict\(\)/.test(bareIdx), '内容走严格版');
+  ok(/bootContentUnread = true/.test(bareIdx), '★ 内容读不出来要打标记（persist 据此拒写）');
+
+  /* ---------- ② store.js 契约：三处严格版都得走 getStrict ---------- */
+  {
+    const bs = stripCommentsFlatJs(rawStore);
+    ok(/loadStrict:\s*\(\)\s*=>\s*getStrict\(K_FILES\)/.test(bs), 'files.loadStrict 走 getStrict');
+    ok(/loadStrict:\s*\(\)\s*=>\s*getStrict\(K_FOLDERS\)/.test(bs), 'folders.loadStrict 走 getStrict');
+    ok(/loadStrict:\s*\(\)\s*=>\s*getStrict\(K_DOC \+ id\)/.test(bs), 'doc(id).loadStrict 走 getStrict');
+  }
+
+  /* ---------- ③ persist：读不出来就一个字节都不写 ---------- */
+  {
+    const pi = rawIdx.indexOf('async function persist() {');
+    ok(pi > 0, '能定位 persist');
+    const pe = rawIdx.indexOf('\n  }\n', pi);
+    ok(pe > pi, '能切出 persist 函数体');
+    const body = rawIdx.slice(rawIdx.indexOf('{', pi) + 1, pe);
+    const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+    const run = new AsyncFn('bootContentUnread', 'status', 'store', 'currentFileId', 'workbook', body);
+    const mk = () => {
+      const log = [];
+      let written = 0;
+      return {
+        log,
+        get written() { return written; },
+        store: { doc: () => ({ save: async () => { written++; return true; } }) },
+        status: (m) => log.push(String(m)),
+      };
+    };
+    const a = mk();
+    const ra = await run(true, a.status, a.store, 'f1', { sheets: [] });
+    eq(a.written, 0, '★ 启动没读出来时 persist 一次都不写（写下去就是覆盖真内容）');
+    eq(ra, false, '★ persist 要返回 false（调用方据此不说"已保存"）');
+    ok(a.log.some((m) => /保存已跳过/.test(m)), '★ 跳过保存要说出来，不能默默什么都不做');
+
+    const b = mk();
+    const rb = await run(false, b.status, b.store, 'f1', { sheets: [] });
+    eq(b.written, 1, '★ 正常路径照旧写一次（改动不得影响正常保存）');
+    eq(rb, true, '★ 正常路径 persist 返回 true');
+  }
+
+  /* ---------- ④ 行为级：真跑启动那一段的四种读结果 ---------- */
+  {
+    const s0 = rawIdx.indexOf('const foldr = await store.folders.loadStrict();');
+    ok(s0 > 0, '能定位启动读取段的起点');
+    const anchor = 'if (!Array.isArray(fileIndex) || !fileIndex.length) {';
+    const s1 = rawIdx.indexOf(anchor, s0);
+    ok(s1 > s0, '能定位迁移块（以它作终点）');
+    const e1 = rawIdx.indexOf('\n  }\n', s1);
+    ok(e1 > s1, '能切到迁移块收尾');
+    const seg = rawIdx.slice(s0, e1) + '\n  }';
+
+    // ⓘ 必须包一层 try/catch：把 `const docOk = …` 改回裸 await 之后块里会抛
+    //   ReferenceError，未捕获会让整个测试进程挂掉、后面的断言一条都跑不到。
+    const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+    const run = new AsyncFn('store', 'wb', 'newFileId', `
+      let bootWarn = '';
+      let bootContentUnread = false;
+      ${seg}
+      return { fileIndex, foldersList, bootWarn };
+    `);
+    const mkStore = (folders, files) => ({
+      folders: { loadStrict: async () => folders },
+      files: { loadStrict: async () => files, save: async (v) => { SAVED.push(v); return true; } },
+      workbook: { load: async () => ({ sheets: [{ id: 's1', root: { data: { text: '旧内容' } } }] }) },
+      doc: () => ({ save: async () => true }),
+    });
+    const wbStub = { newWorkbook: () => ({ sheets: [], activeId: null }) };
+    let SAVED = [];
+    const safe = async (folders, files) => {
+      SAVED = [];
+      try {
+        return { ...(await run(mkStore(folders, files), wbStub, () => 'id-NEW')), threw: '' };
+      } catch (e) {
+        return { fileIndex: null, foldersList: null, bootWarn: '', threw: String(e?.message || e) };
+      }
+    };
+
+    // ① 读得到、有内容：迁移一次都不跑
+    const has = await safe({ ok: true, value: [] }, { ok: true, value: [{ id: 'f1', name: '甲' }] });
+    ok(!has.threw, '① 正常路径要跑得起来' + has.threw);
+    eq(SAVED.length, 0, '★ ① 索引有内容时不跑迁移（不得覆盖）');
+    eq(has.bootWarn, '', '★ ① 一切正常时不得误报');
+
+    // ② 读得到、确实是空的（首次启动）：迁移照旧跑
+    const fresh = await safe({ ok: true, value: [] }, { ok: true, value: null });
+    ok(!fresh.threw, '② 首次启动要跑得起来' + fresh.threw);
+    eq(SAVED.length, 1, '★ ② 真的没有索引时迁移照旧跑（正常路径不受影响）');
+    eq(fresh.bootWarn, '', '★ ② 首次迁移成功时不得误报');
+
+    // ③ 读失败：绝不能跑迁移
+    const bad = await safe({ ok: true, value: [] }, { ok: false, value: null });
+    ok(!bad.threw, '③ 读失败这条路径也要跑得起来' + bad.threw);
+    eq(SAVED.length, 0, '★ ③ 索引读不出来时**不得** files.save（那会覆盖真索引）');
+    ok(/未做初始化迁移/.test(bad.bootWarn), '★ ③ 读失败要把「未做初始化迁移」说清楚');
+    ok(Array.isArray(bad.fileIndex) && bad.fileIndex.length === 1,
+      '★ ③ 内存里给一个默认项让启动走完（真内容一个字节都不能碰）');
+
+    // ④ 文件夹读失败：要说，且不牵连文件索引的说法
+    const badF = await safe({ ok: false, value: null }, { ok: true, value: [{ id: 'f1' }] });
+    ok(!badF.threw, '④ 文件夹读失败要跑得起来' + badF.threw);
+    ok(/文件夹列表读取失败/.test(badF.bootWarn), '★ ④ 文件夹读失败要说出来');
+    ok(!/文件列表/.test(badF.bootWarn), '★ ④ 文件夹读失败不得牵连文件索引的说法（不能虚报）');
+  }
+
+  /* ---------- ⑤ 行为级：内容读不出来必须打标记（persist 据此拒写） ---------- */
+  {
+    const d0 = rawIdx.indexOf('const dr = await store.doc(currentFileId).loadStrict();');
+    ok(d0 > 0, '能定位内容读取段的起点');
+    const d1 = rawIdx.indexOf('\n  }\n', d0);
+    ok(d1 > d0, '能切出内容读取段');
+    const segD = rawIdx.slice(d0, d1) + '\n  }';
+    const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+    const runD = new AsyncFn('store', 'wb', 'currentFileId', `
+      let bootWarn = '';
+      let bootContentUnread = false;
+      ${segD}
+      return { workbook, bootWarn, bootContentUnread };
+    `);
+    const wbStub2 = { newWorkbook: () => ({ sheets: [], activeId: null }) };
+    const mkDoc = (r) => ({ doc: () => ({ loadStrict: async () => r }) });
+
+    const good = await runD(mkDoc({ ok: true, value: { sheets: [{ id: 's1' }] } }), wbStub2, 'f1');
+    eq(good.bootContentUnread, false, '★ 读得到时不得打标记（正常路径不受影响）');
+    eq(good.bootWarn, '', '★ 读得到时不得误报');
+
+    const empty = await runD(mkDoc({ ok: true, value: null }), wbStub2, 'f1');
+    eq(empty.bootContentUnread, false,
+      '★ 「这份脑图本来就是空的」不算读失败（ok=true 时 value 为 null 是正常的）');
+
+    const bad2 = await runD(mkDoc({ ok: false, value: null }), wbStub2, 'f1');
+    eq(bad2.bootContentUnread, true, '★ 内容读不出来必须打标记（persist 据此拒写）');
+    ok(/脑图内容读取失败/.test(bad2.bootWarn), '★ 内容读失败要说清楚是「脑图内容」');
+    ok(/不会保存/.test(bad2.bootWarn), '★ 内容读失败必须说出后果：本次会话不会保存');
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

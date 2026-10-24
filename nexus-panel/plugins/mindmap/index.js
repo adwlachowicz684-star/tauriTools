@@ -63,6 +63,16 @@ bootIframePlugin(async (ctx) => {
    * 所以这里只能先记下来，等 UI 建好再摆上去（见文末 flushBootWarn）。
    */
   let bootWarn = '';
+  /*
+   * BUG 175：启动时**内容没读出来**的标记。
+   *
+   * `store.doc(id).load()` 读失败时返回 null（与「这份脑图本来就是空的」
+   * 长得一模一样），于是 `|| wb.newWorkbook()` 给出一张空画布 —— 而写路径
+   * 往往是好的，用户一编辑 persist() 就把真内容**覆盖成空的**。
+   * 读不出来时本次会话**一律不落盘**：真内容留在原键里，等下次读得出来时
+   * 自然回来。写不进去只是丢这次的编辑，覆盖是永久丢一份脑图。
+   */
+  let bootContentUnread = false;
 
   /* --------------------- 文件库（多文档） ---------------------
    * 旧版本整个插件只有一份工作簿（存在 workbook 键下）。
@@ -82,8 +92,35 @@ bootIframePlugin(async (ctx) => {
    *
    *   与 saveStore 那一族（新建 / 重命名 / 移动 / 删除文件）同一条规矩，
    *   只是这里不能调 status()，所以改成记进 bootWarn。 */
-  let foldersList = (await store.folders.load()) || [];
-  let fileIndex = await store.files.load();
+  /*
+   * BUG 175：**启动这三处读必须走严格版**。
+   *
+   * 宽松版 `load()` 读失败时返回默认值（null / []），与「本来就没有」分不开 ——
+   * 而启动这一段的三种默认值**各自对应一个破坏性动作**：
+   *
+   *   · 文件索引读成 null → 立刻跑迁移，`files.save` 把真索引**覆盖**成
+   *     一个新文件（实测：3 个文件的索引被写成 1 个，其余全成孤儿 doc 键）；
+   *   · 内容读成 null → `|| wb.newWorkbook()` 给出空画布，首次编辑即覆盖；
+   *   · 文件夹读成 [] → 文件夹凭空消失，任何一次文件夹操作就把 [] 写回去。
+   *
+   * `openFile`（切文件）早就判了读失败并拒绝切换 —— 同一条规矩在启动这一处
+   * 漏掉，就是「只修一半」。
+   */
+  const foldr = await store.folders.loadStrict();
+  let foldersList = Array.isArray(foldr.value) ? foldr.value : [];
+  if (!foldr.ok) bootWarn = '文件夹列表读取失败：文件夹可能没有显示出来（未写入，原数据未动）';
+
+  const fr = await store.files.loadStrict();
+  let fileIndex = Array.isArray(fr.value) ? fr.value : [];
+  if (!fr.ok) {
+    /*
+     * 读不出来时**绝不能**跑迁移 —— 迁移会 files.save 覆盖真索引。
+     * 内存里给一个可用的默认项让启动走完（它的 doc 键是新建的孤儿，
+     * 真内容一个字节都不会被碰到），并把后果说清楚。
+     */
+    if (!fileIndex.length) fileIndex = [{ id: newFileId(), name: '我的脑图', folderId: null }];
+    bootWarn = '文件列表读取失败：未做初始化迁移（避免覆盖原索引），本次的新建/重命名可能保存不进去，请刷新重试';
+  }
   if (!Array.isArray(fileIndex) || !fileIndex.length) {
     const id = newFileId();
     const legacy = await store.workbook.load();
@@ -102,7 +139,13 @@ bootIframePlugin(async (ctx) => {
     ? settings.lastFileId
     : fileIndex[0].id;
 
-  let workbook = (await store.doc(currentFileId).load()) || wb.newWorkbook();
+  const dr = await store.doc(currentFileId).loadStrict();
+  let workbook = dr.value || wb.newWorkbook();
+  if (!dr.ok) {
+    bootContentUnread = true;
+    // 这条最要紧，排在最后：bootWarn 是单一句，具体的要盖住泛泛的
+    bootWarn = '脑图内容读取失败：为避免覆盖原内容，本次会话不会保存，请刷新重试';
+  }
   workbook.sheets = wb.normalizeSheets(workbook.sheets);
   let customThemes = (await store.themes.load()) || [];
   // 并入预置主题：必须在注册之前，否则面板读不到、core 里也没这个主题。
@@ -1949,6 +1992,17 @@ async function gcOrphanAssets(quiet = false) {
   }
 
   async function persist() {
+    /*
+     * BUG 175：启动时没读出来就**一个字节都不写**。
+     *
+     * 此时 workbook 是 `wb.newWorkbook()` 造出来的空壳，写下去等于把磁盘上
+     * 那份（只是这一刻没读出来）**覆盖成空的** —— 永久丢一整份脑图。
+     * 不写只是丢本次会话的编辑，且上面那句 bootWarn 已经说清楚了。
+     */
+    if (bootContentUnread) {
+      status('保存已跳过：启动时没能读到这份脑图，写入会覆盖原内容（请刷新重试）', true);
+      return false;
+    }
     // 内部兜底：调用方基本都是 fire-and-forget，写失败（配额触顶等）必须看得见。
     // 注意 store.set 是「吞异常返回 false」而不是抛出，所以必须检查返回值，
     // 只写 try/catch 的话写失败会被静默吞掉。

@@ -224,11 +224,23 @@ export const workbook = {
  */
 export const files = {
   load: () => get(K_FILES, null),
+  /**
+   * 严格版：区分「没有索引」与「读不出来」。
+   *
+   * ⓘ BUG 175：启动时 `files.load()` 读失败返回 null，与「本来就没有索引」
+   *   **长得一模一样** —— 于是首次迁移那段立刻跑起来，`files.save` 把真索引
+   *   **覆盖**成一个新文件，用户所有的脑图变成没人引用的孤儿 doc 键。
+   *   而写路径往往是好的（单条记录损坏只坏那一条），所以两次写入都成功、
+   *   bootWarn 为空 —— 一句提示都没有。
+   */
+  loadStrict: () => getStrict(K_FILES),
   save: (v) => set(K_FILES, v),
 };
 
 export const folders = {
   load: () => get(K_FOLDERS, []),
+  /** 严格版（同上）：读失败不能当成「没有文件夹」 */
+  loadStrict: () => getStrict(K_FOLDERS),
   save: (v) => set(K_FOLDERS, v),
 };
 
@@ -236,6 +248,8 @@ export const folders = {
 export function doc(id) {
   return {
     load: () => get(K_DOC + id, null),
+    /** 严格版（同上）：读失败不能当成「这份脑图是空的」 */
+    loadStrict: () => getStrict(K_DOC + id),
     save: (v) => set(K_DOC + id, v),
     del: () => del(K_DOC + id),
   };
