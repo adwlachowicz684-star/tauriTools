@@ -879,7 +879,35 @@ export function toMermaid(content) {
  */
 export function fromMermaid(text) {
   const rows = [];
-  for (const raw of String(text || '').split(/\r?\n/)) {
+  /*
+   * BUG 167：文件开头的 **YAML frontmatter**（`---` … `---` / `...`）不是节点。
+   *
+   * Mermaid 的 frontmatter 是**官方语法**（官方 mindmap.md 里 `mindmap.colorBy`
+   * 那一节就是这么写的，v12.2.0+），标题 / config / themeVariables 都写在里头；
+   * Mermaid Live Editor 改过配置后导出的 .mmd 也自带这一段。
+   *
+   * 早先完全不认，于是每一行都当节点：
+   *   · 根变成 `---`，`config:` / `mindmap:` / `---` / `mindmap` 全成了它的子节点
+   *   · 真正的中心主题被压到第二层，整棵树**整体下沉一层**
+   *   · 节点数凭空多出 5 个，层级全错
+   * 而 `.mmd` 导入是**整体替换且不可撤销**，上面这些一条提示都没有 ——
+   * 用户看到的是一份结构完全不对的脑图，还以为原文件就是这样。
+   *
+   * ⓘ 只在**开头**认，且**必须有闭合行**：中间孤立的 `---` 仍按节点处理，
+   *   找不到闭合时不吞掉任何一行（那就不是 frontmatter，宁可照旧）。
+   *   本工具自己导出 .mmd 从不写 frontmatter，所以自己的往返不受影响。
+   */
+  const lines = String(text || '').split(/\r?\n/);
+  let start = 0;
+  let head = 0;
+  while (head < lines.length && !lines[head].trim()) head++;
+  if (head < lines.length && /^\s*---\s*$/.test(lines[head])) {
+    for (let i = head + 1; i < lines.length; i++) {
+      // `...` 同样是 YAML 文档结束标记
+      if (/^\s*(---|\.\.\.)\s*$/.test(lines[i])) { start = i + 1; break; }
+    }
+  }
+  for (const raw of lines.slice(start)) {
     if (!raw.trim()) continue;
     /*
      * 头行 / 指令行。

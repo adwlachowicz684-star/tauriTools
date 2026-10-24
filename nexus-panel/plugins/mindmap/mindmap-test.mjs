@@ -21481,6 +21481,87 @@ group('BUG 163 · 首次迁移的两处写入必须接住返回值（写失败�
     '★ 两次都失败时两边都要说到');
 }
 
+group('BUG 167 · Mermaid 文件开头的 YAML frontmatter 不是节点');
+
+{
+  const f167 = await import('./formats.js');
+  /*
+   * ★ 必须先判 null：fromMermaid 失败时返回 null，直接 JSON.parse(c).root
+   * 会抛 TypeError —— 整个测试进程当场崩掉，后面的断言一条都跑不到，
+   * 看着"抓到了"其实漏了大半。
+   */
+  const flat = (c) => {
+    if (!c) return null;
+    const out = [];
+    (function w(n, d) {
+      out.push([n.data.text, d]);
+      (n.children || []).forEach((x) => w(x, d + 1));
+    })(JSON.parse(c).root, 0);
+    return out;
+  };
+  const J = (v) => JSON.stringify(v);
+
+  /*
+   * ① 官方形态：mindmap.md 里 `mindmap.colorBy` 那一节就是这么写的
+   * （v12.2.0+），Mermaid Live Editor 改过配置后导出的 .mmd 也自带这一段。
+   */
+  const official = [
+    '---',
+    'title: 项目结构',
+    'config:',
+    '  mindmap:',
+    '    colorBy: depth',
+    '---',
+    'mindmap',
+    '  root((项目))',
+    '    设计',
+    '      UI',
+    '    开发',
+  ].join('\n');
+  eq(J(flat(f167.fromMermaid(official))),
+    J([['项目', 0], ['设计', 1], ['UI', 2], ['开发', 1]]),
+    '★ 官方 frontmatter：中心主题与层级都还原（早先整棵树下沉一层、凭空多 5 个节点）');
+
+  // ② frontmatter 里的内容一个都不能变成节点
+  const back = flat(f167.fromMermaid(official)) || [];
+  for (const bad of ['---', 'config:', 'mindmap:', 'title: 项目结构', 'colorBy: depth']) {
+    ok(!back.some((r) => r[0] === bad), `★ frontmatter 里的「${bad}」不能变成节点`);
+  }
+  eq(back.length, 4, '★ 节点数不多不少（早先凭空多出 5 个）');
+
+  // ③ 只在**开头**认：中间孤立的 `---` 仍按节点处理
+  eq(J(flat(f167.fromMermaid('mindmap\n  R\n    ---\n    B'))),
+    J([['R', 0], ['---', 1], ['B', 1]]),
+    '★ 中间孤立的 --- 仍是节点（不能吞）');
+
+  // ④ 找不到闭合行时**一行都不吞** —— 那就不是 frontmatter，宁可照旧
+  eq(J(flat(f167.fromMermaid('---\nR\n  A'))),
+    J([['---', 0], ['R', 1], ['A', 2]]),
+    '★ 开头 --- 但无闭合 → 一行都不吞（不能静默丢内容）');
+
+  // ⑤ `...` 同样是 YAML 文档结束标记
+  eq(J(flat(f167.fromMermaid('---\ntitle: X\n...\nmindmap\n  R\n    A'))),
+    J([['R', 0], ['A', 1]]),
+    '★ `...` 同样认作结束标记');
+
+  // ⑥ 开头空行不影响识别
+  eq(J(flat(f167.fromMermaid('\n\n---\ntitle: X\n---\nmindmap\n  R'))),
+    J([['R', 0]]),
+    '开头有空行时仍认得出 frontmatter');
+
+  // ⑦ 本工具自己导出 .mmd 从不写 frontmatter，自己的往返不受影响
+  const self = {
+    root: { data: { text: '中心主题' }, children: [{ data: { text: '甲' }, children: [] }] },
+    template: 'default', theme: 'fresh-blue',
+  };
+  const mm = f167.toMermaid(self);
+  ok(!/^---/.test(String(mm).trim()), '本工具导出 .mmd 不写 frontmatter');
+  eq(J(flat(f167.fromMermaid(mm))), J([['中心主题', 0], ['甲', 1]]), '★ 自己的往返不受影响');
+
+  // ⑧ 只有 frontmatter、没有节点 → 返回 null（不能凭空造一个出来）
+  eq(f167.fromMermaid('---\ntitle: X\n---\n'), null, '★ 只有 frontmatter 时返回 null（不许凭空造节点）');
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');
