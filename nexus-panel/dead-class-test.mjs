@@ -103,6 +103,25 @@ console.log('=== 1. 扫描器自身：必须分得清真假 ===');
   t('模板串 ${} 不误取', !collectUsedClasses('className={`a ${undefinedVar}`}').has('undefinedVar'));
   t('三元里的状态类 open',
     collectUsedClasses("className={`fpx-link-arrow${x ? ' open' : ''}`}").has('open'));
+  /*
+   * ⛔ 定向元断言：类名常量是**模板串**时也必须认。
+   *
+   * 真身：plugins/agent-flow/components/TaskTable.tsx
+   *   const popCls = `ttb-pop${anchorRight ? ' is-right' : ''}`;
+   *   <div className={popCls}>
+   * 类名先进变量、再挂 className，DOM 上是标识符而不是字面量串。
+   * 2d 老正则取出来的是 `ttb-pop${anchorRight ? ` 这种带 `${` 的碎片，
+   * addTokens 整条丢弃 → **ttb-pop 被判成幽灵规则（实测报过一次）**。
+   * 而它明明在挂：照着守卫去"清理"就删掉正在用的样式，静默丢失。
+   */
+  t('模板串常量里的类名也被认成在用',
+    collectUsedClasses("const popCls = `ttb-pop${anchorRight ? ' is-right' : ''}`;").has('ttb-pop'),
+    'ttb-pop（TaskTable.tsx 的 popCls）');
+  t('模板串常量里三元分支的状态类也取',
+    collectUsedClasses("const popCls = `ttb-pop${a ? ' is-right' : ''}`;").has('is-right'));
+  // 反向：动态拼接前缀不是完整类名，常量形态同样不许取（放宽不能过头）
+  t('模板串常量里的拼接前缀不误取',
+    !collectUsedClasses('const rowCls = `level-${n}`;').has('level-'));
   t('hyperscript', collectUsedClasses("h('div.mm-foo.bar', x)").has('mm-foo'));
   /*
    * ⚠️ class: 后的**拼接 + 三元**必须认 —— settings 的插件卡片就写
