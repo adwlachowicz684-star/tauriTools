@@ -140,12 +140,21 @@ const build = (ls) => new Function('localStorage', `
   const seg = sliceFn(c, 'removePlugin(id) {');
   t('（前置）removePlugin 段切到了', !!seg);
   t('removePlugin 先看落盘结果', /const ok = saveCustomPlugins\(/.test(seg));
-  t('removePlugin 没存下就 return false', /if \(!ok\) return false;/.test(seg));
-  const before = seg.slice(0, seg.indexOf('if (!ok) return false;'));
+  /*
+   * 契约是 { ok, mcp } 而非裸 boolean：host.removePlugin 是 async，
+   * 且要顺带把 MCP 网关的注销结局（cleaned / failed）透给调用方。
+   * 判据跟着对象是刻意的 —— 钉 `return false` 会在契约改成对象后
+   * 变成"实现明明改对了、测试却红"，把人往错的方向引。
+   */
+  t('removePlugin 没存下就 return { ok: false }', /if \(!ok\) return \{ ok: false \};/.test(seg));
+  const anchor = 'if (!ok) return { ok: false };';
+  t('（前置）失败返回锚点命中（锚点丢了下面那条会退化成恒真）',
+    seg.indexOf(anchor) > 0);
+  const before = seg.slice(0, seg.indexOf(anchor));
   t('没存下时不撤授权（避免留下"插件在、外链全被拦"的半截状态）',
     !/revokeAllGrants/.test(before));
   t('存下了才撤授权', /revokeAllGrants/.test(seg));
-  t('removePlugin 返回成败', /return true;/.test(seg));
+  t('removePlugin 返回成败', /return \{ ok: true/.test(seg));
 }
 
 /* ================================================================
@@ -174,7 +183,11 @@ const build = (ls) => new Function('localStorage', `
   const c = code('shell');
   const seg = sliceFn(c, 'window.__nexusRemovePlugin = async (id) => {');
   t('（前置）原生壳「移除」段切到了', !!seg);
-  t('原生壳：移除先看落盘结果', /if \(!host\.removePlugin\(id\)\)/.test(seg));
+  /* 同样是对象契约：必须先 await 再判 r?.ok。
+     钉 `if (!host.removePlugin(id))` 会在 async 化后恒假 ——
+     移除失败照样弹「已移除插件」，而这条断言却一直绿。 */
+  t('原生壳：移除先看落盘结果', /const r = await host\.removePlugin\(id\)/.test(seg)
+    && /if \(!r\?\.ok\)/.test(seg));
   t('原生壳：移除失败 → 报 err 并 return（不照报「已移除」）',
     /customPluginWriteFailMsg\('移除'/.test(seg) && /return/.test(seg));
   t('原生壳：移除成功才报「已移除插件」', /toast\('已移除插件', 'ok'\)/.test(seg));
