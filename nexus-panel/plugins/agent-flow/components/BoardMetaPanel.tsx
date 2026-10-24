@@ -147,7 +147,7 @@ function StatusRow({ meta, def, index, total, onChange }: {
         }}
       />
 
-      <label className="bmp-check" title="终态不能再流出（避免"已完成"被随手拖回去）">
+      <label className="bmp-check" title="终态不能再流出（避免「已完成」被随手拖回去）">
         <input
           type="checkbox"
           checked={def.final}

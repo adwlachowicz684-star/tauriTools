@@ -101,16 +101,35 @@ export function scanIframePlugins() {
  * 里（名字带时间戳，互不覆盖），随系统清理即可，不污染仓库。
  */
 function stashOutDir(outDir) {
-  if (!existsSync(outDir)) return;
+  if (!existsSync(outDir)) return null;
   /* 同卷改名（跨卷会 EXDEV，见 stale-root.mjs 的说明） */
   mkdirSync(STALE_ROOT, { recursive: true });
   const stale = resolve(STALE_ROOT, `${basename(outDir)}-${Date.now()}`);
   try {
     renameSync(outDir, stale);
+    return stale;
   } catch (e) {
-    /* 改名失败（跨卷/占用）就原样留着，让 emptyOutDir 自己处理 —— 那是
-       既有行为，失败信息也会更好懂。 */
+    /* 改名失败（跨卷/占用）就原样留着，让 emptyOutDir 自己处理。 */
     console.warn(`[build-plugins] 旧产物挪不走（${e.code}），沿用 emptyOutDir`);
+    return null;
+  }
+}
+
+/**
+ * 构建失败时把 stash 出去的旧产物搬回来。
+ *
+ * 为什么必须：stash 是「先挪走再重建」，一旦构建失败，outDir 就既没有新
+ * 产物也没有旧产物 —— 插件直接从能加载变成 404。构建失败不该顺手把上一次
+ * 的好产物也赔进去。
+ * 实测踩到：agent-flow 因上游漏改调用方构建失败，产物目录被挪走后没能重建。
+ */
+function restoreOutDir(outDir, stale) {
+  if (!stale || !existsSync(stale) || existsSync(outDir)) return;
+  try {
+    renameSync(stale, outDir);
+    console.warn(`[build-plugins] 构建失败，已还原旧产物：${basename(outDir)}`);
+  } catch (e) {
+    console.error(`[build-plugins] 旧产物还原失败（${e.code}）：${stale}`);
   }
 }
 
@@ -120,9 +139,10 @@ async function buildOne(id) {
   const outDir = resolve(PATHS.runtimePlugins, id);
   const t0 = Date.now();
 
-  stashOutDir(outDir);
+  const stashed = stashOutDir(outDir);
 
-  await build({
+  try {
+    await build({
     /* root 指向插件目录：index.html 里的 ./main.tsx 等相对引用按它解析。
        configFile:false 必须显式关掉 —— 否则 Vite 会顺着 root 往上找到
        仓库根的 vite.config.ts，把主构建配置（多页 input、clearScreen 等）
@@ -157,6 +177,11 @@ async function buildOne(id) {
   }
 
   verifyOne(id, outDir);
+  } catch (e) {
+    /* 关键：失败时把旧产物搬回来，否则插件从能加载直接变 404 */
+    restoreOutDir(outDir, stashed);
+    throw e;
+  }
   const ms = Date.now() - t0;
   console.log(`✅ ${id} → runtime-plugins/${id}/ （${ms}ms）`);
 }
