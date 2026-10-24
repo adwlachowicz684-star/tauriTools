@@ -5720,7 +5720,15 @@ group('BUG 100 · 空白节点不得导出成空行（PlantUML / Mermaid）');
 
   // 源码层
   const fsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
-  ok(/text:\s*nodeText\(n\)/.test(fsrc), '★ kmToRows 用 nodeText 的默认占位（不再传 \'\'）');
+  /*
+   * BUG 173：kmToRows 改成「非全空白用原文、全空白才走 nodeText 占位」，
+   * 锚点变了，但这条守的事没变 —— **不许传 ''**（BUG 100）。
+   * 只靠源码契约不够（那只看字面），补两条行为级：空串与全空白都得是占位。
+   */
+  ok(/text:\s*raw\.trim\(\)\s*\?\s*raw\s*:\s*nodeText\(n\)/.test(fsrc),
+    '★ kmToRows 用 nodeText 的默认占位（不再传 \'\'）');
+  eq(f100.kmToRows(mk(''))[0].text, E, 'kmToRows：空文字走占位（不许传空串）');
+  eq(f100.kmToRows(mk('   '))[0].text, E, 'kmToRows：全空白同样走占位');
   ok(!/if\s*\(!t\)\s*continue;/.test(fsrc), '★ fromPlantUml 不再丢空行');
   ok(/if\s*\(!body\)\s*body = EMPTY_NODE_TEXT;/.test(fsrc), 'fromMermaid 空文字补占位');
   ok(/raw\.trim\(\)\s*===\s*'""'/.test(fsrc), '裸 "" 判的是整行（不是取出来的文字）');
@@ -21904,6 +21912,78 @@ group('Mermaid 字面 <br/> 被 unescMermaid 并成空格，往返改内容（BU
     const qline = head.slice(iQ, head.indexOf('\n', iQ));
     ok(/[<]/.test(qline),
       '★ MERMAID_NEEDS_QUOTE 必须含 <（否则含 < 的文字走裸写、转义不生效）');
+  }
+}
+
+
+
+group('BUG 173 · 节点文字的首尾空白在 Mermaid 往返中被静默 trim');
+
+{
+  const f173 = await import('./formats.js');
+  const N = (t, ch) => ({ data: { text: t }, children: ch || [] });
+  const wrap = (r) => JSON.stringify({ root: r, template: 'default', theme: 'fresh-blue' });
+  const tree = (t) => wrap(N('根', [N(t, [N('子1')]), N('尾')]));
+  const flat = (c) => {
+    if (!c) return null;
+    const o = [];
+    (function w(n, d) { o.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(JSON.parse(c).root, 0);
+    return o;
+  };
+  const E = f173.EMPTY_NODE_TEXT;
+
+  /*
+   * ① 行为级：往返必须保住首尾空白。
+   *
+   * 随机压测（5000 组）里 482 例全是这一个症状 —— 写侧 kmToRows 走
+   * nodeText → inlineText，末尾那个 .trim() 把首尾空白削掉，于是
+   * `  a  ` 导出再导回变成 `a`：静默改内容，且不报错。
+   */
+  for (const t of ['  a  ', ' a', 'a ', '\ta\t', '  中  ']) {
+    const got = flat(f173.fromMermaid(f173.toMermaid(tree(t))));
+    eq(got ? got[1][0] : null, t, `★ Mermaid 往返保住首尾空白：${JSON.stringify(t)}`);
+  }
+
+  // ② 写侧必须走引号写法 —— MERMAID_NEEDS_QUOTE 里的 `^\s|\s$` 正是为此写的
+  {
+    const mm = f173.toMermaid(tree('  a  '));
+    ok(/\["\s\s a \s\s"\]/.test(mm.replace(/  a  /, ' a ')) || /\["\s+a\s+"\]/.test(mm),
+      '★ 含首尾空白的文字必须走引号写法（裸写保不住首尾）');
+    ok(!/^\s{2}\s*a\s*$/m.test(mm), '★ 不能裸写（早先写出的是 `    a`，空白全丢）');
+  }
+
+  /*
+   * ③ 读侧：引号分支保住，其余分支**仍 trim**。
+   *
+   * 反向边界必须守住：只改引号分支是刻意的保守 —— 别人的文件里
+   * `A[  x  ]` 那种形状符号与文字之间的空白本就没有意义，一律保住
+   * 会让读出来的文字凭空多出空格。
+   */
+  eq(f173.mermaidTextOf('["  a  "]'), '  a  ', '★ 引号写法内的首尾空白必须保住');
+  eq(f173.mermaidTextOf('root["  a  "]'), '  a  ', '带 id 的引号写法同样保住');
+  eq(f173.mermaidTextOf('A[  x  ]'), 'x', '非引号分支仍 trim（别人的文件不会突然多出空格）');
+
+  // ④ 全空白仍走占位 —— BUG 100 的取舍不动
+  {
+    const got = flat(f173.fromMermaid(f173.toMermaid(tree('   '))));
+    eq(got ? got[1][0] : null, E, '★ 全空白仍是占位（BUG 100 的取舍不动）');
+  }
+
+  // ⑤ 源码契约：同一条换行替换不许抄两遍
+  {
+    const s = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8').replace(/\r\n/g, '\n');
+    const i = s.indexOf('export const inlineText =');
+    ok(i > 0, '能定位 inlineText');
+    const line = stripCommentsFlatJs(s.slice(i, s.indexOf('\n', i)));
+    ok(/inlineTextKeepEdges\(v\)\.trim\(\)/.test(line),
+      '★ inlineText 复用 inlineTextKeepEdges（另抄一份替换必漏）');
+    const i2 = s.indexOf('export function mermaidLabel');
+    ok(i2 > 0, '能定位 mermaidLabel');
+    const body = stripCommentsFlatJs(s.slice(i2, i2 + 900));
+    const cut = body.indexOf('if (MERMAID_NEEDS_QUOTE');
+    ok(cut > 0, '能切出 mermaidLabel 里判据之前那段');
+    ok(!/\.trim\(\)/.test(body.slice(0, cut)),
+      '★ mermaidLabel 在判据之前不许 trim（先 trim 掉，`^\\s|\\s$` 就是死代码）');
   }
 }
 
