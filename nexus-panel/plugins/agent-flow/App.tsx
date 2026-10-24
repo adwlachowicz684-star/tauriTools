@@ -59,9 +59,10 @@ import DirPicker from './components/DirPicker';
 import {
   LEFT_TABS, LEFT_TAB_LABEL,
   TASK_TABS, TASK_TAB_LABEL, TASK_VIEWS, TASK_VIEW_LABEL,
-  normalizeLeftTab, normalizeTaskTab, normalizeTaskView, normalizeLogHeight, leftTabsFor,
+  RIGHT_TABS, RIGHT_TAB_LABEL,
+  normalizeLeftTab, normalizeTaskTab, normalizeTaskView, normalizeRightTab, leftTabsFor,
 } from './engine/layout';
-import type { LeftTab, TaskTab, TaskView } from './engine/layout';
+import type { LeftTab, TaskTab, TaskView, RightTab } from './engine/layout';
 import { defaultKV as kvStore } from './engine/kv';
 import {
   writeTextFile, fsAllowRoot, listFsRoots, canExportToFile,
@@ -106,6 +107,9 @@ import { TaskDetail } from './components/TaskDetail';
 import { HistoryList } from './components/HistoryPanel';
 import { TaskTable } from './components/TaskTable';
 import { BoardTree } from './components/TaskBoard';
+import { AttachPanel } from './components/AttachPanel';
+import { useAttachments } from './hooks/useAttachments';
+import { addAttachment, removeAttachment } from './engine/attachmentStore';
 import { TaskBoardDetail } from './components/TaskBoardDetail';
 import { useTaskBoard } from './hooks/useTaskBoard';
 import {
@@ -850,7 +854,6 @@ export default function App() {
    * 右栏是"设置在上、日志在下"的上下分栏而不是可切标签：
    * 跑流程时盯着日志还得能改参数，切成标签就得来回切。
    */
-  const [logH, setLogH] = useState<number>(() => normalizeLogHeight(kvStore().get('agent-flow.logH.v1')));
 
   /*
    * 任务视图下的子标签：进行中 / 已完成。
@@ -865,7 +868,6 @@ export default function App() {
 
   useEffect(() => { kvStore().set('agent-flow.leftTab.v1', leftTabRaw); }, [leftTabRaw]);
   useEffect(() => { kvStore().set('agent-flow.taskTab.v1', taskTabRaw); }, [taskTabRaw]);
-  useEffect(() => { kvStore().set('agent-flow.logH.v1', String(logH)); }, [logH]);
 
   const leftTab = normalizeLeftTab(leftTabRaw);
   const taskTab = normalizeTaskTab(taskTabRaw);
@@ -1084,6 +1086,37 @@ export default function App() {
     setBoardSel(null);
     setBoardChecked(new Set());
   }, [board.path]);
+
+  /*
+    右栏页签：属性 / 日志 / 文件。
+    存 kv 记住上次的选择 —— 右栏是长时间停留的地方，
+    每次打开都跳回「属性」的话，盯着日志的人要每次手动切一次。
+  */
+  const [rightTabRaw, setRightTabRaw] = useState<RightTab>(
+    () => normalizeRightTab(kvStore().get('agent-flow.rightTab.v1')),
+  );
+  useEffect(() => { kvStore().set('agent-flow.rightTab.v1', rightTabRaw); }, [rightTabRaw]);
+  const rightTab = normalizeRightTab(rightTabRaw);
+
+  /*
+    附属文件清单 —— 与任务板同一个项目、同一套落盘规则，
+    只是另一个文件（attachments-<项目>.json）。
+  */
+  const attach = useAttachments({
+    dir: exportDir,
+    project: boardKey,
+    projectName: boardName,
+    enabled: view === 'tasks',
+  });
+
+  const attachNotice = useMemo(() => {
+    const s = attach.state;
+    if (s.kind === 'error') return `⛔ ${s.message}`;
+    if (s.kind === 'overwritten') return `⚠ 有 ${s.ids.length} 条被文件里的新版本盖掉了`;
+    if (s.kind === 'loading') return '读取中…';
+    if (s.kind === 'saving') return '写入中…';
+    return '';
+  }, [attach.state]);
 
   const boardNotice = useMemo(() => {
     const s = board.state;
@@ -2573,6 +2606,14 @@ function reportSkipped(
     // 自动切到任务窗口，让人立刻看到进度 ——
     // 触发器半夜跑起来时，停留在画布上看不出发生了什么
     setView('tasks');
+    /*
+      顺带把右栏切到「日志」。
+
+      右栏改成页签之后，属性与日志不再同时可见 ——
+      停在属性页跑一个流程，进度一条都看不到，
+      看起来就像这一跑根本没开始。
+    */
+    setRightTabRaw('log');
     setSummary(null);
     activeRuns.current.clear();
     paneSessions.current.clear();
@@ -3371,6 +3412,27 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         ? (scopedActiveHist ? { task: scopedActiveHist, archived: true, empty: '选一条记录看细节。' } : null)
         : (scopedActiveTask ? { task: scopedActiveTask, archived: false, empty: '选一条任务看细节。' } : null);
 
+  /*
+    附属文件挂在哪条任务上。
+
+    任务板视图用**计划态**那条（boardSel，稳定 id，AI 能在文件里写）；
+    列表 / 表格视图用运行记录那条。两者不会同时有 —— 一个视图只选一种。
+
+    都没选时 owner 是空串，面板显示"未挂在任何任务上"的那批。
+    刻意不隐藏面板：AI 可能先写了附件、任务还没建，
+    那时什么都不显示会让人以为写入失败了。
+  */
+  const attachOwner = taskView === 'board'
+    ? (boardSel ?? '')
+    : (detail?.task.id ?? '');
+  const attachOwnerTitle = taskView === 'board'
+    ? (boardSel ? (board.board.nodes[boardSel]?.title ?? '') : '')
+    : (detail?.task.canvasName ?? '');
+  const attachCount = useMemo(
+    () => attach.file.order.filter((id) => attach.file.items[id]?.owner === attachOwner).length,
+    [attach.file, attachOwner],
+  );
+
   return (
     <div className="app-shell">
       {/*
@@ -3917,95 +3979,112 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         */}
         {view === 'flow' ? (
         <div className="af-right-pane">
-          <div className="af-right-insp">
-        <div className="insp-slot">
-          {view !== 'flow' ? (
-            <div className="insp-ro-bar">
-              <span className="insp-ro-tag">只读</span>
-              <span className="insp-ro-hint">
-                {selected ? '改节点请回流程' : '未选中节点'}
-              </span>
-              <button
-                className="mini"
-                onClick={() => setView('flow')}
-                disabled={!selected}
-                title={selected ? '回到流程视图编辑这个节点' : '先在流程视图里选中一个节点'}
-              >
-                前往流程编辑
-              </button>
-            </div>
-          ) : null}
-          <fieldset className="insp-lock" disabled={view !== 'flow'}>
-            <Inspector
-              node={selected}
-              edges={edges}
-              nodes={nodes}
-              onChange={patchNode}
-              credentials={credentials}
-              onOpenCredentials={openCredentials}
-              mcpLibrary={mcpServers}
-              onOpenMcpLibrary={openMcpLibrary}
-              webhookTokens={webhookTokens}
-              onEditModule={(id) => enterInstanceEdit(id)}
-              onNote={pushLog}
-              exportDir={exportDir}
-              onChangeExportDir={setExportDir}
-              onBrowseExportDir={browseExportDir}
-              canExportToFile={canExportToFile()}
-              canvasConfig={canvasConfigOf(activeCanvas)}
-              onCanvasConfigChange={saveCanvasConfig}
-              onExportFlow={exportFlowAs}
-              canvases={canvases}
-              activeCanvasId={activeId ?? undefined}
-              themeMode={themeMode}
-              onThemeModeChange={setThemeMode}
-            />
-          </fieldset>
-        </div>
-
-
-          </div>
-
           {/*
-            分隔条：按住上下拖改日志区高度。
-            向上拖 = 日志变高（鼠标往上、日志在下方，所以取反）。
-          */}
-          <div
-            className="af-right-split"
-            role="separator"
-            aria-orientation="horizontal"
-            title="拖动调整日志区高度"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const startY = e.clientY;
-              const startH = logH;
-              const move = (ev: MouseEvent) => {
-                setLogH(normalizeLogHeight(startH - (ev.clientY - startY)));
-              };
-              const up = () => {
-                window.removeEventListener('mousemove', move);
-                window.removeEventListener('mouseup', up);
-              };
-              window.addEventListener('mousemove', move);
-              window.addEventListener('mouseup', up);
-            }}
-          />
+            右栏三个页签：属性 / 日志 / 文件。
 
-          <div className="af-right-log" style={{ height: logH }}>
-        <div className="logpane">
-          <div className="log-head">
-            运行日志
-            {summary && (
-              <span className={summary.ok ? 'ok' : 'bad'}>
-                {summary.ok ? '全部成功' : `失败 ${summary.failed.length} · 跳过 ${summary.skipped.length}`}
-              </span>
+            以前是「检查器在上、日志在下」中间一条可拖动分隔条；
+            加了附属文件之后三块叠在一栏里每块都被挤成一条，
+            而日志恰恰是运行时最需要看的东西 —— 所以改成页签。
+
+            ⛔ 代价：检查器与日志不再同时可见。故运行开始时会自动
+            切回「日志」（见下面那个 effect），否则跑起来了还停在
+            属性页，一条进度都看不到。
+          */}
+          <div className="af-right-tabs">
+            {RIGHT_TABS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={rightTab === t ? 'on' : ''}
+                onClick={() => setRightTabRaw(t)}
+                title={
+                  t === 'insp' ? '编辑选中节点的参数'
+                  : t === 'log' ? '运行日志'
+                  : '挂在任务上的 md / 图片 / 视频'
+                }
+              >
+                {RIGHT_TAB_LABEL[t]}
+                {t === 'files' && attachCount > 0 ? (
+                  <span className="att-badge">{attachCount}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+
+          <div className="af-right-body">
+            {rightTab === 'files' ? (
+              <AttachPanel
+                file={attach.file}
+                owner={attachOwner}
+                ownerTitle={attachOwnerTitle}
+                dir={exportDir}
+                canWrite={attach.canWrite}
+                onAdd={(item) => attach.apply((f) => addAttachment(f, item).file)}
+                onRemove={(id) => attach.apply((f) => removeAttachment(f, id))}
+                onReload={attach.reload}
+                notice={attachNotice}
+              />
+            ) : rightTab === 'log' ? (
+              <div className="logpane">
+                <div className="log-head">
+                  运行日志
+                  {summary && (
+                    <span className={summary.ok ? 'ok' : 'bad'}>
+                      {summary.ok ? '全部成功' : `失败 ${summary.failed.length} · 跳过 ${summary.skipped.length}`}
+                    </span>
+                  )}
+                </div>
+                <div className="log-body">
+                  {log.length === 0 && <small>还没有运行记录</small>}
+                  {log.map((l, i) => <div key={i}>{l}</div>)}
+                </div>
+              </div>
+            ) : (
+              <div className="insp-slot">
+                {view !== 'flow' ? (
+                  <div className="insp-ro-bar">
+                    <span className="insp-ro-tag">只读</span>
+                    <span className="insp-ro-hint">
+                      {selected ? '改节点请回流程' : '未选中节点'}
+                    </span>
+                    <button
+                      className="mini"
+                      onClick={() => setView('flow')}
+                      disabled={!selected}
+                      title={selected ? '回到流程视图编辑这个节点' : '先在流程视图里选中一个节点'}
+                    >
+                      前往流程编辑
+                    </button>
+                  </div>
+                ) : null}
+                <fieldset className="insp-lock" disabled={view !== 'flow'}>
+                  <Inspector
+                    node={selected}
+                    edges={edges}
+                    nodes={nodes}
+                    onChange={patchNode}
+                    credentials={credentials}
+                    onOpenCredentials={openCredentials}
+                    mcpLibrary={mcpServers}
+                    onOpenMcpLibrary={openMcpLibrary}
+                    webhookTokens={webhookTokens}
+                    onEditModule={(id) => enterInstanceEdit(id)}
+                    onNote={pushLog}
+                    exportDir={exportDir}
+                    onChangeExportDir={setExportDir}
+                    onBrowseExportDir={browseExportDir}
+                    canExportToFile={canExportToFile()}
+                    canvasConfig={canvasConfigOf(activeCanvas)}
+                    onCanvasConfigChange={saveCanvasConfig}
+                    onExportFlow={exportFlowAs}
+                    canvases={canvases}
+                    activeCanvasId={activeId ?? undefined}
+                    themeMode={themeMode}
+                    onThemeModeChange={setThemeMode}
+                  />
+                </fieldset>
+              </div>
             )}
-          </div>
-          <div className="log-body">
-            {log.length === 0 && <small>还没有运行记录</small>}
-            {log.map((l, i) => <div key={i}>{l}</div>)}
-          </div>
-        </div>
           </div>
         </div>
         ) : null}

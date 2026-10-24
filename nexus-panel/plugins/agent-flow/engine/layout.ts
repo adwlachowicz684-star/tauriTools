@@ -129,6 +129,31 @@ export function normalizeTaskView(v: unknown): TaskView {
 /* ------------------------------------------------------------------ */
 
 /** 日志区高度的可调范围（px） */
+/**
+ * 右栏页签。
+ *
+ * 以前右栏是**检查器在上、日志在下**，中间一条可拖动的分隔条。
+ * 改成页签是因为要加第三个（附属文件）—— 三块上下叠在一栏里，
+ * 每块都被挤成一条，而日志恰恰是运行时最需要看的东西。
+ *
+ * ⛔ 代价要说清楚：改完之后检查器与日志**不再同时可见**。
+ * 所以运行开始时会自动切回「日志」（见 App 里那个 effect），
+ * 否则跑起来了还停在检查器上，进度一条都看不到。
+ */
+export type RightTab = 'insp' | 'log' | 'files';
+
+export const RIGHT_TABS: RightTab[] = ['insp', 'log', 'files'];
+
+export const RIGHT_TAB_LABEL: Record<RightTab, string> = {
+  insp: '属性',
+  log: '日志',
+  files: '文件',
+};
+
+export function normalizeRightTab(v: unknown): RightTab {
+  return v === 'log' ? 'log' : v === 'files' ? 'files' : 'insp';
+}
+
 export const LOG_H_MIN = 80;
 export const LOG_H_MAX = 600;
 export const LOG_H_DEFAULT = 200;

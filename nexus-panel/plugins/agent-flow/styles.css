@@ -4393,3 +4393,196 @@ input.mono, textarea.mono {
 }
 .delete-notice ~ .sel-bar { bottom: 66px; }
 .sel-bar .mini { flex: none; }
+
+/* ---------- 右栏页签（属性 / 日志 / 文件）---------- */
+/*
+  右栏从「检查器 + 日志上下分栏」改成页签：加了附属文件之后三块
+  叠在一栏里每块都被挤成一条，而日志是运行时最需要看的东西。
+*/
+.af-right-tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--af-divider);
+}
+.af-right-tabs button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--af-r-ctl, 5px);
+  color: var(--af-mute);
+  font-size: var(--fs-note, 11px);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.af-right-tabs button:hover { color: var(--af-soft); }
+.af-right-tabs button.on {
+  background: var(--af-accent);
+  color: #fff;
+  border-color: var(--af-accent);
+}
+/* 文件页上的条数：不打开也知道这条任务挂了几个 */
+.att-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: var(--r-pill, 999px);
+  background: rgba(255, 255, 255, .25);
+  font-size: var(--fs-micro, 10px);
+}
+.af-right-tabs button.on .att-badge { background: rgba(255, 255, 255, .3); }
+
+/* 页签内容区：占满右栏余下高度，内部自己滚 */
+.af-right-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.af-right-body .logpane { flex: 1; min-height: 0; }
+.af-right-body .insp-slot { flex: 1; min-height: 0; overflow: auto; }
+
+/* ---------- 附属文件面板 ---------- */
+.att-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* 隐藏的 file input：靠按钮触发它的 click，不能 display:none（那样点不开） */
+.att-file-input { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+
+.att-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--af-divider);
+}
+.att-title { font-size: var(--fs-note, 11px); font-weight: var(--fw-strong, 600); }
+.att-owner {
+  flex: none;
+  padding: 3px 8px;
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-notice {
+  flex: none;
+  padding: 4px 8px;
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-warn, var(--af-bad));
+  background: var(--af-sunk);
+  border-bottom: 1px solid var(--af-divider);
+}
+.att-empty { font-size: var(--fs-note, 11px); padding: 16px 12px; line-height: var(--lh-relaxed, 1.6); }
+
+.att-list { flex: none; max-height: 40%; overflow: auto; }
+.att-card {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--af-divider);
+  cursor: pointer;
+}
+.att-card:hover { background: var(--af-item); }
+.att-card.is-active { background: var(--af-item); }
+/* 类型标签：一眼分出文档 / 图片 / 视频，比只看扩展名快 */
+.att-kind {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--af-divider);
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-mute);
+}
+.att-kind.k-md { color: var(--af-accent); border-color: var(--af-accent); }
+.att-kind.k-image { color: var(--af-ok); border-color: var(--af-ok); }
+.att-kind.k-video { color: var(--af-warn, var(--af-bad)); border-color: var(--af-warn, var(--af-bad)); }
+.att-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-note, 11px);
+}
+.att-by { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+.att-x { flex: none; background: none; border: none; color: var(--af-mute); cursor: pointer; padding: 0 2px; font-size: 10px; }
+.att-x:hover { color: var(--af-bad); }
+
+/* 预览区 */
+.att-prev { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.att-prev-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--af-divider);
+}
+.att-prev-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-note, 11px);
+  font-weight: var(--fw-strong, 600);
+}
+.att-prev-ext { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+.att-prev-path {
+  flex: none;
+  padding: 0 8px 4px;
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-prev-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 8px 8px; }
+
+.att-md { font-size: var(--fs-body, 12px); line-height: var(--lh-relaxed, 1.7); }
+.att-warn {
+  padding: 4px 6px;
+  margin-bottom: 6px;
+  border-radius: var(--af-r-sm, 5px);
+  background: var(--af-sunk);
+  color: var(--af-warn, var(--af-bad));
+  font-size: var(--fs-micro, 10px);
+}
+.att-raw { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: var(--fs-note, 11px); }
+.att-img { max-width: 100%; height: auto; display: block; border-radius: var(--af-r-sm, 5px); }
+.att-audio { width: 100%; }
+.att-video { display: flex; flex-direction: column; gap: 6px; }
+.att-video-el { width: 100%; max-height: 220px; background: #000; border-radius: var(--af-r-sm, 5px); }
+.att-hint {
+  padding: 5px 7px;
+  border-radius: var(--af-r-sm, 5px);
+  background: var(--af-sunk);
+  color: var(--af-mute);
+  font-size: var(--fs-micro, 10px);
+  line-height: var(--lh-relaxed, 1.6);
+}
+
+/* 元信息表（视频 / 无预览的文件共用） */
+.att-meta { display: flex; flex-direction: column; gap: 2px; }
+.att-meta-row { display: flex; gap: 8px; font-size: var(--fs-micro, 10px); }
+.att-meta-k { flex: 0 0 62px; color: var(--af-mute); }
+.att-meta-v {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--af-soft);
+}
+
+/* 类型标签的其余两种 —— 与上面 k-md / k-image / k-video 同族，
+   一并定义：组件里那条类名检查要求"用到的类名必须有样式"，
+   查表里列了就得有，缺一种就会被判成用了没定义。 */
+.att-kind.k-audio { color: var(--af-accent); }
+.att-kind.k-other { color: var(--af-mute); }
+
+/* 无预览的文件：只显示记录的信息，容器与视频共用同一张元信息表 */
+.att-other { display: flex; flex-direction: column; gap: 6px; }
