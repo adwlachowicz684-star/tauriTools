@@ -5,7 +5,7 @@ import {
   TABLE_COLUMNS, TABLE_ROW_HEIGHT,
   buildTableRows, applyTable, tableSlice, emptyFilter, emptyQuery,
   filterActive, activeFilterColumns, nextSort, formatEndedAt, ORIGIN_LABEL,
-  priorityLabel, assigneeOptionsOf,
+  priorityLabel, assigneeOptionsOf, sessionOptionsOf,
 } from '../engine/taskTable';
 import {
   type TaskRecord, progressOf, elapsedOf, formatDuration, SOURCE_LABEL,
@@ -16,6 +16,7 @@ import {
   type BoardMeta, TAG_PALETTE,
   statusOf as statusOfMeta, tagOf as tagOfMeta,
 } from '../engine/boardMeta';
+import { shortId } from '../engine/session';
 import { StatusPill } from './TaskPanel';
 
 /**
@@ -52,7 +53,7 @@ function colsExpr(): string {
  * 任务级列只有计划行有值，其余显示成"—"而不是空字符串：
  * 空白会被当成"加载中"或"渲染坏了"，而"—"明确表示"这类数据没有这个字段"。
  */
-function Cell({ row, col, now, meta, counts, onToggleTag, onCreateTag }: {
+function Cell({ row, col, now, meta, counts, onToggleTag, onCreateTag, sessionId }: {
   row: TableRow;
   col: TableColumn;
   now: number;
@@ -60,6 +61,7 @@ function Cell({ row, col, now, meta, counts, onToggleTag, onCreateTag }: {
   counts: Record<string, number>;
   onToggleTag: (taskId: string, tagId: string) => void;
   onCreateTag: (name: string, color: string) => string | null;
+  sessionId: string;
 }) {
   const t = row.record;
   const k = row.task;
@@ -147,6 +149,24 @@ function Cell({ row, col, now, meta, counts, onToggleTag, onCreateTag }: {
       return k.assignee
         ? <span className="ttb-text" title={k.assignee}>{k.assignee}</span>
         : <span className="ttb-dim">未认领</span>;
+    }
+    case 'session': {
+      const sid = k ? (k.session || '') : t ? (t.session || '') : '';
+      if (!sid) return <span className="ttb-dim">—</span>;
+      const mine = sid === sessionId;
+      /*
+        自己的那条标出来。
+        窗口号是 w_3f2a91 这种编号，几十行里找"哪个是我的"根本找不到 ——
+        必须有个视觉锚点，否则"只看我的"这个能力等于没有。
+      */
+      const tip = mine
+        ? '本窗口认领/发起的'
+        : (k ? '别的窗口认领的' : '别的窗口发起的运行');
+      return (
+        <span className={`ttb-sid${mine ? ' is-mine' : ''}`} title={`${sid} · ${tip}`}>
+          {mine ? '● ' : ''}{shortId(sid)}
+        </span>
+      );
     }
     default:
       return null;
@@ -362,10 +382,12 @@ function optionsOf(
   col: TableColumn,
   meta: BoardMeta,
   assigneeOptions: { v: string; label: string }[],
+  sessionOptions: { v: string; label: string }[] = [],
 ): { v: string; label: string }[] {
   if (col.dynamic === 'status') return meta.statuses.map((s) => ({ v: s.id, label: s.name }));
   if (col.dynamic === 'tags') return meta.tags.map((t) => ({ v: t.id, label: t.name }));
   if (col.dynamic === 'assignee') return assigneeOptions;
+  if (col.dynamic === 'session') return sessionOptions;
   return col.options || [];
 }
 
@@ -373,6 +395,7 @@ function optionsOf(
 function emptyOptionsHint(col: TableColumn): string {
   if (col.dynamic === 'tags') return '还没有标签 —— 在标签列点「+」新建一个';
   if (col.dynamic === 'assignee') return '当前这批任务里还没有人认领';
+  if (col.dynamic === 'session') return '当前这批里没有带窗口号的记录';
   if (col.dynamic === 'status') return '还没有配置状态';
   return '没有可选项';
 }
@@ -383,10 +406,11 @@ function filterSummary(
   f: ColumnFilter,
   meta: BoardMeta,
   assigneeOptions: { v: string; label: string }[],
+  sessionOptions: { v: string; label: string }[] = [],
 ): string {
   switch (col.kind) {
     case 'enum': {
-      const opts = optionsOf(col, meta, assigneeOptions);
+      const opts = optionsOf(col, meta, assigneeOptions, sessionOptions);
       const labels = f.values.map((v) => {
         const opt = opts.find((o) => o.v === v);
         return opt ? opt.label : v;
@@ -415,7 +439,7 @@ function filterSummary(
 }
 
 function FilterPop({
-  col, filter, onChange, onClear, anchorRight, meta, assigneeOptions,
+  col, filter, onChange, onClear, anchorRight, meta, assigneeOptions, sessionOptions,
 }: {
   col: TableColumn;
   filter: ColumnFilter;
@@ -425,6 +449,8 @@ function FilterPop({
   meta: BoardMeta;
   /** 「认领」列的选项：从当前数据去重得到，没有人员表可查 */
   assigneeOptions: { v: string; label: string }[];
+  /** 「窗口」列的选项：同样从数据去重 */
+  sessionOptions?: { v: string; label: string }[];
   /**
    * 面板贴单元格右边展开。
    *
@@ -443,7 +469,7 @@ function FilterPop({
       ⛔ 不能用 col.options 兜底动态列 —— 那是空数组，
       会静默渲染出一个"没有任何选项"的面板，看着像功能坏了。
     */
-    const options = optionsOf(col, meta, assigneeOptions);
+    const options = optionsOf(col, meta, assigneeOptions, sessionOptions || []);
     return (
       <div className={popCls}>
         <div className="ttb-pop-title">按{col.label}筛选</div>
@@ -550,7 +576,7 @@ function FilterPop({
 
 export function TaskTable({
   live, archived, board, meta, attachCounts, now, selectedKey, onSelect,
-  onToggleTag, onCreateTag,
+  onToggleTag, onCreateTag, sessionId,
 }: {
   /** 当前会话的运行记录（不落盘） */
   live: TaskRecord[];
@@ -573,6 +599,8 @@ export function TaskTable({
   onToggleTag: (taskId: string, tagId: string) => void;
   /** 新建标签并返回 id */
   onCreateTag: (name: string, color: string) => string | null;
+  /** 本窗口的 sessionID。用于把"我的"标出来 */
+  sessionId: string;
 }) {
   const [query, setQuery] = useState<TableQuery>(() => emptyQuery());
   const [openCol, setOpenCol] = useState<TableColumnId | ''>('');
@@ -606,6 +634,7 @@ export function TaskTable({
     勾选他只会得到零行 —— 那是"明明选了却什么都没有"。
   */
   const assigneeOptions = useMemo(() => assigneeOptionsOf(shown), [shown]);
+  const sessionOptions = useMemo(() => sessionOptionsOf(shown), [shown]);
 
   const slice = useMemo(
     () => tableSlice(shown.length, scrollTop, viewportH),
@@ -688,7 +717,7 @@ export function TaskTable({
             const f = query.filters[id] as ColumnFilter;
             return (
               <span key={id} className="ttb-chip">
-                {col.label}：{filterSummary(col, f, meta, assigneeOptions)}
+                {col.label}：{filterSummary(col, f, meta, assigneeOptions, sessionOptions)}
                 <button
                   type="button"
                   className="ttb-chip-x"
@@ -750,6 +779,7 @@ export function TaskTable({
                       anchorRight={ci >= TABLE_COLUMNS.length - 3}
                       meta={meta}
                       assigneeOptions={assigneeOptions}
+                      sessionOptions={sessionOptions}
                     />
                   ) : null}
                 </div>
@@ -786,6 +816,7 @@ export function TaskTable({
                       counts={attachCounts}
                       onToggleTag={onToggleTag}
                       onCreateTag={onCreateTag}
+                      sessionId={sessionId}
                     />
                   </div>
                 ))}

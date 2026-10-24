@@ -111,6 +111,7 @@ import { BoardTree } from './components/TaskBoard';
 import { AttachPanel } from './components/AttachPanel';
 import { useAttachments } from './hooks/useAttachments';
 import { useBoardMeta } from './hooks/useBoardMeta';
+import { loadSession, saveSession, sessionName, type Session } from './engine/session';
 import { addAttachment, removeAttachment } from './engine/attachmentStore';
 // 别名：下面有个同名的交互回调 toggleTag(taskId, tagId)，直接导入会自己调自己
 import { toggleTag as toggleBoardTag } from './engine/taskBoard';
@@ -1129,6 +1130,16 @@ export default function App() {
     projectName: boardName,
     enabled: view === 'tasks',
   });
+
+  /*
+    本窗口的身份（sessionID）。
+
+    自动生一次、存本地。认领任务、发起运行都带上它 ——
+    这样"只看我的""接手窗口乙那条"才能查。
+  */
+  const [session, setSession] = useState<Session>(() => loadSession());
+  const sessionId = session.id;
+  const sessionLabel = sessionName(session);
 
   /*
     项目元数据：自定义状态流程 + 标签定义。
@@ -2649,6 +2660,11 @@ function reportSkipped(
       source,
       total: scopeTotal,
       /*
+       * 记下这次是谁发起的（窗口号）。
+       * 不记的话，"我刚才跑的那几次"无从查起 —— 只能靠流程名和时间猜。
+       */
+      session: session.id,
+      /*
        * 标题与连线一起抄进任务记录 —— 任务窗口与历史要画流程图。
        * 只存 id 的话图上写的就是 mamu7obyv93 这种乱码，看不出这一步干什么；
        * 只存顺序不存连线的话，那是一列而不是图，分不出"等待"和"阻断"。
@@ -3822,6 +3838,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                 onSelect={selectTableRow}
                 onToggleTag={toggleTag}
                 onCreateTag={createTag}
+                sessionId={sessionId}
               />
             ) : view === 'tasks' ? (taskTab === 'done' ? (
               <HistoryList
@@ -3901,6 +3918,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               selectedId={boardSel}
               onApply={board.apply}
               canWrite={board.canWrite}
+              sessionId={sessionId}
             />
           </div>
         ) : view === 'tasks' ? (
