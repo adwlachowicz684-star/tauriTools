@@ -5731,7 +5731,23 @@ group('BUG 100 · 空白节点不得导出成空行（PlantUML / Mermaid）');
 
   // 源码层
   const fsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
-  ok(/text:\s*nodeText\(n\)/.test(fsrc), '★ kmToRows 用 nodeText 的默认占位（不再传 \'\'）');
+  /*
+   * ⓘ 钉**意图**不钉写法。早先这条钉的是 `text: nodeText(n)` 这一整串 ——
+   *   BUG 173（首尾空白必须保留）把取值换成
+   *   `text: raw.trim() ? raw : nodeText(n)` 之后它就红了，
+   *   而意图（空节点仍走 nodeText 的默认占位，不传 ''）一点没变。
+   *
+   *   只在本函数体里判：全仓 `nodeText(n)` 很多处，不收窄会变成
+   *   "别处有这一串就算过"，而那正是断言失明的老形状。
+   */
+  const ksrc = (() => {
+    const i = fsrc.indexOf('export function kmToRows');
+    if (i < 0) return '';
+    const e = fsrc.indexOf('\n}', i);
+    return fsrc.slice(i, e < 0 ? fsrc.length : e);
+  })();
+  ok(ksrc.length > 0, '（前置）kmToRows 函数体切到了（切片没落空，下面一条才作数）');
+  ok(/text:\s*[^,]*nodeText\(n\)/.test(ksrc), '★ kmToRows 的空节点走 nodeText 的默认占位（不再传 \'\'）');
   ok(!/if\s*\(!t\)\s*continue;/.test(fsrc), '★ fromPlantUml 不再丢空行');
   ok(/if\s*\(!body\)\s*body = EMPTY_NODE_TEXT;/.test(fsrc), 'fromMermaid 空文字补占位');
   ok(/raw\.trim\(\)\s*===\s*'""'/.test(fsrc), '裸 "" 判的是整行（不是取出来的文字）');
