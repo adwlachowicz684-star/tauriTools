@@ -43,6 +43,7 @@
     "test:dead-class": "node dead-class-test.mjs",
     "test:dead-module": "node dead-module-test.mjs",
     "test:deps": "node deps-manifest-test.mjs",
+    "test:dup-react": "node dup-react-test.mjs",
     "test:dialog": "node dialog-test.mjs",
     "test:disclosure": "node disclosure-test.mjs",
     "test:dv-rename-collision": "node plugins/dupview/rename-collision-test.mjs",
@@ -84,10 +85,11 @@
     "test:md-pipeline": "node md-pipeline-test.mjs",
     "test:md-puml": "node md-puml-test.mjs",
     "test:md-recent": "node md-recent-test.mjs",
-    "test:md-recent-persist": "node md-recent-persist-test.mjs",
+  "test:md-recent-persist": "node md-recent-persist-test.mjs",
     "test:md-render": "node md-render-test.mjs",
     "test:md-service": "node md-service-test.mjs",
     "test:mindmap": "node plugins/mindmap/mindmap-test.mjs",
+    "test:mindmap-backup-list": "node mindmap-backup-list-test.mjs",
     "test:mm-export-name": "node plugins/mindmap/mm-export-name-test.mjs",
     "test:mm-shrink-name": "node plugins/mindmap/mm-shrink-name-test.mjs",
     "test:mm-palette": "node plugins/mindmap/mm-palette-test.mjs",
@@ -273,8 +275,7 @@
     "test:typecheck-guard": "node typecheck-guard-test.mjs",
     "test:custom-plugin-save": "node custom-plugin-save-test.mjs",
     "test:credential-vault-persist": "node credential-vault-persist-test.mjs",
-    "test:preload-style": "node preload-style-test.mjs",
-    "test:ctx-contract": "node ctx-contract-test.mjs"
+    "test:preload-style": "node preload-style-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",
