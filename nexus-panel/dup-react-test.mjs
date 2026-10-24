@@ -107,8 +107,28 @@ t('（前置）package.json 声明了 react 与 react-dom', !!declared.react && 
 /* ---------- 第 1 节：顶层版本必须合声明 ---------- */
 
 const copies = existsSync(nm) ? findCopies(nm) : [];
-const topReact = copies.find((c) => isTopLevel(c.path) && /[\\/]react$/.test(c.path));
-const topReactDom = copies.find((c) => isTopLevel(c.path) && /[\\/]react-dom$/.test(c.path));
+
+/*
+ * ⛔ 必须匹配到 `node_modules/react` 这个**完整末段**，不能只写 /[\\/]react$/。
+ * 实测踩到：`@xyflow/react`（v12.12.0）和 `@types/react`（v18.3.31）都以
+ * `/react` 结尾且不含嵌套 node_modules，会被 isTopLevel 判成"顶层"。
+ * 于是第 1 节验的根本不是 react 自己 ——
+ *   命中 @xyflow/react 时红（12.12.0 ≠ 18），看着像"版本漂移"其实是误报；
+ *   命中 @types/react 时绿（18.3.31 主版本碰巧对），真漂移反而没人喊。
+ * 两种方向都是"守卫在验别的东西"，所以判据与元断言必须成对。
+ */
+const TOPNAME = (name) => new RegExp('(^|[\\\\/])node_modules[\\\\/]' + name + '$');
+const isTop = (c, name) => isTopLevel(c.path) && TOPNAME(name).test(c.path);
+
+t('元：@xyflow/react 不被当成 react（作用域包名不能顶替）',
+  !TOPNAME('react').test('/x/node_modules/@xyflow/react'),
+  '写成 /[\\/]react$/ 就会命中它 —— 第 1 节从此验错对象');
+t('元：@types/react 不被当成 react',
+  !TOPNAME('react').test('/x/node_modules/@types/react'),
+  '@types/react 主版本常与 react 一致，命中它会假绿');
+
+const topReact = copies.find((c) => isTop(c, 'react'));
+const topReactDom = copies.find((c) => isTop(c, 'react-dom'));
 
 t('顶层 react 存在', !!topReact, topReact ? topReact.version : '未安装');
 t('顶层 react-dom 存在', !!topReactDom, topReactDom ? topReactDom.version : '未安装');
