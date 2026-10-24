@@ -2187,5 +2187,251 @@ console.log('\n=== 25. 同页 ctx 的两处建法必须注入同一套 services 
 }
 
 
+/* ============================================================
+ * 26. 读盘 JSON.parse 必须有 try 保护
+ * ------------------------------------------------------------
+ * 磁盘上的文件是别人也能写的：手动编辑过、写入中断过、编码不对（BOM）。
+ * 坏 JSON 是真实存在的状态，而 `JSON.parse` 抛 `SyntaxError: Unexpected
+ * token...` —— 用户看不懂，且往往**没有一处会把它显示出来**（外层空 catch
+ * 一吞，界面就渲染成空列表），症状是"打开了但是空的"，用户只会以为数据丢了。
+ *
+ * 只盯**读盘**那几处，不盯所有 JSON.parse：
+ * 深拷贝 `JSON.parse(JSON.stringify(x))` 不可能失败，给它套 try 是噪音。
+ *
+ * ⚠️ 本节（以及它依赖的 stripKeepAll / inTryBlock）曾在一次误覆盖中丢失过：
+ * 本地工作副本被远端内容整份覆盖，而这两样**只存在于本地、从未推上远端**。
+ * 判据是按上述语义重建的，行为以元断言钉住。
+ * ============================================================ */
+console.log('\n=== 26. 读盘 JSON.parse 必须有保护 ===');
+{
+  /** 保偏移剥注释：注释字符换成空格、换行保留，下标与原文一一对齐。 */
+  function stripKeepAll(src) {
+    let out = '', i = 0, st = 'code';
+    while (i < src.length) {
+      const c = src[i], nx = i + 1 < src.length ? src[i + 1] : '';
+      if (st === 'code') {
+        if (c === '/' && nx === '/') { st = 'line'; out += '  '; i += 2; continue; }
+        if (c === '/' && nx === '*') { st = 'block'; out += '  '; i += 2; continue; }
+        if (c === '"') { st = 'str'; out += c; i++; continue; }
+        if (c === "'") { st = 'chr'; out += c; i++; continue; }
+        out += c; i++; continue;
+      }
+      if (st === 'line') { if (c === '\n') { st = 'code'; out += c; } else out += ' '; i++; continue; }
+      if (st === 'block') {
+        if (c === '*' && nx === '/') { st = 'code'; out += '  '; i += 2; continue; }
+        out += (c === '\n' ? '\n' : ' '); i++; continue;
+      }
+      if (c === '\\') { out += c; if (i + 1 < src.length) out += src[i + 1]; i += 2; continue; }
+      if ((c === '"' && st === 'str') || (c === "'" && st === 'chr')) st = 'code';
+      out += c; i++;
+    }
+    return out;
+  }
+
+  /** openIdx 处必须是 '{'，返回配平的 '}' 下标。 */
+  function braceEnd(src, openIdx) {
+    let depth = 0, i = openIdx, st = 'code';
+    while (i < src.length) {
+      const c = src[i], nx = i + 1 < src.length ? src[i + 1] : '';
+      if (st === 'code') {
+        if (c === '/' && nx === '/') { st = 'line'; i += 2; continue; }
+        if (c === '/' && nx === '*') { st = 'block'; i += 2; continue; }
+        if (c === '"') { st = 'str'; i++; continue; }
+        if (c === "'") { st = 'chr'; i++; continue; }
+        if (c === '{') depth++;
+        else if (c === '}') { depth--; if (depth === 0) return i; }
+        i++; continue;
+      }
+      if (st === 'line') { if (c === '\n') st = 'code'; i++; continue; }
+      if (st === 'block') { if (c === '*' && nx === '/') { st = 'code'; i += 2; continue; } i++; continue; }
+      if (c === '\\') { i += 2; continue; }
+      if ((c === '"' && st === 'str') || (c === "'" && st === 'chr')) st = 'code';
+      i++;
+    }
+    return src.length;
+  }
+
+  /** idx 是否落在某个 try { ... } 里。只看 idx **之前**的 try ——
+      后面的 try 保护不到它；而前一个函数的 try 范围早已闭合，也不会充数。 */
+  function inTryBlock(src, idx) {
+    for (const m of src.slice(0, idx).matchAll(/(?:^|[^\w.])try\s*\{/g)) {
+      const open = m.index + m[0].length - 1;
+      const close = braceEnd(src, open);
+      if (idx > open && idx < close) return true;
+    }
+    return false;
+  }
+
+  /** idx 所在函数的函数体（取不到就返回整段，顶层 parse 不判读盘）。 */
+  function enclosingBody(src, idx) {
+    const head = /(?:^|\n)[ \t]*(?:export\s+)?(?:async\s+)?function\s+\w+|(?:^|\n)[ \t]*(?:export\s+)?const\s+\w+\s*=\s*(?:async\s*)?\(/g;
+    const heads = [...src.slice(0, idx).matchAll(head)];
+    if (!heads.length) return src;
+    const h = heads[heads.length - 1];
+    const open = src.indexOf('{', h.index + h[0].length);
+    if (open < 0) return src;
+    return src.slice(open, braceEnd(src, open) + 1);
+  }
+
+  const READ_MARK = /readFileSync|readFile\(|ctx\.invoke\(\s*'[^']*(?:read|load|store|get)|ctx\.invoke\(\s*"[^"]*(?:read|load|store|get)|fs\.read|\breadText\b/;
+  const bare = [];
+  for (const p of walk(HERE)) {
+    const rel = relativeTo(p);
+    if (!(/\.(ts|tsx|js|mjs)$/.test(p)) || p.endsWith('.d.ts')) continue;
+    if (rel.includes('test')) continue;            // 测试里的 parse 有断言兜着
+    // scripts/ 是开发者手工跑的工具脚本：崩了就直接看到堆栈，不需要转成
+    // 面向用户的中文提示 —— 本节管的是"运行界面上悄悄变空"那类失效。
+    if (rel.startsWith('scripts/')) continue;
+    if (rel === 'regression-guard-test.mjs') continue;  // 下面元断言里有样例
+    let s;
+    try { s = readFileSync(p, 'utf8'); } catch { continue; }
+    const flat = stripKeepAll(s);
+    for (const m of flat.matchAll(/JSON\.parse\s*\(/g)) {
+      // 深拷贝不可能失败，不要求它套 try
+      if (/JSON\.parse\(\s*JSON\.stringify/.test(flat.slice(m.index, m.index + 40))) continue;
+      const body = enclosingBody(flat, m.index);
+      if (!READ_MARK.test(body)) continue;          // 不是读盘，不归本节管
+      if (inTryBlock(flat, m.index)) continue;
+      bare.push(`${rel}:${flat.slice(0, m.index).split('\n').length}`);
+    }
+  }
+  t('读盘 JSON.parse 全部有 try 保护（坏 JSON 要报成人话，不是 SyntaxError）',
+    bare.length === 0, bare.length ? `实测 ${bare.length} 处：${bare.join('、')}` : '');
+
+  /* 元断言：判据不是靠"扫不到 parse"蒙混过关 */
+  const probe = 'async function load(dir) {\n'
+    + '  const text = await readFileSync(dir);\n'
+    + '  return JSON.parse(text);\n'
+    + '}';
+  const flat = stripKeepAll(probe);
+  t('判据本身有效（探针：裸 parse 会被认出来）',
+    !inTryBlock(flat, flat.indexOf('JSON.parse(')), '');
+  /* 反向：同一个函数里**上面**那个 try 不该给下面的 parse 充数 */
+  const adj = 'function a(){ try { x(); } }\nfunction b(){ return JSON.parse(s); }';
+  t('相邻函数的 try 不算保护（花括号判据比按行窗口准）',
+    !inTryBlock(adj, adj.lastIndexOf('JSON.parse(')), '');
+  /* 反向：深拷贝不该被算进去，否则会逼人给它也套一层无意义的 try */
+  t('深拷贝不算漏保护（JSON.parse(JSON.stringify(x)) 豁免有效）',
+    /JSON\.parse\(\s*JSON\.stringify/.test('const c = JSON.parse(JSON.stringify(x));'), '');
+}
+
+/* ============================================================
+ * 27. 账本路径基准：读进来的 records 必须先做相对→绝对升级
+ * ------------------------------------------------------------
+ * C# 原版（fenpei-xiangmuzu-qianyi）LinkRecordService 把 project/lib
+ * 存成**相对路径**，基准是 config.lastLib（写入处 `Lib = ToRelPath(absLib)`）；
+ * 本版一律存**绝对路径**。两侧基准不同。
+ *
+ * 不做升级的后果：旧账本里是 "我的项目组\子组" 这种相对串，本版直接当
+ * 绝对路径拼 → 拼出来的位置不存在 → 卡片登记对不上、链接看着在但跳转
+ * 失效，**且全程不报错**（账本能读出来、界面能渲染，只是"对不上"）。
+ * 用户最自然的反应是"账本坏了"，真相只是"路径基准换了"。
+ *
+ * 为什么钉"每个 into_links() 调用点"而不是"有没有这个函数"：
+ * 将来新增一条读路径（比如命令行又开一个入口）最容易漏的就是这一步，
+ * 而漏了不会有任何报错 —— 钉调用点才能覆盖将来。
+ *
+ * 升级做在**读侧**：with_records 是 load→改→save，读进来已规范化，
+ * 写回的自然是绝对路径，旧账本首次读取即固化，不会新旧格式混写。
+ * ============================================================ */
+console.log('\n=== 27. 账本路径基准升级 ===');
+{
+  /** 词法级求函数体：从 startIdx 起找第一个 '{'，配平后返回整段（含两端花括号）。 */
+  function fnBody(src, startIdx) {
+    const open = src.indexOf('{', startIdx);
+    if (open < 0) return '';
+    let i = open, depth = 0, st = 'code';
+    while (i < src.length) {
+      const c = src[i], nx = i + 1 < src.length ? src[i + 1] : '';
+      if (st === 'code') {
+        if (c === '/' && nx === '/') { st = 'line'; i += 2; continue; }
+        if (c === '/' && nx === '*') { st = 'block'; i += 2; continue; }
+        if (c === '"') { st = 'str'; i++; continue; }
+        if (c === "'") { st = 'char'; i++; continue; }
+        if (c === '{') depth++;
+        else if (c === '}') { depth--; if (depth === 0) return src.slice(open, i + 1); }
+        i++; continue;
+      }
+      if (st === 'line') { if (c === '\n') st = 'code'; i++; continue; }
+      if (st === 'block') { if (c === '*' && nx === '/') { st = 'code'; i += 2; continue; } i++; continue; }
+      if (c === '\\') { i += 2; continue; }
+      if ((c === '"' && st === 'str') || (c === "'" && st === 'char')) st = 'code';
+      i++;
+    }
+    return src.slice(open);
+  }
+
+  /** 取 idx 所在函数的函数体：向上找最近的 fn 行，再配平。
+      为什么按花括号而不是按缩进取：store.rs 里有 impl 块，缩进不统一。 */
+  function enclosingFn(src, idx) {
+    const heads = [...src.slice(0, idx).matchAll(/^[ \t]*(?:pub\s+)?(?:unsafe\s+)?fn\s+\w+/gm)];
+    if (!heads.length) return '';
+    return fnBody(src, heads[heads.length - 1].index);
+  }
+
+  /** 一段 Rust 代码里，哪些"读账本"的调用点漏了路径升级。返回行号数组。 */
+  function unnormalized(src) {
+    const out = [];
+    for (const m of src.matchAll(/into_links\s*\(/g)) {
+      // 跳过定义本身（`pub fn into_links(...)`），只统计调用点
+      if (/fn\s+$/.test(src.slice(Math.max(0, m.index - 6), m.index))) continue;
+      const line = src.slice(0, m.index).split('\n').length;
+      const body = enclosingFn(src, m.index);
+      // 自检：取到的函数体必须包含这个调用点本身。取错会让判据**静默失效**
+      // —— 表现为"没发现不规范的地方"，其实压根没扫到。
+      if (!body || !body.includes('into_links')) { out.push(`${line}（取函数体失败）`); continue; }
+      if (!/normalize_record_paths\s*\(/.test(body)) out.push(String(line));
+    }
+    return out;
+  }
+
+  const STORE = 'src-tauri/src/fpx/store.rs';
+  const storeSrc = read(STORE) || '';
+  const callSites = [...storeSrc.matchAll(/into_links\s*\(/g)]
+    .filter((m) => !/fn\s+$/.test(storeSrc.slice(Math.max(0, m.index - 6), m.index)));
+  t('扫到了账本读取点（判据没失明）', callSites.length >= 3,
+    `实测 ${callSites.length} 处 into_links() 调用`);
+
+  const hits = unnormalized(storeSrc);
+  t('每个 into_links() 调用点都做了路径升级', hits.length === 0,
+    hits.length ? `未升级：${STORE} 第 ${hits.join('、')} 行` : '');
+
+  /* 跨文件绕过：别处再解析一次账本，那份不会带升级 —— 同样是静默失效。 */
+  const elsewhere = [];
+  for (const p of walk(HERE)) {
+    const rel = relativeTo(p);
+    if (!p.endsWith('.rs')) continue;
+    if (rel === 'regression-guard-test.mjs' || rel === STORE) continue;  // 后者单列，前者有探针
+    let s;
+    try { s = readFileSync(p, 'utf8'); } catch { continue; }
+    if (/into_links\s*\(/.test(s)) elsewhere.push(rel);
+  }
+  t('账本只在 store.rs 里解析（无跨文件绕过）', elsewhere.length === 0,
+    elsewhere.length ? elsewhere.join('、') : '');
+
+  /* 幂等：升级后的账本再读一次不能再变。不幂等的话每次启动都多拼一层，
+     最后变成 <base>/<base>/.../组，越拼越深且完全对不上。 */
+  const up = storeSrc.match(/fn upgrade_to_abs[\s\S]{0,900}?\n\}/);
+  t('升级是幂等的（绝对路径与空串都不动）',
+    !!up && /is_absolute\(\)/.test(up[0]) && /is_empty\(\)/.test(up[0]),
+    up ? '' : '未找到 upgrade_to_abs，判据没生效');
+
+  /* 元断言：判据不是靠"扫不到 into_links"蒙混过关 */
+  const probeBad = 'pub fn load_x(dir: &Path) -> Vec<LinkRecord> {\n'
+    + '    let f = load_strict::<RecordFile>(&dir.join("link-record.json"));\n'
+    + '    f.into_links()\n'
+    + '}\n';
+  t('判据本身有效（探针：漏升级的读路径会被认出来）',
+    unnormalized(probeBad).length === 1, '');
+
+  const probeGood = 'pub fn load_y(dir: &Path) -> Vec<LinkRecord> {\n'
+    + '    let mut v = f.into_links();\n'
+    + '    normalize_record_paths(&mut v, dir);\n'
+    + '    v\n'
+    + '}\n';
+  t('做了升级的读路径不误报', unnormalized(probeGood).length === 0, '');
+}
+
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
