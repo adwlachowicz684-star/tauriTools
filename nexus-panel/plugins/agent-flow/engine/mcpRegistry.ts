@@ -80,5 +80,5 @@ export function bootRefresh(
  * 那两个都是纯数据变换，已挪到 mcpTools（不依赖 React、可直接测）。
  * 这里 re-export，调用方不用改。
  */
-export type { McpSidebarGroup, McpSidebarItem } from './mcpTools';
-export { mcpSidebarGroups, toolCountOf } from './mcpTools';
+export type { McpSidebarGroup, McpSidebarItem, McpFilterResult } from './mcpTools';
+export { mcpSidebarGroups, toolCountOf, filterMcpGroups, matchesMcpTool } from './mcpTools';

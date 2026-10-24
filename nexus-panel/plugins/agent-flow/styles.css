@@ -2361,6 +2361,184 @@ input.mono, textarea.mono {
 .task-tag.bad { color: var(--af-bad); }
 .task-caret { color: var(--af-mute); width: 10px; flex: none; font-size: var(--fs-micro, 10px); }
 
+/* ---------- 任务视图：表格（列表 / 表格切换中的表格那一半） ---------- */
+
+/* 子标签在表格视图下失效（表格本就覆盖全部数据）：失效必须看得出来，
+   否则"点了没反应"会被当成切换坏了 —— 而实际是那个选择对表格不存在 */
+.pane-tabs button:disabled { opacity: 0.45; cursor: default; }
+.pane-tabs button:disabled:hover { color: var(--af-dim, #9aa); }
+
+/* ---------- 项目切换（= 画布分组）---------- */
+/* 放在左栏最上方：列表与表格都在它下面，于是两个视图共用同一个范围 */
+.prj-bar { flex: none; display: flex; align-items: center; gap: var(--sp-3, 6px);
+  padding: 6px 8px; border-bottom: 1px solid var(--af-divider); }
+.prj-label { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+.prj-sel { flex: 1; min-width: 0; font-size: var(--fs-note, 11px); padding: 2px 4px; }
+
+/* ---------- 任务板（计划态任务树）---------- */
+.bdt-bar { flex: none; display: flex; align-items: center; gap: 4px;
+  padding: 5px 8px; border-bottom: 1px solid var(--af-divider); }
+.bdt-search { flex: none; padding: 5px 8px; border-bottom: 1px solid var(--af-divider); }
+.bdt-search .p-input { width: 100%; font-size: var(--fs-note, 11px); padding: 3px 6px; }
+.bdt-scroll { flex: 1; min-height: 0; overflow: auto; }
+.bdt-empty { font-size: var(--fs-note, 11px); padding: 18px 14px; }
+
+.bdt-row { display: flex; align-items: center; gap: 3px; min-height: 26px;
+  padding: 2px 8px 2px 0; border-bottom: 1px solid var(--af-divider); cursor: pointer; }
+.bdt-row:hover { background: var(--af-item); }
+.bdt-row.is-active { background: var(--af-item); }
+.bdt-check { flex: none; margin: 0; }
+/* 缩进写在自定义属性里：层级是数据，不能用一串写死的 margin 类 */
+.bdt-indent { flex: none; width: var(--bdt-indent, 0px); }
+.bdt-caret { flex: none; width: 12px; padding: 0; background: none; border: none;
+  color: var(--af-mute); font-size: 9px; cursor: pointer; }
+.bdt-caret.is-leaf { cursor: default; }
+
+.bdt-group { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-body, 12px); font-weight: var(--fw-strong, 600); }
+.bdt-count { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-mute);
+  font-variant-numeric: tabular-nums; padding: 0 5px; border-radius: var(--r-pill, 999px);
+  background: var(--af-bg); }
+.bdt-count .bdt-lock { color: var(--af-warn, var(--af-bad)); }
+.bdt-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-note, 11px); }
+/* 状态胶囊沿用任务列表那套配色（.task-pill），不另起一套 —— 同一语义只该有一处定义 */
+.bdt-pill { flex: none; font-size: var(--fs-micro, 10px); padding: 1px 7px;
+  border-radius: var(--r-pill, 999px); border: 1px solid var(--af-divider); color: var(--af-mute); }
+.bdt-pill.st-doing { color: var(--af-accent); border-color: var(--af-accent); }
+.bdt-pill.st-done { color: var(--af-ok); border-color: var(--af-ok); }
+.bdt-pill.st-cancelled { color: var(--af-mute); }
+.bdt-badge { flex: none; font-size: var(--fs-micro, 10px); padding: 0 5px;
+  border-radius: var(--r-pill, 999px); background: var(--af-bg); color: var(--af-mute); }
+.bdt-badge.lock { color: var(--af-warn, var(--af-bad)); }
+.bdt-badge.who { color: var(--af-accent); }
+
+/* ---------- 任务板详情 ---------- */
+.bdd-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.bdd-notice { flex: none; padding: 5px 14px; font-size: var(--fs-note, 11px);
+  color: var(--af-warn, var(--af-bad)); background: var(--af-sunk);
+  border-bottom: 1px solid var(--af-divider); }
+.bdd-path { flex: none; padding: 4px 14px; font-size: var(--fs-micro, 10px);
+  color: var(--af-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bdd-title { flex: 1; min-width: 0; font-size: var(--fs-title, 13px); padding: 4px 7px; }
+.bdd-head { flex: none; display: flex; align-items: center; gap: var(--sp-4, 8px);
+  padding: 10px 14px; border-bottom: 1px solid var(--af-divider); }
+.bdd-kind { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-mute);
+  padding: 1px 6px; border: 1px solid var(--af-divider); border-radius: var(--r-pill, 999px); }
+.bdd-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px;
+  display: flex; flex-direction: column; gap: var(--sp-4, 8px); }
+.bdd-row { display: flex; align-items: flex-start; gap: var(--sp-4, 8px); }
+.bdd-k { flex: none; width: 42px; font-size: var(--fs-note, 11px); color: var(--af-mute);
+  line-height: 24px; }
+.bdd-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.bdd-actions .mini.is-on { color: var(--af-accent); border-color: var(--af-accent); }
+.bdd-who { flex: 1; min-width: 0; font-size: var(--fs-note, 11px); padding: 3px 7px; }
+.bdd-deps { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.bdd-dep { display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+  padding: 1px 6px; border-radius: var(--r-pill, 999px); background: var(--af-item);
+  font-size: var(--fs-micro, 10px); color: var(--af-soft); }
+.bdd-dep-g { color: var(--af-mute); }
+.bdd-dep-x { background: none; border: none; padding: 0 1px; color: var(--af-mute);
+  font-size: 9px; cursor: pointer; }
+.bdd-dep-x:hover { color: var(--af-bad); }
+.bdd-dep-add { flex: 1; min-width: 0; font-size: var(--fs-note, 11px); padding: 2px 4px; }
+.bdd-note-input { flex: 1; min-width: 0; min-height: 54px; resize: vertical;
+  font-size: var(--fs-note, 11px); padding: 4px 7px; }
+.bdd-note, .bdd-mute { font-size: var(--fs-note, 11px); color: var(--af-mute);
+  line-height: var(--lh-relaxed, 1.6); }
+.bdd-stats { display: flex; gap: 10px; font-size: var(--fs-note, 11px); color: var(--af-mute); }
+.bdt-done { color: var(--af-ok); }
+.bdt-doing { color: var(--af-accent); }
+.bdd-warn { padding: 5px 8px; border-radius: var(--af-r-sm, 5px);
+  font-size: var(--fs-note, 11px); line-height: var(--lh-relaxed, 1.6);
+  color: var(--af-warn, var(--af-bad)); background: var(--af-sunk); }
+.bdd-ok { font-size: var(--fs-note, 11px); color: var(--af-ok); }
+
+/* 切换器挂在子标签行里：两个视图共用它，各自画一个就得保证两处永远一致 */
+.ttb-switch { flex: none; display: flex; gap: 2px; align-self: center; margin-right: 6px;
+  border: 1px solid var(--af-divider); border-radius: var(--af-r-ctl); padding: 2px; }
+.ttb-switch button { background: none; border: none; color: var(--af-mute);
+  font-size: var(--fs-micro, 10px); padding: 2px 8px; border-radius: 4px; cursor: pointer; }
+.ttb-switch button.on { background: var(--af-accent); color: #fff; box-shadow: var(--ctl-shadow-press); }
+
+/* 列宽由行内 --ttb-cols 给出（列是数据，写死在 CSS 里就会和列定义分叉） */
+.ttb-grid { display: grid; grid-template-columns: var(--ttb-cols, 1fr);
+  width: max-content; min-width: 100%; }
+.ttb-wrap { flex: 1; min-height: 0; overflow: auto; position: relative; }
+
+/* 表头吸顶：滚到第几百行时还得知道每列是什么 */
+.ttb-head { position: sticky; top: 0; z-index: var(--af-z-base); background: var(--af-panel); }
+.ttb-hrow { height: 30px; background: var(--af-bg); border-bottom: 1px solid var(--af-divider); }
+.ttb-th { display: flex; align-items: center; gap: 2px; padding: 0 6px; position: relative;
+  border-right: 1px solid var(--af-divider);
+  font-size: var(--fs-note, 11px); color: var(--af-mute); }
+.ttb-th.is-right { justify-content: flex-end; }
+.ttb-th-label { flex: 1; min-width: 0; padding: 0; background: none; border: none;
+  color: inherit; font-size: inherit; cursor: pointer; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ttb-th.is-right .ttb-th-label { text-align: right; }
+.ttb-th-label:hover { color: var(--af-fg); }
+.ttb-arrow { flex: none; font-size: 8px; color: var(--af-accent); }
+.ttb-funnel { flex: none; background: none; border: none; padding: 0 2px;
+  color: var(--af-dim); font-size: 10px; cursor: pointer; }
+.ttb-funnel:hover { color: var(--af-fg); }
+.ttb-funnel.is-on { color: var(--af-accent); }
+.ttb-funnel.is-open { color: var(--af-fg); }
+
+.ttb-pop { position: absolute; top: 100%; left: 0; z-index: var(--af-z-float);
+  max-width: 200px;
+  min-width: 152px; padding: 6px 8px; background: var(--af-panel);
+  border: 1px solid var(--af-divider); border-radius: 7px;
+  box-shadow: var(--af-cast-lg); display: flex; flex-direction: column; gap: 5px; }
+/* 末尾几列贴单元格右边展开（表比栏宽，从左边展开会落到可视区外） */
+.ttb-pop.is-right { left: auto; right: 0; }
+.ttb-pop-title { font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+.ttb-pop-item { display: flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: var(--fs-note, 11px); color: var(--af-soft); }
+.ttb-pop-row { display: flex; align-items: center; gap: 4px; }
+.ttb-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.ttb-pop-input { width: 100%; font-size: var(--fs-note, 11px); padding: 2px 6px; }
+.ttb-pop-num { width: 60px; font-size: var(--fs-note, 11px); padding: 2px 4px; }
+.ttb-pop-date { font-size: var(--fs-note, 11px); padding: 2px 4px; }
+.ttb-hint { font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+
+/* 已生效的筛选：不打开面板也知道当前筛了什么，且能一个个摘掉 */
+.ttb-active { flex: none; display: flex; flex-wrap: wrap; gap: 4px;
+  padding: 5px 8px; border-bottom: 1px solid var(--af-divider); }
+.ttb-chip { display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+  padding: 1px 6px; border-radius: var(--r-pill, 999px);
+  background: var(--af-item); color: var(--af-soft); font-size: var(--fs-micro, 10px); }
+.ttb-chip-x { background: none; border: none; padding: 0 1px;
+  color: var(--af-mute); font-size: 9px; cursor: pointer; }
+.ttb-chip-x:hover { color: var(--af-bad); }
+
+/* 行**绝对定位**而不是凑够总高再 translateY：行高恒定，top 直接算得出来 */
+.ttb-body { position: relative; }
+.ttb-row { position: absolute; left: 0; height: 28px; box-sizing: border-box;
+  border-bottom: 1px solid var(--af-divider); cursor: pointer; }
+.ttb-row:hover { background: var(--af-item); }
+.ttb-row.is-active { background: var(--af-item); }
+.ttb-cell { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 0 6px;
+  overflow: hidden; font-size: var(--fs-note, 11px); }
+.ttb-cell.is-right { justify-content: flex-end; }
+.ttb-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ttb-src { color: var(--af-dim); }
+/* 时间与数字用等宽：列右对齐时数字不跳，扫一眼就能比大小 */
+.ttb-time { color: var(--af-soft); font-variant-numeric: tabular-nums; }
+.ttb-num { font-variant-numeric: tabular-nums; }
+.ttb-bad { color: var(--af-bad); margin-left: 2px; }
+.ttb-prog { display: flex; align-items: center; gap: 5px; width: 100%; }
+.ttb-bar { flex: 1; min-width: 20px; height: 3px; border-radius: var(--r-xs, 2px);
+  background: var(--af-item); overflow: hidden; }
+.ttb-bar-in { display: block; height: 100%; background: var(--af-accent); }
+.ttb-bar-in.success { background: var(--af-ok); }
+.ttb-bar-in.failed { background: var(--af-bad); }
+.ttb-bar-in.cancelled { background: var(--af-mute); }
+.ttb-origin { flex: none; padding: 0 5px; border-radius: var(--r-pill, 999px);
+  border: 1px solid var(--af-divider); color: var(--af-mute); font-size: var(--fs-micro, 10px); }
+.ttb-origin.live { color: var(--af-accent); border-color: var(--af-accent); }
+.ttb-empty { font-size: var(--fs-note, 11px); padding: 24px 16px; }
+
 /* ---------- 历史面板 ---------- */
 .hist-filter { padding: 8px 10px; border-bottom: 1px solid var(--af-divider);
   display: flex; flex-direction: column; gap: var(--sp-3); flex: none; }
@@ -3371,6 +3549,11 @@ input.mono, textarea.mono {
 /* ------------------------------------------------------------------ */
 
 .mcp-sec { margin: 2px 0; }
+
+/* MCP 工具检索：连几个服务就有上百条，不搜只能靠眼睛扫 */
+.mcp-search { display: flex; align-items: center; gap: 4px; padding: 2px 0 4px; }
+.mcp-search .p-input { flex: 1; min-width: 0; font-size: var(--fs-note, 11px); padding: 3px 6px; }
+.mcp-search-note { padding: 0 2px 4px; font-size: var(--fs-micro, 10px); color: var(--af-mute); }
 .mcp-sec-title {
   display: flex; align-items: center; gap: var(--sp-3); width: 100%;
   padding: 5px 8px; border: 0; border-radius: var(--af-r-ctl); background: none;

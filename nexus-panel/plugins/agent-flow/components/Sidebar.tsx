@@ -12,6 +12,7 @@ import {
 } from '../engine/customPresets';
 import { setColorOverride, loadCustomColors, saveCustomColors } from '../engine/nodeColors';
 import { pickBrief, producesDescOf } from '../engine/blockApi';
+import { filterMcpGroups } from '../engine/mcpTools';
 import NodeTip, { type TipAnchor } from './NodeTip';
 
 /**
@@ -76,10 +77,17 @@ type Props = {
  */
 function McpServerSection({
   group, disabled, onDragStart, onItemClick, tipKey, hoverDesc,
-  onHover, onHoverOut,
+  onHover, onHoverOut, forceOpen,
 }: {
   group: { server: string; color: string; items: { key: string; label: string; hint?: string }[] };
   disabled?: boolean;
+  /**
+   * 搜索时强制展开。
+   *
+   * 搜到了却不展开，等于"告诉你有、但不给你看" ——
+   * 结果就在那一层折叠里，用户只会以为没搜到。
+   */
+  forceOpen?: boolean;
   onDragStart: (e: DragEvent, p: DragPayload) => void;
   onItemClick: (e: MouseEvent, p: { key: string }) => void;
   /** 当前浮层指向的条目（用它是为了给条目加高亮） */
@@ -90,6 +98,7 @@ function McpServerSection({
   onHoverOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const shown = open || forceOpen === true;
   return (
     <div className="mcp-sec">
       <button
@@ -104,9 +113,9 @@ function McpServerSection({
       >
         <span className="mcp-sec-name">{group.server}</span>
         <span className="mcp-sec-count">{group.items.length}</span>
-        <span className="mcp-sec-arrow">{open ? '▾' : '▸'}</span>
+        <span className="mcp-sec-arrow">{shown ? '▾' : '▸'}</span>
       </button>
-      {open ? (
+      {shown ? (
         <div className="mcp-sec-body">
           {group.items.map((it) => {
             const isOpen = tipKey === it.key;
@@ -143,6 +152,12 @@ function McpServerSection({
 export default function Sidebar({
   onAdd, disabled, mcpGroups, onRefreshMcp, mcpRefreshing,
 }: Props) {
+  /*
+    MCP 工具搜索框的状态放**组件内部**：
+    它是"这一刻想找什么"，不是需要跨会话保留或跨组件共享的东西。
+    提到外层会让 Sidebar 的 props 再多两项，而没有任何一处需要读它。
+  */
+  const [mcpKw, setMcpKw] = useState('');
   const onDragStart = (e: DragEvent, p: DragPayload) => {
     e.dataTransfer.setData(DRAG_MIME, encodeDrag(p));
     // 同时放一份 text/plain，某些环境下自定义 MIME 会被过滤
@@ -362,7 +377,10 @@ export default function Sidebar({
 
   /** MCP 组：按 server 折叠，默认收起 */
   const renderMcpGroup = (label: string) => {
-    const groups = mcpGroups ?? [];
+    const all = mcpGroups ?? [];
+    const { groups, total } = filterMcpGroups(all, mcpKw);
+    const searching = mcpKw.trim() !== '';
+    const noneAtAll = all.every((g) => (g.items?.length ?? 0) === 0);
     return (
       <div className="side-group" key="mcp">
         <div className="side-title">
@@ -379,10 +397,43 @@ export default function Sidebar({
           </span>
         </div>
 
-        {groups.length === 0 ? (
+        {noneAtAll ? (
           <div className="side-empty">
             还没有节点 —— 在连接管理器配一个 MCP 服务，再点刷新
           </div>
+        ) : (
+          /*
+            有工具才给搜索框。
+            一个工具都没有时摆一个输入框，看着像"这里该有东西但我没配好"，
+            而实际要做的只是先去连一个服务。
+          */
+          <div className="mcp-search">
+            <input
+              className="p-input"
+              value={mcpKw}
+              onChange={(e) => setMcpKw(e.target.value)}
+              placeholder="搜工具（名称、说明、参数）"
+            />
+            {searching ? (
+              <button
+                className="link-btn"
+                onClick={() => setMcpKw('')}
+                title="清空搜索"
+              >
+                清空
+              </button>
+            ) : null}
+          </div>
+        )}
+
+        {searching && total === 0 ? (
+          <div className="side-empty">
+            没有匹配的工具。换个词试试 —— 服务名也能搜。
+          </div>
+        ) : null}
+
+        {searching && total > 0 ? (
+          <div className="mcp-search-note">搜到 {total} 个工具</div>
         ) : null}
 
         {groups.map((sg) => (
@@ -390,6 +441,7 @@ export default function Sidebar({
             key={sg.server}
             group={sg}
             disabled={disabled}
+            forceOpen={searching}
             onDragStart={onDragStart}
             onItemClick={onItemClick}
             tipKey={tip?.key ?? null}

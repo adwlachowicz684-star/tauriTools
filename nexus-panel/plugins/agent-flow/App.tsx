@@ -58,10 +58,10 @@ import { prompt } from '../../js/dialog.js';
 import DirPicker from './components/DirPicker';
 import {
   LEFT_TABS, LEFT_TAB_LABEL,
-  TASK_TABS, TASK_TAB_LABEL,
-  normalizeLeftTab, normalizeTaskTab, normalizeLogHeight, leftTabsFor,
+  TASK_TABS, TASK_TAB_LABEL, TASK_VIEWS, TASK_VIEW_LABEL,
+  normalizeLeftTab, normalizeTaskTab, normalizeTaskView, normalizeLogHeight, leftTabsFor,
 } from './engine/layout';
-import type { LeftTab, TaskTab } from './engine/layout';
+import type { LeftTab, TaskTab, TaskView } from './engine/layout';
 import { defaultKV as kvStore } from './engine/kv';
 import {
   writeTextFile, fsAllowRoot, listFsRoots, canExportToFile,
@@ -104,6 +104,18 @@ import CanvasTabs from './components/CanvasTabs';
 import { TaskList } from './components/TaskPanel';
 import { TaskDetail } from './components/TaskDetail';
 import { HistoryList } from './components/HistoryPanel';
+import { TaskTable } from './components/TaskTable';
+import { BoardTree } from './components/TaskBoard';
+import { TaskBoardDetail } from './components/TaskBoardDetail';
+import { useTaskBoard } from './hooks/useTaskBoard';
+import {
+  addNode, removeNode, mergeIntoGroup, splitTask,
+} from './engine/taskBoard';
+import { parseRowKey, type TableRow } from './engine/taskTable';
+import {
+  parseScopeKey, scopeKeyOf, normalizeScope, scopeOptions, scopeLabel,
+  buildProjectIndex, filterByScope, scopeMatches, type ProjectScope,
+} from './engine/projectScope';
 import {
   parseHistory, serializeHistory, addToHistory, removeFromHistory,
   clearCanvasHistory, emptyHistory, HISTORY_STORE_KEY, type HistoryEntry,
@@ -425,7 +437,7 @@ export default function App() {
   const {
     tasks, setTasks, currentTaskRef, tick,
     history, historyFile, histWarn, saveHistory, historyRef,
-    taskSel, setTaskSel, histSel, setHistSel, activeTask, activeHist,
+    taskSel, setTaskSel, histSel, setHistSel,
   } = ts;
 
 
@@ -858,6 +870,149 @@ export default function App() {
   const leftTab = normalizeLeftTab(leftTabRaw);
   const taskTab = normalizeTaskTab(taskTabRaw);
 
+  /*
+   * 任务视图的呈现方式（列表 / 表格）。
+   *
+   * 与 taskTab 分开存：子标签决定"看哪一段数据"，呈现方式决定"怎么看"。
+   * 混成一个状态的话，切到表格会把「进行中/已完成」的选择也重置掉，
+   * 而表格本就覆盖全部数据 —— 那个选择对它毫无意义。
+   */
+  const [taskViewRaw, setTaskViewRaw] = useState<TaskView>(
+    () => normalizeTaskView(kvStore().get('agent-flow.taskView.v1')),
+  );
+  useEffect(() => { kvStore().set('agent-flow.taskView.v1', taskViewRaw); }, [taskViewRaw]);
+  const taskView = normalizeTaskView(taskViewRaw);
+
+  /*
+   * 当前项目（= 画布分组）。
+   *
+   * 只框定**任务面板看到哪些记录**，不动画布区在编辑哪张图 ——
+   * 切换的语义是"我现在盯哪个项目"，不是"我现在改哪张图"。
+   * 混在一起的话，想看另一个项目的任务就得先切走正在编辑的画布，
+   * 而那张图的位置、选中状态全被换掉。
+   */
+  const [projectRaw, setProjectRaw] = useState<string>(
+    () => scopeKeyOf(normalizeScope(parseScopeKey(kvStore().get('agent-flow.project.v1')), canvasGroups)),
+  );
+  useEffect(() => { kvStore().set('agent-flow.project.v1', projectRaw); }, [projectRaw]);
+  /*
+    存的是 key，用时再归到**当前还存在的分组**上：
+    上次选的分组可能已经被删了，不修的话切过去一条记录都没有，
+    而界面上看不出是"这个项目没了"还是"任务真的全空了"。
+  */
+  const project = useMemo<ProjectScope>(
+    () => normalizeScope(parseScopeKey(projectRaw), canvasGroups),
+    [projectRaw, canvasGroups],
+  );
+  const projectIndex = useMemo(
+    () => buildProjectIndex(canvasGroups, canvases.map((c) => c.id)),
+    [canvasGroups, canvases],
+  );
+
+  /*
+    两路记录都按项目过滤，列表与表格共用同一份结果 ——
+    各滤一遍的话，一处漏了就是"表格里没有、列表里还有"。
+  */
+  const scopedTasks = useMemo(
+    () => filterByScope(tasks, project, projectIndex),
+    [tasks, project, projectIndex],
+  );
+  const scopedHistory = useMemo(
+    () => filterByScope(history, project, projectIndex),
+    [history, project, projectIndex],
+  );
+
+  /*
+   * 表格里选中的那一行。
+   *
+   * 存 **key**（`live:xxx` / `archived:xxx`）而不是 id：
+   * 两路数据的 id 会撞（跑完的任务既在 live 也在归档里），
+   * 只存 id 的话点归档那条会选中同 id 的进行中那条，详情对不上。
+   */
+  const [tableSel, setTableSel] = useState<string | null>(null);
+
+  const selectTableRow = useCallback((row: TableRow) => {
+    setTableSel(row.key);
+    // 详情面板按 origin 走各自的分支（可取消 / 已归档），选中要同源
+    const parsed = parseRowKey(row.key);
+    if (!parsed) return;
+    if (parsed.origin === 'live') setTaskSel(parsed.id);
+    else setHistSel(parsed.id);
+  }, [setTaskSel, setHistSel]);
+
+  /*
+   * 表格选中行对应的记录。
+   *
+   * 选中的记录**可能已经不在列表里**（清空调走了、归档被删了）——
+   * 那时退回 null 让详情显示空态，而不是留着一条已经消失的记录
+   * 在那里显示（那是"详情显示的是一个不存在的东西"）。
+   */
+  const activeTable = useMemo<{ row: TableRow; record: HistoryEntry } | null>(() => {
+    if (!tableSel) return null;
+    const parsed = parseRowKey(tableSel);
+    if (!parsed) return null;
+    // 池子用**过滤后**的：切了项目还拿全量池去查，详情就会显示别的项目那条
+    const pool = parsed.origin === 'live' ? scopedTasks : scopedHistory;
+    const rec = pool.find((t) => t.id === parsed.id);
+    if (!rec) return null;
+    return { row: { key: tableSel, origin: parsed.origin, record: rec }, record: rec };
+  }, [tableSel, scopedTasks, scopedHistory]);
+
+  /*
+   * 列表视图的选中项，同样要落在当前项目里。
+   *
+   * 直接用 taskSel / histSel 的话，切到另一个项目后：
+   * 左栏没有任何一行高亮（选中的那条不在这个项目里），
+   * 而右栏详情显示的却是**第一条** —— 两边指着不同的记录，
+   * 看着就是"点了没反应"。所以这里算出真正生效的那个 id，
+   * 高亮与详情共用它。
+   */
+  const scopedTaskSel = useMemo(() => (
+    scopedTasks.some((t) => t.id === taskSel) ? taskSel : (scopedTasks[0]?.id ?? null)
+  ), [taskSel, scopedTasks]);
+  const scopedHistSel = useMemo(() => (
+    scopedHistory.some((e) => e.id === histSel) ? histSel : (scopedHistory[0]?.id ?? null)
+  ), [histSel, scopedHistory]);
+  const scopedActiveTask = useMemo(
+    () => scopedTasks.find((t) => t.id === scopedTaskSel) ?? null,
+    [scopedTasks, scopedTaskSel],
+  );
+  const scopedActiveHist = useMemo(
+    () => scopedHistory.find((e) => e.id === scopedHistSel) ?? null,
+    [scopedHistory, scopedHistSel],
+  );
+
+  const projectOpts = useMemo(
+    () => scopeOptions(canvasGroups, canvases.map((c) => c.id)),
+    [canvasGroups, canvases],
+  );
+
+
+  const scopedRunning = useMemo(
+    () => scopedTasks.filter((t) => t.status === 'running').length,
+    [scopedTasks],
+  );
+
+  /*
+    「清空」也只作用于当前项目。
+
+    不改的话，切到项目甲点「清空」会把**所有**项目的记录一起清掉 ——
+    按钮就在项目甲的列表头上，没人会想到它动的是别的项目的东西。
+    这种"看着是局部、实际是全局"的操作一旦发生无从挽回。
+  */
+  const clearScopedTasks = useCallback(() => {
+    setTasks((list) => list.filter(
+      (t) => t.status === 'running' || !scopeMatches(project, t.canvasId, projectIndex),
+    ));
+  }, [project, projectIndex, setTasks]);
+
+  const clearScopedHistory = useCallback(() => {
+    saveHistory({
+      v: historyFile.v,
+      entries: historyFile.entries.filter((e) => !scopeMatches(project, e.canvasId, projectIndex)),
+    });
+  }, [project, projectIndex, historyFile, saveHistory]);
+
 
   /*
    * 启动时探一次后端通道（审查项 A-01）。
@@ -900,6 +1055,46 @@ export default function App() {
   } = useExportFlow({
     nodes, edges, canvasName: activeCanvas?.name ?? null, onLog: pushLog,
   });
+
+  /*
+   * 任务板（计划态任务）。
+   *
+   * 按项目一个文件 —— AI 只读自己项目那份，不同项目的任务不会
+   * 互相占用上下文。文件落在导出目录里，AI 不打开界面也能直接改。
+   */
+  const boardKey = project.kind === 'group' ? project.groupId
+    : project.kind === 'ungrouped' ? 'ungrouped' : 'all';
+  const boardName = scopeLabel(project, canvasGroups);
+  const board = useTaskBoard({
+    dir: exportDir,
+    project: boardKey,
+    projectName: boardName,
+    enabled: view === 'tasks',
+  });
+  const [boardSel, setBoardSel] = useState<string | null>(null);
+  const [boardChecked, setBoardChecked] = useState<Set<string>>(() => new Set());
+  const [boardKw, setBoardKw] = useState('');
+
+  /*
+    换项目 = 换一个文件，旧的选中项与勾选在这个文件里不存在。
+    不清理的话：选中项指着一个不存在的 id（详情空着），
+    勾选集合里留着别项目的 id（下次点"合并"会静默少合几项）。
+  */
+  useEffect(() => {
+    setBoardSel(null);
+    setBoardChecked(new Set());
+  }, [board.path]);
+
+  const boardNotice = useMemo(() => {
+    const s = board.state;
+    if (s.kind === 'error') return `⛔ ${s.message}`;
+    if (s.kind === 'overwritten') {
+      return `⚠ 有 ${s.ids.length} 项被文件里的新版本盖掉了（AI 或别处刚改过同一条）`;
+    }
+    if (s.kind === 'loading') return '读取中…';
+    if (s.kind === 'saving') return '写入中…';
+    return '';
+  }, [board.state]);
 
   /**
    * 存画布配置（MCP 服务 / 环境变量）。
@@ -3154,6 +3349,28 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
 
   const enabledCount = triggers.filter((t) => t.enabled).length;
 
+  /*
+   * 详情区要显示哪一条。
+   *
+   * 三个来源（表格选中行 / 已归档列表 / 进行中列表）此前各写了一遍
+   * <TaskDetail>，差别只在两个开关上。抄三份的后果是：给详情加一个
+   * 能力（比如"跳到画布"）要改三处，漏一处就是"这个入口看得到、那个看不到"。
+   * 所以在这里先算出一个目标，详情只写一份。
+   */
+  const detail: {
+    task: HistoryEntry;
+    /** 归档记录：显示日期、标注"内容被裁剪过" */
+    archived: boolean;
+    empty: string;
+  } | null = view !== 'tasks' ? null
+    : taskView === 'table'
+      ? (activeTable
+        ? { task: activeTable.record, archived: activeTable.row.origin === 'archived', empty: '在左侧表格里选一条记录看细节。' }
+        : null)
+      : taskTab === 'done'
+        ? (scopedActiveHist ? { task: scopedActiveHist, archived: true, empty: '选一条记录看细节。' } : null)
+        : (scopedActiveTask ? { task: scopedActiveTask, archived: false, empty: '选一条任务看细节。' } : null);
+
   return (
     <div className="app-shell">
       {/*
@@ -3218,10 +3435,13 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           </button>
           <button className={view === 'tasks' ? 'on' : ''} onClick={() => setView('tasks')}>
             任务
-            {tasks.filter((t) => t.status === 'running').length > 0 ? (
-              <span className="view-badge">
-                {tasks.filter((t) => t.status === 'running').length}
-              </span>
+            {/*
+              徽标跟**当前项目**走。
+              用全局数的话，切到项目甲会显示"8 个运行中"而列表里一条没有 ——
+              数字与眼前看到的东西对不上，比没有这个数字更让人怀疑是不是坏了。
+            */}
+            {scopedRunning > 0 ? (
+              <span className="view-badge">{scopedRunning}</span>
             ) : null}
           </button>
         </div>
@@ -3313,6 +3533,31 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             以前任务 / 历史下这条栏被整条隐去（画布藏了、节点拖不动），
             于是同一条栏时有时无，切过去整个界面宽度变一次。
           */}
+          {/*
+            项目切换 —— 只在任务视图、且**确实有分组**时出现。
+
+            放在左栏最上方（标签行之上）：列表与表格都在它下面，
+            于是两个视图天然共用同一个范围，不需要各接一次。
+
+            一个分组都没有时不显示：那时下拉里只有「全部项目」一项，
+            摆一个点不动的控件，比没有这个控件更让人困惑 ——
+            看着像"项目功能还没配好"。
+          */}
+          {view === 'tasks' && projectOpts.length > 0 ? (
+            <div className="prj-bar">
+              <span className="prj-label">项目</span>
+              <select
+                className="p-input prj-sel"
+                value={scopeKeyOf(project)}
+                onChange={(e) => setProjectRaw(e.target.value)}
+                title="只看这个项目的任务记录"
+              >
+                {projectOpts.map((o) => (
+                  <option key={o.key} value={o.key}>{o.label}（{o.count}）</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div className="pane-tabs">
             {leftTabsFor(view).map((t) => (
               <button
@@ -3322,6 +3567,15 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                     ? (taskTab === t ? 'on' : '')
                     : (leftTab === t ? 'on' : '')
                 }
+                /*
+                  表格视图下这两个子标签**没有意义**（表格本就覆盖全部数据），
+                  必须显式禁用而不是留着能点 —— 能点却没反应是最难自查的一类问题：
+                  用户会以为切换坏了，实际是那个选择对表格不存在。
+                */
+                disabled={view === 'tasks' && taskView !== 'list'}
+                title={view === 'tasks' && taskView !== 'list'
+                  ? '表格视图包含进行中与已归档；任务板是计划态任务，与运行记录不是同一批数据'
+                  : undefined}
                 onClick={() => {
                   if (view === 'tasks') setTaskTabRaw(t as TaskTab);
                   else setLeftTabRaw(t as LeftTab);
@@ -3332,24 +3586,101 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                   : LEFT_TAB_LABEL[t as LeftTab]}
               </button>
             ))}
+            {/*
+              列表 / 表格切换只挂在任务视图上。
+
+              放在标签行里而不是各自面板的头部：切换后两个视图的头部
+              内容不同（一个是"任务"+清空，一个是"全部记录"+重置），
+              各自画一个切换器就要保证两处文案与状态一致 ——
+              那种一致迟早会漏。放标签行只有一处，且与子标签同排，
+              位置固定，切过去不会因为头部高度变化而跳。
+            */}
+            {view === 'tasks' ? (
+              <div className="ttb-switch">
+                {TASK_VIEWS.map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={taskView === v ? 'on' : ''}
+                    onClick={() => setTaskViewRaw(v)}
+                    title={v === 'table' ? '一行一条，每列可筛选与排序' : '按流程分组，盯正在跑的'}
+                  >
+                    {TASK_VIEW_LABEL[v]}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="pane-body">
-            {view === 'tasks' ? (taskTab === 'done' ? (
+            {view === 'tasks' && taskView === 'board' ? (
+              <BoardTree
+                board={board.board}
+                expanded={board.expanded}
+                onToggle={board.toggle}
+                selectedId={boardSel}
+                onSelect={setBoardSel}
+                checked={boardChecked}
+                onCheck={(id, on) => setBoardChecked((prev) => {
+                  const s = new Set(prev);
+                  if (on) s.add(id); else s.delete(id);
+                  return s;
+                })}
+                kw={boardKw}
+                onKw={setBoardKw}
+                onAddTask={() => {
+                  const parent = boardSel && board.board.nodes[boardSel]?.kind === 'group' ? boardSel : null;
+                  board.apply((b) => addNode(b, parent, {
+                    kind: 'task', title: '新任务', status: 'todo', deps: [], assignee: '', note: '',
+                  }).board);
+                }}
+                onAddGroup={() => {
+                  const parent = boardSel && board.board.nodes[boardSel]?.kind === 'group' ? boardSel : null;
+                  board.apply((b) => addNode(b, parent, { kind: 'group', title: '新任务组', children: [] }).board);
+                }}
+                onMerge={(ids, title) => {
+                  board.apply((b) => mergeIntoGroup(b, ids, title).board);
+                  setBoardChecked(new Set());
+                }}
+                onSplit={(id, titles) => board.apply((b) => splitTask(b, id, titles).board)}
+                onRemove={(id) => {
+                  board.apply((b) => removeNode(b, id));
+                  if (boardSel === id) setBoardSel(null);
+                }}
+                onReload={board.reload}
+                canWrite={board.canWrite}
+              />
+            ) : view === 'tasks' && taskView === 'table' ? (
+              /*
+                表格视图**不看子标签**：它本就覆盖全部数据
+                （进行中 + 已归档），"看哪一段"由筛选决定。
+                若在表格里也认 taskTab，就会出现"切到已完成、
+                但表格里还有进行中的行"这种自相矛盾的状态。
+              */
+              <TaskTable
+                live={scopedTasks}
+                archived={scopedHistory}
+                now={tick}
+                selectedKey={tableSel}
+                onSelect={selectTableRow}
+              />
+            ) : view === 'tasks' ? (taskTab === 'done' ? (
               <HistoryList
-                entries={history}
+                entries={scopedHistory}
                 now={tick}
                 onDelete={(id) => saveHistory(removeFromHistory(historyFile, id))}
-                onClearAll={() => saveHistory(emptyHistory())}
+                onClearAll={clearScopedHistory}
+                clearAllLabel={project.kind === 'all' ? '清空全部' : '清空本项目'}
                 onClearCanvas={(canvasId) => saveHistory(clearCanvasHistory(historyFile, canvasId))}
-                selectedId={histSel}
+                selectedId={scopedHistSel}
                 onSelect={setHistSel}
               />
             ) : (
               <TaskList
-                tasks={tasks}
+                tasks={scopedTasks}
                 now={tick}
-                onClear={() => setTasks((list) => list.filter((t) => t.status === 'running'))}
-                selectedId={taskSel}
+                onClear={clearScopedTasks}
+                clearLabel={project.kind === 'all' ? '清空' : '清空本项目'}
+                selectedId={scopedTaskSel}
                 onSelect={setTaskSel}
               />
             )) : leftTab === 'node' ? (
@@ -3393,52 +3724,40 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           列表已移到左栏（与节点库共用底板），这里只放**详情**。
         */}
         {/*
-          详情跟随左栏的子标签 —— 两个视图共用一处，
+          详情跟随左栏的选择 —— 列表视图与表格视图共用这一处，
           「已完成」就是原来的历史详情（带日期、可归档），
           「进行中」可取消。
+
+          三条来源（表格选中行 / 已归档 / 进行中）在 return 前已归一成 detail，
+          这里只写一份 —— 三个入口的详情能力必须完全一致，
+          否则"从表格点进去看不到取消按钮"这类差别无从排查。
         */}
-        {view === 'tasks' && taskTab === 'done' ? (
-          <div className="task-detail">
-            {!activeHist ? (
-              <div className="nx-empty task-empty">选一条记录看细节。</div>
-            ) : (
-              <TaskDetail
-                task={activeHist}
-                now={tick}
-                showDate
-                archived
-                onJumpToCanvas={(canvasId) => {
-                  if (canvasId && canvases.some((c) => c.id === canvasId)) {
-                    switchCanvas(canvasId);
-                    setView('flow');
-                  }
-                }}
-                onLocateNode={(canvasId, nodeId) => {
-                  if (!canvasId || !canvases.some((c) => c.id === canvasId)) return;
-                  setView('flow');
-                  if (canvasId === activeId) {
-                    // 已经在这张画布上：直接滚过去，不用等
-                    locateNode(nodeId, nodes);
-                    return;
-                  }
-                  switchCanvas(canvasId);
-                  pendingLocate.current = { canvasId, nodeId };
-                }}
-              />
-            )}
+        {view === 'tasks' && taskView === 'board' ? (
+          <div className="bdd-wrap">
+            {boardNotice ? <div className="bdd-notice">{boardNotice}</div> : null}
+            <div className="bdd-path" title={board.path}>{board.path || '（未设置导出目录）'}</div>
+            <TaskBoardDetail
+              board={board.board}
+              selectedId={boardSel}
+              onApply={board.apply}
+              canWrite={board.canWrite}
+            />
           </div>
-        ) : null}
-        {view === 'tasks' && taskTab !== 'done' ? (
+        ) : view === 'tasks' ? (
           <div className="task-detail">
-            {!activeTask ? (
-              <div className="nx-empty task-empty">选一条任务看细节。</div>
+            {!detail ? (
+              <div className="nx-empty task-empty">
+                {taskView === 'table' ? '在左侧表格里选一条记录看细节。' : '选一条记录看细节。'}
+              </div>
             ) : (
               <TaskDetail
-                task={activeTask}
+                task={detail.task}
                 now={tick}
+                showDate={detail.archived}
+                archived={detail.archived}
                 onCancel={(id) => {
-                  // 只允许停当前那条；历史记录没有可停的东西
-                  if (id === currentTaskRef.current) stop();
+                  // 只允许停当前那条；归档记录没有可停的东西
+                  if (!detail.archived && id === currentTaskRef.current) stop();
                 }}
                 onJumpToCanvas={(canvasId) => {
                   if (canvasId && canvases.some((c) => c.id === canvasId)) {
