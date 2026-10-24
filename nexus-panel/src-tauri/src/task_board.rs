@@ -923,6 +923,9 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
         let obj = task.as_object_mut().ok_or("任务不是对象")?;
 
         let mut changed = false;
+        // 「本次是否从别处进入 review」：进过的不再算（见下方 became 处的注释），
+        // 初值 false，由下方 status 流转段置位。此前漏了声明，编译不过（已补）。
+        let mut entered_review = false;
         for key in ["title", "detail", "priority", "reporter"] {
             if let Some(v) = str_field(body, key) {
                 obj.insert(key.to_string(), json!(v));

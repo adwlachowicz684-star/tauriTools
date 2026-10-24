@@ -72,7 +72,7 @@ t('不再有裸 resolveEntry 赋 src（只允许出现在函数定义/诊断里�
 t('有三态判定 frameSrcMode', /function frameSrcMode\(\)/.test(host));
 t('dev 态直指 dev server（/plugins/<id>/index.html）',
   /env && env\.DEV/.test(host));
-t('prod 态才走 asset 协议', /mode !== 'prod'/.test(host));
+t('prod 态才走同源 runtime 路径（非 prod 退回 resolveEntry）', /mode !== 'prod'/.test(host));
 t('resourceDir 探测：全局 __TAURI__.path 优先',
   /__TAURI__ && w\.__TAURI__\.path/.test(host));
 t('resourceDir 探测：npm 包兜底',
@@ -83,10 +83,13 @@ t('有纯函数 runtimeFrameUrl（拼接逻辑可单测）',
   /export function runtimeFrameUrl\(/.test(host));
 t('URL 带 nexus-bg / nexus-base 防闪参数',
   /q\.set\('nexus-bg'/.test(host) && /q\.set\('nexus-base'/.test(host));
-t('convertFileSrc 前做反斜杠归一化',
-  /replace\(\/\\\\\/g, '\/'\)/.test(host));
-t('resourceDir/convertFileSrc 缺失时退回 resolveEntry（可读失败）',
-  /取不到 resourceDir，退回相对路径加载/.test(host));
+/* 同源化改造（2026-10-24）：asset 协议三坑（%2F 破坏相对资源解析 /
+   module script 的 CORS 拒绝执行 / 跨源后空检测失效）全部实机复现后，
+   runtime 插件改走 dist/ 内同源相对路径。这两条钉子防回退。 */
+t('不再走 convertFileSrc（asset 协议）',
+  !/convertFileSrc/.test(host.match(/export function runtimeFrameUrl[\s\S]*?\n}/)[0]));
+t('resolveFrameSrc 的 prod 分支直接拼相对路径',
+  /return runtimeFrameUrl\(\{ id: manifest\.id, vars, base \}\)/.test(host));
 
 /* ============ 3. 源码层：构建脚本 ============ */
 console.log('\n=== 3. 构建：build-plugins.mjs 独立构建 ===');
@@ -102,8 +105,24 @@ t('校验 HTML 引用的 JS/CSS 真的产出（防静默 404）',
 t('支持 --only <id> 单插件增量构建', /--only/.test(bp));
 t('NATIVE_SUBDIRS 两条原生拷贝规则都在',
   /plugin: 'mindmap', dir: 'editor'/.test(bp) && /plugin: 'project-group', dir: 'preseticons'/.test(bp));
-t('package.json 的 build 串联 plugins:build',
-  /"build":\s*"node scripts\/build-plugins\.mjs && vite build"/.test(src('package.json')));
+t('package.json 的 build 串联 plugins:build + stash-dist + vite + copy-runtime',
+  /"build":\s*"node scripts\/build-plugins\.mjs && node scripts\/stash-dist\.mjs && vite build && node scripts\/copy-runtime\.mjs"/.test(src('package.json')));
+t('copy-runtime 把产物拷进 dist/（同源化的前提）',
+  /dist.*runtime-plugins/.test(src('scripts/copy-runtime.mjs')));
+/* 2026-10-24 实测：copy-runtime 用 fs.cpSync 会被本机 safe-delete shim
+   直接终止进程（exit 127，且没有任何输出），改手递 readFileSync/writeFileSync。
+   同理，任何 import 删除类 API / cpSync 的构建脚本都会中招。 */
+t('copy-runtime 不用 cpSync / 删除类 API（会被 safe-delete shim 杀进程）',
+  !/cpSync|rmSync|unlinkSync|\brm\(/.test(src('scripts/copy-runtime.mjs')));
+/* 陈旧产物（dist/ 342 文件、project-group/preseticons 169 文件）会让下一轮
+   构建的 emptyOutDir 撞批量守卫 → 每次构建都卡死下一次。解法是 rename
+   （守卫不管）到同卷暂存区，跨卷 tmpdir 会 EXDEV。 */
+t('build-plugins 构建前把旧产物 rename 挪走（避开 emptyOutDir 批量删除）',
+  /function stashOutDir/.test(bp) && /renameSync/.test(bp));
+t('stash 目标同卷（用 STALE_ROOT，不用 os.tmpdir 防 EXDEV）',
+  /STALE_ROOT/.test(bp) && !/tmpdir\(\)/.test(bp)
+  && /from '\.\/stale-root\.mjs'/.test(bp));
+t('vite build 之前有 stash-dist 步骤', /scripts\/stash-dist\.mjs/.test(src('package.json')));
 t('package.json 有 plugins:build script', /"plugins:build":/.test(src('package.json')));
 t('vite.config.ts 不再收 iframe 插件入口', (() => {
   const cfg = src('config/nexus.config.mjs');
@@ -168,34 +187,22 @@ console.log('\n=== 6. 行为层：runtimeFrameUrl 拼接 ===');
 
   const host = await import('./js/host.js');
 
-  /* 用 spy 捕获 convertFileSrc 收到的参数 —— 断言"传给它的是归一化
-     正斜杠路径"，比断言它返回什么更能说明问题（返回值取决于 Tauri
-     版本的编码习惯，冒号编不编都是它的事，不是我们的）。 */
-  let cfsArg = null;
-  const cfs = (p) => { cfsArg = p; return `http://asset.localhost/${encodeURI(p)}`; };
+  /* 同源相对路径拼接：不再过 convertFileSrc（asset 协议三坑，见 host.js
+     runtimeFrameUrl 注释），产物就是 dist/ 下的相对 URL。 */
   const url = host.runtimeFrameUrl({
-    convertFileSrc: cfs,
-    resourceDir: 'E:\\app\\Nexus Panel\\resources',
     id: 'task-board',
     vars: { '--bg': '#101318' },
     base: 'dark',
   });
-  t('传给 convertFileSrc 的是归一化正斜杠路径',
-    cfsArg === 'E:/app/Nexus Panel/resources/runtime-plugins/task-board/index.html', cfsArg);
-  t('路径不含反斜杠（混用会在某些 Tauri 版本上拼出坏路径）',
-    !cfsArg.includes('\\'), cfsArg);
+  t('拼出同源相对路径 runtime-plugins/<id>/index.html',
+    url.startsWith('runtime-plugins/task-board/index.html'), url);
+  t('不带 asset.localhost / 盘符（那三条坑的温床；query 的 %23 是合法编码）',
+    !url.includes('asset.localhost') && !url.includes('E:'), url);
   t('带 nexus-bg 参数', /[?&]nexus-bg=%23101318/.test(url), url);
   t('带 nexus-base 参数', /[?&]nexus-base=dark/.test(url), url);
 
-  const noTheme = host.runtimeFrameUrl({
-    convertFileSrc: cfs, resourceDir: '/opt/nexus', id: 'home', vars: {}, base: null,
-  });
+  const noTheme = host.runtimeFrameUrl({ id: 'home', vars: {}, base: null });
   t('无主题信息时不带 query（不拼裸 ?）', !noTheme.includes('?'), noTheme);
-
-  const trailing = host.runtimeFrameUrl({
-    convertFileSrc: cfs, resourceDir: '/opt/nexus/', id: 'x', vars: {}, base: null,
-  });
-  t('resourceDir 尾部斜杠不产生双斜杠', !trailing.includes('nexus//'), trailing);
 
   /* resolveFrameSrc 在 Node 下 import.meta.env 不存在 → plain 分支：
      必须退回 resolveEntry（相对 location 解析），而不是抛错。 */

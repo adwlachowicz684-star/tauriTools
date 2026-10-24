@@ -167,6 +167,15 @@ t('判空只在未握手时进行（已握手的插件不误伤）',
   /const onLoad = \(\) => \{[\s\S]{0,220}if \(handshaked/.test(host));
 t('隔离态读不到 contentDocument 时跳过检测，不误报',
   /catch\s*\{\s*return;\s*\}/.test(host));
+/* 上面那条只覆盖"抛异常"（opaque origin）。runtime 插件走 asset.localhost，
+   与外壳跨源 —— 此时 contentDocument 返回 **null 且不抛异常**，曾因
+   `empty = !doc || ...` 把"读不到"当成"空页面"，所有 runtime 插件开箱即挂。
+   实测复现：mindmap 报"插件页面没有渲染出内容"，而 asset 协议 200、
+   body 里有 plugin-mount（见 2026-10-24 诊断）。 */
+t('跨源（contentDocument 为 null）时跳过检测，不当成空页面',
+  /const doc = iframe\.contentDocument;\s*\n\s*if \(!doc\) return;/.test(host));
+t('空判条件里不再有 !doc（读不到 ≠ 空）',
+  !/empty = !doc \|\|/.test(host));
 
 console.log('\n=== 5. 首帧脚本同时设 color-scheme ===');
 /* iframe 内的表单控件/滚动条不吃父级 color-scheme，

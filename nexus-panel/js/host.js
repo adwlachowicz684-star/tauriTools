@@ -1130,7 +1130,9 @@ export function createHost(opts = {}) {
        *
        * 判空只认"body 一个子元素都没有"。正常插件的 HTML 里至少有挂载点
        * （<div id="root">），React/Vue 挂载前后 body 都不是空的，所以不会误伤。
-       * 隔离态拿不到 contentDocument，读不到就跳过（那种情况只能等超时）。
+       * 读不到 contentDocument 就跳过 —— 隔离态（opaque origin）抛异常，
+       * 跨源（runtime 插件走 asset.localhost，与外壳不同源）返回 null 且
+       * **不抛异常**，两者都只能等握手超时报更准的错误。
        */
       let emptyCheck = null;
       const onLoad = () => {
@@ -1143,7 +1145,8 @@ export function createHost(opts = {}) {
           let empty = false;
           try {
             const doc = iframe.contentDocument;
-            empty = !doc || !doc.body || (doc.body.childElementCount === 0
+            if (!doc) return;         // 读不到 ≠ 空：跨源/未解析，本地无从判空
+            empty = !doc.body || (doc.body.childElementCount === 0
               && !doc.body.textContent.trim());
           } catch { return; }        // 隔离态（opaque origin）读不到，放弃检测
           if (empty) {
@@ -2056,26 +2059,30 @@ export function runtimePluginState() {
 }
 
 /**
- * 拼 runtime 插件的 asset 协议 URL（纯函数，便于测试）。
+ * 拼 runtime 插件的同源相对 URL（纯函数，便于测试）。
  *
- * 与 resolveFrameSrc 的分工：那边负责"取模式、取依赖"（import.meta.env、
- * resourceDir、convertFileSrc —— 都带环境副作用），这里只做确定性的
- * 路径拼接与参数序列化。测试 therefore 能直接覆盖拼接逻辑，
- * 不必模拟整个 vite/Tauri 环境。
+ * 与 resolveFrameSrc 的分工：那边负责"取模式、取主题依赖"（import.meta.env、
+ * exportVars —— 都带环境副作用），这里只做确定性的路径拼接与参数序列化。
+ * 测试 therefore 能直接覆盖拼接逻辑，不必模拟整个 vite/Tauri 环境。
+ *
+ * 为什么是同源相对路径而不是 convertFileSrc 的 asset.localhost：
+ * 2026-10-24 之前走 asset 协议，连踩三个坑（全部实机复现）——
+ *   ① convertFileSrc 把分隔符编成 %2F，浏览器解析相对 URL 时不当分隔符，
+ *      页面内 ./assets/*.js 全解析到协议根，被 asset scope 拒成 403；
+ *   ② asset 协议的 ACAO 写死外壳 origin，ES module script 强制 CORS 模式，
+ *      下载 200 但拒绝执行（且不报 console 错，极难排查）；
+ *   ③ iframe 跨源后 contentDocument 恒 null，空页面检测只能干等超时。
+ * dist/ 内已含 runtime-plugins/（scripts/copy-runtime.mjs 在 vite build
+ * 后拷入），iframe 与外壳同在 tauri.localhost 源下，三个坑一起消失。
  *
  * @param {object} deps
- * @param {(p: string) => string} deps.convertFileSrc  Tauri 的转换函数
- * @param {string} deps.resourceDir                    $RESOURCE 绝对路径
- * @param {string} id                                  插件 id
- * @param {Record<string, string>} [vars]              当前主题变量（取 --bg）
- * @param {string} [base]                              当前主题基调（light/dark）
+ * @param {string} deps.id           插件 id
+ * @param {Record<string, string>} [vars]  当前主题变量（取 --bg）
+ * @param {string} [base]            当前主题基调（light/dark）
  * @returns {string} iframe src（带 nexus-bg / nexus-base 查询参数）
  */
-export function runtimeFrameUrl({ convertFileSrc, resourceDir, id, vars, base }) {
-  // Windows 下 resourceDir 带反斜杠，统一成正斜杠再拼（convertFileSrc
-  // 内部会做 URL 编码，但混用分隔符在某些版本上会拼出坏路径）。
-  const root = String(resourceDir).replace(/\\/g, '/').replace(/\/+$/, '');
-  const url = convertFileSrc(`${root}/${RUNTIME_PLUGINS_DIR}/${id}/index.html`);
+export function runtimeFrameUrl({ id, vars, base }) {
+  const url = `${RUNTIME_PLUGINS_DIR}/${id}/index.html`;
   const q = new URLSearchParams();
   const bg = vars && vars['--bg'];
   if (bg) q.set('nexus-bg', bg);
@@ -2087,30 +2094,20 @@ export function runtimeFrameUrl({ convertFileSrc, resourceDir, id, vars, base })
 /**
  * 解析 iframe 插件的实际 src（三态分流，见 frameSrcMode）。
  *
- * prod 态下 runtime 插件经 convertFileSrc 走 asset 协议：iframe 在
- * asset.localhost 源下，与外壳（tauri.localhost）跨源；桥接层
- * （postMessage + hostOrigin 自报 + e.source 校验）本就按跨源设计，
- * ctx.* API 一行不用改。URL 上带 nexus-bg / nexus-base 参数是为了
- * 首帧底色 —— 跨源后插件页面读不到外壳 localStorage 里缓存的主题色，
- * 深色面板下会先闪一帧白（插件侧 query 优先、localStorage 兜底）。
+ * prod 态下 runtime 插件走**同源相对路径** runtime-plugins/<id>/index.html
+ * （dist/ 内已含，见 scripts/copy-runtime.mjs）：iframe 与外壳同在
+ * tauri.localhost 源下，module script 无 CORS 问题、相对资源解析正常、
+ * contentDocument 可读。桥接层（postMessage + hostOrigin 自报 + e.source
+ * 校验）同源下全部退化成本地直调语义，一行不用改。URL 上带
+ * nexus-bg / nexus-base 参数是为了首帧底色（插件侧 query 优先、
+ * localStorage 兜底）。
  *
- * 非 runtime 插件（registry 未标 runtime）或探测失败时退回 resolveEntry，
- * 让加载失败以可读的形式暴露（404 / 握手超时带诊断），而不是拼一个
- * convertFileSrc(undefined) 的怪 URL。
+ * 非 runtime 插件（registry 未标 runtime）或非 prod 态时退回 resolveEntry，
+ * 让加载失败以可读的形式暴露（404 / 握手超时带诊断）。
  */
 export async function resolveFrameSrc(manifest) {
   const mode = frameSrcMode();
   if (!manifest || !manifest.runtime || mode !== 'prod') {
-    return resolveEntry(manifest.entry);
-  }
-  const dir = await getResourceDir();
-  if (!dir) {
-    console.error('[runtime-plugin] 取不到 resourceDir，退回相对路径加载', manifest.id);
-    return resolveEntry(manifest.entry);
-  }
-  const tauri = await getTauri();
-  if (!tauri || typeof tauri.convertFileSrc !== 'function') {
-    console.error('[runtime-plugin] convertFileSrc 不可用，退回相对路径加载', manifest.id);
     return resolveEntry(manifest.entry);
   }
   let vars = {};
@@ -2119,7 +2116,7 @@ export async function resolveFrameSrc(manifest) {
     vars = exportVars();
     base = themeManager.getResolvedBase && themeManager.getResolvedBase();
   } catch { /* 主题未初始化时不带参数，插件侧自有兜底 */ }
-  return runtimeFrameUrl({ convertFileSrc: tauri.convertFileSrc, resourceDir: dir, id: manifest.id, vars, base });
+  return runtimeFrameUrl({ id: manifest.id, vars, base });
 }
 
 export function readTheme() {
