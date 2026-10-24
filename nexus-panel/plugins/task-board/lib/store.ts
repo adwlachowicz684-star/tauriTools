@@ -39,7 +39,12 @@ export async function saveConfig(ctx: PluginContext, cfg: TbConfig): Promise<TbC
 export async function readStore(ctx: PluginContext, dataDir: string): Promise<TaskStore> {
   const text = await ctx.invoke('tb_read_store', { dir: dataDir });
   if (!text) return normalizeStore(null);
-  return normalizeStore(JSON.parse(text));
+  // 必须走 parseStoreText，不能图省事写 JSON.parse(text)：
+  // 上面那段注释列的后果（SyntaxError 没人看懂 / 渲染成空看板让人以为任务丢了）
+  // 全都发生在这一条路径上 —— 首屏读的就是它。
+  // 曾经这里正是裸 parse，而重试那条路（下面的 parseStoreText）是好的，
+  // 于是「第一次打开崩、重试反而正常」，症状与成因对不上，极难定位。
+  return normalizeStore(parseStoreText(text));
 }
 
 export async function writeStore(ctx: PluginContext, dataDir: string, store: TaskStore): Promise<void> {
