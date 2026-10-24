@@ -21562,6 +21562,171 @@ group('BUG 167 · Mermaid 文件开头的 YAML frontmatter 不是节点');
   eq(f167.fromMermaid('---\ntitle: X\n---\n'), null, '★ 只有 frontmatter 时返回 null（不许凭空造节点）');
 }
 
+group('BUG 168 · Markdown 文件开头的 YAML frontmatter 不是大纲');
+
+{
+  const w168 = await import('./workbook.js');
+  const f168 = await import('./formats.js');
+  const J = (v) => JSON.stringify(v);
+  const flat = (c) => {
+    if (!c) return null;
+    const out = [];
+    const walk = (n, d) => {
+      out.push([n.data?.text, d]);
+      for (const k of n.children || []) walk(k, d + 1);
+    };
+    walk(JSON.parse(c).root, 0);
+    return out;
+  };
+
+  /*
+   * ① Obsidian 最常见的形态：tags / aliases / categories 写成列表。
+   *
+   * 早先这些 `- 设计` 被当成大纲节点，混进脑图结构；而 .md 导入是
+   * 整体替换且不可撤销，一条提示都没有。
+   */
+  const obsidian = '---\ntitle: 项目\ntags:\n  - 设计\n  - 开发\n---\n# 项目启动\n## 需求\n## 排期\n';
+  eq(J(flat(w168.markdownToSheet(obsidian))), J([['项目启动', 0], ['需求', 1], ['排期', 1]]),
+    '★ Obsidian frontmatter 里的 tags 列表不能变成节点（早先「设计」「开发」混进结构）');
+  eq(w168.markdownRowCount(obsidian), 3,
+    '★ 闸门与解析器同一份口径：只数正文 3 行（早先是 5）');
+
+  // ② aliases / 内联数组同样
+  const alias = '---\ntags: [设计, 开发]\naliases:\n  - 别名一\n---\n# 正文\n## 子\n';
+  eq(J(flat(w168.markdownToSheet(alias))), J([['正文', 0], ['子', 1]]),
+    '★ frontmatter 里的 aliases 列表不能变成节点');
+
+  // ③ 对照：没有 frontmatter 时照旧（不能因为加了处理就变了）
+  const plain = '# 项目启动\n## 需求\n## 排期\n';
+  eq(J(flat(w168.markdownToSheet(plain))), J([['项目启动', 0], ['需求', 1], ['排期', 1]]),
+    '无 frontmatter 时照旧');
+
+  /*
+   * ④ 开头是 `---` 但**没有闭合行** → 一行都不吞。
+   *
+   * 那不是 frontmatter（可能是分隔线 / 表格），宁可照旧也不能静默丢内容。
+   */
+  const noClose = '---\n# 甲\n## 乙\n';
+  eq(J(flat(w168.markdownToSheet(noClose))), J([['甲', 0], ['乙', 1]]),
+    '★ 开头 --- 但无闭合 → 一行都不吞（那不是 frontmatter）');
+
+  // ⑤ 中间孤立的 `---` 照旧（水平线，本来就不算节点）
+  const midDash = '# 甲\n---\n## 乙\n---\n## 丙\n';
+  eq(J(flat(w168.markdownToSheet(midDash))), J([['甲', 0], ['乙', 1], ['丙', 1]]),
+    '中间孤立的 --- 照旧（水平线不算节点）');
+
+  /*
+   * ⑥ 只在**开头**认：分块标记之后的成对 `---` 不能吞内容。
+   *
+   * 多画布 .md 里每个块都以 `## 画布：X` 起头，块内出现 `---` 很常见
+   * （章节分隔线）。在那里跳会静默吃掉一个块的全部内容。
+   */
+  const blockDash = '## 画布：A\n---\n### 甲\n---\n### 乙\n';
+  eq(w168.markdownRowCount(blockDash), 2,
+    '★ 只在文件开头认 frontmatter：分块之后成对 --- 不吞内容');
+
+  // ⑦ `...` 同样是 YAML 结束标记
+  const dots = '---\ntitle: X\n...\n# 甲\n## 乙\n';
+  eq(J(flat(w168.markdownToSheet(dots))), J([['甲', 0], ['乙', 1]]),
+    '★ `...` 同样认作结束标记');
+
+  // ⑧ BOM + frontmatter（Windows 记事本存过一遍的 Obsidian 文件）
+  const bom = '\uFEFF---\ntitle: X\ntags:\n  - 甲\n---\n# 乙\n';
+  eq(J(flat(w168.markdownToSheet(bom))), J([['乙', 0]]),
+    '★ BOM + frontmatter 时两个都要处理（早先两处都漏）');
+
+  // ⑨ 只有 frontmatter → 不许凭空造节点
+  eq(w168.markdownRowCount('---\ntitle: X\ntags:\n  - 甲\n---\n'), 0,
+    '★ 只有 frontmatter 时闸门数到 0（不许放行一张空画布）');
+
+  /*
+   * ⑩ 自己的往返不受影响：本工具导出 .md 只用 `#`、从不写 frontmatter。
+   */
+  const self = { root: { data: { text: '中心主题' }, children: [{ data: { text: '甲' }, children: [] }] }, template: 'default', theme: 'fresh-blue' };
+  const md = w168.sheetToMarkdown(self);
+  ok(!/^\s*---/.test(String(md)), '本工具导出 .md 不写 frontmatter');
+  eq(J(flat(w168.markdownToSheet(md))), J([['中心主题', 0], ['甲', 1]]),
+    '★ 自己的往返不受影响');
+
+  /*
+   * ⑪ 共用一份：Markdown / Mermaid / 嗅探三处都调 skipYamlFrontmatter。
+   *
+   * frontmatter 是 YAML 的语法、不随承载格式变；各写一份必然只修一处
+   * （BUG 167 只修了 Mermaid 那一处，Markdown 与嗅探都漏了）。
+   */
+  const fmtSrc = stripCommentsFlat(fs.readFileSync(new URL('./formats.js', import.meta.url), 'utf8'));
+  const wbSrc = stripCommentsFlat(fs.readFileSync(new URL('./workbook.js', import.meta.url), 'utf8'));
+  const calls = (src) => (src.match(/skipYamlFrontmatter\s*\(/g) || []).length;
+  ok(calls(wbSrc) >= 1, '★ Markdown 侧必须复用 skipYamlFrontmatter（不许自己抄一份）');
+  ok(calls(fmtSrc) >= 3, `★ Mermaid / 嗅探 / 定义三处都要用同一份（实测 ${calls(fmtSrc)} 处）`);
+  ok(!/\\uFEFF?\^\\s\*---\\s\*\\$\/\.test\(lines\[/.test(fmtSrc), '★ 不得留第二份 frontmatter 判据');
+
+  // ⑫ 纯函数：无闭合时返回 0
+  eq(f168.skipYamlFrontmatter(['---', 'a: 1']), 0, '纯函数：无闭合返回 0');
+  eq(f168.skipYamlFrontmatter(['# 甲']), 0, '纯函数：不以 --- 开头返回 0');
+  eq(f168.skipYamlFrontmatter(['---', 'a: 1', '---', '# 甲']), 3, '纯函数：返回闭合行的下一行');
+}
+
+group('BUG 169 · 带 frontmatter 的文件，格式嗅探必须跳过它再判');
+
+{
+  const f169 = await import('./formats.js');
+  const mmdFm = '---\ntitle: 项目结构\nconfig:\n  mindmap:\n    colorBy: depth\n---\nmindmap\n  root((项目))\n    设计\n    开发\n';
+
+  /*
+   * ① 把 .mmd 存成 .txt 是本函数注释里点名的常见做法。
+   *    早先第一行是 `---` → 认不出 mindmap → 返回 null → **导不进来**。
+   */
+  eq(f169.detectFormat(mmdFm, 'x.txt'), 'mermaid',
+    '★ 带 frontmatter 的 .mmd 存成 .txt 仍要判成 mermaid（早先返回 null、导不进来）');
+  eq(f169.detectFormat(mmdFm, 'x.mmd'), 'mermaid', '★ 扩展名 .mmd 同样判成 mermaid');
+
+  /*
+   * ② frontmatter 里的 `#` 是 **YAML 注释符**，不是 Markdown 标题。
+   *
+   * 早先它命中 `#{1,6}\s+\S` → 判成 markdown → 解析"成功"但层级全错 ——
+   * 这类是**静默**的，而 .mmd 导入是整体替换且不可撤销。
+   */
+  const withComment = '---\n# 配置段\ntitle: 项目结构\n---\nmindmap\n  root((项目))\n    设计\n';
+  eq(f169.detectFormat(withComment, 'x.txt'), 'mermaid',
+    '★ frontmatter 里的 # 注释不能让文件被判成 markdown（早先静默解析错）');
+  eq(f169.detectFormat(withComment, 'x.md'), 'mermaid',
+    '★ 同上，扩展名是 .md 时也要按内容判成 mermaid');
+
+  // ③ 对照：不带 frontmatter 的 .mmd 照旧
+  const bare = 'mindmap\n  root((项目))\n    设计\n';
+  eq(f169.detectFormat(bare, 'x.txt'), 'mermaid', '对照：不带 frontmatter 的 .mmd 照旧判成 mermaid');
+
+  // ④ 对照：正经 Markdown 仍判 markdown（不能因为改了 body 就回归）
+  eq(f169.detectFormat('# 项目\n## 设计\n', 'x.txt'), 'markdown', '对照：正经 Markdown 仍判 markdown');
+  eq(f169.detectFormat('---\ntitle: 项目\n---\n# 正文\n## 子\n', 'x.md'), 'markdown',
+    '★ 带 frontmatter 的 .md 仍判 markdown（frontmatter 剥掉后正文有标题）');
+
+  /*
+   * ⑤ 对照（BUG 120 那条）：正文里任何一行恰好是 "mindmap" 不算 mermaid。
+   *    改了判据对象（head → body）不能把这条守门改坏。
+   */
+  eq(f169.detectFormat('# 项目\n## 设计\nmindmap\n## 开发', 'x.md'), 'markdown',
+    '★ 对照：正文里的 "mindmap" 一行不能让文件被判成 mermaid（BUG 120）');
+
+  /*
+   * ⑥ 源码契约：三处判据都必须作用于**剥掉 frontmatter 后的 body**。
+   *
+   * ⓘ 这两条为什么是"契约"而不是行为断言：单独把 Markdown 那处退回 head
+   *   在现有用例下**行为等价** —— 因为 mermaid 判据排在前面、带 frontmatter
+   *   的 .mmd 都有 `mindmap` 头行，走不到标题判据那一步（实测：只退回那一处
+   *   全套测试照样绿）。但判据顺序一变、或以后新增判据，它就会静默错判。
+   *   所以在这里锁住"不许再拿 head 去比"，而不是靠造一个刁钻输入去撞。
+   */
+  const dfSrc = stripCommentsFlat(fs.readFileSync(new URL('./formats.js', import.meta.url), 'utf8'));
+  const dfBody = dfSrc.slice(dfSrc.indexOf('export function detectFormat'));
+  ok(!dfBody.includes("head.split('\\n')[0]"),
+    '★ mindmap 判据必须作用于 body（不许再拿 head.split 去比第一行）');
+  ok(!dfBody.includes('#{1,6}\\s+\\S/m.test(head)'),
+    '★ 标题判据必须作用于 body（frontmatter 里的 # 是 YAML 注释，不是标题）');
+}
+
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');
