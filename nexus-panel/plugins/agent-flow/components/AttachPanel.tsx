@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNexus } from '../../../src/nexus-react';
-import { confirm } from '../../js/dialog.js';
+import { confirm } from '../../../js/dialog.js';
 import { looksAbsolute, joinPath } from '../engine/exportDir';
 import { readTextFile } from '../engine/attachmentFile';
 import { readImageDataUrl, readAudioDataUrl, canReadImage, canReadAudio } from '../lib/tauri';
 import {
-  type AttachmentItem, type AttachmentFile,
+  type AttachmentItem, type AttachmentFile, type AttachKind,
   kindOf, extOf, ATTACH_KIND_LABEL,
 } from '../engine/attachmentStore';
-import { probeVideo, formatDuration, formatBitrate, formatFps } from '../../js/media-info.js';
+import { probeVideo, formatDuration, formatBitrate, formatFps } from '../../../js/media-info.js';
 
 /**
  * 附属文件面板（右栏「文件」页签）。
