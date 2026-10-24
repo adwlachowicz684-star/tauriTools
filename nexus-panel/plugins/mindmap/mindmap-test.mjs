@@ -21727,6 +21727,72 @@ group('BUG 169 · 带 frontmatter 的文件，格式嗅探必须跳过它再判'
 }
 
 
+
+group('BUG 170 · 多画布 .md 分块前必须先跳过 YAML frontmatter');
+
+{
+  const w170 = await import('./workbook.js');
+  const J = (v) => JSON.stringify(v);
+  const BOM = '\uFEFF';
+  const titles = (md) => w170.markdownToWorkbook(md).map((s) => s.title);
+  const roots = (md) => w170.markdownToWorkbook(md).map((s) => {
+    try { return JSON.parse(s.content).root.data.text; } catch { return '∅'; }
+  });
+  const kids = (md, i) => {
+    try {
+      return (JSON.parse(w170.markdownToWorkbook(md)[i].content).root.children || [])
+        .map((c) => c.data.text);
+    } catch { return null; }
+  };
+
+  /*
+   * ① 主用例：frontmatter（带 tags 列表）+ 两块。
+   *
+   *   早先的行为：frontmatter 在第一个 `## 画布：` 之前，被塞进 cur.lines，
+   *   等标记一来就 push 成一个 chunk —— 于是凭空多出一张空白画布「画布 1」，
+   *   而 `activeId` 指向它：用户打开看到一片空白，只会以为导入失败了。
+   */
+  const A = '---\ntitle: 项目\ntags:\n  - 设计\n  - 开发\n---\n'
+    + '## 画布：甲\n# 甲根\n## 甲二\n## 画布：乙\n# 乙根\n';
+  eq(titles(A).join('/'), '甲/乙',
+    '★ 带 frontmatter 的多画布 .md：只出这两块（早先凭空多一张「画布 1」）');
+  eq(roots(A).join('/'), '甲根/乙根', '★ 块内容与标题对得上');
+  eq(J(kids(A, 0)), J(['甲二']), '★ 甲块的子节点不受 frontmatter 影响');
+
+  // ② BOM + frontmatter：BUG 149 与 BUG 170 两条要叠在一起生效
+  eq(titles(BOM + A).join('/'), '甲/乙', '★ BOM + frontmatter：两块都要对');
+
+  // ③ frontmatter 里带「画布：」字样 —— 在这个位置它不是分块标记
+  const E = '---\ntitle: 项目\nnote: 画布：甲\n---\n## 画布：乙\n# 乙根\n';
+  eq(titles(E).join('/'), '乙', '★ frontmatter 里的「画布：」不能当成分块标记');
+
+  // ④ 对照：没有 frontmatter 时完全照旧
+  eq(titles('## 画布：甲\n# 甲根\n## 甲二\n').join('/'), '甲', '对照：无 frontmatter 时照旧');
+
+  /*
+   * ⑤ 对照：无分块标记的单画布 .md 照旧（这一路本来就没问题 ——
+   *    mdOutlineRows 那一层已经跳过 frontmatter 了，BUG 168）。
+   */
+  const D = '---\ntitle: 项目\n---\n# 只有一块\n';
+  eq(titles(D).join('/'), '画布 1', '对照：无分块标记时仍是一张（标题取默认）');
+  eq(roots(D).join('/'), '只有一块', '对照：单画布的根照旧');
+
+  // ⑥ 对照：开头孤立的 ---（没有闭合行）不是 frontmatter，一行都不能吞
+  const lone = '---\n# 甲根\n## 画布：乙\n# 乙根\n';
+  eq(titles(lone).join('/'), '画布 1/乙',
+    '★ 无闭合行的 --- 不是 frontmatter：内容一行都不能吞');
+  eq(roots(lone).join('/'), '甲根/乙根', '★ 同上：两块内容都还在');
+
+  // ⑦ 源码契约：分块那一层必须复用共用跳法，不许自己抄一份判据
+  const wsrc170 = stripCommentsFlat(fs.readFileSync(new URL('./workbook.js', import.meta.url), 'utf8'));
+  const i170 = wsrc170.indexOf('export function markdownToWorkbook(');
+  const seg170 = wsrc170.slice(i170, wsrc170.indexOf('\n}', i170) + 2);
+  ok(/skipYamlFrontmatter\(/.test(seg170), '★ 分块层必须复用 skipYamlFrontmatter');
+  eq((wsrc170.match(/function skipYamlFrontmatter/g) || []).length, 0,
+    '★ workbook.js 不得有第二份 skipYamlFrontmatter 定义');
+}
+
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

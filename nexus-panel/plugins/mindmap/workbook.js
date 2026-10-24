@@ -562,7 +562,27 @@ export function markdownToWorkbook(md) {
    * 默认的「画布 1」，而用户文件里明明写着「画布：项目A」。
    */
   const text = stripBom(md);
-  const lines = text.split(/\r?\n/);
+  const rawLines = text.split(/\r?\n/);
+  /*
+   * BUG 170：分块**之前**先跳过文件开头的 YAML frontmatter。
+   *
+   * frontmatter 在**第一个分块标记之前**，所以它会被塞进 `cur.lines`；
+   * 等 `## 画布：X` 一来，`cur` 就被 push 成一个 chunk —— 于是凭空多出
+   * 一张**空白画布**「画布 1」，且 `activeId` 指向它：用户打开看到的是
+   * 一片空白，只会以为导入失败了。
+   *
+   * 更糟的是这里与 `mdOutlineRows`（BUG 168）**各跳一半**：那边跳过之后
+   * frontmatter 一行都不剩（实测 `mdOutlineRows(frontmatter)` = []），
+   * 这一层却又把它留成一个块 —— 于是那个块解析出来是空的「中心主题」，
+   * 静默多一张空画布，一条提示都没有。
+   *
+   * ⓘ 跳法同样是 `formats.skipYamlFrontmatter()`，与 Mermaid（BUG 167）、
+   *   Markdown 大纲（BUG 168）、格式嗅探（BUG 169）**共用一份**；
+   *   各写一份必然只修一处，这正是本项目反复付学费的模式。
+   * ⓘ `flattenBreaks` 先摊一遍：`## 画布：含\r回车` 那类行（BUG 101）
+   *   与 `---\r` 同理，不摊平就判不中。
+   */
+  const lines = rawLines.slice(skipYamlFrontmatter(rawLines.map(flattenBreaks)));
   const chunks = [];
   let cur = { title: null, lines: [] };
 
