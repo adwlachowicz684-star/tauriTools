@@ -183,6 +183,47 @@ export type BuildOptions = {
 };
 
 /**
+ * 取出可用的入参属性表。
+ *
+ * 返回 `null` = **这份 schema 我们渲染不出来**，调用方应当跳过该工具
+ * 而不是硬生成一个"看起来没参数"的节点。
+ *
+ * 三种情形：
+ *   · 根本没给 inputSchema → 当成无参工具（`{}`）。
+ *     规范里它是必填的，但现实中有 server 省略它，而"无参"恰好是
+ *     对这些工具的正确理解（它们真的不要参数），判成坏 schema 会误伤。
+ *   · 明确写了 type 且不是 object → `null`。
+ *     这说明工具要的**不是一组具名参数**（而是一个字符串/数组整体），
+ *     表单渲染不出来；当成无参会发出一份空参数，是发错而不是少发。
+ *   · properties 给了但不是对象 → `null`。
+ *     坏 schema。不拦的话 `Object.keys('abc')` 会得出 `['0','1','2']`，
+ *     凭空生成三个名叫 0/1/2 的字段。
+ */
+function propsOf(schema: McpToolSchema['inputSchema']): Record<string, JsonSchemaProp> | null {
+  if (!schema || typeof schema !== 'object') return {};
+  const t = String((schema as { type?: unknown }).type ?? '').trim().toLowerCase();
+  if (t && t !== 'object') return null;
+  const p = (schema as { properties?: unknown }).properties;
+  if (p === undefined || p === null) return {};
+  if (typeof p !== 'object' || Array.isArray(p)) return null;
+  return p as Record<string, JsonSchemaProp>;
+}
+
+/** 这份 schema 渲染不出来时，给出能直接显示给用户的原因 */
+export function schemaRejectReason(schema: McpToolSchema['inputSchema']): string | null {
+  if (!schema || typeof schema !== 'object') return null;
+  const t = String((schema as { type?: unknown }).type ?? '').trim().toLowerCase();
+  if (t && t !== 'object') {
+    return `入参不是一组具名参数（type=${t}）—— 表单渲染不出来，按无参处理会发错参数`;
+  }
+  const p = (schema as { properties?: unknown }).properties;
+  if (p !== undefined && p !== null && (typeof p !== 'object' || Array.isArray(p))) {
+    return '入参结构里的 properties 不是对象（坏 schema）';
+  }
+  return null;
+}
+
+/**
  * 把一条 MCP 工具 schema 变成节点蓝图。
  *
  * @param server 服务名（用于 type 与展示）
@@ -196,10 +237,13 @@ export function buildBlueprint(
   const toolName = String(tool?.name ?? '').trim();
   if (!toolName) return null;
 
-  const schema = tool?.inputSchema ?? {};
-  const props = schema.properties ?? {};
+  const schema = tool?.inputSchema;
+  const props = propsOf(schema);
+  if (props === null) return null;
   const required = new Set(
-    Array.isArray(schema.required) ? schema.required.map((x) => String(x)) : [],
+    Array.isArray((schema as { required?: unknown })?.required)
+      ? (schema as { required: unknown[] }).required.map((x) => String(x))
+      : [],
   );
 
   const fields: BlueprintField[] = [];
@@ -227,6 +271,28 @@ export function buildBlueprint(
       f.placeholder = String(prop.default);
     }
     fields.push(f);
+  }
+
+  /*
+   * required 里点名、properties 里却没有的参数 —— **补一个文本框**。
+   *
+   * 不补的话它会同时消失在两个地方：面板上没有这个格子（用户填不了），
+   * 而 missingRequired 只遍历 fields、也查不到它（于是"校验通过"）。
+   * 结果是一个死局：执行时把缺参数的请求发给 server，server 报
+   * "缺少必填参数 X"，而用户根本无处可填 X，也不会知道是 schema 的问题。
+   *
+   * 补成文本是猜的（schema 没给类型），但猜了至少能用、且校验得到；
+   * hint 明说这是补的，用户才知道该去核对原工具的定义。
+   */
+  for (const key of required) {
+    if (Object.prototype.hasOwnProperty.call(props, key)) continue;
+    fields.push({
+      key,
+      label: key,
+      kind: 'text',
+      required: true,
+      hint: 'schema 里声明为必填、却没给出定义 —— 按文本处理（请核对原工具的参数）',
+    });
   }
 
   const serverName = String(server ?? '').trim() || 'mcp';
@@ -259,6 +325,11 @@ export function buildBlueprints(
       skipped.push({ name: '（无名）', reason: '工具没有名字' });
       continue;
     }
+    const bad = schemaRejectReason(t?.inputSchema);
+    if (bad) {
+      skipped.push({ name, reason: bad });
+      continue;
+    }
     const bp = buildBlueprint(server, t, opts);
     if (!bp) {
       skipped.push({ name, reason: '生成失败' });
@@ -277,6 +348,38 @@ export function buildBlueprints(
     list.push(bp);
   }
   return { list, skipped };
+}
+
+/**
+ * 跨服务去重：同 type 只留第一个。
+ *
+ * `buildBlueprints` 的 seen 只在**同一批（同一个 server）内**查重，
+ * 而 slugify 会把 `Notion MCP` 与 `notion.mcp` 压成同一个片段 ——
+ * 两个服务名压成同 slug、工具又同名时，两条蓝图得到**完全相同的 type**。
+ *
+ * 后果比"少一个工具"糟：注册表按 type 存，后者**静默覆盖**前者，
+ * 而侧栏是按原始服务名分组的，于是界面上两个条目都在、计数也各算 1，
+ * 拖出来的却是同一个（后注册的那个）。用户以为拖的是 A 的工具，
+ * 调的是 B 的 —— 全程不报错。
+ *
+ * 所以汇总后必须再排一次队，撞掉的**说出来**而不是悄悄丢掉。
+ */
+export function dedupeByType(
+  list: NodeBlueprint[],
+): { list: NodeBlueprint[]; dropped: NodeBlueprint[] } {
+  const keep: NodeBlueprint[] = [];
+  const dropped: NodeBlueprint[] = [];
+  const seen = new Set<string>();
+  for (const b of list ?? []) {
+    const t = String(b?.type ?? '');
+    if (t && seen.has(t)) {
+      dropped.push(b);
+      continue;
+    }
+    if (t) seen.add(t);
+    keep.push(b);
+  }
+  return { list: keep, dropped };
 }
 
 /* ------------------------------------------------------------------ */

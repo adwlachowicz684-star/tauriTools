@@ -24,7 +24,7 @@
 
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 import {
-  buildBlueprints, diffBlueprints, mergeBlueprints, isMcpType,
+  buildBlueprints, dedupeByType, diffBlueprints, mergeBlueprints, isMcpType,
   type NodeBlueprint, type McpToolSchema,
   MCP_SINGLE_TIMEOUT_SEC, MCP_HANDSHAKE_CALLS, MCP_TIMEOUT_MARGIN_SEC,
 } from './mcpTools';
@@ -272,6 +272,11 @@ export async function refreshAll(opts: RefreshOptions): Promise<RefreshOutcome> 
 
   const fresh: NodeBlueprint[] = [];
   let anyOk = false;
+  /*
+   * 本轮**新生成**的蓝图单独收集 —— 它们要跨服务排一次队（见下面 dedupeByType）。
+   * 旧快照不同批参与：那是历史遗留，去重会把还在用的老节点挤掉。
+   */
+  const made: NodeBlueprint[] = [];
 
   for (const s of servers) {
     const name = String(s?.name ?? '').trim();
@@ -305,7 +310,7 @@ export async function refreshAll(opts: RefreshOptions): Promise<RefreshOutcome> 
         name,
       );
       const { list, skipped } = buildBlueprints(name, tools ?? []);
-      for (const b of list) fresh.push(b);
+      for (const b of list) made.push(b);
       for (const sk of skipped) {
         // 单个工具坏掉只记一条，不影响这个 server 的其它工具
         failures.push({ server: name, reason: `工具「${sk.name}」：${sk.reason}` });
@@ -327,6 +332,25 @@ export async function refreshAll(opts: RefreshOptions): Promise<RefreshOutcome> 
   if (!anyOk) {
     return { ok: false, list: previous, diffs: [], failures, usedFallback: true };
   }
+
+  /*
+   * 跨服务排队：**只在所有服务都问完之后**做。
+   *
+   * buildBlueprints 里的 seen 只覆盖单个服务（它一次只接一个服务的清单），
+   * 而两个服务名压成同 slug、工具又同名时会得到同一个 type ——
+   * 注册表按 type 存，后者静默覆盖前者；侧栏却按原始服务名分成两组，
+   * 于是两个条目都在、计数各算 1，拖出来却是同一个。
+   *
+   * 撞掉的说出来（记进 failures），不悄悄丢。
+   */
+  const deduped = dedupeByType(made);
+  for (const b of deduped.dropped) {
+    failures.push({
+      server: b.server,
+      reason: `工具「${b.tool}」与另一个服务的工具压成了同一个标识（${b.type}），已跳过 —— 不排队的话注册表里会静默覆盖`,
+    });
+  }
+  for (const b of deduped.list) fresh.push(b);
 
   /*
    * 合并后标 stale：**只在"这个 server 刷新成功了、但工具已不在新列表里"时标**。
