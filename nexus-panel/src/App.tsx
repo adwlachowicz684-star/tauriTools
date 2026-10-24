@@ -235,7 +235,7 @@ export default function App() {
 
       const saved = localStorage.getItem(KEY_SIDEBAR_OPEN);
       setSidebarOpen(saved === null ? true : saved === '1');
-      const accent = localStorage.getItem('nexus:accent');
+      const accent = themeApi.getAccent();
       if (accent) document.documentElement.style.setProperty('--accent', accent);
 
       const last = localStorage.getItem(KEY_LAST_PLUGIN);

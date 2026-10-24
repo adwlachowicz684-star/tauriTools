@@ -9,6 +9,7 @@ import {
   createHost, loadRegistry, getCustomPlugins, saveCustomPlugins,
   takeCustomPluginWriteError, customPluginWriteFailMsg,
   filterByRuntime, visiblePlugins, isInsideTauri, escapeHtml,
+  KEY_LAST_PLUGIN, KEY_SIDEBAR_OPEN,
 } from './host.js';
 import {
   applyTheme, setAccent, getCurrent, exportVars, getBase,
@@ -704,12 +705,12 @@ async function initToolbar() {
 (async function () {
   await init();
 
-  const saved = localStorage.getItem('nexus:sidebar-open');
+  const saved = localStorage.getItem(KEY_SIDEBAR_OPEN);
   $('#body').classList.toggle('open', saved === null ? true : saved === '1');
 
   $('#side-toggle').onclick = () => {
     const open = $('#body').classList.toggle('open');
-    localStorage.setItem('nexus:sidebar-open', open ? '1' : '0');
+    localStorage.setItem(KEY_SIDEBAR_OPEN, open ? '1' : '0');
     // 收起→展开时，正挂着的 nav-item 提示要立刻收掉：名字已显示出来了
     refreshTooltip();
   };
@@ -747,13 +748,13 @@ async function initToolbar() {
 
   window.addEventListener('hashchange', route);
   if (!location.hash) {
-    const last = localStorage.getItem('nexus:last-plugin');
+    const last = localStorage.getItem(KEY_LAST_PLUGIN);
     location.hash = last && host.getPlugins().some((p) => p.id === last)
       ? last : (host.getPlugins()[0]?.id || '');
   }
   await route();
   window.addEventListener('beforeunload', () =>
-    localStorage.setItem('nexus:last-plugin', host.state.activeId));
+    localStorage.setItem(KEY_LAST_PLUGIN, host.state.activeId));
 
   /* 外壳快捷键。抽成命令表，是为了让 iframe 插件转发回来的按键
      （焦点在沙箱里时，主窗口收不到事件）走同一套逻辑。 */
