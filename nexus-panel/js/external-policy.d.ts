@@ -53,7 +53,22 @@ export function kindOfDirective(d?: string): 'script' | 'frame' | 'media' | 'ima
 export function suggestCsp(policy?: Policy): string;
 export const LOCAL_HOSTS: Set<string>;
 
-/** 外壳注入的运行时扩展（原生 shell 提供） */
-export declare const rescanAll: () => Promise<void>;
-export declare const scanPlugin: (p: { entry: string; id: string; name?: string }) => Promise<any>;
-export declare const setRefreshHandler: (fn: (() => void) | null) => void;
+/*
+ * ⚠️ 下面三个**刻意不声明为本模块的导出**。
+ *
+ * 它们不是 `js/external-policy.js` 导出的东西 —— 该文件里查无此名，
+ * 实际是外壳在挂 `window.__NEXUS__.external` 时**注入**进去的
+ * （原生壳见 js/shell.js 的 `external: { ...extPolicy, rescanAll, … }`，
+ *   React 壳见 src/App.tsx 的同名字段）。
+ *
+ * 早先这里写着三条 `export declare const`，后果是那类最难的漂移：
+ *   · `import { rescanAll } from '../js/external-policy.js'` —— **类型检查通过**
+ *     （d.ts 白纸黑字声明了），运行时却是 `undefined`，调用即崩；
+ *   · 而它比"两边都没有"更难查：代码提示里有、自动补全给得出来，
+ *     只有真跑起来才发现是空的。
+ *
+ * 真正的声明在 **src/global.d.ts**，那里用
+ * `typeof extPolicy & { rescanAll: …; scanPlugin: …; setRefreshHandler: … }`
+ * 表达"模块导出的 + 外壳注入的"这两层 —— 形状与注入的来源一致，
+ * 谁新增注入项就去那里补，不要回到本文件。
+ */

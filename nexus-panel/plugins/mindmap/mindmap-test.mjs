@@ -1052,7 +1052,9 @@ group('回收孤儿附件 · 快照读不全就不许动手（BUG 164）');
   eq(noEnum.list, null, '★ 列举失败时 list 是 null（空数组会被当成「真的没有快照」）');
 
   // ④ index.js 的 ③ 必须走严格版，且读不全就中止（剥注释后再判：注释里提到旧写法）
-  const seg = idx.slice(idx.indexOf('// ③ 历史快照'), idx.indexOf('// ④ 用户图标'));
+  ok(idx.includes('const snap = await store.listBackupsStrict();'), '③ 段起点锚点存在（改了切片就落空）');
+  ok(idx.includes('const lib = await picons.loadLibraryStrict();'), '③ 段终点锚点存在');
+  const seg = idx.slice(idx.indexOf('const snap = await store.listBackupsStrict();'), idx.indexOf('const lib = await picons.loadLibraryStrict();'));
   ok(seg.length > 100, '定位到 ③ 那一段');
   const code = stripCommentsFlatJs(seg);
   ok(/listBackupsStrict\(\)/.test(code), '★ ③ 走 listBackupsStrict（不是会静默缺席的 listBackups）');
@@ -1061,7 +1063,8 @@ group('回收孤儿附件 · 快照读不全就不许动手（BUG 164）');
   ok(/aborted: true/.test(code), '★ 中止时回 aborted:true（调用方据此说话）');
 
   // ⑤ ② 与 ③ 口径一致：脑图文件读不出是中止，快照读不出同样必须是中止
-  const seg2 = idx.slice(idx.indexOf('// ② 其余仍在列表里的文件'), idx.indexOf('// ③ 历史快照'));
+  ok(idx.includes('for (const fit of fileIndex) {'), '② 段起点锚点存在');
+  const seg2 = idx.slice(idx.indexOf('for (const fit of fileIndex) {'), idx.indexOf('const snap = await store.listBackupsStrict();'));
   ok(/aborted: true/.test(stripCommentsFlatJs(seg2)), '② 读不出就中止（与 ③ 同一条规矩）');
 
   // ⑥ 中止要说出来：deleteFile / gcAssets 两处调用方
@@ -1119,7 +1122,7 @@ group('回收孤儿附件 · 图标库读不全就不许动手（BUG 165）');
   }
 
   // ③ ④ 必须走严格版，且读不出来就中止（剥注释再判：注释里提到旧写法）
-  const seg = idx.slice(idx.indexOf('// ④ 用户图标'), idx.indexOf('// ④ 用户图标') + 1400);
+  const seg = idx.slice(idx.indexOf('const lib = await picons.loadLibraryStrict();'), idx.indexOf('const lib = await picons.loadLibraryStrict();') + 1400);
   ok(seg.length > 200, '定位到 ④ 那一段');
   const code = stripCommentsFlatJs(seg);
   ok(/loadLibraryStrict\(\)/.test(code), '★ ④ 走 loadLibraryStrict（不是会静默缺席的 loadLibrary）');
@@ -1129,7 +1132,7 @@ group('回收孤儿附件 · 图标库读不全就不许动手（BUG 165）');
   ok(/ic\.assetId/.test(code), '④ 仍要把用户图标的 assetId 算进 live');
 
   // ④ 与 ③ 口径一致：快照读不出是中止，图标库读不出同样必须是中止
-  const seg3 = idx.slice(idx.indexOf('// ③ 历史快照'), idx.indexOf('// ④ 用户图标'));
+  const seg3 = idx.slice(idx.indexOf('const snap = await store.listBackupsStrict();'), idx.indexOf('const lib = await picons.loadLibraryStrict();'));
   ok(/aborted: true/.test(stripCommentsFlatJs(seg3)), '③ 读不全就中止（与 ④ 同一条规矩）');
 
   // ⑤ 界面侧也要说：图标库浮层读失败不能让自定义图标默默消失
