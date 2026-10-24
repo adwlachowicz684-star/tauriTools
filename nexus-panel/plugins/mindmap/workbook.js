@@ -18,7 +18,7 @@ import { decodeRefList } from './io.js';
  * 两处必须用同一个值：各写一份的话，改了一处不改另一处，
  * Markdown 往返就会凭空多出/少掉「未命名」。
  */
-import { EMPTY_NODE_TEXT, inlineText, flattenBreaks, ROOT_TEXT, rowsWithVirtualRoot, stripBom } from './formats.js';
+import { EMPTY_NODE_TEXT, inlineText, flattenBreaks, ROOT_TEXT, rowsWithVirtualRoot, stripBom, skipYamlFrontmatter } from './formats.js';
 
 /*
  * 中心主题文案住在 formats.js（那边导入侧插虚拟根要用，而它不能反过来
@@ -296,7 +296,28 @@ export function mdOutlineRows(md) {
    * **整行被跳过**；首行若正好是分块标记 `## 画布：X`，那张画布的标题就
    * 静默变成默认「画布 1」。Windows 记事本存 UTF-8 默认带 BOM，很常见。
    */
-  for (const rawLine of stripBom(md).split(/\r?\n/)) {
+  const src = stripBom(md).split(/\r?\n/);
+  /*
+   * BUG 168：跳过文件开头的 **YAML frontmatter**（`---` … `---` / `...`）。
+   *
+   * Obsidian / Typora / Notion / Hugo / Jekyll 导出的 `.md` 几乎都带这一段，
+   * 里面写 title / tags / aliases / date。早先不认它，于是其中的**列表项**
+   * 被当成大纲节点混进脑图：
+   *
+   *   '---\ntitle: 项目\ntags:\n  - 设计\n  - 开发\n---\n# 项目启动'
+   *     修复前 → 中心主题 >（设计、开发、项目启动）
+   *     修复后 → 项目启动
+   *
+   * 而 `tags:` / `aliases:` / `categories:` 下面写成列表正是 frontmatter 里
+   * 最常见的写法。导入又是整体替换且不可撤销，一条提示都没有。
+   *
+   * ⓘ 跳法在 formats.skipYamlFrontmatter() 里，与 Mermaid（BUG 167）和
+   *   格式嗅探（BUG 169）**共用同一份** —— 各写一份必然只修一处。
+   *
+   * ⓘ 只在**开头**跳、且必须有闭合行，所以多画布文件的分块内容不受影响。
+   *   本工具自己导出 .md 从不写 frontmatter，往返不受影响。
+   */
+  for (const rawLine of src.slice(skipYamlFrontmatter(src))) {
     /*
      * BUG 101：先把行里的换行终止符摊平成空格，再判"是不是大纲行"。
      *

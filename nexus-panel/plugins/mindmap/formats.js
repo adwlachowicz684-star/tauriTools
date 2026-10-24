@@ -184,6 +184,51 @@ export const flattenBreaks = (v) => String(v ?? '').replace(/[\r\n\u2028\u2029]+
 export const stripBom = (v) => String(v ?? '').replace(/^\uFEFF/, '');
 
 /**
+ * YAML frontmatter 之后的第一行下标（纯函数，可测）。
+ *
+ * 返回 **0** 表示「没有 frontmatter，一行都不吞」。
+ *
+ * ------------------------------------------------------------------
+ * BUG 168：Markdown 侧的 frontmatter 必须跳过。
+ *
+ * Obsidian / Typora / Notion / Hugo / Jekyll 导出的 `.md` **几乎都带**
+ * 开头这一段（`---` 之间写 title / tags / aliases / date）。早先不认它，
+ * 于是里面那些**列表项**被当成大纲节点混进脑图：
+ *
+ *   '---\ntitle: 项目\ntags:\n  - 设计\n  - 开发\n---\n# 项目启动\n## 需求'
+ *     修复前 → 中心主题 >（设计、开发、项目启动 >（需求））
+ *     修复后 → 项目启动 >（需求）     ← frontmatter 一个节点都不出
+ *
+ * 而 `tags:` / `aliases:` / `categories:` 下面写成列表是 frontmatter 里
+ * **最常见**的写法，所以撞的不是刁钻输入。导入又是整体替换且不可撤销 ——
+ * 用户拿到一棵混着「设计」「开发」的怪树，一条提示都没有。
+ *
+ * BUG 169：格式嗅探同样要跳过它 —— 带 frontmatter 的 `.mmd` 被判成
+ * `null`（导不进来）或 `markdown`（静默解析错），见 detectFormat 的说明。
+ * ------------------------------------------------------------------
+ *
+ * ⓘ 与 Mermaid 那条（BUG 167）**共用这一份**：frontmatter 是 YAML 的语法，
+ *   不随承载格式变。各写一份必然只修一处，这正是本项目反复付学费的模式。
+ *
+ * ⓘ 只在**开头**认，且**必须有闭合行**：找不到闭合就返回 0、一行都不吞
+ *   —— 那不是 frontmatter（可能是分隔线 / 表格），宁可照旧也不能静默丢内容。
+ *   本工具自己导出从不写 frontmatter，所以自己的往返不受影响。
+ *
+ * @param {string[]} lines 已剥 BOM、按行拆开的文本
+ * @returns {number} 正文起始下标
+ */
+export function skipYamlFrontmatter(lines) {
+  let head = 0;
+  while (head < lines.length && !String(lines[head] ?? '').trim()) head++;
+  if (head >= lines.length || !/^\s*---\s*$/.test(lines[head])) return 0;
+  for (let i = head + 1; i < lines.length; i++) {
+    // `...` 同样是 YAML 文档结束标记
+    if (/^\s*(---|\.\.\.)\s*$/.test(lines[i])) return i + 1;
+  }
+  return 0;
+}
+
+/**
  * 节点文字规范化：换行类字符及其前后空白 → 单个空格，并 trim。
  *
  * 导出节点文字 / 画布标题用这个；判「整行是不是标题」用 flattenBreaks。
@@ -898,15 +943,12 @@ export function fromMermaid(text) {
    *   本工具自己导出 .mmd 从不写 frontmatter，所以自己的往返不受影响。
    */
   const lines = String(text || '').split(/\r?\n/);
-  let start = 0;
-  let head = 0;
-  while (head < lines.length && !lines[head].trim()) head++;
-  if (head < lines.length && /^\s*---\s*$/.test(lines[head])) {
-    for (let i = head + 1; i < lines.length; i++) {
-      // `...` 同样是 YAML 文档结束标记
-      if (/^\s*(---|\.\.\.)\s*$/.test(lines[i])) { start = i + 1; break; }
-    }
-  }
+  /*
+   * 跳法本身在 `skipYamlFrontmatter()` 里 —— 与 Markdown 侧（BUG 168）
+   * 和格式嗅探（BUG 169）**共用同一份**。frontmatter 是 YAML 的语法，
+   * 不随承载格式变；各写一份必然只修一处。
+   */
+  const start = skipYamlFrontmatter(lines);
   for (const raw of lines.slice(start)) {
     if (!raw.trim()) continue;
     /*
@@ -1582,6 +1624,27 @@ export function detectFormat(text, name = '') {
   const src = String(text || '');
   const head = src.slice(0, 4096).trim();
   const ext = (String(name).match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase() || '';
+  /*
+   * BUG 169：带 **YAML frontmatter** 的文件必须先剥掉这一段再嗅探。
+   *
+   * 早先直接拿 `head.split('\n')[0]` 去比 `mindmap`，于是带 frontmatter 的
+   * .mmd（第一行是 `---`）**根本认不出来**：
+   *
+   *   · 扩展名是 .mmd → 走兜底碰巧对了
+   *   · 扩展名是 .txt → 返回 **null**，文件直接导不进来
+   *     （把 .mmd 存成 .txt 是本函数注释里点名的常见做法）
+   *   · frontmatter 里有 `# 注释`（YAML 的注释符）→ 命中下面的
+   *     `#{1,6}\s+\S` → 判成 **markdown** —— 解析"成功"但层级全错，
+   *     这类是**静默**的，导入又是整体替换且不可撤销
+   *
+   * 剥掉之后第一行才是 `mindmap`，两种扩展名都判对。
+   *
+   * ⓘ 用的是 head（前 4096 字符）：frontmatter 一般远短于此；真被截断时
+   *   skipYamlFrontmatter 找不到闭合行、返回 0，退回原样 —— 是降级不是错判。
+   *   JSON / XML 那几条仍按 head 原文判（它们不会有 frontmatter）。
+   */
+  const headLines = head.split('\n');
+  const body = headLines.slice(skipYamlFrontmatter(headLines)).join('\n');
 
   // 内容嗅探优先
   if (head.startsWith('{') || head.startsWith('[')) {
@@ -1592,8 +1655,8 @@ export function detectFormat(text, name = '') {
   const rootName = rootElementName(head);
   if (rootName === 'opml') return 'opml';
   if (rootName === 'map') return 'freemind';
-  // Mermaid mindmap 的「mindmap」是**第一行**
-  if (/^mindmap\s*$/i.test(head.split('\n')[0] || '')) return 'mermaid';
+  // Mermaid mindmap 的「mindmap」是**第一行**（frontmatter 之后的第一行，BUG 169）
+  if (/^mindmap\s*$/i.test(body.split('\n')[0] || '')) return 'mermaid';
   if (/^@startmindmap\b/i.test(firstMeaningfulLine(head))) return 'plantuml';
   /*
    * **ATX 标题必须先于「裸 * 列表」判断** —— 顺序反了会丢内容。
@@ -1609,9 +1672,9 @@ export function detectFormat(text, name = '') {
    * 判据：PlantUML mindmap 的行首是 `*`/`**`，**不会**出现 `# 标题`；
    * 而带 `#` 标题的文件必然是 Markdown。两者同时出现时，Markdown 是唯一合理解。
    */
-  if (/^\s*#{1,6}\s+\S/m.test(head)) return 'markdown';
+  if (/^\s*#{1,6}\s+\S/m.test(body)) return 'markdown';
   // PlantUML 片段（无包裹标记）—— 走到这里说明没有 ATX 标题，不会误吃 Markdown
-  if (/^\*+\s+\S/m.test(head)) return 'plantuml';
+  if (/^\*+\s+\S/m.test(body)) return 'plantuml';
 
   // 兜底：按扩展名
   if (ext === 'xmind') return 'xmind';
