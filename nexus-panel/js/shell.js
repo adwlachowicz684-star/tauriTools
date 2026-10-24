@@ -536,6 +536,11 @@ function openAddDialog() {
           <option value="iframe">沙箱 iframe（默认·推荐）</option>
           <option value="module">同页模块（可直调 Rust）</option>
         </select></div>
+      <div><div class="p-muted" style="margin-bottom:6px">需要的后端命令（可选，逗号分隔）</div>
+        <input class="p-input" id="p-cmds" placeholder="app_version, fs_op"></div>
+      <div class="p-muted" style="font-size:11px;line-height:1.6">
+        不填则只能用 app_version / rust_ping 两个只读命令。填了就等于<b>你把这项能力授权给这个插件</b>，只装信得过的插件。
+      </div>
     </div>
     </div>
     <div class="p-muted" style="font-size:11px;line-height:1.6;margin-top:10px">
@@ -575,6 +580,16 @@ function openAddDialog() {
       name, entry, custom: true,
       type: box.querySelector('#p-type').value,
       icon: box.querySelector('#p-icon').value.trim() || '◌',
+      /*
+       * 需要的后端命令：与 React 壳（AddPluginDialog）同一条规矩。
+       * 没有这个字段的话，无构建模式装的自定义插件永远只有
+       * app_version/rust_ping 两个只读命令 —— 调 fs_op 等被
+       * invoke-policy 静默拦下，表现是「插件没反应」，
+       * 而用户想不到是权限没给。
+       * 存进清单（manifest.commands）：checkInvoke 认的就是它。
+       */
+      commands: (box.querySelector('#p-cmds').value || '')
+        .split(/[,，]/).map((s) => s.trim()).filter(Boolean),
     };
     const saved = saveCustomPlugins([...getCustomPlugins(), p]);
     const werr = takeCustomPluginWriteError();
@@ -601,10 +616,21 @@ window.__nexusRemovePlugin = async (id) => {
     toast(customPluginWriteFailMsg('移除', '', takeCustomPluginWriteError()), 'err');
     return r;
   }
-  toast('已移除插件', 'ok');
+  /*
+   * MCP 网关协作结局在这里说（chokepoint 知道做了什么）——
+   * 调用方（设置页两版）只负责"移除前确认"，不重复弹 toast。
+   * 失败要说清残留与补救路径，但不能把「插件已卸」说成失败。
+   */
+  if (r.mcp?.status === 'cleaned') {
+    toast('已移除插件，其 MCP 网关服务已一并注销', 'ok');
+  } else if (r.mcp?.status === 'failed') {
+    toast(`插件已移除，但 MCP 服务「${id}」注销失败：${r.mcp.error ?? ''}。可去「设置 → MCP 网关」手动移除`, 'warn');
+  } else {
+    toast('已移除插件', 'ok');
+  }
   await init();
   navigate(host.getPlugins()[0]?.id || 'home');
-  /* 把 MCP 协作结果透出去：设置页要据此说"已一并注销"还是"残留待手动清理" */
+  /* 把结果透出去：调用方要据此刷新列表 */
   return r;
 };
 
@@ -734,7 +760,11 @@ async function initToolbar() {
   const shellCommands = {
     'mod+b': () => { $('#side-toggle').click(); },
     'mod+r': () => { if (host.state.activeId) host.mount(host.state.activeId); },
-    'mod+,': () => { if (host.hasSettings()) openPluginSettings(); },
+    /* 无 hasSettings() 门槛：抽屉里除插件自有设置，还有外壳固定提供的
+       沙箱 / 插件主题区块，对任何插件都有内容（与 React 壳一致 ——
+       带门槛的话同一快捷键两壳行为不同，原生壳下对无设置面板的插件
+       「按了没反应」）。 */
+    'mod+,': () => { openPluginSettings(); },
     /* 藏到托盘。
        ------------------------------------------------------------------
        只能"藏"，不能"唤"：窗口隐藏后它**收不到任何键盘事件**，

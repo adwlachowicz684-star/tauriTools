@@ -153,8 +153,26 @@ t('React 版说明标注立即生效', /立即生效/.test(src('src/components/S
 console.log('\n=== 8. 调用点接线 ===');
 const hostSrc = src('js/host.js');
 t('init 消息用 varsForPlugin', /type: 'init', manifest, theme: varsForPlugin\(manifest\.id\)/.test(hostSrc));
-t('pushTheme 用 varsForPlugin', /send\(iframe, \{ type: 'theme', theme: varsForPlugin\(pluginId\)/.test(hostSrc));
+t('pushTheme 用 varsForPlugin', /send\(iframe,\s*\{\s*type: 'theme',\s*theme: varsForPlugin\(pluginId\)/.test(hostSrc));
 t('module 容器应用了内联变量', /applyThemeVarsTo\(container,\s*varsForPlugin\(manifest\.id\)/.test(hostSrc));
+
+/*
+ * 8b. 主题 id 下发链（2026-10-17 深查补）：
+ * 沙箱 iframe 的 document 本来没有 data-theme（宿主主文档上有但读不到），
+ * 按主题缓存渲染结果的插件（md 的 mermaid）因此永判不出主题变更 ——
+ * 切主题后图颜色冻结且不报错。链路：host 在 init/theme 消息带 themeId →
+ * SDK 写进 data-theme + 派发 nexus-theme-applied。
+ */
+console.log('\n=== 8b. 主题 id 下发链（沙箱按主题重画）===');
+const sdkSrc = src('js/plugin-sdk.js');
+t('init 消息带 themeId', /themeId: currentThemeId\(\)/.test(hostSrc));
+t('theme 推送消息带 themeId', /themeId: currentThemeId\(\)/.test(hostSrc));
+t('SDK 把 themeId 写进 iframe 的 data-theme',
+  /document\.documentElement\.dataset\.theme = themeId/.test(sdkSrc));
+t('SDK 应用完派发 nexus-theme-applied（React 不因 DOM 直改而重渲染，插件要这个信号）',
+  /dispatchEvent\(new CustomEvent\('nexus-theme-applied'/.test(sdkSrc));
+t('applyThemeVars 收第三个参数 themeId',
+  /function applyThemeVars\(vars, hostBase, themeId\)/.test(sdkSrc));
 
 
 /* ---------- 9. 目标主题被改基调 → 按**实际**基调判 ---------- */

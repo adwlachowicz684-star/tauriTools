@@ -594,7 +594,17 @@ export function installedVersionsOf(installed, item) {
   const spec = specOf(item && item.install);
   if (!spec) return [];
   const list = Array.isArray(installed) ? installed : [];
-  return list.filter((d) => d && d.name === spec.name).slice().sort((x, y) => cmpVersion(x.version, y.version));
+  /*
+   * 按**安全名**比对（与 orphanDepsOf 同一口径，见那里的说明）。
+   * 直接比 `d.name === spec.name` 的话：scope 包（`@plantuml/core`，
+   * 后端从文件名还原出的是 `_plantuml_core`）永远匹配不上 ——
+   * DepsCard 该行永远显示未装、没有移除入口，而 md 插件
+   * requireDep 也找不到它，**静默回退打包版**（运行时安装白装）。
+   * 测试 mock 用真实名所以一直不红，是这个 bug 能躺着的根源。
+   */
+  const want = safeNameOf(spec.name);
+  return list.filter((d) => d && safeNameOf(String(d.name)) === want)
+    .slice().sort((x, y) => cmpVersion(x.version, y.version));
 }
 
 /**
@@ -645,10 +655,19 @@ export function toAssetUrl(ctx, path) {
   return `http://asset.localhost/${p.replace(/^\/+/, '')}`;
 }
 
-/** 从已装列表里找某一条（返回整条，含伴生信息）。 */
+/** 从已装列表里找某一条（返回整条，含伴生信息）。
+ *
+ * 按**安全名**比对：后端 list 从文件名还原出的 name 是安全化过的
+ * （`@plantuml/core` → `_plantuml_core`，见 orphanDepsOf 的说明），
+ * 用真实名找永远找不到 —— scope 包（当前清单里唯一可装的 scope 包
+ * 就是它）装上却取不到，调用方静默回退打包版。
+ */
 export async function resolveRuntimeDep(ctx, name, version) {
   const { list } = await listRuntimeDeps(ctx);
-  const hit = list.find((d) => d && d.name === name && (!version || d.version === version));
+  const want = safeNameOf(String(name || ''));
+  const hit = list.find(
+    (d) => d && safeNameOf(String(d.name)) === want && (!version || d.version === version),
+  );
   return hit || null;
 }
 

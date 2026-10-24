@@ -696,6 +696,54 @@ fn safe_idx(idx: &str) -> Option<&str> {
     (idx.len() == 8 && idx.bytes().all(|b| b.is_ascii_hexdigit())).then_some(idx)
 }
 
+/// 校验「裸文件名」：改名 / 新建这类只该动**所在目录下一层**的操作，
+/// 输入必须是一个单纯的文件名。
+///
+/// 为什么必须收口：`parent.join(newname)` 在 newname 含分隔符或 `..` 时
+/// 会把文件搬到别的目录（`子目录\x.pdf`）甚至父目录之上（`..\x.pdf`）——
+/// 用户以为在原地改名，实际文件被挪走、可能覆盖别人的文件。
+/// 前端 prompt 的输入同样不可信（那是体验层，不是边界）。
+///
+/// 拒绝：空 / 含 / \ / 首尾空格或点 / Windows 非法字符 <>:"|?* / 控制字符 /
+/// 保留设备名（CON PRN AUX NUL COM1-9 LPT1-9）/ 超长（> 200 字符）。
+///
+/// 刻意**不静默 trim**：调用方拿去 join 的是原始串，这里改成"修好了"
+/// 只会让磁盘名与用户输入不一致。要 trim 是前端的事（体验层）。
+fn validate_bare_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name.len() > 200 {
+        return Err(if name.is_empty() {
+            "文件名不能为空".into()
+        } else {
+            "文件名过长（上限 200 字符）".into()
+        });
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err("文件名不能包含路径分隔符（只能改当前目录下的这一层）".into());
+    }
+    if name.contains("..") {
+        return Err("文件名不能包含 ..".into());
+    }
+    if name != name.trim_matches(|c: char| c == ' ' || c == '.') {
+        return Err("文件名不能以空格或点开头/结尾（Windows 会静默去掉，磁盘名与界面名会不一致）".into());
+    }
+    if name.chars().any(|c| c.is_control()) {
+        return Err("文件名不能包含控制字符".into());
+    }
+    if name.chars().any(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')) {
+        return Err(r#"文件名不能包含 < > : " | ? * 这些字符（Windows 文件名非法）"#.into());
+    }
+    // Windows 保留设备名（含带扩展名的 CON.txt）
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    const RESERVED: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if RESERVED.contains(&stem.as_str()) {
+        return Err(format!("「{stem}」是 Windows 保留设备名，不能用作文件名"));
+    }
+    Ok(())
+}
+
 fn roots_of(dir: &Path) -> Vec<Root> {
     read_json(&dir.join("_work/roots.json"))
 }
@@ -841,6 +889,14 @@ pub fn dupview_rename(app: AppHandle, path: String, newname: String) -> serde_js
     let idx = map[hit].idx.clone();
     if newname.is_empty() || newname == oldname {
         return err("新文件名无效");
+    }
+    /*
+     * 只收裸文件名：含分隔符 / `..` 的输入会让下面的 parent.join
+     * 把文件搬出所在目录（见 validate_bare_name 的说明）。
+     * 后端校验是边界；前端 prompt 的 trim 只是体验层。
+     */
+    if let Err(e) = validate_bare_name(&newname) {
+        return err(&e);
     }
     let src = Path::new(&path);
     let parent = match src.parent() {
@@ -1185,6 +1241,16 @@ fn dedup_targets(acts: &mut Vec<RenAction>) {
         .collect();
     let mut used: HashSet<String> = HashSet::new();
     for a in acts.iter_mut() {
+        /*
+         * 纵深防御：计划文件（_work/plan.json）是磁盘上的东西，
+         * 手工改过的话 new_name 可能含分隔符 / `..` —— 那时下面的
+         * parent.join 会把文件搬出所在目录。计划名正常由规则生成，
+         * 这条路走不到；但"磁盘上的配置不可信"是本项目的一贯前提。
+         * 非裸文件名的一律不动作（跳过去执行别的，别把整批拖死）。
+         */
+        if validate_bare_name(&a.new_name).is_err() {
+            continue;
+        }
         let Some(parent) = a.new_path.parent().map(|p| p.to_path_buf()) else {
             continue;
         };
@@ -1883,3 +1949,53 @@ fn rel_under(abs: &str, root: &str) -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
+
+#[cfg(test)]
+mod bare_name_tests {
+    use super::validate_bare_name;
+
+    #[test]
+    fn accepts_plain_names() {
+        for n in ["a.pdf", "试卷_01.pdf", "my-file.v2.txt", "a".repeat(200).as_str()] {
+            assert!(validate_bare_name(n).is_ok(), "应接受：{n}");
+        }
+    }
+
+    #[test]
+    fn rejects_path_escape() {
+        // 这三个是本轮修的漏洞形状：parent.join 会把文件搬出所在目录
+        for n in ["..\\x.pdf", "../x.pdf", "子目录\\x.pdf", "a/b.pdf", "..", "."] {
+            assert!(validate_bare_name(n).is_err(), "应拒绝穿越：{n}");
+        }
+    }
+
+    #[test]
+    fn rejects_windows_illegal_and_reserved() {
+        for n in ["a<b>.pdf", "a:b.pdf", "a|b.pdf", "a?b.pdf", "a*b.pdf", "a\"b.pdf",
+                  "CON.pdf", "con", "nul.txt", "COM1", "lpt9.png"] {
+            assert!(validate_bare_name(n).is_err(), "应拒绝非法/保留名：{n}");
+        }
+    }
+
+    #[test]
+    fn rejects_edge_whitespace_and_dots() {
+        // Windows 会静默去掉尾空格/点，磁盘名与界面名将不一致
+        for n in [" a.pdf", "a.pdf ", ".pdf", "a.pdf.", "a\r\nb.pdf", "a\tb.pdf"] {
+            assert!(validate_bare_name(n).is_err(), "应拒绝边距/控制符：{n:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty_and_overlong() {
+        assert!(validate_bare_name("").is_err());
+        assert!(validate_bare_name("   ").is_err());
+        assert!(validate_bare_name(&"a".repeat(201)).is_err());
+    }
+
+    #[test]
+    fn normal_names_with_dots_inside_pass() {
+        // ".." 整体拒绝但不禁用普通多点名（v1.2.pdf 是常见形状）
+        assert!(validate_bare_name("v1.2.pdf").is_ok());
+        assert!(validate_bare_name("a..b.pdf").is_err(), "含连续两点仍拒（避免与 .. 混淆）");
+    }
+}

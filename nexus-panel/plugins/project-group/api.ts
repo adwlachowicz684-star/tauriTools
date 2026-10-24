@@ -236,7 +236,16 @@ export function makeApi(ctx: PluginContext) {
 
     mcpStatus: () => call<{ running: boolean }>('fpx_mcp_status'),
 
-    importIcons: (fromDir: string) => call<string[]>('fpx_import_icons', { from_dir: fromDir }),
+    /**
+     * 导入图标。后端同名**跳过不覆盖**（icons/ 里已存在的可能正被卡片
+     * 引用），回包 { imported, skipped, icons } —— 界面要据实说
+     * "导了几个、跳过几个"，不能拿 icons.length 当导入数（那是总量）。
+     */
+    importIcons: (fromDir: string) =>
+      call<{ imported: number; skipped: number; icons: string[] }>(
+        'fpx_import_icons',
+        { from_dir: fromDir },
+      ),
 
     /** 数据目录里的图标 → data URI（沙箱内无法直接用本地路径显示） */
     iconData: (path: string) => call<string>('fpx_icon_data', { path }),

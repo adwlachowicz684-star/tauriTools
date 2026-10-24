@@ -143,6 +143,19 @@ function onFocusIn(e) {
 function onFocusOut() { hide(); }
 
 /**
+ * 离开当前元素才隐藏；在子元素间移动不算。
+ *
+ * 必须是**具名函数**：写成 installTooltip 里的匿名箭头的话，
+ * uninstall 拿不到同一个引用，removeEventListener 摘不掉 ——
+ * 每装拆一轮泄漏一个常驻 document 监听（测试反复装卸、
+ * 外壳热更新时越积越多），且没有任何报错。
+ */
+function onOut(e) {
+  if (!current) return;
+  if (!current.contains(e.relatedTarget)) hide();
+}
+
+/**
  * 安装悬浮提示。
  * @returns {() => void} 卸载函数（测试里要能干净地拆掉）
  */
@@ -151,11 +164,7 @@ export function installTooltip() {
   installed = true;
 
   document.addEventListener('mouseover', onOver, true);
-  document.addEventListener('mouseout', (e) => {
-    // 只有真的离开了当前元素才隐藏；在子元素间移动不算
-    if (!current) return;
-    if (!current.contains(e.relatedTarget)) hide();
-  }, true);
+  document.addEventListener('mouseout', onOut, true);
   document.addEventListener('focusin', onFocusIn, true);
   document.addEventListener('focusout', onFocusOut, true);
   window.addEventListener('scroll', onReflow, true);
@@ -163,6 +172,7 @@ export function installTooltip() {
 
   return function uninstall() {
     document.removeEventListener('mouseover', onOver, true);
+    document.removeEventListener('mouseout', onOut, true);
     document.removeEventListener('focusin', onFocusIn, true);
     document.removeEventListener('focusout', onFocusOut, true);
     window.removeEventListener('scroll', onReflow, true);

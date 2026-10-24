@@ -3210,10 +3210,14 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
   /* 上面几条只钉了"函数支持收基调"与"宿主会发 themeBase"，
      没钉**调用处真的把值传进去** —— 破坏验证时把 d.themeBase 去掉，
      断言仍全绿（函数签名没变、宿主消息也没变，只是没传）。
-     所以必须单独钉这一处。 */
+     所以必须单独钉这一处。
+     第三参 d.themeId 是合法扩展（沙箱 iframe 按主题 id 重画，见
+     plugin-sdk.js applyThemeVars 注释）：正则放行可选的第三参，
+     但 d.themeBase 仍然必须传 —— 丢掉它依旧红。 */
+  const themeCall = /applyThemeVars\(d\.theme,\s*d\.themeBase(\s*,\s*d\.themeId)?\)/;
   t('SDK 调用 applyThemeVars 时真的把 themeBase 传了进去',
-    /applyThemeVars\(d\.theme,\s*d\.themeBase\)/.test(sdkSrc),
-    /applyThemeVars\(d\.theme,\s*d\.themeBase\)/.test(sdkSrc)
+    themeCall.test(sdkSrc),
+    themeCall.test(sdkSrc)
       ? '已传' : '没传 → 权威值白给，仍走推断');
 
   t('SDK 未在 applyThemeVars 内部引用外层消息对象 d（会 ReferenceError）',

@@ -380,9 +380,16 @@ export function IconPickDialog({
     if (importing) return;
     setImporting(true);
     try {
-      const list = await api.importIcons(dir);
-      onImported(list);
-      onLog(`已导入 ${list.length} 个图标`);
+      const r = await api.importIcons(dir);
+      onImported(r.icons);
+      /*
+       * 据实说：导入数是 r.imported（新落盘的），跳过数是 r.skipped
+       * （同名不覆盖 —— 那些图标可能正被卡片引用着）。
+       * 原来拿 r.icons.length 当"已导入 N 个"，那是导入**之后的总量**，
+       * 第二次导入同一目录也会报"已导入 N 个"（其实一个都没进）。
+       */
+      onLog(`已导入 ${r.imported} 个图标`
+        + (r.skipped > 0 ? `，${r.skipped} 个同名已跳过（不覆盖已有图标）` : ''));
       setTab('mine');
     } catch (e) {
       onLog(errText(e), true);

@@ -87,6 +87,24 @@ export const HARD_DENY = new Set([
 export const THIRD_DENY_CAPS = ['M'];
 
 /**
+ * 只允许**内置插件**使用的命令（第三方声明 + 用户放行也不给）。
+ *
+ * 与 THIRD_DENY_CAPS 的分工：那个按**等级**禁（提权/进程/监听/宿主操控），
+ * 这个按**命令**禁 —— 收的是「能力本身不危险，但只有内置插件有正当用途」
+ * 那一类。典型形状：fpx_list_dirs 能列任意路径的子目录（目录选择器
+ * 要靠它浏览还没授权的目录，所以 Rust 侧不能套 guard），给第三方等于
+ * 让它摸清磁盘布局 —— 而它在现实中只有内置的 folder-picker 在调。
+ *
+ * 为什么值得单列一张表而不是塞进某个插件的白名单注释里：
+ * 白名单管「谁能调」，这张表管「谁都不能调（除内置）」——
+ * 将来新增同形状的命令（内置服务专用、Rust 侧刻意不设防的）
+ * 有个该去的地方，不会因为「忘了在某插件清单里排除」而漏掉。
+ */
+export const BUILTIN_ONLY = new Set([
+  'fpx_list_dirs',
+]);
+
+/**
  * 各插件允许的命令。
  *
  * key = 插件 id，value = 允许的命令集合。
@@ -147,8 +165,10 @@ export const PLUGIN_COMMANDS = {
    *   · fpx_save_fav_dirs   写常用文件夹（整表替换）
    *
    * ⚠️ fpx_list_dirs 能列任意路径的子目录（与 fpx_read_file 同理，
-   *    不经 guard），等于能摸清整块磁盘的布局。
-   *    所以 folder-picker 必须保持 builtin: true，不给第三方。
+   *    Rust 侧不经 guard —— 目录选择器要靠它浏览**还没授权**的目录，
+   *    套 guard 会把授权流程本身掐断）。所以它进了 BUILTIN_ONLY：
+   *    第三方连声明带放行一起拒。folder-picker 自身必须保持
+   *    builtin: true，且不给第三方（双重保证）。
    */
   'folder-picker': ['fpx_quick_roots', 'fpx_list_dirs', 'fpx_list_fav_dirs', 'fpx_save_fav_dirs'],
 
@@ -582,6 +602,15 @@ export function checkInvoke(pluginId, cmd, manifest) {
         reason: `第三方插件 ${pluginId} 不能声明 ${cap} 类命令 ${name}`
           + '（提权/进程/网络监听/宿主操控类一律不授予第三方）。'
           + '若确实需要，请把它作为内置插件提供。',
+      };
+    }
+    /* 内置专用命令：声明了、用户也放行了，也不给 —— 与 THIRD_DENY_CAPS
+       同级的第二道闸，只是判据是命令名而不是等级（见 BUILTIN_ONLY 注释）。 */
+    if (BUILTIN_ONLY.has(name)) {
+      return {
+        ok: false,
+        reason: `命令 ${name} 只允许内置插件使用（第三方插件 ${pluginId} 不可用）。`
+          + '这类能力只有内置插件有正当用途，给第三方等于开放不该开放的面',
       };
     }
   }

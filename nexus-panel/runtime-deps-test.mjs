@@ -343,6 +343,28 @@ function missingCtx() {
   t('声明里没写版本时不硬标 stale（无法判定就不标）',
     rt.staleVersionsOf(installed, { install: 'npm i mermaid' }).length === 0);
 
+  /*
+   * scope 包：后端 list 从文件名还原出的 name 是**安全名**
+   * （`@plantuml/core` → `_plantuml_core`，见 orphanDepsOf 的说明）。
+   * 这里钉死 installedVersionsOf / staleVersionsOf 也按安全名比对 ——
+   * 2026-10-17 深查发现它们此前用真实名直接比，导致 scope 包
+   * （清单里唯一可装的 scope 包）装上后：DepsCard 永远显示未装、
+   * 没有移除入口，md 插件 requireDep 找不到它而**静默回退打包版**。
+   * 旧测试的 mock 全用真实名（非 scope 包 safeNameOf 是恒等），
+   * 所以那个 bug 一直不红 —— 这就是"mock 太干净"的代价。
+   */
+  const scoped = [
+    { name: '_plantuml_core', version: '1.2026.8', file: '_plantuml_core@1.2026.8.mjs' },
+    { name: '_plantuml_core', version: '1.2026.7', file: '_plantuml_core@1.2026.7.mjs' },
+  ];
+  const itemPuml = { kind: 'runtime', dev: false, install: 'npm i @plantuml/core@^1.2026.8' };
+  t('scope 包：已装版本按安全名匹配得上（不是空）',
+    rt.installedVersionsOf(scoped, itemPuml).length === 2,
+    `实际 ${rt.installedVersionsOf(scoped, itemPuml).length}`);
+  t('scope 包：stale 只标与声明不符的那份',
+    rt.staleVersionsOf(scoped, itemPuml).length === 1
+    && rt.staleVersionsOf(scoped, itemPuml)[0].version === '1.2026.7');
+
   /* 移除必须拿 list 给的真实文件名，不能按声明版本重拼 */
   let seen = null;
   const ctx = stubCtx(async (cmd, a) => {

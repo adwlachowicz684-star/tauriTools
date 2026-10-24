@@ -33,6 +33,9 @@ const GATE_RS = path.join(HERE, 'src-tauri/src/mcp_gate.rs');
 const CARD = path.join(HERE, 'plugins/settings/McpGatewayCard.tsx');
 const APP = path.join(HERE, 'plugins/settings/App.tsx');
 const HOST = path.join(HERE, 'js/host.js');
+const SHELL = path.join(HERE, 'js/shell.js');
+const REACT_SHELL = path.join(HERE, 'src/App.tsx');
+const NO_BUILD_SETTINGS = path.join(HERE, 'plugins/settings/index.js');
 
 let pass = 0;
 let fail = 0;
@@ -71,6 +74,9 @@ const gateSrc = fs.readFileSync(GATE_RS, 'utf8');
 const cardSrc = fs.readFileSync(CARD, 'utf8');
 const appSrc = fs.readFileSync(APP, 'utf8');
 const hostSrc = fs.readFileSync(HOST, 'utf8');
+const shellSrc = fs.readFileSync(SHELL, 'utf8');
+const reactShellSrc = fs.readFileSync(REACT_SHELL, 'utf8');
+const noBuildSrc = fs.readFileSync(NO_BUILD_SETTINGS, 'utf8');
 
 /* ================================================================== */
 section('1. Rust 侧接线：状态、模块、命令注册');
@@ -327,11 +333,29 @@ t(
 );
 t(
   'MCP 注销失败时把「插件已卸」与「残留待手动清理」分开说（不把成功说成失败）',
-  /插件已移除，但 MCP 服务/.test(appSrc) && /status: 'failed', error:/.test(hostSrc),
+  /插件已移除，但 MCP 服务/.test(shellSrc) && /status: 'failed', error:/.test(hostSrc),
 );
 t(
   'confirm 从 dialog.js 导入（项目统一弹窗，不另起炉灶）',
   /import \{ prompt, confirm \} from '\.\.\/\.\.\/js\/dialog\.js'/.test(appSrc),
+);
+/*
+ * 卸载入口的调用纪律（本轮深查的回归点）：
+ * 三个移除入口（React 设置页 / 无构建设置页 / React 壳自己的面板）
+ * 都必须 await chokepoint 并读 {ok, mcp} —— 写 `=== false`（Promise
+ * 永不为 false）或不 await，都会让失败路径失效 + 列表读到旧快照。
+ */
+t(
+  'React 壳自己的 removePlugin 也走 await + 读 ok/mcp（不是 === false）',
+  /await hostRef\.current\?\.removePlugin\(id\)/.test(reactShellSrc) && /r\.mcp\?\.status/.test(reactShellSrc),
+);
+t(
+  '无构建设置页移除后 await 读返回值、不自己弹成功 toast',
+  /const r = await shell\.removePlugin\(p\.id\)/.test(noBuildSrc) && /!r\?\.ok/.test(noBuildSrc),
+);
+t(
+  'chokepoint（__nexusRemovePlugin）统一说 MCP 结局，调用方不重复弹',
+  /r\.mcp\?\.status === 'cleaned'/.test(shellSrc) && !/mcp_gw_unregister/.test(appSrc),
 );
 /*
  * 卸载残留总收口（本轮审查补）：本地 KV / 每插件配置 / 外链信任 /

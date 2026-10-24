@@ -1552,6 +1552,12 @@ pub fn fpx_open_path(
 }
 
 /// 列出子目录（内嵌目录选择器）。
+///
+/// ⚠️ 刻意**不过 guard**：这个接口的用途就是「浏览还没授权的目录」
+/// （folder-picker 的选择器从快速起点一层层点进去，直到找到要授权的
+/// 那个）—— 套 ensure_path_allowed 会把授权流程本身掐断。
+/// 它的收口在 js/invoke-policy.js：BUILTIN_ONLY，只给内置插件
+/// （现实中只有 folder-picker 这个内置服务在调）。
 #[tauri::command(rename_all = "snake_case")]
 pub fn fpx_list_dirs(path: String) -> Result<Vec<DirEntryLite>, String> {
     sys::list_dirs(&path)
@@ -3011,22 +3017,28 @@ pub fn fpx_mcp_register() -> String {
 /* ---------------------------- 预设图标 ---------------------------- */
 
 /// 把某目录下的图标文件导入数据目录 icons/（用于接入原版 preseticons）。
+///
+/// 同名**跳过不覆盖**：icons/ 里已存在的图标可能正被卡片引用着，
+/// 静默覆盖会让那些卡片的图标当场变成另一张图，而导入提示照报成功
+/// （前端注释还以为"后端重名会自动加 (1)"—— 从来没有过）。
+/// 跳过的条数随回包出去，让界面能说清"导了几个、跳过几个"。
 #[tauri::command(rename_all = "snake_case")]
 pub async fn fpx_import_icons(
     app: AppHandle,
     state: State<'_, FpxState>,
     from_dir: String,
-) -> Result<Vec<String>, String> {
+) -> Result<serde_json::Value, String> {
     let dir = store::data_dir(&app, &state)?;
     let src = std::path::PathBuf::from(&from_dir);
     if !src.is_dir() { return Err("源目录不存在".into()); }
 
     // 复制图标文件可能成百上千，放到阻塞线程池
     let dest = dir.join("icons");
-    let n = tauri::async_runtime::spawn_blocking(move || -> Result<usize, String> {
+    let (n, skipped) = tauri::async_runtime::spawn_blocking(move || -> Result<(usize, usize), String> {
         std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
         let exts = ["ico", "png", "jpg", "jpeg", "svg", "bmp"];
         let mut count = 0usize;
+        let mut skipped = 0usize;
         for entry in std::fs::read_dir(&src).map_err(|e| e.to_string())?.flatten() {
             let p = entry.path();
             if !p.is_file() { continue; }
@@ -3036,16 +3048,28 @@ pub async fn fpx_import_icons(
                 .unwrap_or(false);
             if !ok { continue; }
             if let Some(name) = p.file_name() {
-                if std::fs::copy(&p, dest.join(name)).is_ok() { count += 1; }
+                let target = dest.join(name);
+                // 已存在 = 可能被卡片引用，跳过（要换图请用户在图标管理里改）
+                if target.exists() {
+                    skipped += 1;
+                    continue;
+                }
+                if std::fs::copy(&p, target).is_ok() { count += 1; }
             }
         }
-        Ok(count)
+        Ok((count, skipped))
     })
     .await
     .map_err(|e| format!("导入任务异常终止: {e}"))??;
 
-    if n == 0 { return Err("该目录下没有可导入的图标文件（.ico/.png/.jpg/.svg/.bmp）".into()); }
-    Ok(sys::list_icons(&dir))
+    if n == 0 && skipped == 0 {
+        return Err("该目录下没有可导入的图标文件（.ico/.png/.jpg/.svg/.bmp）".into());
+    }
+    Ok(serde_json::json!({
+        "imported": n,
+        "skipped": skipped,
+        "icons": sys::list_icons(&dir),
+    }))
 }
 
 /* ---------------------------- 内部工具 ---------------------------- */

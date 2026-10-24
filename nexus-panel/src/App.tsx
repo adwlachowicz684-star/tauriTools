@@ -9,6 +9,7 @@ import {
   type Host, type PluginManifest,
 } from '../js/host.js';
 import * as extPolicy from '../js/external-policy.js';
+import { confirm } from '../js/dialog.js';
 import * as pluginCfg from '../js/plugin-config.js';
 import * as themeApi from '../js/theme-manager.js';
 import { getCloseAction, onCloseActionChange } from '../js/host.js';
@@ -101,8 +102,12 @@ export default function App() {
   const pushToast = useCallback((msg: string, type: string = 'info') => {
     const id = nextId();
     // 对外接受任意字符串（外壳的 ctx.toast 也传字符串），
-    // 落到 ToastItem 前收窄到它认的三种，避免把未知值塞进样式类名
-    const kind: ToastItem['type'] = type === 'ok' || type === 'err' ? type : 'info';
+    // 落到 ToastItem 前收窄到它认的四种，避免把未知值塞进样式类名。
+    // 'warn' 必须保留：设置页「做成了但没能记住（落盘失败）」那类
+    // 提示靠它区分于普通 info —— 收窄成 info 的话两壳告警色阶不一致，
+    // 而 .toast.warn（css/controls.css）在 React 壳永远用不上。
+    const kind: ToastItem['type'] =
+      type === 'ok' || type === 'err' || type === 'warn' ? type : 'info';
     setToasts((t) => [...t, { id, msg, type: kind }]);
     setTimer(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }, [setTimer]);
@@ -275,7 +280,24 @@ export default function App() {
 
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
 
-  const addPlugin = useCallback((p: Omit<PluginManifest, 'id'>) => {
+  const addPlugin = useCallback(async (p: Omit<PluginManifest, 'id'>) => {
+    /*
+     * A3：外域代码不该被当成本地插件装进来 —— 与原生壳（js/shell.js
+     * 的添加对话框）同一条规矩。React 壳此前没有这道确认：粘贴 CDN
+     * 入口直接装上，无警告、外链不登记，CSP 不触发观测就全程无提示。
+     */
+    if (extPolicy.isExternal(p.entry)) {
+      const host = extPolicy.hostOf(p.entry);
+      const go = await confirm({
+        title: '安装外域插件',
+        message: `⚠ 这个插件的入口是外域地址：\n\n${host}\n\n`
+          + `它的代码会由 ${host} 提供，并能访问本面板的数据。\n`
+          + `确定要安装吗？（建议只在完全信任该来源时继续）`,
+        okText: '仍然安装',
+        danger: true,
+      });
+      if (!go) return;
+    }
     const item: PluginManifest = { ...p, id: `custom-${nextId()}`, custom: true };
     /* 存不下时也要把对话框收掉：留着它界面就停在这一屏，
        而下面的「已添加」又不弹 —— 点了没反应、还退不出去。 */
@@ -286,6 +308,11 @@ export default function App() {
     }
     pushToast(`已添加「${item.name}」`, 'ok');
     setDialogOpen(false);
+    /* 导入即扫外链（与原生壳同）：不扫的话，外链要等 CSP 违规才
+       被发现，而用户装完插件根本不会再去看一眼设置页。 */
+    try {
+      await extPolicy.scanEntry(item.entry, item.id);
+    } catch { /* 扫描失败不挡安装：入口都装上了，拦这个没意义 */ }
     (async () => {
       hostRef.current!.state.plugins = filterByRuntime(await loadRegistry());
       setPlugins(visiblePlugins(hostRef.current!.state.plugins));
@@ -293,14 +320,29 @@ export default function App() {
     })();
   }, [pushToast]);
 
-  const removePlugin = useCallback((id: string) => {
-    /* 用 === false 而不是 !：hostRef 还没挂上时是 undefined，
-       那属于另一回事，不该被这里当成"移除失败"改写行为。 */
-    if (hostRef.current?.removePlugin(id) === false) {
+  const removePlugin = useCallback(async (id: string) => {
+    /*
+     * host.removePlugin 是 **async** 且返回 { ok, mcp }（卸载残留
+     * 总收口）。此前这里写 `=== false` —— Promise 永远不等于 false，
+     * 于是存储不可用时也照弹「已移除插件」：谎报成功，且 MCP 注销
+     * 结果（可能失败待手动清理）被彻底丢掉。
+     */
+    const r = await hostRef.current?.removePlugin(id);
+    if (!r) {
+      pushToast('移除失败：未连接到外壳，请用侧栏的插件管理操作', 'err');
+      return;
+    }
+    if (!r.ok) {
       pushToast(customPluginWriteFailMsg('移除', '', takeCustomPluginWriteError()), 'err');
       return;
     }
     pushToast('已移除插件', 'ok');
+    /* MCP 网关协作结果：chokepoint 已注销（或失败），这里把结局说清 */
+    if (r.mcp?.status === 'cleaned') {
+      pushToast(`其 MCP 网关服务「${id}」已一并注销`, 'ok');
+    } else if (r.mcp?.status === 'failed') {
+      pushToast(`MCP 服务「${id}」注销失败：${r.mcp.error ?? ''}。可去「设置 → MCP 网关」手动移除`, 'warn');
+    }
     (async () => {
       hostRef.current!.state.plugins = filterByRuntime(await loadRegistry());
       setPlugins(visiblePlugins(hostRef.current!.state.plugins));

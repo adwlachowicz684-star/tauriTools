@@ -101,7 +101,15 @@ export interface Host {
   getSidebarItems(): Array<{ id: string; pluginId: string; label: string; icon?: string; event: string; [k: string]: unknown }>;
   refresh(): Promise<PluginManifest[]>;
   /** 返回有没有真的移除掉（没存下时为 false，此时不撤授权） */
-  removePlugin(id: string): boolean;
+  /**
+   * 移除自定义插件 —— 卸载残留总收口。async：内部要拆服务实例、
+   * 清本地存储、注销 MCP 网关服务。返回 ok=false = 清单没存下
+   * （插件还在，此时什么都没清）；mcp 是 MCP 协作结局。
+   */
+  removePlugin(id: string): Promise<{
+    ok: boolean;
+    mcp?: { status: 'none' | 'cleaned' | 'failed'; error?: string };
+  }>;
 }
 
 export function createHost(opts: {

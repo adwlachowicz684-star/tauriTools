@@ -28,6 +28,7 @@ import * as pluginConfig from './plugin-config.js';
 import * as extPolicy from './external-policy.js';
 import {
   initTheme, exportVars, exportVarsFor, findTheme,
+  getThemeId as currentThemeId,
   onChange as onThemeChange,
 } from './theme-manager.js';
 // 命名空间导入：供 ctx.shell.theme 桥接用。用具名导入会和本文件的
@@ -1178,6 +1179,9 @@ export function createHost(opts = {}) {
               type: 'init', manifest, theme: varsForPlugin(manifest.id), view,
               /* 基调直接给权威值，别让插件按 --bg 亮度猜（理由见 pluginThemeBase）。 */
               themeBase: pluginThemeBase(manifest.id),
+              /* 主题 id：SDK 写进 iframe 的 data-theme（按主题缓存渲染的
+                 插件靠它判断主题变更，如 md 的 mermaid 重画）。 */
+              themeId: currentThemeId(),
               openArgs,                         // 打开参数（E2），与 module 同语义
               isolated,                         // 插件据此决定能力探测方式
               /*
@@ -1837,7 +1841,15 @@ export function createHost(opts = {}) {
       const timer = setTimeout(finish, 400);      // 兜底：不能无限等
       try {
         window.addEventListener('message', onAck);
-        send(iframe, { type: 'theme', theme: varsForPlugin(pluginId), themeBase: pluginThemeBase(pluginId) });
+        send(iframe, {
+          type: 'theme',
+          theme: varsForPlugin(pluginId),
+          themeBase: pluginThemeBase(pluginId),
+          /* 主题 id 一并下发：SDK 写进 iframe 的 data-theme，
+             按主题缓存渲染结果的插件（md 的 mermaid）靠它判断主题变更 ——
+             不下发的话沙箱里永远没有 data-theme，切主题不重画且不报错。 */
+          themeId: currentThemeId(),
+        });
       } catch { finish(); }
     });
   }

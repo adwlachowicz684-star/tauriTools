@@ -161,7 +161,7 @@ const ok = (name, cond, why) => {
 /* ---- 6. 删除 / 还原 也要同步目录树里的 dim ---- */
 ok(
   '删除同步目录树的 dim',
-  /function setItemDim\(/.test(src) && /async function del\([\s\S]{0,500}setItemDim\(path,\s*true\)/.test(src),
+  /function setItemDim\(/.test(src) && /async function del\([\s\S]{0,900}setItemDim\(path,\s*true\)/.test(src),
   '不同步的话下一次操作会带着过期状态',
 );
 ok(

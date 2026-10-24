@@ -140,7 +140,7 @@ import { CLI_META, DEFAULT_TRIGGER_CONFIG, DEFAULT_BRANCH, type TaskNodeData, ma
 import type { FlowEdge, FlowNode } from './flowTypes';
 import { killCli, runCli, canWatch, startWatch, canWebhook, startWebhook,
   fileOp, fsArgsOf, fetchText, httpRequest, postJson, readImageDataUrl, readAudioDataUrl,
-  fetchDeviceSalt, tailFile, type DonePayload, type FsArgs } from './lib/tauri';
+  fetchDeviceSalt, tailFile, type FsArgs } from './lib/tauri';
 
 /**
  * 画布的节点组件映射。
@@ -2314,6 +2314,14 @@ function reportSkipped(
     }
 
     /*
+     * 从这里往下全是可能抛的（建任务记录、跑图、归档）。
+     * 整段包 try/finally：**无论多意外的路径，running 都必须放行** ——
+     * 没有保底的话，一次 reject 就让 running 永久为 true：按钮全灰、
+     * 所有触发器被「已有任务在运行」跳过，用户只能重载插件。
+     * 这是本项目最防的「点了没反应」的终极形态。
+     */
+    try {
+    /*
      * 任务总数按**这一条链路**估，而不是全画布节点数。
      *
      * progressOf 取 max(task.total, 实际出现数)：分母若含范围外节点，
@@ -2455,9 +2463,6 @@ function reportSkipped(
     const executor: Executor = async (node, rendered, onChunk) => {
       const runId = `${stamp}:${node.id}`;
       activeRuns.current.set(node.id, runId);
-      // 用 ref 而非 let：闭包里赋值时，TS 的流分析看不到赋值点，
-      // 会把 `if (!done) throw` 之后的 done 收窄成 never。
-      const doneRef: { current: DonePayload | null } = { current: null };
       // 执行器只会被任务节点调用：条件/触发器/并发节点在执行器内部处理并 continue
       const d = node.data as TaskNodeData;
       /*
@@ -2476,18 +2481,23 @@ function reportSkipped(
        */
       const cont = eff.canRelay && eff.paneId !== '' && paneSessions.current.has(eff.paneId);
       if (eff.canRelay && eff.paneId !== '') paneSessions.current.add(eff.paneId);
-      await runCli(
+      /*
+       * runCli 进程真正结束才 resolve（DonePayload 就是结局）。
+       * 此前它在 invoke('run_node') 一返回就 resolve —— 那条 invoke
+       * 只负责启动进程。于是这里 await 完去读 doneRef 必然是 null：
+       * 桌面端每个 CLI 节点「启动即失败」，且 runId 已从 activeRuns
+       * 删掉，进程成孤儿（停止按钮杀不到）。
+       */
+      const done = await runCli(
         { runId, cli: eff.cli, cmd: DEFAULT_CMD[eff.cli], prompt: rendered,
           workdir: eff.workdir, model: eff.model, yolo: eff.yolo, cont },
         {
           onStdout: (c) => onChunk(c),
           onStderr: (c) => onChunk(c),
-          onDone: (p) => { doneRef.current = p; },
+          onDone: () => { /* 结局经返回值拿，不走 ref 中转 */ },
         },
       );
       activeRuns.current.delete(node.id);
-      const done = doneRef.current;
-      if (!done) throw new Error('未收到进程结束事件');
       if (!done.success) throw new Error(`CLI 退出码 ${done.code ?? '未知'}`);
       return '';
     };
@@ -2696,9 +2706,25 @@ function reportSkipped(
       }));
       currentTaskRef.current = null;
     }
-    setRunning(false);
-    abortRef.current = null;
     return result.ok;
+    } catch (e) {
+      /*
+       * 崩溃也要留得下证据：任务记录标失败（别让任务窗口挂着一条
+       * 永不完案的记录），错误进日志。返回 false 而不是再抛 ——
+       * 调用方（调度器 / 手动触发）拿不到结果就会当成失败处理，
+       * 而再抛一次只会变成 unhandled rejection，照样静默。
+       */
+      pushLog(`✗ 流程执行崩溃：${describeErr(e)}`);
+      const crashedId = currentTaskRef.current;
+      if (crashedId) {
+        setTasks((list) => list.map((t) => (t.id === crashedId ? finishTask(t, false) : t)));
+        currentTaskRef.current = null;
+      }
+      return false;
+    } finally {
+      setRunning(false);
+      abortRef.current = null;
+    }
   }, [running, nodes, edges, concurrency, globalInput, onEvent, setNodes, pushLog, activeId, canvases, saveHistory, credentials]);
 
   // 调度器通过 ref 调用 run，避免闭包捕获旧状态
@@ -2743,6 +2769,16 @@ function reportSkipped(
               status: ok ? 'success' : 'failed',
             },
           } as FlowNode)
+          : n
+      )));
+    }).catch((err: unknown) => {
+      // run 内部已有保底（catch + finally），正常到不了这里；
+      // 但漏 catch 的 .then 会把意外 reject 变成 unhandled rejection ——
+      // 界面上什么都不显示，与「点了没反应」同形。
+      pushLog(`✗ 手动触发失败：${describeErr(err)}`);
+      setNodes((ns) => ns.map((n) => (
+        n.id === nodeId && isTrigger(n.data)
+          ? ({ ...n, data: { ...n.data, status: 'failed' } } as FlowNode)
           : n
       )));
     });
@@ -2859,6 +2895,11 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
 
   // 为启用的 watch 触发器注册/注销目录监听
   const watchCleanups = useRef<Map<string, () => void>>(new Map());
+  /* 每个监听启动时用的配置指纹（目录 + 递归开关）。
+     启用中改这两个字段必须**停旧起新**：后端同 id 直接跳过不更新路由，
+     只按 id 去重的话，界面显示新目录、实际监听旧目录 —— 用户改了没生效
+     且不报错，只会以为这个功能坏了。 */
+  const watchCfg = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!watchSupported) return;
     const wanted = new Map<string, Trigger>(
@@ -2866,39 +2907,49 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         .filter((t) => t.kind === 'watch' && t.enabled && t.config.watchDir)
         .map((t) => [t.id, t] as const),
     );
+    const keyOf = (t: Trigger) => JSON.stringify([t.config.watchDir, !!t.config.watchRecursive]);
 
-    // 关掉不再需要或配置变了的
+    // 关掉不再需要的 + 配置变了的
     for (const [id, cleanup] of watchCleanups.current) {
       const t = wanted.get(id);
-      if (!t) {
+      if (!t || watchCfg.current.get(id) !== keyOf(t)) {
         cleanup();
         watchCleanups.current.delete(id);
+        watchCfg.current.delete(id);
       }
     }
 
-    // 新开缺失的
+    // 新开缺失的（含配置变了重起的）
     for (const [id, t] of wanted) {
       if (watchCleanups.current.has(id)) continue;
+      const key = keyOf(t);
+      watchCfg.current.set(id, key);
       /*
-       * 必须 catch。
-       *
-       * 以前这里只有 .then 没有 .catch ——
-       * 目录不存在、没授权、后端不支持时 startWatch 会 reject，
-       * 于是产生一个 unhandled rejection：**错误被静默吞掉**。
-       *
-       * 后果是用户配了一个监听，界面上看起来在跑（开关是开的），
-       * 实际上根本没起来，而且没有任何提示 ——
-       * 他会一直等一个永远不会来的触发。
+       * tracked start：cleanup 先占位再等 promise 落地。
+       * 直接 .then 里 set 的话，"起到之前就被要求停"（改配置紧接着又改）
+       * 会漏停 —— 监听还是起来了，只是没人记得它。这里起到时若已标停，
+       * 起到即停。
        */
+      let stopped = false;
+      let landed: (() => void) | null = null;
+      const mine = () => { stopped = true; landed?.(); };
+      watchCleanups.current.set(id, mine);
       void startWatch(id, t.config.watchDir, t.config.watchRecursive, (path) => {
         scheduler.notifyWatch(path);
       }).then((cleanup) => {
-        if (cleanup) watchCleanups.current.set(id, cleanup);
+        if (cleanup) landed = cleanup;
+        // 起到之前就被要求停（改配置紧接着又改）：起到即停，不留没人记得的监听
+        if (stopped) landed?.();
       }).catch((err: unknown) => {
+        // 起失败：只摘自己的占位（可能已被新配置接管），清指纹让下次重试
+        if (watchCleanups.current.get(id) === mine) {
+          watchCleanups.current.delete(id);
+          watchCfg.current.delete(id);
+        }
         pushLog(`✗ 目录监听启动失败（${t.config.watchDir || '未填目录'}）：${describeErr(err)}`);
       });
     }
-  }, [triggers, watchSupported, scheduler]);
+  }, [triggers, watchSupported, scheduler, pushLog, describeErr]);
 
   useEffect(() => () => {
     watchCleanups.current.forEach((c) => c());
@@ -2907,6 +2958,11 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
 
   // 为启用的 webhook 触发器启动本地 HTTP 服务
   const webhookCleanups = useRef<Map<string, () => void>>(new Map());
+  /* 启动时用的配置指纹（端口/路径/令牌）。
+     启用中改这三项必须停旧起新：Rust 侧同 id 直接跳过不更新路由，
+     只按 id 去重的话，界面显示新 URL（TriggerInspector 读的是新配置）、
+     实际监听旧路由 —— 调新地址 404、带新令牌 401，全程无提示。 */
+  const webhookCfg = useRef<Map<string, string>>(new Map());
   // 触发器没填校验 Token 时，后端会生成一个；按触发器 id 存下来给界面提示
   const [webhookTokens, setWebhookTokens] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -2914,11 +2970,15 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
     const wanted = new Map<string, Trigger>(
       triggers.filter((t) => t.kind === 'webhook' && t.enabled).map((t) => [t.id, t] as const),
     );
+    const keyOf = (t: Trigger) => JSON.stringify([t.config.port, t.config.path, t.config.token]);
 
+    // 关掉不再需要的 + 配置变了的
     for (const [id, cleanup] of webhookCleanups.current) {
-      if (!wanted.has(id)) {
+      const t = wanted.get(id);
+      if (!t || webhookCfg.current.get(id) !== keyOf(t)) {
         cleanup();
         webhookCleanups.current.delete(id);
+        webhookCfg.current.delete(id);
         setWebhookTokens((m) => {
           if (!(id in m)) return m;
           const next = { ...m };
@@ -2928,8 +2988,16 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
       }
     }
 
+    // 新开缺失的（含配置变了重起的）
     for (const [id, t] of wanted) {
       if (webhookCleanups.current.has(id)) continue;
+      const key = keyOf(t);
+      webhookCfg.current.set(id, key);
+      /* tracked start：cleanup 先占位再等 promise 落地（同 watch 分支） */
+      let stopped = false;
+      let landed: (() => void) | null = null;
+      const mine = () => { stopped = true; landed?.(); };
+      webhookCleanups.current.set(id, mine);
       void startWebhook(
         id,
         t.config.port,
@@ -2940,10 +3008,23 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         },
         (tok) => setWebhookTokens((m) => ({ ...m, [id]: tok })),
       ).then((cleanup) => {
-        if (cleanup) webhookCleanups.current.set(id, cleanup);
+        if (cleanup) landed = cleanup;
+        if (stopped) landed?.();
+      }).catch((err: unknown) => {
+        /*
+         * 必须 catch：端口被占用 / 路径非法时 startWebhook 会 reject，
+         * 没有 catch 就是 unhandled rejection —— 错误被静默吞掉，
+         * 开关开着、服务没起、用户零提示（生产环境还看不到控制台）。
+         * 与 watch 分支同一条规矩。
+         */
+        if (webhookCleanups.current.get(id) === mine) {
+          webhookCleanups.current.delete(id);
+          webhookCfg.current.delete(id);
+        }
+        pushLog(`✗ Webhook 启动失败（${t.config.port || '未填端口'}${t.config.path ? ' ' + t.config.path : ''}）：${describeErr(err)}`);
       });
     }
-  }, [triggers, webhookSupported, scheduler]);
+  }, [triggers, webhookSupported, scheduler, pushLog, describeErr]);
 
   useEffect(() => () => {
     webhookCleanups.current.forEach((c) => c());

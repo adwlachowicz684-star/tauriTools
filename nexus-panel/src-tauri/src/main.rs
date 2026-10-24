@@ -389,9 +389,9 @@ fn main() {
             fpx::fpx_mcp_status, fpx::fpx_import_icons, fpx::fpx_rename_folder, fpx::fpx_clear_invalid,
             fpx::fpx_mcp_register,
             fpx::fpx_move_folder, fpx::fpx_rename_content_item, fpx::fpx_rename_skill_segment,
-            af_flow::run_node, af_flow::kill_node, af_flow::check_cli,
+            af_flow::run_node, af_flow::kill_node, af_flow::kill_all_nodes, af_flow::check_cli,
             af_flow::watch_start, af_flow::watch_stop,
-            af_flow::webhook_start, af_flow::webhook_stop,
+            af_flow::webhook_start, af_flow::webhook_stop, af_flow::webhook_stop_all,
             af_flow::fs_op, af_flow::af_read_image_data_url, af_flow::af_read_audio_data_url,
             af_flow::af_fs_allow_root, af_flow::af_fs_list_roots, af_flow::af_fs_disallow_root,
             /* 这两条此前**定义了却没注册**：带了 #[tauri::command] 但不在
@@ -624,6 +624,18 @@ fn main() {
                  * 编译上只多一句 "request_cancel is never used"，不报错。
                  */
                 crate::dupview::request_cancel(app_handle);
+                /*
+                 * agent-flow 退出收口：杀掉还在跑的 CLI 子进程、停掉
+                 * webhook 服务。不收的话：子进程孤儿化（用户以为任务
+                 * 停了，AI CLI 还在写文件），HTTP 服务继续监听（本机
+                 * 任何程序还能触发工作流，而前端已收不到事件）。
+                 */
+                if let Some(st) = app_handle.try_state::<crate::af_flow::ProcRegistry>() {
+                    crate::af_flow::kill_all_nodes(st);
+                }
+                if let Some(st) = app_handle.try_state::<crate::af_flow::WebhookRegistry>() {
+                    crate::af_flow::webhook_stop_all(st);
+                }
                 let should_stop = crate::fpx::store::resolve_data_dir(app_handle)
                     .map(|dir| crate::fpx::store::load_config(&dir).close_mcp_on_exit)
                     .unwrap_or(false);

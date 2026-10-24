@@ -224,11 +224,21 @@ const build = (ls) => new Function('localStorage', `
     /setDialogOpen\(false\)/.test(addSeg) && /return/.test(addSeg));
   t('React：添加成功才报「已添加」', /已添加/.test(c));
 
-  const rmSeg = sliceFn(c, 'if (hostRef.current?.removePlugin(id) === false) {');
+  /* host.removePlugin 自 412c7f59（卸载残留五路收口）起是 **async** 且返回
+     { ok, mcp } —— Promise 永不等于 false，旧 `=== false` 判据已作废：
+     存储不可用时它会谎报「已移除插件」，且 MCP 注销结局被彻底丢掉。
+     这里改钉新契约：await 取值 + !r.ok 才判失败 + MCP 结局两条分支。 */
+  const rmSeg = sliceFn(c, 'const r = await hostRef.current?.removePlugin(id)');
   t('（前置）React 移除分支切到了', !!rmSeg);
-  t('React：移除用 === false（hostRef 没挂上时是 undefined，不该被当成失败）',
-    /=== false/.test(c));
-  t('React：移除没存下 → 报 err 并 return', /pushToast\(/.test(rmSeg) && /'err'/.test(rmSeg) && /return/.test(rmSeg));
+  t('React：移除走 await 新契约（{ok,mcp}，Promise 永不等于 false）',
+    /const r = await hostRef\.current\?\.removePlugin\(id\)/.test(c)
+    && !/removePlugin\(id\) === false/.test(c));
+  t('React：连不上外壳（!r）→ 报 err 并 return',
+    /pushToast\(/.test(rmSeg) && /'err'/.test(rmSeg) && /return/.test(rmSeg));
+  t('React：没存下（!r.ok）→ 报 err 并 return',
+    /if \(!r\.ok\)/.test(c));
+  t('React：MCP 网关结局说清（cleaned / failed 各有一条 toast）',
+    /r\.mcp\?\.status === 'cleaned'/.test(c) && /r\.mcp\?\.status === 'failed'/.test(c));
 }
 
 /* ================================================================

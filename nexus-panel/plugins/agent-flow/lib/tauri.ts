@@ -104,11 +104,21 @@ export type StreamHandlers = {
 };
 
 /**
- * 启动一个 CLI 节点。
+ * 启动一个 CLI 节点，**进程真正结束才 resolve**。
+ *
  * 在 Tauri 内走 Rust 的 shell 插件流式读取；
  * 在纯浏览器里降级为模拟输出，方便单独调试画布。
+ *
+ * ⚠️ 返回值语义：resolve 出的 DonePayload 就是进程的最终结局
+ * （code/success）。此前这里在 `invoke('run_node')` 一返回就 resolve ——
+ * 而那条 invoke 只是**启动**进程。调用方 await 完去读 onDone 写入的
+ * 结果，必然拿到 null：桌面端每个 CLI 节点都是「启动即失败」
+ * （未收到进程结束事件），且调用方紧接着把 runId 从 activeRuns 删掉，
+ * 进程成了孤儿 —— 「停止」按钮再也杀不到它。
+ * 浏览器降级分支会同步调 onDone，所以只有桌面端坏，
+ * 双路径不一致正是这类 bug 的指纹。
  */
-export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> {
+export async function runCli(req: RunRequest, h: StreamHandlers): Promise<DonePayload> {
   if (!hasTauri()) {
     // 浏览器降级：模拟流式返回，仅用于验证画布与调度逻辑
     const text = `[模拟输出] ${req.cli} 收到任务:\n${req.prompt.slice(0, 200)}`;
@@ -116,8 +126,9 @@ export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> 
       h.onStdout(piece);
       await new Promise((r) => setTimeout(r, 30));
     }
-    h.onDone({ code: 0, success: true });
-    return;
+    const p: DonePayload = { code: 0, success: true };
+    h.onDone(p);
+    return p;
   }
 
   // 命令发得出去（走桥接），事件却收不回来：进程会照常跑完，
@@ -125,8 +136,9 @@ export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> 
   // 这种情况直接判死，好过静默卡住。
   if (!hasTauriEvents()) {
     h.onStderr('拿不到 Tauri 事件通道，CLI 节点无法运行（需桌面端，且本插件未被设为隔离模式）\n');
-    h.onDone({ code: null, success: false });
-    return;
+    const p: DonePayload = { code: null, success: false };
+    h.onDone(p);
+    return p;
   }
 
   const out = `cli-out/${req.runId}`;
@@ -135,12 +147,15 @@ export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> 
 
   const unlisteners: UnlistenFn[] = [];
   let settled = false;
+  let resolveDone: (p: DonePayload) => void = () => {};
+  const donePromise = new Promise<DonePayload>((r) => { resolveDone = r; });
 
   const finish = (p: DonePayload) => {
     if (settled) return;
     settled = true;
     h.onDone(p);
     unlisteners.forEach((u) => u());
+    resolveDone(p);
   };
 
   // listen 也包进 try：事件通道不可用时这里会抛，
@@ -155,6 +170,8 @@ export async function runCli(req: RunRequest, h: StreamHandlers): Promise<void> 
     h.onStderr(`启动失败: ${String(e)}\n`);
     finish({ code: null, success: false });
   }
+  // invoke 返回只代表"进程已启动"；结局等 cli-done 事件（或上面的 catch）
+  return donePromise;
 }
 
 /** 终止正在跑的节点进程 */

@@ -293,12 +293,30 @@ export function useCredentialVault({
        * 迁移可能**新增**连接（老节点上的 key 收进来）。
        * 只 setCredentials 不落盘的话，刷新后新连接消失，
        * 而节点上已经指向它 —— 表现为"配好了，重启就没了"。
+       *
+       * encryptStore 只**加密并返回**，落盘要另调 persistVaultStore
+       * （唯一入口，如实回答存没存成）。此前这里 `void encryptStore(...)`
+       * 把密文算了就扔：磁盘上一个字节都没写，而下面那个"连接变化 →
+       * 加密落盘"的 effect 又因为 loadedCredsRef 同引用判定被跳过 ——
+       * 迁移进来的连接重启即丢，且全程无提示。
        */
       const creds = migrateLlmNow(r.credentials);
       setCredentials(creds);
       loadedCredsRef.current = { list: creds, key: vaultKey };
       if (creds.length !== r.credentials.length) {
-        void encryptStore(beRef.current!, store, creds, vaultKey);
+        encryptStore(beRef.current!, store, creds, vaultKey)
+          .then((next) => {
+            if (!alive) return;
+            if (persistVaultStore(next)) {
+              setStore(next);
+            } else {
+              setUnlockErr(`迁移出来的 ${creds.length - r.credentials.length} 条连接没能保存`
+                + `（${takeVaultWriteError() || '浏览器存储不可用'}）—— 本次会话可用，重启后会消失`);
+            }
+          })
+          .catch((e) => {
+            if (alive) setUnlockErr(`迁移连接保存失败：${String(e?.message || e)}`);
+          });
       }
       if (r.failed.length > 0) {
         setUnlockErr(`有 ${r.failed.length} 条连接解不开，可能是口令不对或数据损坏。`);

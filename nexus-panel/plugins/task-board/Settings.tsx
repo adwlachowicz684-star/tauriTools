@@ -46,7 +46,18 @@ export default function Settings() {
       setCfg(next);
       // 服务在跑且配置变了：重启服务让新配置生效。
       // 状态行必须反映真实结果——重启失败时探旧端口兜底，不显示假在线。
-      if (serviceOn && (next.port !== prev.port || next.token !== prev.token || next.notifyUrl !== prev.notifyUrl)) {
+      /*
+       * dataDir 也在重启条件里：9911 服务启动时把数据目录写进授权表，
+       * 运行中改目录不重启的话，AI 的 curl 通道继续读写**旧** tasks.json，
+       * 而 UI 与 MCP 网关已走新目录 —— 两库静默分叉，且 ● 仍显示在线。
+       * （2026-10-17 深查发现此处漏了 dataDir。）
+       */
+      if (serviceOn && (
+        next.port !== prev.port
+        || next.token !== prev.token
+        || next.notifyUrl !== prev.notifyUrl
+        || next.dataDir !== prev.dataDir
+      )) {
         let stopped = true;
         try {
           await S.apiStop(ctx, prev);

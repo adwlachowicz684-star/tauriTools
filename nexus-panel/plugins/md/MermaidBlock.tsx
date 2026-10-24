@@ -23,6 +23,7 @@ import {
   isMermaid,
   cacheKeyOf,
 } from './mermaid';
+import { createBlockCache } from './blocks';
 import { reactTextOf } from './text-of';
 
 /*
@@ -81,10 +82,37 @@ function getMermaid(ctx: any): Promise<any> {
 }
 
 /*
- * 渲染结果缓存：同一段源码 + 同一主题只画一次。
+ * 渲染结果缓存：同一段源码 + 同一主题只画一次，**有界 LRU**
+ * （与 blocks.js 同一份实现，上限 400 条）。
  * 键带 themeTag（见 cacheKeyOf），否则切主题后图不重画。
+ *
+ * 无界 Map 的话：在 mermaid 块里每敲一个字符都是一次成功渲染 =
+ * 一条新缓存（SVG 动辄数十上百 KB），长会话内存只涨不落 ——
+ * 而 blocks.js 的 createBlockCache(400) 早就是有界的，
+ * 两份缓存一份有一份没有，正是会漂的那类不对称。
  */
-const htmlCache = new Map();
+const htmlCache = createBlockCache(400);
+
+/*
+ * 单张图的渲染超时（20s，与 plantuml 块同一口径）。
+ *
+ * 为什么必须有：队列是**模块级串行**的，mermaid.render 对病态大图
+ * （或引擎挂起）可能永不 resolve —— 那张图会永远卡在「图表渲染中…」，
+ * 且挡住后面所有图（整队不再前进），而用户看不到任何错误。
+ * 超时把这一张判失败上错误框，队列让给下一张。
+ */
+const RENDER_TIMEOUT_MS = 20_000;
+
+/** 给 Promise 赛一个超时：超时按失败走，错误信息说清是超时 */
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(msg)), ms);
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
 
 /** 主题标记：宿主 <html> 上的 data-theme 之类，用于判断要不要重画 */
 function themeTagOf() {
@@ -99,7 +127,7 @@ function themeTagOf() {
   }
 }
 
-function readVar(name) {
+function readVar(name: string) {
   try {
     return getComputedStyle(document.documentElement).getPropertyValue(name) || '';
   } catch {
@@ -109,6 +137,14 @@ function readVar(name) {
 
 export default function MermaidBlock({ ctx, children, className, ...rest }: any) {
   const code = String(reactTextOf((children as any)?.props?.children ?? children) || '');
+  /*
+   * themeTag 进 state：宿主切主题时 SDK 会（重）写 iframe 的 data-theme
+   * 并派发 nexus-theme-applied（见 plugin-sdk.js）—— 没有这个信号时，
+   * effect 只依赖 [code]，切主题后已渲染的图颜色冻结且不报错。
+   * 无构建模式（同页）宿主主文档就有 data-theme，曾经"一直正常"，
+   * 正是那种沙箱坏、同页好的不一致。
+   */
+  const [themeTag, setThemeTag] = useState<string>(() => themeTagOf());
   const [html, setHtml] = useState<string>(() => {
     const hit = htmlCache.get(cacheKeyOf(code, themeTagOf()));
     return typeof hit === 'string' ? hit : '';
@@ -121,9 +157,16 @@ export default function MermaidBlock({ ctx, children, className, ...rest }: any)
     return () => { alive.current = false; };
   }, []);
 
+  /* 主题应用后刷新 themeTag（触发下面的渲染 effect 按新键重画） */
+  useEffect(() => {
+    const onTheme = () => setThemeTag(themeTagOf());
+    document.addEventListener('nexus-theme-applied', onTheme);
+    return () => document.removeEventListener('nexus-theme-applied', onTheme);
+  }, []);
+
   useEffect(() => {
     if (!code.trim()) return;
-    const tag = themeTagOf();
+    const tag = themeTag;
     const key = cacheKeyOf(code, tag);
 
     const hit = htmlCache.get(key);
@@ -153,7 +196,11 @@ export default function MermaidBlock({ ctx, children, className, ...rest }: any)
         themeVariables: Object.keys(vars).length ? vars : undefined,
       });
 
-      const { svg } = await mermaid.render(`md-mm-${Math.random().toString(36).slice(2)}`, code);
+      const { svg } = await withTimeout<any>(
+        mermaid.render(`md-mm-${Math.random().toString(36).slice(2)}`, code),
+        RENDER_TIMEOUT_MS,
+        `图表渲染超时（${RENDER_TIMEOUT_MS / 1000}s 未完成，可能是图太大或引擎卡死）`,
+      );
       return svg;
     }).then((svg: string) => {
       if (cancelled || !alive.current) return;
@@ -169,7 +216,7 @@ export default function MermaidBlock({ ctx, children, className, ...rest }: any)
     });
 
     return () => { cancelled = true; };
-  }, [code]);
+  }, [code, themeTag]);
 
   /* 不是 mermaid 的代码块不该走到这里 —— 兜底渲染成 pre，不丢内容 */
   if (!isMermaid(className)) {

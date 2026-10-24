@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkInvoke, PLUGIN_COMMANDS, HARD_DENY, registerBuiltinIds, resetBuiltinIds, isTrusted, grantCommands, revokeGrant, revokeAllGrants, userGrants } from './js/invoke-policy.js';
+import { checkInvoke, PLUGIN_COMMANDS, HARD_DENY, registerBuiltinIds, resetBuiltinIds, isTrusted, grantCommands, revokeGrant, revokeAllGrants, userGrants, BUILTIN_ONLY } from './js/invoke-policy.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
@@ -211,7 +211,32 @@ t('同页侧同样传了 manifest', /checkInvoke\(manifest\?\.id, payload\?\.cmd
 t('注释说明了同页侧不是硬边界（不夸大）',
   /真正的硬边界在 iframe 侧/.test(sdk));
 
-console.log('\n=== 7. 宿主内部调用不受影响 ===');
+console.log('\n=== 7. BUILTIN_ONLY：内置专用命令（声明+放行也不给第三方）===');
+/*
+ * fpx_list_dirs 能列任意路径的子目录，而目录选择器要靠它浏览
+ * **还没授权**的目录（Rust 侧不能套 guard，否则掐断授权流程）。
+ * 所以收口在 policy 层：第三方连声明带放行一起拒。
+ * 2026-10-17 深查发现：此前只有"folder-picker 是内置所以安全"
+ * 这一条注释保证，第三方只要拿到用户放行就能枚举磁盘布局。
+ */
+t('fpx_list_dirs 在 BUILTIN_ONLY 名单里', BUILTIN_ONLY.has('fpx_list_dirs'));
+grantCommands('my-plugin', ['fpx_list_dirs']);
+t('第三方：声明了 + 用户放行了 + 非 M 类 → 仍拒绝（三级同时满足也拒）',
+  checkInvoke('my-plugin', 'fpx_list_dirs', { commands: ['fpx_list_dirs'] }).ok === false);
+t('拒绝理由说清是"只允许内置"（不是"未声明"，排查方向不同）',
+  /只允许内置插件使用/.test(checkInvoke('my-plugin', 'fpx_list_dirs', { commands: ['fpx_list_dirs'] }).reason));
+revokeAllGrants('my-plugin');
+t('内置插件（folder-picker）不受影响 —— isTrusted 提前放行，BUILTIN_ONLY 拦不到它',
+  checkInvoke('folder-picker', 'fpx_list_dirs', {}).ok === true);
+t('BUILTIN_ONLY 判据在 isTrusted 放行**之后**（内置不被自己人挡住）',
+  (() => {
+    const s = src('js/invoke-policy.js');
+    const iTrust = s.indexOf('if (isTrusted(pluginId))');
+    const iOnly = s.indexOf('BUILTIN_ONLY.has(name)');
+    return iTrust >= 0 && iOnly > iTrust;
+  })());
+
+console.log('\n=== 8. 宿主内部调用不受影响 ===');
 /*
  * 外壳自己调 window_action 是**直接** tauri.invoke，不走 ctx.invoke，
  * 不该被插件白名单挡住 —— 否则标题栏按钮全会失效。

@@ -508,6 +508,17 @@ pub fn register_builtins(app: &AppHandle, state: &GatewayState) {
         let name_c = name.clone();
         let handler: ToolHandler = Arc::new(move |args: &Value| {
             let dir = tb_data_dir(&app_c)?;
+            /*
+             * 必须过看板的文件锁：这是 tasks.json 的**第三条写通道**
+             * （另两条是看板 UI 与 9911 HTTP 服务）。不过锁的话，
+             * AI 经网关的「读-改-写」会与另两条交叉 —— 后写的覆盖
+             * 先写的，双方都不报错、都看不到 TB_CONFLICT，
+             * 表现为"我明明改过，它又变回去了"。
+             * 锁在 task_board 模块内（pub(crate)），口径与那两条一致。
+             */
+            let _guard = task_board::file_lock()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             let result = task_board::mcp_call_tool(&name_c, args, &dir);
             // task-board 的 MCP 层把业务失败放在 result.isError 里
             // （与 MCP 约定一致），原样回传即可，网关不拆开重包。

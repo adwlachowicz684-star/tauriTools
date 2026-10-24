@@ -625,7 +625,7 @@ export default definePlugin({
             ? h('span.p-tag', {}, '内置')
             : h('button.p-btn.danger', {
                 style: { height: '30px', padding: '0 10px', fontSize: '12px' },
-                onclick: () => {
+                onclick: async (e) => {
                   // 原来直接 window.__nexusRemovePlugin(p.id)：沙箱下该全局不存在，
                   // 点了「移除」要么抛 ReferenceError、要么毫无反应。这里走外壳降级，
                   // 取不到就显式提示，不静默。
@@ -634,8 +634,20 @@ export default definePlugin({
                     ctx.toast('移除失败：未连接到外壳，请用侧栏的插件管理操作', 'err');
                     return;
                   }
-                  shell.removePlugin(p.id);
-                  ctx.toast(`已移除「${p.name}」`, 'ok');
+                  /*
+                   * await + 读返回值：壳的 chokepoint 会统一弹结局
+                   * （含 MCP 注销成败），这里不自己弹 ——
+                   * 原来无条件弹「已移除」，存储不可用时与壳内的
+                   * 失败提示同时弹出，自相矛盾且谎报成功。
+                   * 成功后把这一行摘掉：本页是挂载时的一次性快照，
+                   * 没有整页重渲染的机制；壳侧的 init() 会重载侧边栏。
+                   */
+                  const r = await shell.removePlugin(p.id);
+                  if (!r?.ok) {
+                    ctx.toast('移除失败：插件清单没能存下（浏览器存储不可用？）', 'err');
+                    return;
+                  }
+                  e.currentTarget?.closest?.('.p-row')?.remove();
                 },
               }, '移除')),
       );

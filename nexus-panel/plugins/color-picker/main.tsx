@@ -49,6 +49,9 @@ export type PickResult = {
 /* 方法表是静态注册的，拿不到 React 的 setState，
    所以用模块级槽位做桥 —— 服务同一时刻只处理一次调用，无并发问题。 */
 let current: Session | null = null;
+/* 最新自定义色（模块级镜像，随 onSaveCustom / 会话复位更新）。
+   openSession 在组件外，需要它把"被顶掉的会话"按取消收摊。 */
+let lastCustom: string[] = [];
 let setView: ((s: {
   open: boolean; initial: string; custom: string[];
   preset?: string[]; showDefaultTag?: boolean;
@@ -67,6 +70,26 @@ function ServicePanel() {
     setView = setLocalView;
     return () => { setView = null; };
   }, []);
+
+  /*
+   * 新会话开始：把两个 ref 复位到**本次**的起始值与自定义色。
+   *
+   * 不复位的话：「打开面板后直接点确定」返回的是上一次会话的值 ——
+   * 面板显示的是本次 initial，交回去的却是旧的，界面说一套、结果另一套；
+   * custom 更糟：调用方契约是"把返回的 custom 存起来"，于是它当前的
+   * 收藏被上一次会话的列表抹掉（首次打开还会拿到 DEFAULT/空）。
+   *
+   * dep 用 view 对象标识而不是 view.initial：连续两次同一个色打开时
+   * initial 字面量相同，按值比较不会重新触发，而 ref 里还留着上次
+   * 选中的值。view 只在开会话（setView）与收摊（finish）时换标识，
+   * 后者被 open:false 挡掉。
+   */
+  useEffect(() => {
+    if (!view.open) return;
+    hexRef.current = view.initial;
+    customRef.current = view.custom;
+    lastCustom = view.custom;
+  }, [view]);
 
   /** 收摊：把结果（含最新 custom）交回去 */
   const finish = (hex: string | null) => {
@@ -98,7 +121,7 @@ function ServicePanel() {
             current.emitFn(current.previewEvent, hex);
           }
         }}
-        onSaveCustom={(colors) => { customRef.current = colors; }}
+        onSaveCustom={(colors) => { customRef.current = colors; lastCustom = colors; }}
         onLog={() => { /* 服务里没有日志面板，静默 */ }}
         /*
          * 「取消 / 确定」作为 actions 塞进色盘的右下角 ——
@@ -135,6 +158,17 @@ async function openSession(
   } = {},
   emitFn?: ((e: string, p: unknown) => void) | null,
 ) {
+  /*
+   * 会话互斥：上一次还没收摊就被再次调用时，先把它按**取消**收掉。
+   * 不收的话第一个 Promise 永不 settle —— 调用方（比如两个地方同时
+   * 调起取色）有一个一直挂着，界面停在"等待中"。
+   * 与 folder-picker 的「按取消收掉上一个」同一条规矩。
+   * custom 带 lastCustom（它界面上刚收藏的量），别让用户白收藏。
+   */
+  if (current) {
+    current.resolve({ hex: null, custom: lastCustom } as PickResult);
+    current = null;
+  }
   const initial = normalizeHex(args.initial || '') || DEFAULT_COLOR;
   /*
    * 起始值要能表达"没设色"：预览块显示「默认」标记，

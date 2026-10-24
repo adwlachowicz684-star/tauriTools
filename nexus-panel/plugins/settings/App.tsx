@@ -1246,7 +1246,9 @@ export default function Settings() {
       /* await 是必须的：__nexusRemovePlugin 内部要 init() + navigate()
          （重载清单、把当前视图切走）才算完。不 await 的话下面
          getPlugins() 读到的是还没重载的旧清单 —— 刚移除的插件
-         还列在表里，直到设置页下次挂载才消失。 */
+         还列在表里，直到设置页下次挂载才消失。
+         结局 toast 由壳的 chokepoint 统一说（含 MCP 注销成败），
+         这里不重复弹。 */
       const r: any = await shell.removePlugin(p.id);
       if (!r?.ok) {
         ctx.toast('移除失败：插件清单没能存下（浏览器存储不可用？）', 'err');
@@ -1255,19 +1257,6 @@ export default function Settings() {
       const list = shell.getPlugins?.();
       setPlugins(Array.isArray(list) ? list : []);
       setPluginsUnknown(!Array.isArray(list));
-      /* MCP 注销由宿主收口完成，这里只把结果说清楚 */
-      const mcp = r.mcp?.status;
-      if (mcp === 'cleaned') {
-        ctx.toast(`已移除「${p.name}」，其 MCP 服务「${mcpServer}」已一并注销`, 'ok');
-      } else if (mcp === 'failed') {
-        // 插件已经卸了，MCP 清理失败不能把成功说成失败 —— 说清残留和补救路径
-        ctx.toast(
-          `插件已移除，但 MCP 服务「${mcpServer}」注销失败：${String(r.mcp?.error ?? '')}。可去「设置 → MCP 网关」手动移除`,
-          'warn',
-        );
-      } else {
-        ctx.toast(`已移除「${p.name}」`, 'ok');
-      }
     } catch (e: any) {
       ctx.toast('移除失败：' + String(e?.message ?? e), 'err');
     }

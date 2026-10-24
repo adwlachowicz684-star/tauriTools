@@ -786,8 +786,10 @@ export function createModuleContext({
 /**
  * @param {object} vars     主题变量
  * @param {string} [base]   宿主给的权威基调（'light' | 'dark'），可省略
+ * @param {string} [themeId] 宿主当前主题 id（写进 data-theme，供按主题
+ *                           缓存渲染结果的插件判断主题变更），可省略
  */
-function applyThemeVars(vars, hostBase) {
+function applyThemeVars(vars, hostBase, themeId) {
   if (!vars) return;
   let s = document.getElementById('nexus-theme-vars');
   if (!s) {
@@ -822,6 +824,31 @@ function applyThemeVars(vars, hostBase) {
     ? hostBase
     : (isLightColor(vars['--bg']) ? 'light' : 'dark');
   document.documentElement.style.colorScheme = base;
+  /*
+   * 把**主题 id** 也写进 data-theme —— 与 data-nexus-base 分工：
+   * 后者只有深浅两档（给 CSS 按基调切档用），前者是主题的完整身份。
+   * 按主题缓存渲染结果的插件（md 的 mermaid：缓存键含 themeTag，
+   * 切主题要重画）靠它判断"主题变了没有"。
+   * 缺了它：iframe 插件的 document 永远没有 data-theme（宿主主文档
+   * 上有，但沙箱里读不到），缓存键不变 → 切主题后已渲染的图颜色冻结，
+   * 且不报错。无构建模式（同页）读主文档所以一直正常 —— 又一处
+   * "沙箱坏、同页好"的不一致。
+   */
+  try {
+    if (themeId) document.documentElement.dataset.theme = themeId;
+  } catch { /* 忽略 */ }
+  /*
+   * 广播「主题已应用」：变量是直接写进 DOM 的，React 不会因此重渲染，
+   * 而按主题缓存渲染结果的插件（md 的 mermaid：缓存键含 themeTag）
+   * 需要在这个时点重画。没有这个信号，它们只能自己挂
+   * MutationObserver 盯 data-theme —— 每个插件各盯一份。
+   * 事件带 themeId，插件可自行判断是否真要重画。
+   */
+  try {
+    document.dispatchEvent(new CustomEvent('nexus-theme-applied', {
+      detail: { themeId: themeId ?? null, base },
+    }));
+  } catch { /* 忽略 */ }
   /* 把基调也写成 data 属性，供插件 CSS 按基调切档。
      光有 colorScheme 不够：那是给浏览器原生控件用的，CSS 选择器读不到。
      而插件里常有些"品牌色的浅色变体"（错误文字、代码段…），
@@ -965,7 +992,7 @@ export function bootIframePlugin(mountFn, settingsFn, serviceMethods) {
       // 把主题变量写到 iframe 的 :root，保证视觉与外壳一致
       if (d.theme) {
         currentTheme = d.theme;
-        const base = applyThemeVars(d.theme, d.themeBase);
+        const base = applyThemeVars(d.theme, d.themeBase, d.themeId);
         /* 回执：告诉外壳"新变量已落地"，pushTheme 正在等这条消息。
            不回的话外壳只能等超时兜底（400ms）才 resolve。
            d.theme 为空时不回 —— 没写任何变量，谈不上"已生效"。 */

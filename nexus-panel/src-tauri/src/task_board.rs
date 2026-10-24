@@ -41,7 +41,12 @@ const STATUSES: [&str; 5] = ["todo", "claimed", "doing", "review", "done"];
 
 /// 文件级全局锁：看板 UI 与 HTTP 服务两条写通道都要过它，
 /// 否则「读-改-写」序列会被对方插在半途。
-fn file_lock() -> &'static Mutex<()> {
+///
+/// pub(crate)：MCP 统一网关（mcp_gate）的 native handler 也直调
+/// 看板的业务函数，那是**第三条写通道** —— 不过这把锁的话，
+/// AI 经网关的读-改-写会与另两条通道交叉，静默丢更新
+/// （后写的覆盖先写的，双方都不报错、都看不到 TB_CONFLICT）。
+pub(crate) fn file_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -958,6 +963,10 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
                 }
                 obj.insert("status".to_string(), json!(status));
                 changed = true;
+                // 记下"本次是不是从别处进入 review"（进过的不再算）
+                if status == "review" && old != "review" {
+                    entered_review = true;
+                }
                 let suffix = if note.is_empty() { String::new() } else { format!("（{}）", note) };
                 push_history(obj, &by, "status", &format!("{} -> {}{}", old, status, suffix));
             }
@@ -973,7 +982,13 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
             push_history(obj, &by, "note", &note);
         }
         obj.insert("updatedAt".to_string(), json!(now_ms()));
-        let became = obj.get("status").and_then(|v| v.as_str()) == Some("review");
+        /*
+         * 「本次**进入** review」才算送审触发，不是「终态是 review」。
+         * 判终态的话：对已在 review 的任务改个标题/备注也会再发一份
+         * submit-review webhook —— agent-flow 侧重复触发审查流程，
+         * 而用户只觉得"我就改了个字"。（2026-10-17 深查修）
+         */
+        let became = entered_review;
         (Value::Object(obj.clone()), became)
     };
 

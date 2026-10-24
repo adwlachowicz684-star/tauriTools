@@ -297,27 +297,56 @@ fn kill_one(pid: u32) -> Result<(), String> {
     }
 }
 
+/// 杀一个已注册的 CLI 进程。kill_node 与退出收口共用这一份 ——
+/// 两处各写一遍的话，退出路径漏了「先杀进程树再杀本体」的次序，
+/// 就会留下孤儿子进程（用户以为任务停了，AI CLI 还在跑还在写文件）。
+fn kill_registered(map: &mut HashMap<String, CommandChild>, run_id: &str) -> Result<(), String> {
+    let Some(child) = map.remove(run_id) else {
+        return Ok(());
+    };
+    // pid 必须在 kill 之前取：kill 会消费掉 child
+    let pid = child.pid();
+    let tree_err = kill_process_tree(pid);
+    // 本体仍交给 Tauri 杀：它走的是平台原生路径，比我们可靠。
+    // 上面已整树清过一遍，这里失败多半只是"进程已不存在"，不值得报错。
+    let own_err = child.kill().err();
+    match (tree_err, own_err) {
+        // 树清干净了，本体这一刀失手多半是"已经死了"，不算失败
+        (Ok(()), None) => {}
+        (Ok(()), Some(e)) => {
+            eprintln!("[af] 进程树已清理，本体的 kill 报错（pid {pid}）: {e}");
+        }
+        // 树没清干净：无论本体杀没杀掉，都要告诉用户有残留
+        (Err(te), _) => return Err(format!("终止进程树失败（可能有残留子进程）: {te}")),
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn kill_node(state: State<'_, ProcRegistry>, run_id: String) -> Result<(), String> {
     let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(child) = map.remove(&run_id) {
-        // pid 必须在 kill 之前取：kill 会消费掉 child
-        let pid = child.pid();
-        let tree_err = kill_process_tree(pid);
-        // 本体仍交给 Tauri 杀：它走的是平台原生路径，比我们可靠。
-        // 上面已整树清过一遍，这里失败多半只是"进程已不存在"，不值得报错。
-        let own_err = child.kill().err();
-        match (tree_err, own_err) {
-            // 树清干净了，本体这一刀失手多半是"已经死了"，不算失败
-            (Ok(()), None) => {}
-            (Ok(()), Some(e)) => {
-                eprintln!("[af] 进程树已清理，本体的 kill 报错（pid {pid}）: {e}");
-            }
-            // 树没清干净：无论本体杀没杀掉，都要告诉用户有残留
-            (Err(te), _) => return Err(format!("终止进程树失败（可能有残留子进程）: {te}")),
+    kill_registered(&mut map, &run_id)
+}
+
+/// 退出收口：杀掉全部还在跑的 CLI 进程，返回收掉的条数。
+///
+/// 不杀的后果不是"内存泄漏"这么轻：关面板后子进程孤儿化 ——
+/// 用户以为任务停了，那个 AI CLI 还在跑、还在写文件；
+/// 且 PID 复用后，下次 kill_node 拿着旧 run_id 可能杀到无关进程。
+#[tauri::command]
+pub fn kill_all_nodes(state: State<'_, ProcRegistry>) -> usize {
+    let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let ids: Vec<String> = map.keys().cloned().collect();
+    let mut n = 0;
+    for id in &ids {
+        if map.contains_key(id) && kill_registered(&mut map, id).is_ok() {
+            n += 1;
         }
     }
-    Ok(())
+    if n > 0 {
+        eprintln!("[af] 退出收口：已终止 {n} 个还在运行的 CLI 进程");
+    }
+    n
 }
 
 /// 检查 CLI 是否已安装。用标准库执行，不占用 shell 插件权限额度。
@@ -478,7 +507,14 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<MiniRequest>> 
             let k = t[..idx].trim().to_lowercase();
             let v = t[idx + 1..].trim().to_string();
             if k == "content-length" {
-                content_len = v.parse::<usize>().unwrap_or(0);
+                // 解析失败不能当 0：那会把整个 body 静默丢掉，
+                // 而调用方看到的是「空参数」而不是「头部坏了」
+                content_len = v.parse::<usize>().map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("content-length 不是合法数字: {v}"),
+                    )
+                })?;
             }
             headers.push((k, v));
         }
@@ -499,6 +535,22 @@ fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<MiniRequest>> 
             .by_ref()
             .take(content_len as u64)
             .read_to_end(&mut buf)?;
+        /*
+         * 读不够声明长度 = 客户端断在半路（或对端限流）。
+         * 不检查的话 body 被静默截断：JSON 解析失败 →「请求体不是合法
+         * JSON」，而真相是"只收到了三分之一"—— 排查方向整个跑偏。
+         * content-length 解析失败（非数字/负数）同样不能当 0 静默丢 body。
+         */
+        if buf.len() < content_len {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!(
+                    "请求体不完整：声明 {} 字节，只收到 {}（客户端可能断在半路）",
+                    content_len,
+                    buf.len()
+                ),
+            ));
+        }
         body = String::from_utf8_lossy(&buf).to_string();
     }
 
@@ -648,7 +700,18 @@ pub fn webhook_start(
     // 端口已被占：直接把这条路由加进去（多触发器共端口靠 path 区分）
     if let Some(srv) = map.get(&port) {
         let mut routes = srv.routes.lock().unwrap_or_else(|e| e.into_inner());
-        if !routes.iter().any(|(tid, _, _)| tid == &id) {
+        if let Some(r) = routes.iter_mut().find(|(tid, _, _)| tid == &id) {
+            /*
+             * 同 id 重注册 = 配置变了（端口/路径/令牌改过）。
+             *
+             * 这里必须**更新**而不是跳过：前端「停旧起新」是两次异步
+             * invoke，stop 未落时 start 会看到旧路由 —— 跳过不更新的话，
+             * 界面显示新 URL、实际监听旧路由（调新地址 404、带新令牌
+             * 401，全程无提示）。更新让两种到达顺序都收敛到新配置。
+             */
+            r.1 = path.clone();
+            r.2 = effective.clone();
+        } else {
             routes.push((id.clone(), path.clone(), effective.clone()));
         }
         return Ok(effective);
@@ -729,6 +792,32 @@ pub fn webhook_start(
 
     map.insert(port, WebhookServer { stop, wake, routes });
     Ok(effective)
+}
+
+/// 退出收口：停掉全部 webhook 服务（含端口监听线程），返回停掉的端口数。
+///
+/// 不停的话：面板关了 HTTP 服务还在监听，本机任何程序都能继续触发
+/// 工作流（起 CLI、读写授权目录）；而前端监听器已随 iframe 销毁 ——
+/// 调用方收到 `{"ok":true}`、工作流永不执行，「说了成功其实没成」。
+#[tauri::command]
+pub fn webhook_stop_all(state: State<'_, WebhookRegistry>) -> usize {
+    let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let ports: Vec<u16> = map.keys().copied().collect();
+    let n = ports.len();
+    for p in ports {
+        if let Some(srv) = map.remove(&p) {
+            srv.stop.store(true, Ordering::Relaxed);
+            // 唤醒正在 wait_timeout 的 accept 线程，让它马上看到 stop
+            let (lock, cvar) = &*srv.wake;
+            if let Ok(_g) = lock.lock() {
+                cvar.notify_all();
+            }
+        }
+    }
+    if n > 0 {
+        eprintln!("[af] 退出收口：已停掉 {n} 个 webhook 服务");
+    }
+    n
 }
 
 #[tauri::command]

@@ -256,9 +256,16 @@ export default function DepsCard() {
        * "文件在、import 报错"是最常见的假成功 —— CDN 给的 ESM 里可能带
        * 浏览器不认的语法。不在这里验，用户会在某个插件里才看到报错，
        * 而那时已经不知道是哪一步出的问题。
+       *
+       * ⚠️ 第三个参数（path）**不传**：installRuntimeDep 回的是**文件名**
+       * （`_plantuml_core@1.2026.8.mjs`），而 loadRuntimeDep 要的是磁盘
+       * 路径 —— 把文件名塞进 convertFileSrc 转不出有效 asset URL，
+       * 每次安装都红字"已下载，但这个包加载不了"（假失败，安装其实成功）。
+       * 不传时它自己按「安全名 + 版本」从已装列表里解析路径
+       * （resolveRuntimeDepPath，口径见 runtime-deps.js）。
        */
       try {
-        await loadRuntimeDep(ctx, r.name!, r.version!, r.file);
+        await loadRuntimeDep(ctx, r.name!, r.version!);
         setMsg({ k, text: `已安装 ${r.version || '最新版'} 并验证可加载`, bad: false });
       } catch (e) {
         setMsg({

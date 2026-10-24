@@ -742,7 +742,7 @@ document.getElementById('cmenu').onclick=function(e){
 document.addEventListener('click',function(e){if(!e.target.closest('#cmenu'))closeCMenu();});
 window.addEventListener('blur',closeCMenu);
 window.addEventListener('resize',closeCMenu);
-window.addEventListener('keydown',function(e){if(e.key==='Escape'){closeCMenu();rnClose();}});
+window.addEventListener('keydown',function(e){if(e.key==='Escape'){closeCMenu();rnClose();closeLdc();}});
 /* 树内滚动时菜单会悬在原地、指向错行，直接收起。capture 才能收到内层滚动。 */
 document.addEventListener('scroll',closeCMenu,true);
 
@@ -1071,10 +1071,18 @@ function zoom(el){
     if(cell)cell.classList.add('ld');
     cmdPage(path,idx,i,'f').then(function(j){
       if(cell)cell.classList.remove('ld');
-      if(S!==PAGE_CACHE[path]||!j.ok)return;
+      if(S!==PAGE_CACHE[path])return;
+      /* 取图失败**不能静默 return**：大图区会留着上一页（或空白），
+         缩略格解除暗态像"加载完了"—— 用户看到的是裂图/旧图，
+         没有任何提示。据实说明失败原因。 */
+      if(!j.ok){
+        if(S.picked===i)main.innerHTML='<div class="pl err">这一页加载失败：'+esc(j.err||'请重试')+'</div>';
+        return;
+      }
       S.fulls[i]=apiU(j.url);
       if(S.picked===i)main.innerHTML='<img src="'+S.fulls[i]+'">';
-    }).catch(function(){if(cell)cell.classList.remove('ld');});
+    }).catch(function(e){if(cell)cell.classList.remove('ld');
+      if(S===PAGE_CACHE[path]&&S.picked===i)main.innerHTML='<div class="pl err">这一页加载失败：'+esc(e&&e.message?e.message:'请重试')+'</div>';});
   }
 
   /* 缩略图**串行**填：前一格出来再取下一格。
@@ -1121,7 +1129,10 @@ function zoom(el){
     strip.innerHTML='<div class="pl err">加载失败：'+esc(e&&e.message?e.message:'请重试')+'</div>';
   });
 }
-document.getElementById('ldc').onclick=function(e){if(e.target===this||e.target.id==='main')this.style.display='none';};
+document.getElementById('ldc').onclick=function(e){if(e.target===this||e.target.id==='main')closeLdc();};
+/* 灯箱关：遮罩点击与 Escape 共用一口。原先 Escape 分支只关菜单和
+   改名框 —— 灯箱开着按 Esc 毫无反应，用户以为卡死（只能去找遮罩点）。 */
+function closeLdc(){var L=document.getElementById('ldc');if(L)L.style.display='none';}
 async function ren(btn){
   const card=btn.closest('.card');
   const path=card.getAttribute('data-path');
@@ -1211,6 +1222,15 @@ function setItemDim(path,dim){
 async function del(btn){
   const card=btn.closest('.card');
   const path=card.getAttribute('data-path');
+  /*
+   * 删除前确认。进回收目录**可恢复**，但误点成本真实存在
+   * （批量视图里点错一行的事不罕见），而且改名/打包都有预览确认，
+   * 删除没有就是三类操作里唯一的例外。
+   * 用原生 confirm 而非 js/dialog.js：本插件是无构建 iframe，
+   * 产物自包含，引不进去（文件内既有的移除文件夹确认同一取舍）。
+   */
+  const name=card.getAttribute('data-name')||path;
+  if(!confirm('「'+name+'」将被移入回收目录（可恢复）。\n确定删除这一项吗？'))return;
   const j=await cmdDelete(path);
   if(!j.ok){toast('失败:'+j.err);return;}
   card.classList.add('dim');
