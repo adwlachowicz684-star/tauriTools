@@ -211,6 +211,10 @@ function mount(o = {}) {
  * @param {string} [o.okText='确定']
  * @param {string} [o.cancelText='取消']
  * @param {boolean} [o.danger]  危险操作，确认按钮用状态色
+ * @param {string|number} [o.width]  宽度，默认 400px
+ *   ⚠️ 这一条此前**没声明**，而实现里明明读着（`width: o?.width || 400` 传给 mount）。
+ *      于是传 width 的调用方被 TS 判 TS2353「'width' 不存在」——
+ *      类型否认了实现本来就支持的参数。补上即可，行为一字未改。
  * @returns {Promise<boolean>}
  */
 export function confirm(o) {
