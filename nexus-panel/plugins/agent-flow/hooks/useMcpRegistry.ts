@@ -18,7 +18,10 @@ import { hydrateMcpNodes, bootRefresh } from '../engine/mcpRegistry';
  * 那会一路拉起 React 组件。把纯数据变换留在 mcpTools 里，
  * 它们才能被单测直接覆盖（mcpRegistry 本身在测试环境里 import 不了）。
  */
-import { mcpSidebarGroups, toolCountOf, type NodeBlueprint } from '../engine/mcpTools';
+import {
+  mcpSidebarGroups, toolCountOf, countMcpUsage, describeAffected, refreshBreaksNodes,
+  type NodeBlueprint,
+} from '../engine/mcpTools';
 
 /**
  * MCP 服务库 + 工具节点刷新。
@@ -66,10 +69,17 @@ const mcpFetcher: McpToolFetcher = async (server) => {
 };
 
 export function useMcpRegistry({
-  initCanvases, onLog,
+  initCanvases, onLog, canvasesRef,
 }: {
   initCanvases: unknown[];
   onLog: (msg: string) => void;
+  /*
+   * **当前**全部画布 —— 刷新后要拿它算"有没有节点用着变化的工具"。
+   *
+   * 用 ref 而不是值：它是每次渲染都变的对象，放进依赖数组会让刷新回调
+   * 反复重建，进而让防抖 effect 反复重新注册（与 mcpRefsRef 同一套理由）。
+   */
+  canvasesRef?: { current: unknown[] };
 }) {
   /*
    * MCP 服务改由**全局库**管（一处配置，全图可用）。
@@ -203,6 +213,19 @@ export function useMcpRegistry({
         rebuildMcpGroups(mcpSidebarGroups(r.outcome.list));
       }
       onLog(r.message);
+      /*
+       * 变化里有没有**画布上正在用的**工具 —— 有就点名说出来。
+       *
+       * r.message 只说"新增/变更/移除 各几个"，不点名也不提画布；
+       * 而用户要修的是画布上那些节点：工具没了或字段改了名，
+       * 已填的参数会对不上，执行时表现是"明明填了却说缺必填参数"。
+       *
+       * 先 refreshBreaksNodes 再查用量：没有危险变化时连遍历画布都省了。
+       */
+      if (r.outcome.ok && refreshBreaksNodes(r.outcome.diffs)) {
+        const warn = describeAffected(r.outcome.diffs, countMcpUsage(canvasesRef?.current ?? []));
+        if (warn) onLog(warn);
+      }
     } finally {
       // 只有仍是最新那次才收起"刷新中" ——
       // 否则旧刷新返回时会把新刷新还在跑的状态提前清掉

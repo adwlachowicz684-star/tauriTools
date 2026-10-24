@@ -468,7 +468,12 @@ export default function App() {
   const {
     mcpServers, commitMcp, mcpGroups, mcpToolCount, mcpRefreshing,
     refreshMcp: doRefreshMcp,
-  } = useMcpRegistry({ initCanvases: init.canvases, onLog: pushLog });
+  } = useMcpRegistry({
+    initCanvases: init.canvases,
+    onLog: pushLog,
+    // 刷新后要拿全部画布算"有没有节点用着变化的工具"（见 hook 里的说明）
+    canvasesRef,
+  });
   /*
    * 凭据库（加密存储 / 解锁 / 换保管方式）。
    *
