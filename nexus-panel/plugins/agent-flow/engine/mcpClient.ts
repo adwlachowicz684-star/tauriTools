@@ -365,11 +365,22 @@ export async function listTools(
 /* 调用工具                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 调用结果。
+ *
+ * ⚠️ `ok` 与 `isError` 是**同一件事的两面**，不是两个独立判断 ——
+ * 以前 `ok` 是硬编码的 `true`，于是工具报错时两个字段同时是
+ * `ok: true, isError: true`，自相矛盾。调用方看 `ok` 就会把工具
+ * 报错的文本（"范围超出上限"）当成正常输出喂给下游。
+ *
+ * 现在 `ok` 由 `isError` 派生，两者不可能对不上。
+ */
 export type McpCallResult = {
+  /** 工具**真的**跑成了吗 —— 恒等于 `!isError`，不是"请求发出去了吗" */
   ok: boolean;
   /** 取出的文本；content 里可能有多种块，拼起来 */
   text: string;
-  isError?: boolean;
+  isError: boolean;
 };
 
 /**
@@ -428,7 +439,21 @@ export async function callTool(
     return JSON.stringify(o);
   }).join('\n');
 
-  return { ok: true, text, isError: r?.isError === true };
+  /*
+   * ok **由** isError 派生，不许各说各的 ——
+   *
+   * 以前这里是 `{ ok: true, ... }`：请求发出去了就算成功。而 MCP 的
+   * 请求成功 ≠ 工具成功 —— 工具自己报错时响应体照样是 200 + result，
+   * 只是 result.isError 为 true。实测（改之前）：
+   *
+   *   ok=true  isError=true  text="范围超出上限"
+   *
+   * 两个字段同时成立。调用方 `if (r.ok)` 会把这段报错文本当作工具的
+   * 正常输出继续往下传 —— 与 runMcp 那段注释说的"绿着成功"同源，
+   * 只是更难看出来：工具确实被调用了，返回值里也确实写着错了。
+   */
+  const isError = r?.isError === true;
+  return { ok: !isError, text, isError };
 }
 
 /* ------------------------------------------------------------------ */
