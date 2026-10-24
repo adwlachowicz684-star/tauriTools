@@ -17,6 +17,7 @@
 //! 这里沿用同一形状，前端只需要把 fetch 换成 invoke，不必重写判断逻辑。
 //! 改动返回结构前先确认前端对应分支，否则会静默走进"失败"分支。
 
+pub mod cache;
 pub mod docx;
 pub mod pack;
 pub mod pdf;
@@ -267,11 +268,19 @@ pub(crate) fn write_json<T: Serialize>(p: &Path, v: &T) -> Result<(), String> {
 /// `_work/`、`_imgs/`、`_docx_pdf/`、`_trash/` 这些自有目录，不再打开任何旧文件。
 ///
 /// 由 `dupview_roots` / `dupview_list` 在每次打开插件时调用；导入完成后
-/// 它就是几次 `is_file()`，可以放心反复调用。
+/// 它就是几次 `is_file()` 加一次孤儿缓存扫描（见 `cache::sweep`），
+/// 可以放心反复调用。
 pub fn migrate_legacy(app: &AppHandle) -> Result<(), String> {
     let dir = data_dir(app)?;
     migrate_map(app)?;
     migrate_docx_cache(&dir);
+    /* 孤儿缓存清理，每次打开插件时顺带跑掉。
+       【为什么挂在打开时】缓存只增不减的根因是"索引条目消失后没人回收"：
+       文件被删 / 改名改到索引追不上 / 根目录被移除，旧 idx 名下的缩略图、
+       逐页图、docx→PDF 永远留在磁盘上（本机实测攒到 2.3G，占全部缓存 72%）。
+       清理逻辑与安全底线在 cache.rs：索引读不到就整体不删、只认 8 位十六进制
+       形状、_work/_trash 不碰。 */
+    cache::sweep(&dir, cache::SweepMode::Orphan);
     Ok(())
 }
 
@@ -611,6 +620,52 @@ pub fn dupview_delroot(app: AppHandle, path: String) -> serde_json::Value {
         Ok(()) => ok(serde_json::json!({})),
         Err(e) => err(&e),
     }
+}
+
+/* ---------------------------------------------------------------------------
+ * 命令：缓存治理（统计 / 分级清理）
+ * -------------------------------------------------------------------------*/
+
+/// 缓存占用统计：活缓存 / 孤儿 / 活逐页图 / 孤儿逐页图四档分开报。
+///
+/// 前端「缓存」面板据此显示"清理能回收多少"，按钮上的数字也来自它 ——
+/// 不让用户按一个写死的文案去按按钮。只读，不删任何文件。
+///
+/// 索引读不到时 `indexOk = false`、数字全 0：那是"没法判断"，
+/// 不是"没有缓存"（UI 必须明说，见 cache::stats）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn dupview_cache_stats(app: AppHandle) -> serde_json::Value {
+    let dir = match data_dir(&app) {
+        Ok(d) => d,
+        Err(e) => return err(&e),
+    };
+    ok(serde_json::json!(cache::stats(&dir)))
+}
+
+/// 分级清理缓存。`mode` 三档（代价差着量级，传错必须报错）：
+///   · `orphan` —— 只清索引里已无对应的缓存（删文件/改名/移除根目录留下的）；
+///   · `pages`  —— 孤儿 + 全部逐页图（可再生，重新打开卷子即按页渲染回来）；
+///   · `all`    —— 清空全部可识别缓存（缩略图/逐页图/docx→PDF 全删，
+///                 其中 docx→PDF 要重新过一遍 LibreOffice，几百份要约几十分钟）。
+///
+/// 【为什么清理前要前端确认】
+/// 三档代价从"零"到"几十分钟"，按钮上的规模数字必须来自 dupview_cache_stats
+/// 的实时统计，确认框里列明再让用户按。
+///
+/// 安全底线全部在 cache.rs 内强制：索引读不到（不存在/空/损坏）就整体不删；
+/// 只认 `<8位十六进制>` 形状的缓存名，认不出来的文件一概不碰；
+/// 只走 `_imgs` 与 `_docx_pdf`，`_work` 索引与 `_trash` 回收件不在此模块出现。
+/// 打开插件时的自动清理走的是同一个函数的 orphan 档（见 migrate_legacy）。
+#[tauri::command(rename_all = "snake_case")]
+pub fn dupview_cache_sweep(app: AppHandle, mode: String) -> serde_json::Value {
+    let dir = match data_dir(&app) {
+        Ok(d) => d,
+        Err(e) => return err(&e),
+    };
+    let Some(m) = cache::SweepMode::parse(&mode) else {
+        return err(&format!("未知清理档位：{mode}（应为 orphan / pages / all）"));
+    };
+    ok(serde_json::json!(cache::sweep(&dir, m)))
 }
 
 /* ---------------------------------------------------------------------------

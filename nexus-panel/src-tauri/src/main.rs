@@ -437,7 +437,7 @@ fn main() {
              */
             updater::updater_check, updater::updater_install, updater::updater_relaunch,
             /*
-             * dupview（试卷查重）十八条 —— 同样被覆盖丢过。
+             * dupview（试卷查重）二十三条 —— 同样被覆盖丢过。
              * 少了它们：插件界面里每个操作都失败，且不报具体原因。
              * 必须带 `dupview::` 前缀（写裸名会编译失败：找不到定义）。
              *
@@ -447,8 +447,12 @@ fn main() {
              * 后 4 条是文件树右键菜单用的：批量「已解决」（done_set）、
              * 批量改名（rename_preview 预览 + rename_all 执行）、打包 ZIP（pack_zip）。
              * 末尾 open_in_explorer 也是右键菜单用的：在系统文件管理器中打开该目录。
+             * 最后两条是缓存治理：cache_stats 只读占用统计，cache_sweep 分级清理
+             * （orphan / pages / all）；孤儿清理由 migrate_legacy 在每次打开
+             * 插件时自动跑，这两条是「缓存」面板上的手动入口。
              */
             dupview::dupview_roots, dupview::dupview_addroot, dupview::dupview_delroot, dupview::dupview_scan_status, dupview::dupview_scan, dupview::dupview_scanall, dupview::dupview_list, dupview::dupview_pageinfo, dupview::dupview_page, dupview::dupview_rename, dupview::dupview_delete, dupview::dupview_restore, dupview::dupview_dir_done, dupview::dupview_browse, dupview::dupview_done_set, dupview::dupview_rename_preview, dupview::dupview_rename_all, dupview::dupview_pack_zip, dupview::dupview_open_in_explorer, dupview::dupview_dir_rename_preview, dupview::dupview_dir_rename,
+            dupview::dupview_cache_stats, dupview::dupview_cache_sweep,
             /* 常用文件夹：folder-picker 服务与设置页共用，读 + 整表覆盖写。 */
             fpx::fpx_list_fav_dirs, fpx::fpx_save_fav_dirs,
             /*

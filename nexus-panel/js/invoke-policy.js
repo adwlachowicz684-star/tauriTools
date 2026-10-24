@@ -349,6 +349,11 @@ export const PLUGIN_COMMANDS = {
     'dupview_open_in_explorer',
     'dupview_dir_rename_preview',
     'dupview_dir_rename',
+    /* 缓存治理两条：stats 只读占用统计（R），sweep 分级清理（W）。
+       孤儿清理由 migrate_legacy 在每次打开插件时自动跑（cache::sweep），
+       这两条是「缓存」面板上的手动入口，让用户看得见数字、选得了档位。 */
+    'dupview_cache_stats',
+    'dupview_cache_sweep',
   ],
 
   'demo-iframe': ['rust_ping'],

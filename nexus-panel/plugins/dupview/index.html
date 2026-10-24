@@ -58,6 +58,9 @@ header .sub{font-size:12px;color:#cbbfa8;margin-left:auto}
 .frroot button.frdel{color:#e8b9b0;border-color:#7a4a44}
 .frprog{font-size:11px;color:#d9c9a6;background:#2b2620;border:1px solid #6a5c3a;border-radius:6px;padding:6px 8px;margin-top:8px;display:none;line-height:1.5;word-break:break-all;white-space:pre-line}
 .frprog.on{display:block}
+.cacheline{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:#d9c9a6;padding:3px 2px}
+.cacheline b{color:#f3ecdf;font-weight:600}
+.cachebtns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #5c5142}
 .tip{position:fixed;z-index:200;left:0;top:0;max-width:560px;background:#2b2620;color:#f3ecdf;border:1px solid #6a5c3a;border-radius:6px;padding:5px 9px;font-size:12px;line-height:1.5;word-break:break-all;white-space:pre-line;box-shadow:0 4px 14px rgba(0,0,0,.4);display:none;pointer-events:none}
 .fbtn{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#f3ecdf;background:#4a4133;border:1px solid #6a5c3a;border-radius:14px;padding:3px 10px;cursor:pointer;user-select:none}
 .fbtn:hover{background:#5a5040}
@@ -210,6 +213,16 @@ header .sub{font-size:12px;color:#cbbfa8;margin-left:auto}
 </div></div>
 <span class="sep"></span>
 <button class="fbtn" id="btnTree" onclick="toggleTree()" data-tip="收起 / 展开左侧目录树">◀ 目录树</button>
+<div class="dd"><button class="fbtn" id="cacheBtn" onclick="toggleCache(event)" data-tip="查重缓存管理：缩略图 / 逐页图 / docx 转换 PDF。每次打开插件会自动清理孤儿缓存">缓存</button>
+<div class="ddpanel" id="cachePanel" style="min-width:300px">
+<div id="cacheStats">统计中…</div>
+<div class="cachebtns">
+<button class="fbtn" onclick="cacheClean('orphan')" data-tip="只删索引里已无对应的缓存（源文件已删 / 改名 / 目录已移除）——零代价，删的都是不可能再被命中的文件">清理孤儿缓存</button>
+<button class="fbtn" onclick="cacheClean('pages')" data-tip="孤儿 + 全部逐页图。逐页图可再生（重新打开卷子即按页渲染）；docx 转换缓存不动">清理孤儿+页图</button>
+<button class="fbtn" onclick="cacheClean('all')" data-tip="清空全部可识别缓存。缩略图与逐页图重渲即可，但 docx→PDF 要重新过一遍转换（几百份要约几十分钟）">清空全部缓存</button>
+</div>
+<div class="frprog" id="cacheMsg"></div>
+</div></div>
 <div class="dd"><button class="fbtn" id="frBtn" onclick="toggleFR(event)">＋ 文件夹</button>
 <div class="ddpanel" id="frPanel" style="min-width:440px">
 <div class="frrow"><input class="frin" id="frPath" placeholder="粘贴或输入文件夹绝对路径" data-tip="支持任意本地文件夹，例如 D:\试卷\2026届">
@@ -392,6 +405,65 @@ function frLoad(){
     document.getElementById('frList').innerHTML=h||'<div style="font-size:11px;color:#a08c63;padding:4px 2px">尚未添加文件夹</div>';
     frStatus(j.status);
   }).catch(function(){});
+}
+/* ---- 缓存管理面板 ----
+   缓存（缩略图 / 逐页图 / docx→PDF）只增不减的根因是"索引条目消失后没人回收"，
+   后端已在每次打开插件时自动清掉孤儿（migrate_legacy → cache::sweep）。
+   这里给人手动入口：三档清理，按钮上的数字一律来自实时统计，不写死。 */
+function toggleCache(e){
+  e.stopPropagation();
+  var p=document.getElementById('cachePanel');
+  var on=!p.classList.contains('open');
+  p.classList.toggle('open',on);
+  if(on)cacheLoad();
+}
+function cacheLine(label,val,tip){
+  return '<div class="cacheline" data-tip="'+esc(tip)+'"><span>'+label+'</span><b>'+val+'</b></div>';
+}
+function cacheLoad(){
+  var el=document.getElementById('cacheStats');
+  el.innerHTML='统计中…';
+  cmdCacheStats().then(function(j){
+    if(!j.ok){el.innerHTML=cacheLine('统计失败',j.err||'','');return;}
+    /* 索引读不到必须明说 —— 拿一堆 0 当"没有缓存"会让用户以为已经清过了 */
+    if(!j.indexOk){el.innerHTML=cacheLine('索引不可读','无法统计','扫描索引（_work/map.json）读不到：此时不清理任何东西，也不会显示成"没有缓存"');return;}
+    var pf=j.livePagesFiles+j.orphanPagesFiles,pb=j.livePagesBytes+j.orphanPagesBytes;
+    var h='';
+    h+=cacheLine('活缓存',fmt(j.liveBytes)+' · '+j.liveFiles+' 个','索引里的文件正在用的缓存，删了要重生（docx 转换一份要几分钟）');
+    h+=cacheLine('孤儿缓存',fmt(j.orphanBytes)+' · '+j.orphanFiles+' 个','源文件已删 / 改名 / 目录已移除，永远不可能再被命中 —— 纯垃圾');
+    h+=cacheLine('其中逐页图',fmt(pb)+' · '+pf+' 个','可再生资产：重新打开卷子就会按页渲染回来');
+    h+=cacheLine('总计',fmt(j.totalBytes)+' · '+j.totalFiles+' 个','');
+    el.innerHTML=h;
+  }).catch(function(){el.innerHTML=cacheLine('统计失败','','');});
+}
+function cacheClean(mode){
+  var labels={orphan:'孤儿缓存',pages:'孤儿缓存 + 全部逐页图',all:'全部缓存（含 docx 转换 PDF）'};
+  var tips={orphan:'零代价：删的都是不可能再被命中的缓存。',pages:'逐页图会全部重渲（打开卷子时按页生成）；docx 转换缓存不动。',all:'缩略图与逐页图重渲即可，但 docx→PDF 要重新过一遍转换（几百份要约几十分钟）。'};
+  cmdCacheStats().then(function(j){
+    if(!j.ok||!j.indexOk){toast('索引不可读，已拒绝清理');return;}
+    /* 三档各自的规模：orphan = 孤儿；pages = 孤儿 + 活逐页图；all = 全部。
+       注意 pages 档不能把"孤儿逐页图"算两遍（它已含在孤儿里）。 */
+    var f,b;
+    if(mode==='orphan'){f=j.orphanFiles;b=j.orphanBytes;}
+    else if(mode==='pages'){f=j.orphanFiles+j.livePagesFiles;b=j.orphanBytes+j.livePagesBytes;}
+    else{f=j.totalFiles;b=j.totalBytes;}
+    if(!f){toast('没有可清理的缓存');return;}
+    ask('清理'+labels[mode],'将删除约 '+fmt(b)+' / '+f+' 个缓存文件。\n'+tips[mode]+'\n\n索引（_work）与回收件（_trash）不会动。',[
+      {label:'取消',val:''},
+      {label:'清理',val:'go',cls:'primary'}
+    ]).then(function(v){
+      if(v!=='go')return;
+      var msg=document.getElementById('cacheMsg');
+      msg.textContent='清理中…';msg.classList.add('on');
+      cmdCacheSweep(mode).then(function(r){
+        if(!r.ok){msg.classList.remove('on');toast('清理失败：'+(r.err||''));return;}
+        var txt='已清理 '+r.removedFiles+' 个文件（缩略图 '+r.thumbs+' / 逐页图 '+r.pages+' / docx 转换 '+r.docxPdf+'），释放 '+fmt(r.removedBytes);
+        msg.textContent=txt;msg.classList.add('on');
+        toast(txt);
+        cacheLoad();
+      }).catch(function(e){msg.classList.remove('on');toast('清理失败：'+beErr(e));});
+    });
+  }).catch(function(){toast('统计失败，已取消清理');});
 }
 function frStatus(st){
   var el=document.getElementById('frProg');
@@ -1306,6 +1378,8 @@ async function cmdDirRenamePreview(path,recursive){return beCtx().invoke('dupvie
 async function cmdDirRename(path,recursive){return beCtx().invoke('dupview_dir_rename',{path:path,recursive:recursive})}
 async function cmdPackZip(path,mode){return beCtx().invoke('dupview_pack_zip',{path:path,mode:mode})}
 async function cmdReveal(path){return beCtx().invoke('dupview_open_in_explorer',{path:path})}
+async function cmdCacheStats(){return beCtx().invoke('dupview_cache_stats',{})}
+async function cmdCacheSweep(mode){return beCtx().invoke('dupview_cache_sweep',{mode:mode})}
 /* 原生化后没有"后端进程"可起停：渲染、比对都编译进 exe 里，随面板一起就绪。
    这一整条 python 时代的启停栏直接隐藏 —— 留着只会让人去点一个
    已经不存在的「启动后端」。BE 对象只留 ready 这一个语义。 */

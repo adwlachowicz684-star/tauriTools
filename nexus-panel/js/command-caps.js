@@ -272,6 +272,23 @@ export const COMMAND_CAPS = {
    */
   dupview_open_in_explorer: 'M',
 
+  /*
+   * 试卷查重：缓存治理两条（src/dupview/cache.rs）。
+   *
+   * stats 定 **R**：只数缓存目录里的文件数与字节，返回值里没有任何用户文件
+   * 路径，与"读版本号"同级。
+   *
+   * sweep 定 **W**：它确实删文件 —— 但删的是插件**自己数据目录下的可再生缓存**
+   * （缩略图可重渲、逐页图可重渲、docx→PDF 重转要几分钟但回得来），
+   * 且 Rust 侧强制三条底线：索引读不到（不存在/空/损坏）就整体不删；
+   * 只认 <8位十六进制> 形状的缓存名，认不出来的文件一概不碰；
+   * 只走 _imgs 与 _docx_pdf，_work 索引与 _trash 回收件不碰。
+   * 定 W 而不是 R 是沿用本表取向：删除类操作按"看得到的效果"管，
+   * 让"能不能删"这件事在能力画像里看得见。
+   */
+  dupview_cache_stats: 'R',
+  dupview_cache_sweep: 'W',
+
   fpx_save_config: 'W',
   fpx_create_link: 'W',
   fpx_remove_link: 'W',
