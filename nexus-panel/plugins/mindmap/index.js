@@ -1511,6 +1511,18 @@ async function gcOrphanAssets(quiet = false) {
     return { files: fileIndex, folders: foldersList, currentId: currentFileId };
   }
 
+  /*
+   * ⚠️ 当前布局下这个函数是**休眠**的 —— 但别删。
+   *
+   * 文件库现在是 .mm-body 的 absolute 浮层（不占 flex 流），画布铺满且几何
+   * 恒定：开合时 canvasEl 的 left 一点不变，于是下面的 dLeft 恒为 0，
+   * 补偿永远不会触发。
+   *
+   * 保留它作为**兜底**：布局一旦回到「文件库挤窄画布」，这条链路会自动接管，
+   * 不用重新踩一遍那些坑 —— 尤其是「位移必须在父页面测，在 iframe 内取
+   * getBoundingClientRect().left 是恒定值、测不到容器位移」那条。
+   * 这个仓库在 挤窄 / 抽屉 / 浮层 之间来回改过好几轮。
+   */
   /**
    * 在底框开合前后把画布内容**钉在同一处**。
    *
