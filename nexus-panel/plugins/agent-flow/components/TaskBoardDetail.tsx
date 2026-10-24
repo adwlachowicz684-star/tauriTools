@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { confirm } from '../../../js/dialog.js';
-import { isComposing } from '../../../js/ime.js';
+import { confirm } from '../../js/dialog.js';
 import {
   type TaskBoard, type BoardStatus, type BoardTask,
   isGroup, isTask, lockOf, statusOf, tallyOf, leafTaskIds,
@@ -117,10 +116,7 @@ export function TaskBoardDetail({
           disabled={!canWrite}
           onChange={(e) => setTitleDraft(e.target.value)}
           onBlur={commitTitle}
-          /* 组合期的回车是「把候选词上屏」，不是提交：中文标题打到一半按回车
-             选词，会被 commitTitle 落盘成拼音串（见 js/ime.js 第 1、2 条）。
-             React 合成事件不转发 isComposing，必须传 nativeEvent。 */
-          onKeyDown={(e) => { if (isComposing(e.nativeEvent)) return; if (e.key === 'Enter') commitTitle(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') commitTitle(); }}
         />
         {group ? (
           <span className="bdd-kind">任务组</span>
