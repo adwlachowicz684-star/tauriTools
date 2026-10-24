@@ -5,6 +5,7 @@ import {
   mcpTypeOf, isMcpType, slugify, groupByServer, signatureOf,
   diffBlueprints, refreshBreaksNodes, mcpColorOf,
   exportBlueprints, importBlueprints, mergeBlueprints,
+  mcpSidebarGroups, filterMcpGroups,
   type McpToolSchema,
 } from '../engine/mcpTools';
 
@@ -260,4 +261,85 @@ test('合并按 type 去重，重复导入不堆副本', () => {
   const b = [mk('read', {}), mk('write', {})];
   const merged = mergeBlueprints(a, b);
   assert.equal(merged.length, 2, '同 type 应只留一条');
+});
+
+/* ================= 检索 ================= */
+
+test('检索: 空关键词原样返回（没输入不该变成"什么都没有"）', () => {
+  const groups = mcpSidebarGroups([
+    buildBlueprint('notion', tool('create_page', {}, [], '新建页面')) as never,
+  ]);
+  const r = filterMcpGroups(groups, '');
+  assert.equal(r.groups.length, 1);
+  assert.equal(r.total, 1);
+});
+
+test('检索: 能按工具名搜', () => {
+  const groups = mcpSidebarGroups([
+    buildBlueprint('notion', tool('create_page', {}, [], 'x')) as never,
+    buildBlueprint('notion', tool('search', {}, [], 'y')) as never,
+  ]);
+  const r = filterMcpGroups(groups, 'search');
+  assert.equal(r.total, 1);
+  assert.equal(r.groups[0].items[0].label, 'search');
+});
+
+test('检索: 能按说明搜（工具名里没有那个词）', () => {
+  const groups = mcpSidebarGroups([
+    buildBlueprint('fs', tool('op_1', {}, [], '读取本地文件内容')) as never,
+  ]);
+  assert.equal(filterMcpGroups(groups, '读取').total, 1);
+});
+
+test('检索: 能按服务名搜', () => {
+  const groups = mcpSidebarGroups([
+    buildBlueprint('notion', tool('a', {}, [], 'x')) as never,
+    buildBlueprint('github', tool('b', {}, [], 'y')) as never,
+  ]);
+  const r = filterMcpGroups(groups, 'github');
+  assert.equal(r.total, 1);
+  assert.equal(r.groups[0].server, 'github');
+});
+
+test('检索: 能按参数名搜（界面折叠着看不见参数）', () => {
+  const groups = mcpSidebarGroups([
+    buildBlueprint('fs', tool('read', { path: { type: 'string' } }, [], 'x')) as never,
+    buildBlueprint('fs', tool('list', {}, [], 'y')) as never,
+  ]);
+  const r = filterMcpGroups(groups, 'path');
+  assert.equal(r.total, 1);
+  assert.equal(r.groups[0].items[0].label, 'read');
+});
+
+test('检索: 一个都不剩的服务组整个去掉（留空组像"连上了但没工具"）', () => {
+  const groups = mcpSidebarGroups([
+    buildBlueprint('notion', tool('a', {}, [], 'x')) as never,
+    buildBlueprint('github', tool('b', {}, [], 'y')) as never,
+  ]);
+  const r = filterMcpGroups(groups, 'notion');
+  assert.equal(r.groups.length, 1);
+  assert.equal(r.groups[0].server, 'notion');
+});
+
+test('检索: 大小写不敏感', () => {
+  const groups = mcpSidebarGroups([
+    buildBlueprint('Notion', tool('CreatePage', {}, [], 'x')) as never,
+  ]);
+  assert.equal(filterMcpGroups(groups, 'createpage').total, 1);
+});
+
+test('检索: 搜不到时 total 为 0（界面据此区分"没搜到"与"没连上"）', () => {
+  const groups = mcpSidebarGroups([
+    buildBlueprint('notion', tool('a', {}, [], 'x')) as never,
+  ]);
+  const r = filterMcpGroups(groups, '不存在的词');
+  assert.equal(r.total, 0);
+  assert.equal(r.groups.length, 0);
+});
+
+test('检索: 条目带参数名，且不进 label（不会把条目撑成两行）', () => {
+  const bp = buildBlueprint('fs', tool('read', { path: { type: 'string' } })) as never;
+  const groups = mcpSidebarGroups([bp]);
+  assert.deepEqual(groups[0].items[0].argKeys, ['path']);
+  assert.equal(groups[0].items[0].label, 'read');
 });

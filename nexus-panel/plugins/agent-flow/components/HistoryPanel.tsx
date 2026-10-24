@@ -36,12 +36,18 @@ const STATUS_OPTIONS: { v: StatusKey; label: string }[] = [
 ];
 
 export function HistoryList({
-  entries, now, onDelete, onClearAll, onClearCanvas, selectedId, onSelect,
+  entries, now, onDelete, onClearAll, clearAllLabel, onClearCanvas, selectedId, onSelect,
 }: {
   entries: HistoryEntry[];
   now: number;
   onDelete: (id: string) => void;
   onClearAll: () => void;
+  /**
+   * 「清空全部」的文案，由外层按当前项目范围给。
+   * 切到某个项目下时它清的是本项目，写死「清空全部」就在骗人
+   * （理由同 TaskList 的 clearLabel）。
+   */
+  clearAllLabel?: string;
   onClearCanvas: (canvasId: string) => void;
   /** 选中项由外层持有 —— 列表在左栏、详情在中间，两边必须同步 */
   selectedId: string | null;
@@ -105,8 +111,9 @@ export function HistoryList({
           className="side-head-btn"
           onClick={onClearAll}
           disabled={entries.length === 0}
+          title={entries.length === 0 ? undefined : `只清掉当前项目下的 ${entries.length} 条归档`}
         >
-          清空全部
+          {clearAllLabel || '清空全部'}
         </button>
       </div>
 
@@ -141,7 +148,7 @@ export function HistoryList({
             <span className="task-mute">{formatSize(stats.chars)}</span>
             <span className="task-grow" />
             <button className="mini danger" onClick={onClearAll} disabled={entries.length === 0}>
-              清空全部
+              {clearAllLabel || '清空全部'}
             </button>
           </div>
           {entries.length > 0 ? (
@@ -158,7 +165,7 @@ export function HistoryList({
              * 比明文躺着更难发现。所以选择明说，并保留清空入口。
              */
             <div className="hist-stats">
-              <span className="task-mute" title="节点输出与日志按原样归档。若运行结果里回显过令牌，它也会在这里 —— 用上面的「清空全部」可以彻底清掉">
+              <span className="task-mute" title="节点输出与日志按原样归档。若运行结果里回显过令牌，它也会在这里 —— 用上面的清空按钮可以彻底清掉">
                 归档的是原始输出，不做脱敏
               </span>
             </div>

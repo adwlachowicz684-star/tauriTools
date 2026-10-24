@@ -30,7 +30,11 @@ import {
  *   3. 不限制记录条数（上限只受内存约束，不人为截断）
  */
 
-function StatusPill({ status }: { status: string }) {
+/**
+ * 状态胶囊。导出给表格视图复用 ——
+ * 同一颗胶囊抄两份的话，改配色时只会改掉一处，另一处悄悄变旧。
+ */
+export function StatusPill({ status }: { status: string }) {
   return <span className={`task-pill st-${status}`}>{STATUS_LABEL[status as keyof typeof STATUS_LABEL] || status}</span>;
 }
 
@@ -65,12 +69,20 @@ function GroupHead({
 }
 
 export function TaskList({
-  tasks, now, onClear, selectedId, onSelect,
+  tasks, now, onClear, clearLabel, selectedId, onSelect,
 }: {
   tasks: TaskRecord[];
   /** 当前时间。由外层定时传入，让耗时实时走秒 */
   now: number;
   onClear: () => void;
+  /**
+   * 清空按钮的文案，由外层按当前项目范围给。
+   *
+   * 写死成「清空」的话，切到某个项目下点它，动的是**所有**项目的记录
+   * （见 App 里 clearScopedTasks 的说明）。文案必须跟着作用范围走，
+   * 否则按钮自己就在骗人。
+   */
+  clearLabel?: string;
   /**
    * 选中项由外层持有。
    *
@@ -156,8 +168,9 @@ export function TaskList({
           className="side-head-btn"
           onClick={onClear}
           disabled={tasks.length === 0}
+          title={tasks.length === 0 ? undefined : `只清掉当前项目下的 ${tasks.length} 条记录`}
         >
-          清空
+          {clearLabel || '清空'}
         </button>
       </div>
 
