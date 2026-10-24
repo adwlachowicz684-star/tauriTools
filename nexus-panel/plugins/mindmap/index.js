@@ -1814,7 +1814,14 @@ async function gcOrphanAssets(quiet = false) {
    * 全清了 —— 不可逆。合并按 ts 去重，重复的跳过，本机原有的保留。
    */
   async function exportBackups() {
-    const all = await store.listBackups();
+    /*
+     * 必须走严格版（宽松版在列举失败/个别读不出来时返回短一截的数组）：
+     * 这份文件是要拿到**另一台机器**上去恢复的，缺了哪份当场看不出来，
+     * 等真要回滚才发现那一份没带过来 —— 而提示已经说过「已导出 N 份」。
+     */
+    const snap = await store.listBackupsStrict();
+    if (snap.enumFailed) { status('快照列表读取失败，未导出（导出的文件会缺快照）', true); return; }
+    const all = snap.list || [];
     if (!all.length) { status('没有可导出的快照', true); return; }
     const payload = {
       kind: 'nexus-mindmap-backups',
@@ -1833,7 +1840,9 @@ async function gcOrphanAssets(quiet = false) {
       new Blob([JSON.stringify(payload)], { type: 'application/json' }),
     );
     if (!io.downloadOk(r)) { status('快照导出失败：浏览器没能创建下载', true); return; }
-    status(`已导出 ${all.length} 份快照`);
+    status(`已导出 ${all.length} 份快照`
+      + (snap.failed ? `，**这份文件不完整**：有 ${snap.failed} 份快照没读出来` : ''),
+    !!snap.failed);
   }
 
   async function importBackups() {
@@ -1844,7 +1853,17 @@ async function gcOrphanAssets(quiet = false) {
     const list = data?.backups;
     if (!Array.isArray(list) || !list.length) { status('文件里没有快照数据', true); return; }
 
-    const mine = new Set((await store.listBackups()).map((b) => b.ts));
+    /*
+     * 去重表也必须走严格版：宽松版读不全时 `mine` 少了几项，本机本来就有的
+     * 那几份会被当成新快照**再写一遍**，而汇总里照样说「已导入 N 份」。
+     * 无法去重就该中止 —— 混进"已导入"等于把重复数据说成新数据。
+     */
+    const snapMine = await store.listBackupsStrict();
+    if (snapMine.enumFailed) {
+      status('本机快照列表读不全，未导入（无法判断哪些是重复的）', true);
+      return;
+    }
+    const mine = new Set((snapMine.list || []).map((b) => b.ts));
     // 记下本次写入的 key：它们必须躲过随后的滚动清理。
     // 导入的历史快照 ts 普遍比本机现有的更旧，而清理从最旧的开始删 ——
     // 不保护的话「已导入 N 份」的提示和「列表里一份都没有」会同时出现。

@@ -31,7 +31,7 @@
  *      「这处没有输入框」清单外都必须有守卫。
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
 import { stripCommentsJs as strip } from './test-scan-utils.mjs';
@@ -191,31 +191,85 @@ const NO_INPUT_OK = [
 
 const exts = new Set(['.ts', '.tsx', '.js']);
 const BAD = ['node_modules', '.git', 'dist', 'runtime-plugins', 'target', '.tool_output'];
-const found = [];
-(function walk(d) {
-  for (const e of readdirSync(d, { withFileTypes: true })) {
-    if (BAD.includes(e.name)) continue;
-    const p = join(d, e.name);
-    if (e.isDirectory()) { walk(p); continue; }
-    if (!exts.has(extname(e.name))) continue;
-    /* 测试文件里出现 'Escape' 多数是断言本身，不参与 */
-    if (e.name.includes('-test') || e.name.includes('.test.')) continue;
-    let s = '';
-    try { s = strip(readFileSync(p, 'utf8')); } catch { continue; }
-    const lines = s.split('\n');
-    lines.forEach((l, i) => {
-      if (!/key\s*===?\s*['"]Escape['"]/.test(l)) return;
-      const w = lines.slice(Math.max(0, i - 12), Math.min(lines.length - 1, i + 6)).join('\n');
-      if (!w.includes('isComposing')) found.push(p.slice(ROOT.length + 1) + ':' + (i + 1));
-    });
-  }
-})(ROOT);
+
+/*
+ * 跳过 `_` 开头的临时文件（`_bak_App.tsx`、`_r33_host.bak` 这类备份与调试脚本）。
+ *
+ * 不跳会怎样（实测）：工作区里一份旧备份 `_bak_App.tsx` 被当成源码扫进去，
+ * 它里面恰好有裸 Esc —— 于是兜底清单里得为一份**根本不入库的备份**加一条豁免，
+ * 而"加豁免"正是最省事的让红消失的办法；等哪天这份备份被删掉，
+ * 那条豁免就变成一个永不匹配的死条目，谁也说不清它当初是为什么加的。
+ */
+const isTemp = (n) => n.startsWith('_');
+
+/* 抽成函数而不是 IIFE：第 4 节的自检要拿它去扫一个现场造出来的样本。
+   写死一次性扫描的话，"扫描器失明了"根本验不出来。 */
+function scanBareEsc() {
+  const out = [];
+  (function walk(d) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (BAD.includes(e.name)) continue;
+      if (isTemp(e.name)) continue;
+      const p = join(d, e.name);
+      if (e.isDirectory()) { walk(p); continue; }
+      if (!exts.has(extname(e.name))) continue;
+      /* 测试文件里出现 'Escape' 多数是断言本身，不参与 */
+      if (e.name.includes('-test') || e.name.includes('.test.')) continue;
+      let s = '';
+      try { s = strip(readFileSync(p, 'utf8')); } catch { continue; }
+      const lines = s.split('\n');
+      lines.forEach((l, i) => {
+        if (!/key\s*===?\s*['"]Escape['"]/.test(l)) return;
+        const w = lines.slice(Math.max(0, i - 12), Math.min(lines.length - 1, i + 6)).join('\n');
+        if (!w.includes('isComposing')) out.push(p.slice(ROOT.length + 1) + ':' + (i + 1));
+      });
+    }
+  })(ROOT);
+  return out;
+}
+
+const found = scanBareEsc();
 
 const unexpected = found.filter((x) => !NO_INPUT_OK.some((k) => x.startsWith(k)));
 t(`兜底：没有清单之外的裸 Esc（当前裸 ${found.length} 处，全在清单内）`, unexpected.length === 0);
 if (unexpected.length) console.log('   →', unexpected.join('\n   → '));
 for (const k of NO_INPUT_OK) {
   t(`清单仍在：${k} 确实无输入框（未误加守卫）`, !found.some((x) => x.startsWith(k)) === false);
+}
+
+/* ── 4. 自检：扫描器自己不许失明 ────────────────────────────────
+ * 「清单之外没有裸 Esc」这条，在扫描器**什么都没扫到**时照样是绿的 ——
+ * found 恒为空，unexpected 自然为空，报告上看着一切正常。
+ *
+ * 上面那条「清单仍在」能挡一部分（清单里六处必须还在），但它依赖真实代码里
+ * 恰好存在反例：哪天某处真的补了守卫，清单那条会红，而红的原因并不是
+ * "扫描器坏了" —— 用真实代码当反例，反例本身会变。
+ *
+ * 所以自己造一个：写一个带裸 Esc 的样本，扫描必须抓到它，且抓完撤干净。
+ */
+{
+  const probeName = 'zz-selfcheck-bare-esc.js';
+  /* 名字不以 `_` 开头（否则被上面的临时文件规则跳掉），也不含 `-test` */
+  const probe = join(ROOT, probeName);
+  writeFileSync(probe, [
+    "export function noop() {}",
+    "window.addEventListener('keydown', (e) => {",
+    "  if (e.key === 'Escape') close();",
+    "});",
+    '',
+  ].join('\n'), 'utf8');
+  try {
+    const withProbe = scanBareEsc();
+    t('自检：扫描器抓得到现场造出来的裸 Esc（抓不到的话，上面那条恒绿）',
+      withProbe.some((x) => x.startsWith(probeName)),
+      '实际抓到前几条：' + JSON.stringify(withProbe.slice(0, 3)));
+    t('自检：样本被判成「裸」（它的窗口里没有 isComposing）',
+      withProbe.some((x) => x.startsWith(probeName)) && found.length < withProbe.length);
+  } finally {
+    /* 用完即撤：留着会污染下一轮的真实扫描，也会让工作区多一个垃圾文件 */
+    if (existsSync(probe)) unlinkSync(probe);
+  }
+  t('自检：样本用完已删除（不污染后续扫描）', !existsSync(probe));
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} 通过 ${pass}，失败 ${fail}`);

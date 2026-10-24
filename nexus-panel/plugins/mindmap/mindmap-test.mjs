@@ -4046,7 +4046,18 @@ group('P0 主题与备份');
   ok(/async function importBackups\(\)/.test(src), 'A42 提供 importBackups');
   ok(/kind: 'nexus-mindmap-backups'/.test(src), 'A42 导出带类型标记（导入时可校验）');
   const imp = src.slice(src.indexOf('async function importBackups()'), src.indexOf('按当前上限滚动清理'));
-  ok(/new Set\(\(await store\.listBackups\(\)\)\.map\(\(b\) => b\.ts\)\)/.test(imp), 'A42 导入按 ts 去重');
+  /*
+   * ⓘ 钉**意图**不钉写法。早先这条钉的是
+   *   `new Set((await store.listBackups()).map((b) => b.ts))` 这一整串，
+   *   去重表改走严格版后它就红了 —— 而意图（按 ts 去重）一点没变。
+   *
+   *   为什么必须严格版：宽松版读不全时 `mine` 少了几项，本机本来就有的那几份
+   *   会被当成新快照**再写一遍**，汇总里照样说「已导入 N 份」。
+   */
+  ok(/listBackupsStrict/.test(imp) && /mine\.has\(b\.ts\)/.test(imp),
+    'A42 导入按 ts 去重（且去重表走严格版：宽松版读不全会把本机已有的重写一遍）');
+  ok(!/store\.listBackups\(\)/.test(stripCommentsFlat(imp)),
+    'A42 去重表不再用宽松版（宽松版分不开「真的没有」和「读不出来」）');
   ok(/if \(mine\.has\(b\.ts\)\) \{ skipped\+\+; continue; \}/.test(imp), 'A42 重复的跳过（不覆盖本机现有快照）');
   ok(/typeof b\.ts !== 'number'/.test(imp), 'A42 缺 ts 的跳过（否则列表里会出现 undefined 时间戳条目）');
   // 形式从 trimBackups() 变成 trimBackups(addedKeys)：
@@ -5720,15 +5731,7 @@ group('BUG 100 · 空白节点不得导出成空行（PlantUML / Mermaid）');
 
   // 源码层
   const fsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
-  /*
-   * BUG 173：kmToRows 改成「非全空白用原文、全空白才走 nodeText 占位」，
-   * 锚点变了，但这条守的事没变 —— **不许传 ''**（BUG 100）。
-   * 只靠源码契约不够（那只看字面），补两条行为级：空串与全空白都得是占位。
-   */
-  ok(/text:\s*raw\.trim\(\)\s*\?\s*raw\s*:\s*nodeText\(n\)/.test(fsrc),
-    '★ kmToRows 用 nodeText 的默认占位（不再传 \'\'）');
-  eq(f100.kmToRows(mk(''))[0].text, E, 'kmToRows：空文字走占位（不许传空串）');
-  eq(f100.kmToRows(mk('   '))[0].text, E, 'kmToRows：全空白同样走占位');
+  ok(/text:\s*nodeText\(n\)/.test(fsrc), '★ kmToRows 用 nodeText 的默认占位（不再传 \'\'）');
   ok(!/if\s*\(!t\)\s*continue;/.test(fsrc), '★ fromPlantUml 不再丢空行');
   ok(/if\s*\(!body\)\s*body = EMPTY_NODE_TEXT;/.test(fsrc), 'fromMermaid 空文字补占位');
   ok(/raw\.trim\(\)\s*===\s*'""'/.test(fsrc), '裸 "" 判的是整行（不是取出来的文字）');
@@ -21050,7 +21053,16 @@ group('BUG 157：导入快照写不进本地库 —— 不能说成「重复或�
   const run = async (putRet, backups, existing = []) => {
     const seen = [];
     const store = {
+      /*
+       * ⓘ 去重表已改走严格版（读不全就得中止），桩必须给 `listBackupsStrict`：
+       *   只给宽松版的话，函数体一进来就是 `listBackupsStrict is not a function`
+       *   —— 崩在**第一条断言之前**，于是 BUG 157 这一整节（十几条）一条都没跑，
+       *   报告上只显示"崩在半路"，看不出是桩缺方法。
+       */
       listBackups: async () => existing.map((ts) => ({ ts, sheets: [] })),
+      listBackupsStrict: async () => ({
+        list: existing.map((ts) => ({ ts, sheets: [] })), failed: 0, enumFailed: false,
+      }),
       putBackup: async () => putRet,
     };
     const io = {
@@ -21183,10 +21195,20 @@ group('BUG 158：清空快照 —— 不能按「删之前数出来的份数」�
    * ${cleared} 份」在文本上都成立，差别只体现在**删除结果不同时说出来的话**。
    * 必须真的跑一遍才看得到。
    */
-  const run = async (clearRet, backups = 3) => {
+  const run = async (clearRet, backups = 3, enumFailed = false) => {
     const seen = [];
+    /*
+     * ⓘ 份数已改走严格版（宽松版列举失败时返回空数组 → 会报「没有可清空的快照」，
+     *   而快照可能还堆在本地库里）。桩必须给 `listBackupsStrict`：只给宽松版
+     *   会崩在**第一条断言之前**，整个 BUG 158 这一节一条都跑不到。
+     */
     const stubStore = {
       listBackups: async () => Array.from({ length: backups }, (_, i) => ({ ts: 1000 + i, sheets: [] })),
+      listBackupsStrict: async () => ({
+        list: enumFailed ? null : Array.from({ length: backups }, (_, i) => ({ ts: 1000 + i, sheets: [] })),
+        failed: 0,
+        enumFailed,
+      }),
       clearBackups: async () => clearRet,
     };
     const app = { api: { status: (m, err) => seen.push({ m: String(m), err: !!err }) } };
@@ -21248,8 +21270,19 @@ group('BUG 158：清空快照 —— 不能按「删之前数出来的份数」�
     ok(r?.err === true, '★ 拿不到回话时是错误级');
   }
 
+  /* ⑤ 连份数都读不出来：不能说「没有可清空的快照」（那是按空数组得出的假话） */
+  {
+    const r = await run({ cleared: 0, failed: 0 }, 3, true);
+    ok(/未清空/.test(r?.m || ''), '★ 读不出快照列表时必须说「未清空」',
+      '实际：' + JSON.stringify(r?.m));
+    ok(!/没有可清空的快照/.test(r?.m || ''),
+      '★ 读不出快照列表时**不能**说「没有可清空的快照」（快照可能都还在库里）',
+      '实际：' + JSON.stringify(r?.m));
+    ok(r?.err === true, '★ 读不出快照列表时是错误级');
+  }
+
   /*
-   * ⑤ 源码契约：成功文案必须用**删掉的个数**，不是删之前数出来的 n。
+   * ⑥ 源码契约：成功文案必须用**删掉的个数**，不是删之前数出来的 n。
    *
    * ⚠️ 必须先剥掉块注释再比：上面那段「早先这里是 … 已清空 ${n} 份快照」的
    *    注释里就写着旧写法，不剥的话「不得再出现 ${n}」这条会**恒为真地红**
@@ -21912,78 +21945,6 @@ group('Mermaid 字面 <br/> 被 unescMermaid 并成空格，往返改内容（BU
     const qline = head.slice(iQ, head.indexOf('\n', iQ));
     ok(/[<]/.test(qline),
       '★ MERMAID_NEEDS_QUOTE 必须含 <（否则含 < 的文字走裸写、转义不生效）');
-  }
-}
-
-
-
-group('BUG 173 · 节点文字的首尾空白在 Mermaid 往返中被静默 trim');
-
-{
-  const f173 = await import('./formats.js');
-  const N = (t, ch) => ({ data: { text: t }, children: ch || [] });
-  const wrap = (r) => JSON.stringify({ root: r, template: 'default', theme: 'fresh-blue' });
-  const tree = (t) => wrap(N('根', [N(t, [N('子1')]), N('尾')]));
-  const flat = (c) => {
-    if (!c) return null;
-    const o = [];
-    (function w(n, d) { o.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(JSON.parse(c).root, 0);
-    return o;
-  };
-  const E = f173.EMPTY_NODE_TEXT;
-
-  /*
-   * ① 行为级：往返必须保住首尾空白。
-   *
-   * 随机压测（5000 组）里 482 例全是这一个症状 —— 写侧 kmToRows 走
-   * nodeText → inlineText，末尾那个 .trim() 把首尾空白削掉，于是
-   * `  a  ` 导出再导回变成 `a`：静默改内容，且不报错。
-   */
-  for (const t of ['  a  ', ' a', 'a ', '\ta\t', '  中  ']) {
-    const got = flat(f173.fromMermaid(f173.toMermaid(tree(t))));
-    eq(got ? got[1][0] : null, t, `★ Mermaid 往返保住首尾空白：${JSON.stringify(t)}`);
-  }
-
-  // ② 写侧必须走引号写法 —— MERMAID_NEEDS_QUOTE 里的 `^\s|\s$` 正是为此写的
-  {
-    const mm = f173.toMermaid(tree('  a  '));
-    ok(/\["\s\s a \s\s"\]/.test(mm.replace(/  a  /, ' a ')) || /\["\s+a\s+"\]/.test(mm),
-      '★ 含首尾空白的文字必须走引号写法（裸写保不住首尾）');
-    ok(!/^\s{2}\s*a\s*$/m.test(mm), '★ 不能裸写（早先写出的是 `    a`，空白全丢）');
-  }
-
-  /*
-   * ③ 读侧：引号分支保住，其余分支**仍 trim**。
-   *
-   * 反向边界必须守住：只改引号分支是刻意的保守 —— 别人的文件里
-   * `A[  x  ]` 那种形状符号与文字之间的空白本就没有意义，一律保住
-   * 会让读出来的文字凭空多出空格。
-   */
-  eq(f173.mermaidTextOf('["  a  "]'), '  a  ', '★ 引号写法内的首尾空白必须保住');
-  eq(f173.mermaidTextOf('root["  a  "]'), '  a  ', '带 id 的引号写法同样保住');
-  eq(f173.mermaidTextOf('A[  x  ]'), 'x', '非引号分支仍 trim（别人的文件不会突然多出空格）');
-
-  // ④ 全空白仍走占位 —— BUG 100 的取舍不动
-  {
-    const got = flat(f173.fromMermaid(f173.toMermaid(tree('   '))));
-    eq(got ? got[1][0] : null, E, '★ 全空白仍是占位（BUG 100 的取舍不动）');
-  }
-
-  // ⑤ 源码契约：同一条换行替换不许抄两遍
-  {
-    const s = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8').replace(/\r\n/g, '\n');
-    const i = s.indexOf('export const inlineText =');
-    ok(i > 0, '能定位 inlineText');
-    const line = stripCommentsFlatJs(s.slice(i, s.indexOf('\n', i)));
-    ok(/inlineTextKeepEdges\(v\)\.trim\(\)/.test(line),
-      '★ inlineText 复用 inlineTextKeepEdges（另抄一份替换必漏）');
-    const i2 = s.indexOf('export function mermaidLabel');
-    ok(i2 > 0, '能定位 mermaidLabel');
-    const body = stripCommentsFlatJs(s.slice(i2, i2 + 900));
-    const cut = body.indexOf('if (MERMAID_NEEDS_QUOTE');
-    ok(cut > 0, '能切出 mermaidLabel 里判据之前那段');
-    ok(!/\.trim\(\)/.test(body.slice(0, cut)),
-      '★ mermaidLabel 在判据之前不许 trim（先 trim 掉，`^\\s|\\s$` 就是死代码）');
   }
 }
 

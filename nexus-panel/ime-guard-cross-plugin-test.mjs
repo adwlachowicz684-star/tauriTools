@@ -103,6 +103,7 @@ const SITES = [
   ['plugins/agent-flow/components/CanvasLibrary.tsx', "if (ev.key === 'Enter') {", '库分组改名（写盘）'],
   ['plugins/agent-flow/components/DirPicker.tsx', "if (e.key === 'Enter') void load(cwd);", 'agent-flow 目录选择器'],
   ['plugins/agent-flow/components/CredentialPanel.tsx', "if (e.key === 'Enter' && unlockPass && onUnlock) onUnlock(unlockPass);", '凭据解锁'],
+  ['plugins/agent-flow/components/TaskBoardDetail.tsx', "if (e.key === 'Enter') commitTitle();", '任务板详情：标题改名（写盘）★'],
 ];
 
 /** 取包含该特征串的那个 keydown 块：往前找最近的三种写法之一 */
