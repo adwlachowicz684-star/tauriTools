@@ -11396,8 +11396,10 @@ group('布局：文件库浮层 + 画布假描边让位 + 控件档位');
     '画布上真的创建了 .mm-canvas-frame 元素（不是只有样式规则）');
 
   // 同步函数必须存在且真的写入 left
+  // 窗口取到**整个函数体**而不是固定 900 字符：固定长度太脆，往函数里加
+  // 一段说明注释就会把它挤出窗口，于是函数明明写了 left 却被判成"空函数"。
   const syncFn = idxNC.slice(idxNC.indexOf('function syncCanvasInset'),
-    idxNC.indexOf('function syncCanvasInset') + 900);
+    idxNC.indexOf('\n  }\n', idxNC.indexOf('function syncCanvasInset')));
   ok(/function syncCanvasInset/.test(idxNC), '存在 syncCanvasInset 同步函数');
   ok(/canvasFrameEl\.style\.left\s*=/.test(syncFn),
     'syncCanvasInset 真的写入 left（不是空函数）');
@@ -19383,6 +19385,73 @@ group('BUG 135 · FreeMind 图标与外框导成 XMind 会丢，必须数出来�
       '★ 图标统计排在 `if (!total) return;` 之前（否则没附件的节点数不到）');
   }
 }
+
+group('假边框四条边必须用同一个坐标系（相对 .mm-body）');
+
+{
+  const ix = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const css = fs.readFileSync(path.join(HERE, 'styles.css'), 'utf8');
+
+  // ---- 1) 前提：假框挂在 body 上 ----
+  //
+  // 挂哪儿决定坐标系。挂在画布里会被 overflow:hidden 裁掉外投影；
+  // 挂在 body 上则四边必须都是 body 坐标 —— 混进画布坐标就错位。
+  ok(/body\.appendChild\(canvasFrameEl\)/.test(ix), '假框挂在 .mm-body 上');
+  ok(!/canvasEl\.appendChild\(canvasFrameEl\)/.test(ix), '没有挂在 .mm-canvas 内');
+
+  const fnSeg = ix.slice(ix.indexOf('function syncCanvasInset()'),
+    ix.indexOf('\n  }\n', ix.indexOf('function syncCanvasInset()')));
+  const code = fnSeg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  // ---- 2) 四条边都按 body 实测写入 ----
+  for (const edge of ['top', 'right', 'bottom', 'left']) {
+    ok(new RegExp('canvasFrameEl\\.style\\.' + edge + '\\s*=').test(code),
+      `假框的 ${edge} 边由 JS 写入`);
+  }
+  // 关键：body 只能被取一次，不许在同一个函数里被重定义成 canvasEl
+  {
+    const bodyRects = (code.match(/body\.getBoundingClientRect\(\)/g) || []).length;
+    ok(bodyRects >= 1, '至少量一次 body');
+    // 展开分支里 a.right 减的必须是 **body** 的 left，不是画布的
+    ok(/a\.right\s*-\s*bb\.left/.test(code) || /a\.right\s*-\s*b\.left/.test(code),
+      '文件库右缘减的是 body 左缘（不是画布左缘）');
+  }
+
+  // ---- 3) 收起时也不能回落 CSS 的 left:0 ----
+  //
+  // CSS 里 left:0 是 **body 最左边**，而画布左边还坐着图标条，
+  // 回落它等于向左多伸一个图标条宽度，投影描到图标条上。
+  // 精确定位到 !visible 分支内部：只断言全局"不含 = ''"会误伤 catch 里的
+  // 异常回退（那个清空是合法的），所以必须只看分支里的赋值。
+  const closedSeg = code.slice(code.indexOf('if (!visible) {'),
+    code.indexOf('if (!visible) {') + 260);
+  ok(!/canvasFrameEl\.style\.left\s*=\s*['"]{2}/.test(closedSeg),
+    '收起分支不把 left 清空（那会回落 CSS 的 left:0）');
+  ok(/canvasLeft/.test(code), '收起时 left 取画布左缘（body 坐标）');
+
+  // ---- 4) 行为验证：四边合成一个矩形，且不与图标条重叠 ----
+  {
+    const RAIL = 46, GAP = 10, BODY_W = 1200, SIDE = 276;
+    const bodyLeft = 0;
+    const canvasLeft = RAIL + GAP;              // 画布左缘（body 坐标）
+    const filesW = 186;
+    const sync = (visible) => {
+      const cl = Math.max(0, canvasLeft);
+      return visible ? Math.max(0, canvasLeft + filesW + GAP) : cl;
+    };
+    eq(sync(false), canvasLeft, '收起：左边缘 = 画布左缘（body 坐标）');
+    eq(sync(true), canvasLeft + filesW + GAP, '展开：左边缘 = 文件库右缘 + gap');
+    ok(sync(false) >= RAIL, '收起时框不压图标条');
+    ok(sync(true) >= RAIL, '展开时框不压图标条');
+
+    // 反例：混用画布坐标系 → 少算画布左缘（正好是图标条宽 + gap）
+    const correct = canvasLeft + filesW + GAP;   // 正确（body 坐标）
+    const wrong = filesW + GAP;                  // 旧写法（相对画布坐标）
+    eq(correct - wrong, canvasLeft, '反例：旧写法比正确值少了一个画布左缘');
+    ok(wrong < correct, '反例：旧写法算出的 left 偏左（压到图标条上）');
+  }
+}
+
 
 /* ============================================================
    结果

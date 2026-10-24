@@ -287,13 +287,28 @@ bootIframePlugin(async (ctx) => {
       canvasFrameEl.style.bottom = `${Math.round(b.bottom - c.bottom)}px`;
     } catch { /* 量不到就沿用 CSS 初值 */ }
 
-    // 左边缘：收起时贴画布左缘（就是整块画布），展开时让到文件库右缘
-    // —— 于是看上去画布被挤窄了，而画布元素本身一动没动。
-    if (!visible) { canvasFrameEl.style.left = ''; return; }
+    /*
+     * 左边缘 —— 必须和上面三条边用**同一个坐标系**（相对 .mm-body）。
+     *
+     * 这里踩过：原来把 b 重定义成 canvasEl（画布坐标系），算出来只是
+     * 「文件库宽 + gap」，少算了画布左缘那一段（图标条 46 + gap 10 ≈ 56px）；
+     * 假框于是向左多伸 56px，外投影描到图标条上。收起时更直接 ——
+     * `left = ''` 回落 CSS 的 `left:0`，那是 body 最左边，同样偏 56px。
+     *
+     * 假框挂在 body 上，四条边就都得是 body 坐标，混一个就错位。
+     */
     try {
+      const bb = body.getBoundingClientRect();
+      const cc = canvasEl.getBoundingClientRect();
+      const canvasLeft = Math.round(cc.left - bb.left);
+      if (!visible) {
+        // 收起：框就是整块画布，左缘贴画布左缘（**不是** body 的 0）
+        canvasFrameEl.style.left = `${Math.max(0, canvasLeft)}px`;
+        return;
+      }
+      // 展开：让到文件库右缘 —— 看上去画布被挤窄了，而画布元素一动没动
       const a = filesEl.getBoundingClientRect();
-      const b = canvasEl.getBoundingClientRect();
-      canvasFrameEl.style.left = `${Math.max(0, Math.round(a.right - b.left))}px`;
+      canvasFrameEl.style.left = `${Math.max(0, Math.round(a.right - bb.left))}px`;
     } catch { canvasFrameEl.style.left = ''; }
   }
 
