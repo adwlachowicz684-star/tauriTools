@@ -9,6 +9,7 @@ import {
   type ModuleDef, type ModuleEdge, type KV,
 } from '../engine/modules';
 import { readSrc } from './srcScan';
+import { runGraph } from '../engine/runner';
 import { stackEdges } from '../engine/stack';
 
 function memKV() {
@@ -1126,4 +1127,160 @@ test('源码守卫：编辑模块期间，画布页签与画布列表都要锁�
       `${tag} 必须在编辑模块时锁住（否则模块会被另一张画布覆盖）`,
     );
   }
+});
+
+/* ================================================================ */
+/* 模块里套模块                                                       */
+/* ================================================================ */
+
+/*
+ * 选中一个模块实例再打包一次，就得到了"模块里套模块"。
+ * 以前 expandModules 只展开一层：内层那个模块节点原样留在运行时图里，
+ * 而模块**没有执行器**（runner 对没有执行器的节点是直通），于是：
+ *   绿着 success、output 空串、里面的活一件没干、整条流程 ok:true。
+ * 用户看到的是"流程跑通了"，而内层模块里的写文件 / 命令行 / 接口
+ * 一次都没执行 —— 全程不报错。
+ */
+test('模块里套模块：内层也要展开（展开后不许还有 module 节点）', () => {
+  const B: ModuleDef = {
+    id: 'B', name: 'B', color: '', createdAt: 0,
+    nodes: [{ id: 'X', data: { kind: 'const', value: 'v' } }] as never,
+    edges: [],
+  } as ModuleDef;
+  const A: ModuleDef = {
+    id: 'A', name: 'A', color: '', createdAt: 0,
+    nodes: [{ id: 'M', data: { kind: 'module', moduleId: 'B' } }] as never,
+    edges: [],
+  } as ModuleDef;
+  const g = {
+    nodes: [{ id: 'inst', data: { kind: 'module', moduleId: 'A' } }] as never,
+    edges: [] as never[],
+  };
+  const r = expandModules(g as never, (id: string) => (id === 'A' ? A : id === 'B' ? B : null));
+  const kinds = r.nodes.map((n) => String((n.data as Record<string, unknown>)?.kind ?? ''));
+  assert.deepEqual(
+    kinds.filter((k) => k === 'module'), [],
+    '展开后还留着 module 节点 —— 它没有执行器，会静默直通（绿着成功、什么都没做）',
+  );
+  /*
+   * 两层前缀：外层实例是 inst，内层模块节点是 M，B 里的节点是 X
+   * —— 所以是 inst__M__X。只展开一层的话这里会是 'inst__M'。
+   */
+  assert.deepEqual(r.nodes.map((n) => n.id), ['inst__M__X'], '内层节点要按实例前缀展开出来');
+});
+
+/* 端口要在**展开之后**算，否则外部边会连到一个已经不存在的 id 上 */
+test('模块里套模块：出口取的是展开后的内部节点', () => {
+  const B: ModuleDef = {
+    id: 'B', name: 'B', color: '', createdAt: 0,
+    nodes: [{ id: 'X', data: { kind: 'const', value: 'v' } }] as never,
+    edges: [],
+  } as ModuleDef;
+  const A: ModuleDef = {
+    id: 'A', name: 'A', color: '', createdAt: 0,
+    nodes: [{ id: 'M', data: { kind: 'module', moduleId: 'B' } }] as never,
+    edges: [],
+  } as ModuleDef;
+  const g = {
+    nodes: [
+      { id: 'inst', data: { kind: 'module', moduleId: 'A' } },
+      { id: 'out', data: { kind: 'text', template: 'x' } },
+    ] as never,
+    edges: [{ id: 'e1', source: 'inst', target: 'out' }] as never[],
+  };
+  const r = expandModules(g as never, (id: string) => (id === 'A' ? A : id === 'B' ? B : null));
+  const e = r.edges.find((x) => x.target === 'out');
+  assert.ok(e, '模块出口要接到外面的节点上');
+  assert.equal(e!.source, 'inst__M__X', '出口该是展开后的内层节点，而不是已经不存在的 inst__M');
+});
+
+/* 环：不挡住就是无限递归，而表现在界面上是卡死或爆栈 */
+test('模块循环引用：挡住并留下原因（不是无限展开）', () => {
+  const A: ModuleDef = {
+    id: 'A', name: 'A', color: '', createdAt: 0,
+    nodes: [{ id: 'M', data: { kind: 'module', moduleId: 'A' } }] as never,
+    edges: [],
+  } as ModuleDef;
+  const g = {
+    nodes: [{ id: 'inst', data: { kind: 'module', moduleId: 'A' } }] as never,
+    edges: [] as never[],
+  };
+  const r = expandModules(g as never, () => A);
+  assert.equal(r.nodes.length, 1, '环要挡住，不能一层层展开下去');
+  assert.match(
+    String((r.nodes[0].data as Record<string, unknown>)?.error ?? ''),
+    /循环引用/, '占位节点要写明是循环引用，否则用户无从知道为什么没展开',
+  );
+});
+
+/*
+ * 反向测试：只盯"展开后没有 module 节点"会放过"整张图被清空"。
+ * 环里那一层仍要留下节点（带着原因），不能什么都不剩。
+ */
+test('模块循环引用：节点要留下来（不能整层消失）', () => {
+  const A: ModuleDef = {
+    id: 'A', name: 'A', color: '', createdAt: 0,
+    nodes: [{ id: 'M', data: { kind: 'module', moduleId: 'A' } }] as never,
+    edges: [],
+  } as ModuleDef;
+  const g = {
+    nodes: [{ id: 'inst', data: { kind: 'module', moduleId: 'A' } }] as never,
+    edges: [] as never[],
+  };
+  const r = expandModules(g as never, () => A);
+  assert.equal(r.nodes[0].id, 'inst__M', '环挡住后仍要留下带原因的占位节点');
+});
+
+/* ================================================================ */
+/* 展开失败的残留：不许再静默直通                                      */
+/* ================================================================ */
+
+/*
+ * 旧行为实测：模块被删掉的图跑完是 `ok:true, failed:[]`，
+ * 模块节点绿着 success、output 空串，下游读 {{模块.output}} 拿到空串。
+ * 用户看到的是"流程跑通了"，而这个模块里的活一件没干。
+ */
+test('模块被删了：跑起来要失败并说清原因（旧行为是 ok:true 的静默空转）', async () => {
+  const g = {
+    nodes: [{ id: 'inst', data: { kind: 'module', moduleId: 'GONE' } }] as never,
+    edges: [] as never[],
+  };
+  const r = expandModules(g as never, () => null);
+  const events: { type?: string; id?: string; ok?: boolean; error?: string }[] = [];
+  const out = await runGraph(r as never, {
+    concurrency: 1,
+    executor: async () => ({ output: '', ok: true }),
+    llmCaller: async () => ({ ok: true, text: '' }),
+    onEvent: (e: { type?: string; id?: string; ok?: boolean; error?: string }) => void events.push(e),
+  } as never);
+  assert.equal(out.ok, false, '模块没展开却 ok:true —— 那正是"看着跑通了其实没做"');
+  assert.ok(out.failed.includes('inst'), 'inst 要在失败集合里，否则下游照跑');
+  const done = events.find((x) => x.type === 'node-done' && x.id === 'inst');
+  assert.equal(done?.ok, false, 'node-done 不能是 ok:true');
+  assert.match(String(done?.error ?? ''), /模块已删除/, '失败原因要把展开阶段的原因带出来');
+});
+
+/*
+ * 反向：正常模块**不能**因为挂了 runModule 就失败。
+ * 只盯"残留会失败"的话，把展开整个摘掉也是红的 —— 那不是本轮要防的。
+ */
+test('正常模块：展开后跑得起来（runModule 不该误伤）', async () => {
+  const A: ModuleDef = {
+    id: 'A', name: 'A', color: '', createdAt: 0,
+    nodes: [{ id: 'X', data: { kind: 'const', value: 'OK-VALUE' } }] as never,
+    edges: [],
+  } as ModuleDef;
+  const g = {
+    nodes: [{ id: 'inst', data: { kind: 'module', moduleId: 'A' } }] as never,
+    edges: [] as never[],
+  };
+  const r = expandModules(g as never, () => A);
+  const out = await runGraph(r as never, {
+    concurrency: 1,
+    executor: async () => ({ output: '', ok: true }),
+    llmCaller: async () => ({ ok: true, text: '' }),
+    onEvent: () => {},
+  } as never);
+  assert.equal(out.ok, true, '正常的模块不该失败');
+  assert.deepEqual(out.failed, [], '正常模块不该进失败集合 —— runModule 误伤了展开好的节点');
 });

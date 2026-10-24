@@ -94,7 +94,11 @@ const NO_RUNNER_NEEDED: Record<string, string> = {
   frame: '组合框：只框住一批节点，不执行',
   taskPane: 'CLI 窗格：提供共享配置，不执行',
   apiPane: 'API 窗格：提供共享配置，不执行',
-  module: '模块：展开成内部节点后由它们各自执行',
+  /*
+   * module 不在这里了 —— 它现在**有**执行器（runModule）。
+   * 不是让它执行内部节点，而是接住"展开失败的残留模块节点"：
+   * 以前没有执行器 → 直通 → 绿着成功、空输出、什么都没做。
+   */
   canvasRef: '画布引用：指向另一张画布，本身不执行',
 };
 

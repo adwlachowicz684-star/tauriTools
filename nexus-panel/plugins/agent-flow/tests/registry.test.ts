@@ -85,9 +85,18 @@ test('每种真实节点都要挂上执行器（合并节点最容易漏）', ()
   /*
    * 这些不是漏挂：
    *   frame / taskPane / apiPane —— 容器，不参与执行
-   *   canvasRef / module         —— 纯编排占位，直通是设计如此
+   *   canvasRef                  —— 纯编排占位，直通是设计如此
+   *
+   * module **不在这里了**。以前它的理由是「展开成内部节点后由它们各自
+   * 执行」，而展开并不总是成功 —— 模块被删了且没脱钩、循环引用、
+   * 以及本轮修的"模块里套模块只展开一层"，都会留下一个 module 节点。
+   * 它没有执行器 → 直通 → 实测整条 `ok:true, failed:[]`，
+   * 绿着 success、输出空串、里面的活一件没干。
+   *
+   * 现在挂了 runModule，它**唯一**的作用是：把展开阶段写进 data.error
+   * 的原因报成失败。正常模块轮不到它（跑之前就展开掉了）。
    */
-  const BY_DESIGN = new Set(['frame', 'taskPane', 'apiPane', 'canvasRef', 'module']);
+  const BY_DESIGN = new Set(['frame', 'taskPane', 'apiPane', 'canvasRef']);
   const kinds = [
     'task', 'trigger', 'condition', 'parallel', 'loop', 'fs', 'ocr', 'translate',
     'llmChat', 'update', 'github-update', 'github-push', 'generic-http', 'extract',

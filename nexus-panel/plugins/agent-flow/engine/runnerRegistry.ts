@@ -58,6 +58,7 @@ import { runCanvasIn, runCanvasOut } from './runners/canvasPort';
 import { runTableRead, runDerive, runFilter, runAgg } from './runners/table';
 import { runMath, runText, runCompare, runRandom, runVar, runStop, runAsk } from './runners/ops';
 import { runMcp } from './runners/mcp';
+import { runModule } from './runners/module';
 
 export type NodeRunner = (ctx: RunContext) => Promise<void>;
 
@@ -107,6 +108,12 @@ const RUNNERS: Record<string, NodeRunner | undefined> = {
    * 有守卫盯这里（见 tests/runnerRegistry.test.ts），别删。
    */
   mcp: runMcp,
+  /*
+   * 模块平时轮不到它执行（跑之前就展开成内部节点了）。
+   * 挂在这里是为了「展开失败的残留模块节点」不再静默直通：
+   * 见 engine/runners/module.ts。
+   */
+  module: runModule,
 };
 
 /**
