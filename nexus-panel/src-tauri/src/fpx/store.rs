@@ -652,10 +652,57 @@ impl RecordFile {
     }
 }
 
+/// 把一条账本记录里的 `project` / `lib` 从**旧版的相对路径**升级成绝对路径。
+///
+/// 为什么要做：C# 原版 `LinkRecordService` 明写「project/lib 以相对路径存储
+/// （基准 = baseRoot，通常取 `config.lastLib`）」，写入处是
+/// `Lib = ToRelPath(absLib)`；而本版一律存绝对路径（`LinkRecord.project`
+/// 直接就是 `junction::link_state` 要拼的路径）。两侧基准不同。
+///
+/// 不做这件事的后果：旧版账本里是 `"我的项目组\子组"` 这种相对串，本版
+/// 直接拿它当路径拼，拼出来的位置根本不存在 —— 卡片登记对不上、链接看着
+/// 在但跳转失效，**且全程不报错**（账本能读出来、界面能渲染，只是"对不上"）。
+/// 用户最自然的反应是"账本坏了"或"链接没建成功"，而真相只是"路径基准换了"。
+///
+/// 为什么在**读侧**做而不是写侧：`with_records` 是 load → 改 → save，
+/// 读进来已规范化，写回的自然是绝对路径。于是旧账本在**首次读取时自动升级**，
+/// 既不需要单独的迁移入口，也不会出现"新旧格式混在同一个文件里"
+/// —— 只改读不改写，或只改写不改读，都会造成混写，那是比不改更糟的状态。
+///
+/// `base` = 账本文件所在目录（对齐原版 baseRoot 兜底到程序目录的语义）。
+/// 返回被转换的**字段**数；0 表示无需迁移。
+pub fn normalize_record_paths(records: &mut [LinkRecord], base: &Path) -> usize {
+    let mut n = 0usize;
+    for r in records.iter_mut() {
+        if upgrade_to_abs(&mut r.project, base) { n += 1; }
+        if upgrade_to_abs(&mut r.lib, base) { n += 1; }
+    }
+    n
+}
+
+/// 单个字段的升级：相对才动，绝对与空串原样保留。返回是否改过。
+fn upgrade_to_abs(p: &mut String, base: &Path) -> bool {
+    let s = p.trim();
+    if s.is_empty() { return false; }
+    // 本版写入的一律是绝对路径，旧版写入的一律是相对路径 —— 只在后者上动手，
+    // 保证这个函数**幂等**：升级后的账本再读一次不会有任何变化。
+    if Path::new(s).is_absolute() { return false; }
+    // 先把新值算出来再赋值：s 借用的正是 *p，写成 `*p = base.join(s)...`
+    // 的话，读（s）与写（*p）落在同一条语句里，能不能过借用检查要看
+    // NLL 的心情 —— 拆成两步就没有任何歧义。
+    let joined = base.join(s).to_string_lossy().to_string();
+    *p = joined;
+    true
+}
+
 /// 严格加载账本（写入路径专用）。
 pub fn load_records_strict(dir: &Path) -> LoadOutcome<Vec<LinkRecord>> {
     match load_strict::<RecordFile>(&dir.join("link-record.json")) {
-        LoadOutcome::Ok(f) => LoadOutcome::Ok(f.into_links()),
+        LoadOutcome::Ok(f) => {
+            let mut v = f.into_links();
+            normalize_record_paths(&mut v, dir);
+            LoadOutcome::Ok(v)
+        }
         LoadOutcome::Corrupted { backup, reason } => {
             LoadOutcome::Corrupted { backup, reason }
         }
@@ -667,9 +714,11 @@ pub fn load_records(dir: &Path) -> Vec<LinkRecord> {
     // 后续 save_records 会把空列表整份写回，所有链接记录瞬间蒸发。
     // 这里给空列表只为让界面仍能渲染，但损坏状态会被记下，
     // 随后的 save_records 会被 guard_against_corrupt 拦住。
-    load_strict::<RecordFile>(&dir.join("link-record.json"))
+    let mut v = load_strict::<RecordFile>(&dir.join("link-record.json"))
         .unwrap_or_else(RecordFile::default)
-        .into_links()
+        .into_links();
+    normalize_record_paths(&mut v, dir);
+    v
 }
 
 pub fn save_records(dir: &Path, records: &[LinkRecord]) -> Result<(), String> {
@@ -1072,7 +1121,23 @@ pub fn load_records_from_exact(path: &std::path::Path) -> Result<Vec<LinkRecord>
         // 文件不存在时 load_strict 返回 default（空），首次运行属正常。
         // 两种形态（{links:[]} 与裸数组）也由 RecordFile 的 untagged 认，
         // 与 load_records 同。
-        LoadOutcome::Ok(f) => Ok(f.into_links()),
+        LoadOutcome::Ok(f) => {
+            let mut v = f.into_links();
+            // 与 load_records 同一套升级规则。这里只拿到文件路径，没有目录参数，
+            // 所以 base 取它的父目录。
+            //
+            // 父目录为空说明**连账本路径本身都是相对的**（比如直接传了
+            // "link-record.json"）—— 此时 join 出来仍是相对串，升级等于没做，
+            // 与其留个"看着升级了其实没有"的假象，不如原样返回。
+            // （真出现这种情况，junction 那些按绝对路径拼的操作本来也用不了，
+            //  属于另一个问题，不在这里兜。）
+            if let Some(base) = path.parent() {
+                if !base.as_os_str().is_empty() {
+                    normalize_record_paths(&mut v, base);
+                }
+            }
+            Ok(v)
+        }
         LoadOutcome::Corrupted { backup, reason } => Err(format!(
             "{} 读取失败（{reason}），已暂停一切写入以保护现场。\n\
              损坏内容已另存为：{}\n\
@@ -1125,4 +1190,75 @@ pub fn safe_truncate_at(s: &str, max: usize) -> usize {
         end -= 1;
     }
     end
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 造一条记录；只有 project / lib 参与升级，其余字段任意。
+    fn rec(project: &str, lib: &str) -> LinkRecord {
+        LinkRecord {
+            project: project.to_string(),
+            lib: lib.to_string(),
+            group: "g".to_string(),
+            created: "".to_string(),
+            names: vec![".opencode".to_string()],
+        }
+    }
+
+    /// 跨平台取一个确定是绝对路径的样例。
+    fn abs_sample() -> &'static str {
+        if cfg!(windows) { r"C:\data\proj" } else { "/data/proj" }
+    }
+
+    #[test]
+    fn relative_paths_upgraded_to_absolute() {
+        let base = if cfg!(windows) { Path::new(r"C:\data") } else { Path::new("/data") };
+        let mut v = vec![rec("组/子", "组")];
+        let n = normalize_record_paths(&mut v, base);
+        // 两个字段（project + lib）各算一次
+        assert_eq!(n, 2, "相对路径应被升级");
+        assert!(
+            Path::new(&v[0].project).is_absolute(),
+            "project 应升级为绝对路径，实际：{}", v[0].project
+        );
+        assert!(
+            Path::new(&v[0].lib).is_absolute(),
+            "lib 应升级为绝对路径，实际：{}", v[0].lib
+        );
+    }
+
+    #[test]
+    fn absolute_paths_left_untouched() {
+        let base = Path::new("/data");
+        let abs = abs_sample();
+        let mut v = vec![rec(abs, abs)];
+        let n = normalize_record_paths(&mut v, base);
+        assert_eq!(n, 0, "本版写入的绝对路径不该被改动");
+        assert_eq!(v[0].project, abs);
+        assert_eq!(v[0].lib, abs);
+    }
+
+    #[test]
+    fn upgrade_is_idempotent() {
+        // 旧账本首次读取即固化；再读一次不应有任何变化。
+        // 不幂等的话，每次启动都会把路径再拼一层，最终变成
+        // <base>/<base>/.../组 这种越拼越深、且完全对不上的路径。
+        let base = if cfg!(windows) { Path::new(r"C:\data") } else { Path::new("/data") };
+        let mut v = vec![rec("组", "组")];
+        normalize_record_paths(&mut v, base);
+        let once = v[0].project.clone();
+        assert_eq!(normalize_record_paths(&mut v, base), 0, "第二次读取不该再改");
+        assert_eq!(v[0].project, once, "幂等性被破坏：{} != {}", v[0].project, once);
+    }
+
+    #[test]
+    fn empty_fields_left_untouched() {
+        // 空串 join 后会变成 base 本身，那等于凭空造出一条指向数据目录的记录 ——
+        // 比原样留空危险得多。
+        let mut v = vec![rec("", "  ")];
+        assert_eq!(normalize_record_paths(&mut v, Path::new("/data")), 0);
+        assert_eq!(v[0].project, "");
+    }
 }
