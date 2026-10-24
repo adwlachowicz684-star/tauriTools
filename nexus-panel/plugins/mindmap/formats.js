@@ -229,13 +229,25 @@ export function skipYamlFrontmatter(lines) {
 }
 
 /**
+ * 节点文字规范化：换行类字符及其前后空白 → 单个空格，**保留首尾空白**。
+ *
+ * 与 inlineText 是同一个替换，只差末尾那个 trim —— 分开成两个函数并由
+ * inlineText 复用本函数，是为了让这条替换只写一遍（抄两遍必漏，
+ * BUG 100 / 101 都是这么来的）。
+ *
+ * ⓘ 什么时候必须用这个：导出节点文字时首尾是用户真正写进去的内容
+ * （粘贴带入、刻意对齐），trim 掉就是静默改内容（BUG 173）。
+ */
+export const inlineTextKeepEdges = (v) => String(v ?? '').replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ');
+
+/**
  * 节点文字规范化：换行类字符及其前后空白 → 单个空格，并 trim。
  *
  * 导出节点文字 / 画布标题用这个；判「整行是不是标题」用 flattenBreaks。
  * 两者是同一个替换，只是要不要 trim —— 分开成两个函数，是为了让
  * 每条路都只写一遍（抄两遍必漏，BUG 100 / 101 都是这么来的）。
  */
-export const inlineText = (v) => String(v ?? '').replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ').trim();
+export const inlineText = (v) => inlineTextKeepEdges(v).trim();
 
 /**
  * 字号取**数字部分**：`"20pt"` / `"20px"` / `"1.2em"` 一律 → `"20"` / `"20"` / `"1.2"`。
@@ -340,7 +352,18 @@ export function rowsToKm(rows, rootFallback = ROOT_TEXT) {
     return { root: { data: { text: rootFallback }, children: [] } };
   }
   const make = (text) => {
-    const t = String(text ?? '').trim();
+    /*
+     * **不 trim**（BUG 173）：首尾空白是节点文字的一部分（粘贴带入、
+     * 刻意对齐都可能），trim 掉就是静默改内容 —— Mermaid `["  a  "]` 里
+     * 明明带着那对引号（"特殊字符包裹"，明说里面是字面内容），
+     * 导回来却变成 `a`。
+     *
+     * 全空白 / 空串**仍走占位**：`t || EMPTY_NODE_TEXT` 对 `'   '` 成立
+     * （空格是真值），所以只有真正的空串才占位 —— 与写侧 kmToRows 的
+     * 「全空白 → nodeText 占位」不是同一个口径，但写侧已经把全空白
+     * 换成占位了，导回来时这里收到的本就是占位文字，不会撞上。
+     */
+    const t = String(text ?? '');
     return { data: { text: t || EMPTY_NODE_TEXT }, children: [] };
   };
   const root = make(list[0].text);
@@ -374,8 +397,18 @@ export function kmToRows(root) {
      * kmToRows 只被 toMermaid / toPlantUml 用，OPML / FreeMind / Markdown
      * 各自走 nodeText()，早已是占位 —— 把这里也统一成占位，
      * 四种交换格式的口径才一致（见 BUG 98 / 99：同一份逻辑抄两遍就会漏）。
+     *
+     * ⓘ **首尾空白必须保留**（BUG 173）：nodeText 走 inlineText，后者会 trim，
+     *   于是 `  a  ` 导出再导回就变成 `a` —— 静默改内容，且不报错。而 Mermaid
+     *   的判据 MERMAID_NEEDS_QUOTE 里明明写着 `^\s|\s$`（原意正是靠加引号
+     *   把首尾空白保下来），被这一层 trim 架空成了永远不成立的死代码。
+     *   这里换成 inlineTextKeepEdges：换行仍压成空格（两种格式都是单行的，
+     *   表达不了换行），但首尾不动。
+     *
+     *   全空白时**仍走 nodeText 的占位** —— BUG 100 的取舍不动。
      */
-    out.push({ depth, text: nodeText(n), collapsed: isCollapsed(n) });
+    const raw = inlineTextKeepEdges(n?.data?.text ?? '');
+    out.push({ depth, text: raw.trim() ? raw : nodeText(n), collapsed: isCollapsed(n) });
   });
   return out;
 }
@@ -764,7 +797,12 @@ const MERMAID_NEEDS_QUOTE = /[()[\]{}"#;:,<`]|^\s|\s$|\s\s|^%/;
 
 /** 单个节点文字 → 安全的 Mermaid 写法（纯函数，可测） */
 export function mermaidLabel(text) {
-  const t = String(text ?? '').replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ').trim();
+  /*
+   * **不 trim**（BUG 173）：首尾空白是用户真正写进去的内容，
+   * 而 MERMAID_NEEDS_QUOTE 里的 `^\s|\s$` 正是为了给它们加引号 ——
+   * 先 trim 掉的话，那条判据永远不成立（死代码），首尾空白就静默丢失了。
+   */
+  const t = inlineTextKeepEdges(text);
   if (!t) return '""';                     // 空节点也要占位，否则整张图解析失败
   if (MERMAID_NEEDS_QUOTE.test(t)) {
     /*
@@ -863,8 +901,16 @@ export function mermaidTextOf(line) {
    */
   const m = s.match(MERMAID_SHAPE);
   let t = '';
+  /*
+   * 引号写法 `["x"]`（m[2]）的内容**不能 trim**（BUG 173）：那对引号是
+   * Mermaid 的「特殊字符包裹」，明说里面是字面内容 —— 首尾空白是文字
+   * 的一部分。其余分支仍 trim：那是既有行为，形状符号与文字之间的空白
+   * 本就没有意义，改了反而会让别人的文件读出来多出空格。
+   */
+  let keepEdges = false;
   if (m) {
     t = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? m[6] ?? m[7] ?? m[8] ?? '';
+    if (m[1] == null && m[2] != null) keepEdges = true;
     /*
      * Cloud / Bang 里的**成对引号**是 Mermaid 的「特殊字符包裹」，与 `["x"]`
      * 同义 —— 官方示例就写 `))"Bang 形状"((` 和 `)"云形状的节点"(`。
@@ -879,7 +925,8 @@ export function mermaidTextOf(line) {
       t = t.slice(1, -1);
     }
   }
-  return unescMermaid(String(t)).trim();
+  const out = unescMermaid(String(t));
+  return keepEdges ? out : out.trim();
 }
 
 /**
