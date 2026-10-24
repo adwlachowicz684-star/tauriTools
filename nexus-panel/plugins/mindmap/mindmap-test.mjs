@@ -19214,19 +19214,50 @@ group('BUG 134 · Mermaid 的 :::class 不能吃掉引号写法的行尾');
     eq((root.children[0].children || []).length, 0, '★ A 下面没有多出子节点');
   }
 
-  /* 五、源码契约：MERMAID_SUFFIX 的 ::: 分支必须排除引号 */
+  /*
+   * 五、BUG 171：引号之外的**六种形状**同样不能被吃掉。
+   *
+   * BUG 134 只排了引号，而 `[x]` / `(x)` / `((x))` / `{{x}}` / `)x(` / `))x((`
+   * 的行尾分别是 `]` `)` `))` `}}` `(` `((` —— 那些符号也不是空白，于是
+   * 照样整段被吃：别人的 .mmd 里 `root[会议:::重要]` 导进来变成 `root[会议`。
+   * 本工具写侧遇到 `:` 一律加引号，所以自己的往返不受影响 —— 只有导入
+   * 别处产出的文件才发作（与 BUG 134 同一条缝，只是换了个形状）。
+   */
+  for (const [open, close] of [['[', ']'], ['(', ')'], ['((', '))'], ['{{', '}}'],
+                               ['))', '(('], [')', '(']]) {
+    eq(f.mermaidTextOf(`root${open}会议:::重要${close}`), '会议:::重要',
+      `★ ${open}…${close} 形状下的 ::: 不被剥（BUG 171）`);
+  }
+  {
+    const root = JSON.parse(f.fromMermaid('mindmap\n  root[会议:::重要]\n    子\n')).root;
+    eq(root.data.text, '会议:::重要', '★ 方括号形状整行解析：文字保住');
+    eq((root.children || []).map((n) => n.data.text).join(','), '子',
+      '★ 方括号形状整行解析：子树不抬层');
+  }
+
+  /* 反向：真正的装饰写法仍要剥 —— 排除形状符号不能把真 class 也留下 */
+  eq(f.mermaidTextOf('A[x]:::cls'), 'x', '★ 方括号 + 真装饰仍剥掉（不回归）');
+  eq(f.mermaidTextOf('A((x)):::cls'), 'x', '★ 圆 + 真装饰仍剥掉（不回归）');
+  eq(f.mermaidTextOf('A{{x}}:::cls'), 'x', '★ 六边形 + 真装饰仍剥掉（不回归）');
+  eq(f.mermaidTextOf('A)y(:::cls'), 'y', '★ 云 + 真装饰仍剥掉（不回归）');
+  eq(f.mermaidTextOf('A))y((:::cls'), 'y', '★ Bang + 真装饰仍剥掉（不回归）');
+
+  /* 六、源码契约：::: 分支必须排除引号**与全部形状符号** */
   {
     const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
     const m = src.match(/const MERMAID_SUFFIX = (\/.*\/);/);
     ok(!!m, '找到 MERMAID_SUFFIX');
     /*
      * 判的是这条正则**本身**的形状，不是"文件里出现过 :::"。
-     * 写 `:::[^\s]+` 就是 BUG；`:::[^\s"]+` 才是修好的。
-     * ⓘ 用 indexOf 整段匹配、不写 `\\s` —— 源码里 `\s` 是两个字符，
+     * ⓘ 只排引号是 BUG 171 —— 六种形状的闭合符号 `()[]{}` 都得排，
+     *   少排 `(`，云形状与 Bang（`root)会议:::重要(`）照样被吃掉。
+     * ⓘ 用整段匹配、不写 `\\s` —— 源码里 `\s` 是两个字符，
      *   正则里写 `\s`（单词边界/空白类）匹配不到它（本项目第 N 次栽）。
      */
-    ok(m && m[1].includes(':::[^\\s"]+'),
-      '★ MERMAID_SUFFIX 的 ::: 分支排除引号（否则吃掉 ["…"] 的行尾）');
+    const branch = ((m && m[1].match(/:::\S+/)) || [''])[0];
+    const miss = ['"', '(', ')', '[', ']', '{', '}'].filter((c) => !branch.includes(c));
+    ok(!!branch && !miss.length,
+      `★ MERMAID_SUFFIX 的 ::: 分支排除引号与全部形状符号（缺：${miss.join(' ') || '无'}）`);
   }
 }
 
