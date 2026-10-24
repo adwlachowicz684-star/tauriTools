@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildBlueprint, buildBlueprints, createMcpData, mcpArgsOf, missingRequired,
   mcpTypeOf, isMcpType, slugify, groupByServer, signatureOf,
-  diffBlueprints, refreshBreaksNodes, mcpColorOf,
+  diffBlueprints, refreshBreaksNodes, mcpColorOf, brokenTypes,
   exportBlueprints, importBlueprints, mergeBlueprints,
   mcpSidebarGroups, filterMcpGroups,
   type McpToolSchema,
@@ -199,6 +199,47 @@ test('只改说明不算变化', () => {
   const a = [buildBlueprint('fs', tool('read', { path: { type: 'string' } }, [], '旧说明'))];
   const b = [buildBlueprint('fs', tool('read', { path: { type: 'string' } }, [], '新说明'))];
   assert.equal(diffBlueprints(a as never, b as never).length, 0);
+});
+
+/*
+ * 参数格的显示顺序来自 Object.keys(props)，也就是 server 返回 JSON 里的
+ * 属性顺序 —— 那不是一份稳定的承诺。指纹若不排序，换一次顺序就报
+ * 「N 个节点受影响」，而一个都没坏：报几次之后这条提示就没人信了。
+ */
+test('参数只换顺序不算变化（不能误报「会弄坏已有节点」）', () => {
+  const mk2 = (keys: string[]) =>
+    ({
+      type: 'mcp:fs:read',
+      label: 'fs · read',
+      server: 'fs',
+      tool: 'read',
+      fields: keys.map((k) => ({ key: k, label: k, kind: 'text', required: false })),
+      generatedAt: 0,
+    }) as never;
+  const a = mk2(['a', 'b', 'c']);
+  const b = mk2(['c', 'a', 'b']);
+  assert.equal(signatureOf(a), signatureOf(b), '指纹应与顺序无关');
+  assert.equal(diffBlueprints([a], [b]).length, 0, '只换顺序不该报变化');
+  assert.equal(brokenTypes(diffBlueprints([a], [b])).length, 0);
+});
+
+/** 排序不能把真变化一起抹掉 —— 只盯"别误报"的话，恒返回 '' 也算通过 */
+test('排序后仍能识别真变化', () => {
+  const mk2 = (keys: string[], req: string[] = []) =>
+    ({
+      type: 'mcp:fs:read',
+      label: 'fs · read',
+      server: 'fs',
+      tool: 'read',
+      fields: keys.map((k) => ({ key: k, label: k, kind: 'text', required: req.includes(k) })),
+      generatedAt: 0,
+    }) as never;
+  const a = mk2(['a', 'b', 'c']);
+  const b = mk2(['c', 'a', 'b', 'd']);
+  const d = diffBlueprints([a], [b]);
+  assert.equal(d.length, 1, '多出一个参数必须算变化');
+  assert.equal(d[0].kind, 'changed');
+  assert.deepEqual(brokenTypes(d), ['mcp:fs:read']);
 });
 
 test('signatureOf 区分必填性', () => {

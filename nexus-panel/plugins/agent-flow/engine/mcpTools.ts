@@ -511,12 +511,27 @@ export function groupByServer(list: NodeBlueprint[]): ServerGroup[] {
  * 只比**字段与必填**，不比 description ——
  * 说明文字改了不影响调用，拿它当变化依据会造成大量无意义的"有更新"。
  */
+/**
+ * 参数结构的"指纹" —— 用来判断这次刷新**有没有改到参数结构**。
+ *
+ * ⚠️ 必须**排序后再拼**：参数格的显示顺序来自 `Object.keys(props)`，
+ *    也就是 server 返回 JSON 里的属性顺序，那不是一份稳定的承诺 ——
+ *    换一次顺序就指纹变了，于是每个工具都被判成 changed，
+ *    刷新完界面就报「N 个节点受影响」，而实际上一个都没坏。
+ *
+ *    这类误报比漏报更糟：参数没变却说变了，报几次之后
+ *    这条提示本身就不被信任了 —— 真出事时也没人看。
+ *
+ *    只把指纹排成规范序，**不去排序 fields 本身**：
+ *    面板上的格子顺序沿用 schema 的顺序（往往就是"必填在前"的逻辑顺序），
+ *    按字母硬排反而更难填。
+ */
 export function signatureOf(bp: NodeBlueprint): string {
   const parts: string[] = [];
   for (const f of bp.fields ?? []) {
     parts.push(`${f.key}:${f.kind}${f.required ? '*' : ''}${(f.options ?? []).join('|')}`);
   }
-  return parts.join(',');
+  return parts.sort().join(',');
 }
 
 export type DiffKind = 'added' | 'removed' | 'changed';
