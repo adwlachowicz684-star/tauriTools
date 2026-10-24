@@ -481,7 +481,10 @@ console.log('\n=== 8. iframe 插件必须自带样式来源 ===');
  * 凡是 iframe 类型、且入口是本地 index.html 的插件，要么引了外链 CSS，
  * 要么自带了足够的内联样式。
  */
-const fs2 = fs;
+/* 第 8 节：块作用域隔离 —— 下面三个名字在模块顶层已声明过一次（第 6 节）。
+   同名再声明会让整个文件 SyntaxError（60 条断言一条都跑不了），
+   所以这一节必须自带作用域，不能靠改名绕过（改名下一个人还会踩）。 */
+{const fs2 = fs;
 const regSrc = src('plugins/registry.js');
 const iframeIds = [];
 for (const mm of regSrc.matchAll(/id:\s*'([^']+)'/g)) {
@@ -528,8 +531,8 @@ for (const [id, entry] of iframeIds) {
   t(`${id} 有样式来源（外链 / 入口 import / 足量内联）`, ok,
     ok ? how : '三者皆无 → 打开只有文字，且不报错');
 }
+}
 
-console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
