@@ -34,6 +34,7 @@
     "test:cwd-invariant": "node cwd-invariant-test.mjs",
     "test:command-consistency": "node command-consistency-test.mjs",
     "test:controls": "node controls-test.mjs",
+    "test:ctx-contract": "node ctx-contract-test.mjs",
     "test:config-sync": "node scripts/sync-config.mjs --check",
     "test:admit-scan": "node scripts/scan-admit.mjs",
     "test:cmd-scan": "node scripts/scan-commands.mjs",
