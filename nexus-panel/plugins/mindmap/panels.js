@@ -2720,58 +2720,16 @@ export function openPreview(app, asset, opts) {
   return dlg;
 }
 
-/**
- * 历史快照列表的「读得全不全」判据。
- *
- * ⓘ 早先列表显示走宽松版 `store.listBackups()`：它把「列举失败」和
- *   「个别读不出来」都降级成短一截的数组，于是界面直接写「暂无快照」——
- *   而快照是「误操作后可回滚」的唯一退路，这句"没有"会让用户以为退路
- *   已经没了，从而放心继续改（或反过来以为备份一直没生效）。
- *   回收孤儿附件那条路径已经改成严格版（BUG 164），显示这条漏了。
- *
- * @param {{list:Array|null, failed:number, enumFailed:boolean}} r
- *   `listBackupsStrict()` 的结果。
- * @returns {{note:string, empty:string}}
- *   note  —— 读不全时的警示；**读全了是空串**（那时不该有任何警示）。
- *   empty —— 列表为空时显示的那一句；只有"读全了且真的没有"才是「暂无快照」。
- *
- * ⓘ `enumFailed` 字段可能根本不存在（宽松版的形状没有它）：那时按"读全了"
- *   处理，否则老调用点会集体变红。传 null 则按读不出来处理 —— 连结果都
- *   没有，绝不能显示「暂无快照」。
- */
-export function backupListNote(r) {
-  const enumFailed = r == null ? true : !!r.enumFailed;
-  const failed = r?.failed || 0;
-  if (enumFailed) {
-    return {
-      note: '快照列表读取失败：下面可能不完整，实际份数可能更多',
-      empty: '快照列表读取失败，暂时列不出来（重启后再试）',
-    };
-  }
-  if (failed) {
-    return {
-      note: `有 ${failed} 份快照没读出来，下面不完整`,
-      empty: '快照读取失败，暂时列不出来（重启后再试）',
-    };
-  }
-  return { note: '', empty: '暂无快照' };
-}
-
 /** 历史快照列表 */
 export async function openBackups(app) {
+  const list = await store.listBackups();
   const box = h('div.mm-list', {});
-  /* 读不全的警示单独一行：混进列表里会被当成"其中一条快照" */
-  const note = h('div.mm-hint', { style: 'display:none' });
 
   const render = async () => {
     box.innerHTML = '';
-    const snap = await store.listBackupsStrict();
-    const txt = backupListNote(snap);
-    note.textContent = txt.note;
-    note.style.display = txt.note ? '' : 'none';
-    const items = snap.list || [];
+    const items = await store.listBackups();
     if (!items.length) {
-      box.appendChild(h('div.mm-hint', {}, txt.empty));
+      box.appendChild(h('div.mm-hint', {}, '暂无快照'));
       return;
     }
     for (const b of items) {
@@ -2805,7 +2763,6 @@ export async function openBackups(app) {
 
   const dlg = dialog('历史快照', [
     h('div.mm-hint', {}, `按时间倒序，最多保留 ${app.settings?.backupMax ?? store.BACKUP_KEEP} 份。恢复会覆盖当前所有画布。`),
-    note,
     box,
     h('div.mm-actions', {},
       h('button.mm-btn', {
@@ -2826,17 +2783,7 @@ export async function openBackups(app) {
          * 全部走 askConfirm({ danger: true })。
          */
         onclick: safe('清空快照', async () => {
-          /*
-           * 份数也必须走严格版：宽松版在列举失败时返回空数组，于是这里
-           * 会报「没有可清空的快照」—— 而快照可能还堆在本地库里。
-           * 那是**假话**，且方向最坏：用户以为库是空的，就不再管了。
-           */
-          const snap = await store.listBackupsStrict();
-          if (snap.enumFailed) {
-            app.api.status('快照未清空：读不出快照列表，本地库中的快照可能都还在', true);
-            return;
-          }
-          const n = (snap.list || []).length;
+          const n = (await store.listBackups()).length;
           if (!n) { app.api.status('没有可清空的快照', true); return; }
           const ok = await askConfirm({
             title: '清空快照',
@@ -3036,7 +2983,17 @@ export async function openIconLibrary(app) {
     const r = await picons.deleteGroup(g.id);
     if (!r.ok) { app.api.status(r.error, true); return; }
     await reload();
-    app.api.status('已删除分组：' + g.name);
+    /*
+     * 字节删不掉也要说（BUG 174）。
+     *
+     * 分组条目已经从图标库里删掉了，函数返回 ok:true —— 若只看 ok，
+     * 这里就是一句干干净净的「已删除分组：X」，而那些字节还躺在本地库里
+     * 变成孤儿白占配额。与回收孤儿附件（BUG 159）同一条规矩：
+     * **失败本身可以不拦操作，但必须回话**。
+     */
+    app.api.status('已删除分组：' + g.name
+      + (r.assetFailed ? `（${r.assetFailed} 个图标的字节未能清理，仍占用本地存储空间）` : ''),
+    !!r.assetFailed);
   };
 
   /** A4 导入：把选中的图片存进 IndexedDB 并归入当前分组 */
