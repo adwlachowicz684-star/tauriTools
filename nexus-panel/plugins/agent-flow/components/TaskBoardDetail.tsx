@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { confirm } from '../../js/dialog.js';
-import { isComposing } from '../../js/ime.js';
+import { confirm } from '../../../js/dialog.js';
+import { isComposing } from '../../../js/ime.js';
 import {
   type TaskBoard, type BoardStatus, type BoardTask,
   isGroup, isTask, lockOf, statusOf, tallyOf, leafTaskIds,

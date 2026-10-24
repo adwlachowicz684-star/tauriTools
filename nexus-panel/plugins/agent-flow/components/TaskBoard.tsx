@@ -1,5 +1,5 @@
 import { useMemo, useState, type CSSProperties } from 'react';
-import { confirm, prompt } from '../../js/dialog.js';
+import { confirm, prompt } from '../../../js/dialog.js';
 import {
   type TaskBoard, type BoardRow,
   boardRows, visibleIds, lockOf, statusOf, tallyOf, isGroup,
