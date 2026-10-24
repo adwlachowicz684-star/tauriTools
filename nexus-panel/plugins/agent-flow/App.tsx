@@ -26,6 +26,7 @@ import {
   duplicateElements, stripRuntime, type DupNode, type DupEdge,
 } from './engine/duplicate';
 import { CredentialPanel, canUse } from './components/CredentialPanel';
+import { BoardMetaPanel } from './components/BoardMetaPanel';
 // 卡片上的参数格要能就地改，得拿到 App 的 patchNode ——
 // 卡片是经 nodeTypes 交给 xyflow 渲染的，不是 App 的直接子组件，只能走 Context
 import { NodePatchProvider } from './components/ArgCell';
@@ -109,7 +110,11 @@ import { TaskTable } from './components/TaskTable';
 import { BoardTree } from './components/TaskBoard';
 import { AttachPanel } from './components/AttachPanel';
 import { useAttachments } from './hooks/useAttachments';
+import { useBoardMeta } from './hooks/useBoardMeta';
 import { addAttachment, removeAttachment } from './engine/attachmentStore';
+// 别名：下面有个同名的交互回调 toggleTag(taskId, tagId)，直接导入会自己调自己
+import { toggleTag as toggleBoardTag } from './engine/taskBoard';
+import { addTag } from './engine/boardMeta';
 import { TaskBoardDetail } from './components/TaskBoardDetail';
 import { useTaskBoard } from './hooks/useTaskBoard';
 import {
@@ -959,10 +964,19 @@ export default function App() {
     const parsed = parseRowKey(tableSel);
     if (!parsed) return null;
     // 池子用**过滤后**的：切了项目还拿全量池去查，详情就会显示别的项目那条
-    const pool = parsed.origin === 'live' ? scopedTasks : scopedHistory;
+    //
+    // board 行不在这里查 —— 它是任务条目而不是运行记录，
+    // 没有 HistoryEntry 可给；它的详情走下方另一条分支（任务条目详情）。
+    const pool = parsed.origin === 'live' ? scopedTasks
+      : parsed.origin === 'archived' ? scopedHistory
+      : null;
+    if (!pool) return null;
     const rec = pool.find((t) => t.id === parsed.id);
     if (!rec) return null;
-    return { row: { key: tableSel, origin: parsed.origin, record: rec }, record: rec };
+    return {
+      row: { key: tableSel, origin: parsed.origin, record: rec, task: null, ownerId: parsed.id },
+      record: rec,
+    };
   }, [tableSel, scopedTasks, scopedHistory]);
 
   /*
@@ -1081,6 +1095,8 @@ export default function App() {
   const [boardSel, setBoardSel] = useState<string | null>(null);
   const [boardChecked, setBoardChecked] = useState<Set<string>>(() => new Set());
   const [boardKw, setBoardKw] = useState('');
+  /** 状态流程与标签的设置面板 */
+  const [metaOpen, setMetaOpen] = useState(false);
 
   /*
     换项目 = 换一个文件，旧的选中项与勾选在这个文件里不存在。
@@ -1113,6 +1129,62 @@ export default function App() {
     projectName: boardName,
     enabled: view === 'tasks',
   });
+
+  /*
+    项目元数据：自定义状态流程 + 标签定义。
+    与任务板、附件清单同一个项目、同一套落盘规则，第三个文件。
+  */
+  const meta = useBoardMeta({
+    dir: exportDir,
+    project: boardKey,
+    projectName: boardName,
+    enabled: view === 'tasks',
+  });
+
+  /*
+    每个条目挂了几个附件 —— 表格的附件列要显示它。
+    按 ownerId 建索引而不是每次遍历清单：表格有几百行时，
+    每行都扫一遍清单是 O(行 × 附件)，滚动起来会卡。
+  */
+  const attachCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const id of attach.file.order) {
+      const it = attach.file.items[id];
+      if (!it) continue;
+      out[it.owner] = (out[it.owner] ?? 0) + 1;
+    }
+    return out;
+  }, [attach.file]);
+
+  const toggleTag = useCallback((taskId: string, tagId: string) => {
+    board.apply((b) => toggleBoardTag(b, taskId, tagId).board);
+  }, [board]);
+
+  /** 新建标签。返回新 id，让调用方能立刻把它挂到刚点的那一行上 */
+  const createTag = useCallback((name: string, color: string): string | null => {
+    let newId: string | null = null;
+    meta.apply((m) => {
+      const r = addTag(m, name, color);
+      newId = r.id;
+      return r.meta;
+    });
+    return newId;
+  }, [meta]);
+
+  /*
+    元数据的写入提示。
+    被覆盖是**整份**的（配置不像任务那样逐条合并），
+    所以提示要说得比任务板那边更重 —— 用户刚改完几个状态名被盖掉，
+    是最难解释的那种丢失。
+  */
+  const metaNotice = useMemo(() => {
+    const s = meta.state;
+    if (s.kind === 'error') return `⛔ ${s.message}`;
+    if (s.kind === 'overwritten') return '⚠ 磁盘上有一份更新的配置，你的改动没写入 —— 刷新后再改一次';
+    if (s.kind === 'loading') return '读取中…';
+    if (s.kind === 'saving') return '写入中…';
+    return '';
+  }, [meta.state]);
 
   const attachNotice = useMemo(() => {
     const s = attach.state;
@@ -3515,6 +3587,20 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         {histWarn ? (
           <span className="hist-warn-inline" title={histWarn}>⚠ 归档存储</span>
         ) : null}
+        {/*
+          流程设置的入口只在**任务视图**出现。
+          状态与标签都是任务板的东西，在流程视图里放这个按钮，
+          点了会打开一个跟画布毫无关系的面板 —— 看着像按错了。
+        */}
+        {view === 'tasks' ? (
+          <button
+            className="mini"
+            onClick={() => setMetaOpen(true)}
+            title="自定义状态流程（含挂起、取消）与标签"
+          >
+            流程设置
+          </button>
+        ) : null}
         <strong className="brand">Agent Flow</strong>
         {/*
           工具栏不再放「+ 任务 / + 条件 / + 并发 / + 触发器 / 删除 / 撤销 / 停止」
@@ -3696,8 +3782,10 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                 onKw={setBoardKw}
                 onAddTask={() => {
                   const parent = boardSel && board.board.nodes[boardSel]?.kind === 'group' ? boardSel : null;
+                  const now = Date.now();
                   board.apply((b) => addNode(b, parent, {
                     kind: 'task', title: '新任务', status: 'todo', deps: [], assignee: '', note: '',
+                    desc: '', tags: [], createdAt: now, updatedAt: now, due: 0, priority: 0,
                   }).board);
                 }}
                 onAddGroup={() => {
@@ -3726,9 +3814,14 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               <TaskTable
                 live={scopedTasks}
                 archived={scopedHistory}
+                board={board.board}
+                meta={meta.meta}
+                attachCounts={attachCounts}
                 now={tick}
                 selectedKey={tableSel}
                 onSelect={selectTableRow}
+                onToggleTag={toggleTag}
+                onCreateTag={createTag}
               />
             ) : view === 'tasks' ? (taskTab === 'done' ? (
               <HistoryList
@@ -4096,6 +4189,21 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
       </div>
       </div>
       </div>
+
+      {/*
+        流程设置（状态 + 标签）同凭据中心一样挂在这层：
+        它是全屏遮罩（position:fixed），放哪一层都显示，
+        不依赖右栏或任务视图的布局 —— 从顶栏按钮点进来一定能看到。
+      */}
+      {metaOpen ? (
+        <BoardMetaPanel
+          meta={meta.meta}
+          canWrite={meta.canWrite}
+          notice={metaNotice}
+          onChange={meta.apply}
+          onClose={() => setMetaOpen(false)}
+        />
+      ) : null}
 
       {/*
         凭据中心挂在这里（af-body-row 之外），不跟着右栏走。

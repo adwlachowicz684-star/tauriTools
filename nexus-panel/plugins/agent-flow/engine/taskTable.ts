@@ -26,28 +26,71 @@ import {
   progressOf, elapsedOf, STATUS_LABEL, SOURCE_LABEL,
 } from './tasks';
 import { formatDateTime } from './history';
+import { type TaskBoard, type BoardTask, isTask, isGroup, childrenOf } from './taskBoard';
 
-/** 一条记录来自哪。live = 当前会话，archived = 落盘归档 */
-export type TaskOrigin = 'live' | 'archived';
+/**
+ * 一条记录来自哪。
+ *
+ * live / archived = 运行记录（跑出来的）；
+ * board = 任务板条目（人排的计划）。
+ *
+ * 三类**合在同一张表里**而不是分成两张：
+ * 说明、标签、附件这些字段只在任务条目上有，把条目单独放一张表的话，
+ * "找上周那条挂起的任务"要切两次视图；合在一起一次筛选就能出结果。
+ *
+ * ⛔ 代价：运行记录行在"说明 / 标签"这些列上是空的。
+ * 这是两种数据本来就不同的部分 —— 硬填一个值才是错（会让人以为
+ * 那次运行也写了说明）。空着显示成"—"，语义清楚。
+ */
+export type TaskOrigin = 'live' | 'archived' | 'board';
 
 export const ORIGIN_LABEL: Record<TaskOrigin, string> = {
   live: '进行中',
   archived: '已归档',
+  board: '计划',
 };
 
-const ORIGIN_ORDER: Record<TaskOrigin, number> = { live: 0, archived: 1 };
+const ORIGIN_ORDER: Record<TaskOrigin, number> = { board: 0, live: 1, archived: 2 };
 
 export type TableRow = {
-  /** `live:xxx` / `archived:xxx` —— 两路数据的 id 可能相同，靠前缀区分 */
+  /** `live:xxx` / `archived:xxx` / `board:xxx` —— 三路数据的 id 可能相同，靠前缀区分 */
   key: string;
   origin: TaskOrigin;
-  record: TaskRecord;
+  /** 运行记录。board 行没有 */
+  record: TaskRecord | null;
+  /** 任务条目。live / archived 行没有 */
+  task: BoardTask | null;
+  /**
+   * 关联用的 id：任务条目取条目 id，运行记录取记录 id。
+   * 附件这类"挂在某个东西上"的数据用它查，调用方不用再判 origin。
+   */
+  ownerId: string;
 };
 
-export function buildTableRows(live: TaskRecord[], archived: TaskRecord[]): TableRow[] {
+export function buildTableRows(
+  live: TaskRecord[],
+  archived: TaskRecord[],
+  board?: TaskBoard | null,
+): TableRow[] {
   const rows: TableRow[] = [];
-  for (const t of live) rows.push({ key: `live:${t.id}`, origin: 'live', record: t });
-  for (const t of archived) rows.push({ key: `archived:${t.id}`, origin: 'archived', record: t });
+  if (board) {
+    /*
+      任务板是**树**（root + children），没有扁平的 order 数组。
+      按先序遍历取任务节点 —— 顺序即树上的上下顺序，
+      与列表视图里看到的次序一致，两个视图对同一条任务不会各排各的。
+    */
+    const walk = (parent: string | null): void => {
+      for (const id of childrenOf(board, parent)) {
+        const n = board.nodes[id];
+        if (!n) continue;
+        if (isGroup(n)) { walk(id); continue; }
+        rows.push({ key: `board:${id}`, origin: 'board', record: null, task: n, ownerId: id });
+      }
+    };
+    walk(null);
+  }
+  for (const t of live) rows.push({ key: `live:${t.id}`, origin: 'live', record: t, task: null, ownerId: t.id });
+  for (const t of archived) rows.push({ key: `archived:${t.id}`, origin: 'archived', record: t, task: null, ownerId: t.id });
   return rows;
 }
 
@@ -57,7 +100,7 @@ export function parseRowKey(key: string): { origin: TaskOrigin; id: string } | n
   if (at < 0) return null;
   const prefix = key.slice(0, at);
   const id = key.slice(at + 1);
-  if (prefix !== 'live' && prefix !== 'archived') return null;
+  if (prefix !== 'live' && prefix !== 'archived' && prefix !== 'board') return null;
   return { origin: prefix, id };
 }
 
@@ -67,7 +110,10 @@ export function parseRowKey(key: string): { origin: TaskOrigin; id: string } | n
 
 export type TableColumnId =
   | 'origin' | 'name' | 'status' | 'source'
-  | 'started' | 'ended' | 'elapsed' | 'progress' | 'nodes';
+  | 'started' | 'ended' | 'elapsed' | 'progress' | 'nodes'
+  /* 下面这些是**任务级**列：值在任务板条目上，运行记录行没有 */
+  | 'planStatus' | 'desc' | 'note' | 'tags' | 'created' | 'updated' | 'attach'
+  | 'priority' | 'assignee';
 
 /**
  * 列的取值类型，决定它配什么样的筛选控件与排序方式：
@@ -87,6 +133,18 @@ export type TableColumn = {
   align?: 'right';
   /** enum 列的可选项 */
   options?: { v: string; label: string }[];
+  /**
+   * 选项来自动态源，不在 TABLE_COLUMNS 里写死：
+   *   'status'   → 自定义状态流程（boardMeta）
+   *   'tags'     → 标签定义（boardMeta）
+   *   'assignee' → 当前这批任务里实际出现过的负责人（由调用方去重传入）
+   *
+   * ⛔ 为什么不把选项直接塞进 TABLE_COLUMNS：
+   *    状态和标签是**用户可改**的，而 TABLE_COLUMNS 是模块级常量。
+   *    塞进去就得在每次改配置时重建整个列数组，
+   *    而"列顺序"与"选项"是两件事，绑一起会让改个标签名连带列的顺序重置。
+   */
+  dynamic?: 'status' | 'tags' | 'assignee';
   /** enum 列的排序权重。不按字典序 —— "运行中"该排在"成功"前面 */
   rank?: Record<string, number>;
   /** 数字列的单位提示，写在区间输入框的 placeholder 上 */
@@ -99,10 +157,35 @@ const STATUS_OPTIONS = (['running', 'success', 'failed', 'cancelled'] as TaskSta
 const SOURCE_OPTIONS = (['manual', 'interval', 'cron', 'watch', 'webhook', 'chat', 'unknown'] as TaskSource[])
   .map((v) => ({ v, label: SOURCE_LABEL[v] }));
 
+/**
+ * 优先级档位。
+ *
+ * 任务里存的是数字（0 = 未设，1 = P1 最高 … 数字越小越紧急），
+ * 这里给出显示名。筛选用的是数字字符串，不是这些名字 ——
+ * 改一次显示名不该让已存的筛选失效。
+ */
+export const PRIORITY_OPTIONS = [
+  { v: '1', label: 'P1 最高' },
+  { v: '2', label: 'P2 高' },
+  { v: '3', label: 'P3 中' },
+  { v: '4', label: 'P4 低' },
+  { v: '0', label: '未设' },
+];
+
+/** 优先级的显示名。数字 → 文案；0 与空都显示"—" */
+export function priorityLabel(p: number): string {
+  const hit = PRIORITY_OPTIONS.find((o) => o.v === String(p || 0));
+  return hit ? hit.label : String(p);
+}
+
 export const TABLE_COLUMNS: TableColumn[] = [
   {
     id: 'origin', label: '归属', kind: 'enum', width: 78,
-    options: [{ v: 'live', label: ORIGIN_LABEL.live }, { v: 'archived', label: ORIGIN_LABEL.archived }],
+    options: [
+      { v: 'board', label: ORIGIN_LABEL.board },
+      { v: 'live', label: ORIGIN_LABEL.live },
+      { v: 'archived', label: ORIGIN_LABEL.archived },
+    ],
     rank: ORIGIN_ORDER,
   },
   { id: 'name', label: '流程', kind: 'text', width: 150 },
@@ -118,6 +201,33 @@ export const TABLE_COLUMNS: TableColumn[] = [
   { id: 'elapsed', label: '耗时', kind: 'number', width: 84, align: 'right', unit: '秒' },
   { id: 'progress', label: '进度', kind: 'number', width: 78, align: 'right', unit: '%' },
   { id: 'nodes', label: '节点', kind: 'number', width: 68, align: 'right' },
+  /* ---- 任务级 ---- */
+  {
+    id: 'planStatus', label: '计划状态', kind: 'enum', width: 96,
+    dynamic: 'status',
+  },
+  { id: 'desc', label: '任务说明', kind: 'text', width: 170 },
+  { id: 'note', label: '备注', kind: 'text', width: 150 },
+  { id: 'tags', label: '标签', kind: 'enum', width: 130, dynamic: 'tags' },
+  { id: 'created', label: '创建', kind: 'time', width: 116 },
+  { id: 'updated', label: '更新', kind: 'time', width: 116 },
+  { id: 'attach', label: '附件', kind: 'number', width: 62, align: 'right', unit: '个' },
+  /*
+    优先级用 enum（下拉选）而不是 number（区间填）：
+    "高/中/低"是离散档位，没人会想筛"优先级在 2 到 3 之间"。
+    ⛔ 但存的是数字 —— 字符串档位按字典序排会排出"低 < 高 < 中"，
+    所以靠下面的 rank 排，不靠字典序。
+  */
+  {
+    id: 'priority', label: '优先级', kind: 'enum', width: 82,
+    options: PRIORITY_OPTIONS,
+    // 未设排最后：它是"还没定"，不该混在 P1 前面
+    rank: { '1': 1, '2': 2, '3': 3, '4': 4, '0': 9 },
+  },
+  {
+    id: 'assignee', label: '认领', kind: 'enum', width: 96,
+    dynamic: 'assignee',
+  },
 ];
 
 export const TABLE_TOTAL_WIDTH = TABLE_COLUMNS.reduce((s, c) => s + c.width, 0);
@@ -137,25 +247,102 @@ export function columnOf(id: TableColumnId): TableColumn {
  * enum / text 返回字符串（排序走 rank 或字典序），
  * number / time 返回数字 —— 两者分开，避免"10" 与 "9" 按字符串比出 10 < 9。
  */
-export function cellValue(row: TableRow, id: TableColumnId, now: number): string | number {
+export function cellValue(
+  row: TableRow,
+  id: TableColumnId,
+  now: number,
+  counts?: Record<string, number>,
+): string | number {
   const t = row.record;
+  const k = row.task;
   switch (id) {
     case 'origin': return ORIGIN_LABEL[row.origin];
-    case 'name': return t.canvasName || '未命名流程';
-    case 'status': return t.status;
-    case 'source': return t.source;
-    case 'started': return t.startedAt;
+    // 任务条目行显示任务标题；运行行显示流程名
+    case 'name': return k ? (k.title || '未命名任务') : (t ? (t.canvasName || '未命名流程') : '');
+    case 'status': return t ? t.status : '';
+    case 'source': return t ? t.source : '';
+    case 'started': return t ? t.startedAt : 0;
     /*
       未结束的记录没有 endedAt，这里给 0 而不是 now：
         给 now 的话，正在跑的那条会一直"最新"，排序每秒都在变位置 ——
         表会自己跳，没法点。0 表示"还没结束"，且稳定。
     */
-    case 'ended': return t.endedAt ?? 0;
-    case 'elapsed': return elapsedOf(t, now);
-    case 'progress': return progressOf(t).percent;
-    case 'nodes': return Math.max(t.total, t.order.length);
+    case 'ended': return t ? (t.endedAt ?? 0) : 0;
+    case 'elapsed': return t ? elapsedOf(t, now) : 0;
+    case 'progress': return t ? progressOf(t).percent : 0;
+    case 'nodes': return t ? Math.max(t.total, t.order.length) : 0;
+    /* ---- 任务级 ---- */
+    case 'planStatus': return k ? k.status : '';
+    case 'desc': return k ? k.desc : '';
+    case 'note': return k ? k.note : '';
+    // 多值拼成串只是为了能进比较；筛选时按 rawValues 拆开判（见下）
+    case 'tags': return k ? k.tags.join(',') : '';
+    case 'created': return k ? k.createdAt : 0;
+    case 'updated': return k ? k.updatedAt : 0;
+    case 'attach': return counts ? attachCountOf(row, counts) : 0;
+    case 'priority': return k ? priorityLabel(k.priority) : '';
+    case 'assignee': return k ? (k.assignee || '未认领') : '';
     default: return '';
   }
+}
+
+/**
+ * 该列用于**筛选**的原始值（可能多个）。
+ *
+ * 为什么单独一份而不直接用 cellValue 的返回值：
+ * 标签是多值的（一条任务可以挂好几个），拼成串之后
+ * "选中 A 和 B"就变成要匹配 "A,B" 这个整体 —— 只有同时挂着 A 和 B
+ * 且顺序一致才命中，而用户要的是"挂着 A 或 B 的都算"。
+ *
+ * 返回数组，enum 匹配统一成"任一命中"，单值列就是长度 1 的数组。
+ */
+export function rawValues(row: TableRow, id: TableColumnId): string[] {
+  switch (id) {
+    case 'origin': return [row.origin];
+    case 'status': return row.record ? [row.record.status] : [];
+    case 'source': return row.record ? [row.record.source] : [];
+    case 'planStatus': return row.task ? [row.task.status] : [];
+    case 'tags': return row.task ? row.task.tags : [];
+    // 存的是数字，筛选用字符串比（选项的 v 也是字符串）
+    case 'priority': return row.task ? [String(row.task.priority || 0)] : [];
+    // 空串 = 没人领。它要能单独筛出来（"找没人认领的"是很常用的查询），
+    // 所以不能返回空数组 —— 空数组在 matchesColumn 里表示"这行没有值，不匹配任何选项"。
+    case 'assignee': return row.task ? [row.task.assignee || ''] : [];
+    default: return [];
+  }
+}
+
+/**
+ * 从一批行里算出「认领」列的选项。
+ *
+ * 负责人没有一张"人员表"可查 —— 名字是**手填**的（人写、AI 写都行），
+ * 所以只能从现有数据里去重得到。
+ *
+ * 为什么不在列定义里写死：写死就得先维护一份人员名单，
+ * 而这份名单必然与实际数据脱节（漏掉有人、留着已不参与的）。
+ */
+export function assigneeOptionsOf(rows: TableRow[]): { v: string; label: string }[] {
+  const seen = new Map<string, string>();
+  for (const r of rows) {
+    const k = r.task;
+    if (!k) continue;
+    const v = k.assignee || '';
+    if (!seen.has(v)) seen.set(v, v || '未认领');
+  }
+  return [...seen.entries()]
+    .map(([v, label]) => ({ v, label }))
+    // 未认领排最后 —— 它是"没人"，不该顶在名单前面
+    .sort((a, b) => (a.v === '' ? 1 : b.v === '' ? -1 : a.label.localeCompare(b.label, 'zh')));
+}
+
+/**
+ * 附件计数。
+ *
+ * 计数**不在 cellValue 里算**：附件清单是另一份数据（不在任务板上），
+ * 表格模块拿不到它。由调用方算好传进来，保持本模块是纯函数。
+ */
+export function attachCountOf(row: TableRow, counts: Record<string, number>): number {
+  return counts[row.ownerId] ?? 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -221,13 +408,18 @@ function dayEnd(s: string): number | null {
 }
 
 /** 单列匹配 */
-function matchesColumn(row: TableRow, col: TableColumn, f: ColumnFilter, now: number): boolean {
-  const v = cellValue(row, col.id, now);
+function matchesColumn(
+  row: TableRow, col: TableColumn, f: ColumnFilter, now: number,
+  counts?: Record<string, number>,
+): boolean {
+  const v = cellValue(row, col.id, now, counts);
   switch (col.kind) {
     case 'enum': {
       // 按**值**比，不按显示文案比 —— 文案是给人看的，改一次文案筛选就失效
-      const raw = col.id === 'origin' ? row.origin : col.id === 'status' ? row.record.status : row.record.source;
-      return f.values.indexOf(raw) >= 0;
+      const raws = rawValues(row, col.id);
+      if (raws.length === 0) return false;      // 这行在该列上没有值 → 不匹配任何选项
+      // 多值列（标签）命中任一即可
+      return raws.some((x) => f.values.indexOf(x) >= 0);
     }
     case 'text': {
       const kw = f.text.trim().toLowerCase();
@@ -298,31 +490,45 @@ export function activeFilterColumns(q: TableQuery): TableColumnId[] {
  * 但 enum 列的 values 是空数组 → 全部不匹配 → 整表变空。
  * 那是最难自查的一类 bug：看起来"什么都没筛，却一条都没有"。
  */
-export function filterRows(rows: TableRow[], q: TableQuery, now: number): TableRow[] {
+export function filterRows(
+  rows: TableRow[], q: TableQuery, now: number, counts?: Record<string, number>,
+): TableRow[] {
   const active = activeFilterColumns(q);
   if (active.length === 0) return rows;
   const cols = active.map(columnOf);
   const fs = active.map((id) => q.filters[id] as ColumnFilter);
   return rows.filter((r) => {
     for (let i = 0; i < cols.length; i += 1) {
-      if (!matchesColumn(r, cols[i], fs[i], now)) return false;
+      if (!matchesColumn(r, cols[i], fs[i], now, counts)) return false;
     }
     return true;
   });
 }
 
 /** 两行的先后。返回负数 = a 在前 */
-function compareRows(a: TableRow, b: TableRow, id: TableColumnId, dir: SortDir, now: number): number {
+function compareRows(
+  a: TableRow, b: TableRow, id: TableColumnId, dir: SortDir, now: number,
+  counts?: Record<string, number>,
+): number {
   const col = columnOf(id);
-  const av = cellValue(a, id, now);
-  const bv = cellValue(b, id, now);
+  const av = cellValue(a, id, now, counts);
+  const bv = cellValue(b, id, now, counts);
   let d = 0;
   if (typeof av === 'number' && typeof bv === 'number') {
     d = av - bv;
   } else if (col.kind === 'enum' && col.rank) {
-    // rank 里没有的（比如新增了状态）排最后，而不是当成 0 混在最前面
-    const ar = col.rank[String(av)] ?? 99;
-    const br = col.rank[String(bv)] ?? 99;
+    /*
+      按**原始值**查 rank，不能拿显示文案去查。
+
+      rank 的键是数据里存的那个值（'running' / '1' / 'live'），
+      而 cellValue 给的是给人看的文案（"运行中" / "P1 最高" / "进行中"）。
+      拿文案去查必然全部落空 → 都返回 99 → 这一列等于没法排序，
+      而界面上看不出坏了（点了有反应，只是顺序不对）。
+
+      顺带修掉的既有问题：归属列此前就是这么失效的。
+    */
+    const ar = col.rank[rawValues(a, id)[0] ?? ''] ?? 99;
+    const br = col.rank[rawValues(b, id)[0] ?? ''] ?? 99;
     d = ar - br;
   } else {
     d = String(av).localeCompare(String(bv), 'zh');
@@ -338,20 +544,24 @@ function compareRows(a: TableRow, b: TableRow, id: TableColumnId, dir: SortDir, 
  * （耗时、进度每秒都在动），只靠稳定性仍可能让相邻两行来回换位置。
  * id 是唯一的，兜底后顺序完全确定 —— 正在跑的表不会自己抖。
  */
-export function sortRows(rows: TableRow[], q: TableQuery, now: number): TableRow[] {
+export function sortRows(
+  rows: TableRow[], q: TableQuery, now: number, counts?: Record<string, number>,
+): TableRow[] {
   if (!q.sortKey) return rows;
   const id = q.sortKey;
   const dir = q.sortDir;
   return [...rows].sort((a, b) => {
-    const d = compareRows(a, b, id, dir, now);
+    const d = compareRows(a, b, id, dir, now, counts);
     if (d !== 0) return d;
     return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
   });
 }
 
 /** 筛选 + 排序。表格每次渲染走这一个入口，两件事的顺序就不会分叉 */
-export function applyTable(rows: TableRow[], q: TableQuery, now: number): TableRow[] {
-  return sortRows(filterRows(rows, q, now), q, now);
+export function applyTable(
+  rows: TableRow[], q: TableQuery, now: number, counts?: Record<string, number>,
+): TableRow[] {
+  return sortRows(filterRows(rows, q, now, counts), q, now, counts);
 }
 
 /**
