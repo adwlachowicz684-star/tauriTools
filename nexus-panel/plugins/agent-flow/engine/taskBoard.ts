@@ -57,11 +57,31 @@
 
 export const BOARD_VERSION = 1;
 
-export type BoardStatus = 'todo' | 'doing' | 'done' | 'cancelled';
+/**
+ * 计划状态。
+ *
+ * 现在是**自定义状态 id**（如 'todo' / 'review'），不再是写死的联合类型 ——
+ * 状态集由用户在 boardMeta 里配（见 engine/boardMeta.ts）。
+ *
+ * ⛔ 别把它当成"运行结果"：跑成功了还是失败了是系统记的事实，
+ * 这里存的是**人推到哪一步**。两者在表格里是独立的两列。
+ */
+export type BoardStatus = string;
 
-export const BOARD_STATUS_LABEL: Record<BoardStatus, string> = {
+/** 默认那套状态的 id。数据里没写、或写了不认识的 id 时退回它 */
+export const DEFAULT_STATUS = 'todo';
+
+/**
+ * 内置状态的兜底显示名。
+ *
+ * 只在**拿不到项目元数据**时用（那时显示 id 会是一串英文）。
+ * 正常路径一律走 boardMeta.statusName() —— 用户可能把"待办"改成"需求池"，
+ * 那份名字才是准的。
+ */
+export const BOARD_STATUS_LABEL: Record<string, string> = {
   todo: '待办',
   doing: '进行中',
+  held: '已挂起',
   done: '已完成',
   cancelled: '已取消',
 };
@@ -82,6 +102,39 @@ export type BoardTask = {
   /** 谁领了。空 = 没人领 */
   assignee: string;
   note: string;
+  /**
+   * 任务说明 —— 一句话说清这条要做什么。
+   *
+   * 与 note（备注）分开：说明是"要做什么"，备注是"过程中记的"。
+   * 混成一个字段的话，做完之后没人去清理说明，
+   * 下次看到这条分不清哪些是原始要求、哪些是后来的补充。
+   */
+  desc: string;
+  /** 标签 id 列表。标签定义（名字 + 颜色）在 boardMeta 里 */
+  tags: string[];
+  /**
+   * 创建时间。自动生成，不可改。
+   *
+   * 为什么必须存：任务板是给人排期的，"这条挂了多久没动"
+   * 全靠它 —— 不存就只能看更新时间，而更新时间会被无关编辑顶掉。
+   */
+  createdAt: number;
+  /** 最后更新时间。任何字段变动都推进它 */
+  updatedAt: number;
+  /**
+   * 截止时间（时间戳）。0 = 没设。
+   *
+   * 用 0 而不是 null：JSON 里 null 与"没写"分不清，
+   * 而 0 在排序时能明确落到"没有截止"这一档。
+   */
+  due: number;
+  /**
+   * 优先级。0 = 未设，1 = P1（最高）…数字越小越紧急。
+   *
+   * 用数字而不是字符串：排序要能比大小，
+   * "高/中/低"按字典序排会排出"低 < 高 < 中"这种荒唐顺序。
+   */
+  priority: number;
 };
 
 export type BoardNode = BoardGroup | BoardTask;
@@ -118,7 +171,20 @@ export function isTask(n: BoardNode | undefined): n is BoardTask {
   return !!n && n.kind === 'task';
 }
 
-const STATUSES: BoardStatus[] = ['todo', 'doing', 'done', 'cancelled'];
+/*
+  状态不再有一个"合法值清单" —— 状态集是用户在 boardMeta 里配的，
+  这里无从知道有哪些。所以只要是非空字符串就认。
+
+  ⛔ 不要在这里校验"这个状态在 meta 里存不存在"：
+     解析发生在 meta 加载之前（两者是并行读的两个文件），
+     此刻校验必然误判；且用户删了某个状态后，
+     老任务上的旧 id 该**保留**（见 boardMeta.removeStatus 的说明），
+     校验把它们清掉反而丢失了"这条用的是已删除状态"这个信息。
+*/
+function statusOfRaw(v: unknown): BoardStatus {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s || DEFAULT_STATUS;
+}
 
 function asIdList(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
@@ -154,14 +220,27 @@ export function parseBoard(raw: string | null, project = '', projectName = ''): 
       continue;
     }
     if (n.kind === 'task') {
-      const st = STATUSES.indexOf(n.status as BoardStatus) >= 0 ? n.status as BoardStatus : 'todo';
+      /*
+        时间字段：写了就用，没写给 0。
+        createdAt 给 0 而不是"现在" —— 给现在会让一条
+        从别处迁移来的老任务显示成刚建的，历史就假了。
+      */
+      const createdAt = typeof n.createdAt === 'number' && isFinite(n.createdAt) ? n.createdAt : 0;
+      const updatedAtRaw = typeof n.updatedAt === 'number' && isFinite(n.updatedAt) ? n.updatedAt : 0;
       nodes[k] = {
         kind: 'task',
         title,
-        status: st,
+        status: statusOfRaw(n.status),
         deps: asIdList(n.deps),
         assignee: typeof n.assignee === 'string' ? n.assignee : '',
         note: typeof n.note === 'string' ? n.note : '',
+        desc: typeof n.desc === 'string' ? n.desc : '',
+        tags: asIdList(n.tags),
+        createdAt,
+        // 没写过 updatedAt 时用 createdAt —— 至少不会显示成"从未更新"
+        updatedAt: updatedAtRaw || createdAt,
+        due: typeof n.due === 'number' && isFinite(n.due) ? n.due : 0,
+        priority: typeof n.priority === 'number' && isFinite(n.priority) ? n.priority : 0,
       };
     }
   }
@@ -612,6 +691,7 @@ export function splitTask(board: TaskBoard, id: string, titles: string[]): OpRes
   const list = titles.map((t) => t.trim()).filter(Boolean);
   if (list.length === 0) return { board, id, warnings: ['没有填子任务标题'] };
 
+  const now = Date.now();
   let b = board;
   if (isTask(n)) {
     const deps = n.deps;
@@ -620,7 +700,8 @@ export function splitTask(board: TaskBoard, id: string, titles: string[]): OpRes
     b.nodes[id] = { kind: 'group', title: n.title, children: [] };
     for (const t of list) {
       const r = addNode(b, id, {
-        kind: 'task', title: t, status: 'todo', deps: [...deps], assignee, note: '',
+        kind: 'task', title: t, status: DEFAULT_STATUS, deps: [...deps], assignee, note: '',
+        desc: '', tags: [], createdAt: now, updatedAt: now, due: 0, priority: 0,
       });
       b = r.board;
     }
@@ -630,7 +711,10 @@ export function splitTask(board: TaskBoard, id: string, titles: string[]): OpRes
   } else {
     // 已经是组：继续往里加就是"再拆一层"
     for (const t of list) {
-      const r = addNode(b, id, { kind: 'task', title: t, status: 'todo', deps: [], assignee: '', note: '' });
+      const r = addNode(b, id, {
+        kind: 'task', title: t, status: DEFAULT_STATUS, deps: [], assignee: '', note: '',
+        desc: '', tags: [], createdAt: now, updatedAt: now, due: 0, priority: 0,
+      });
       b = r.board;
     }
   }
@@ -676,20 +760,33 @@ export function claimTask(board: TaskBoard, id: string, who: string): OpResult {
     ...n,
     assignee: who,
     status: n.status === 'todo' ? 'doing' : n.status,
+    updatedAt: Date.now(),
   };
   b.updatedAt = Date.now();
   return { board: b, id, warnings };
 }
 
 /** 标记状态。与领取同理：被卡住只给警告，不硬挡 */
-export function setTaskStatus(board: TaskBoard, id: string, status: BoardStatus): OpResult {
+export function setTaskStatus(
+  board: TaskBoard,
+  id: string,
+  status: BoardStatus,
+  advance?: string[],
+): OpResult {
   const n = board.nodes[id];
   const warnings: string[] = [];
   if (!n) return { board, id, warnings: ['节点不存在'] };
   if (isGroup(n)) {
     return { board, id, warnings: ['任务组的状态由它下面的任务决定，不能直接标记'] };
   }
-  if (status === 'doing' || status === 'done') {
+  /*
+    哪些目标状态算"推进"、需要检查前置 —— 状态可自定义之后这里没法写死。
+
+    advance 由调用方传（从 boardMeta 里算出来：所有非终态且不是初始态的）。
+    没传时退回内置那两个 id —— 老调用点不至于因为没传就完全不检查。
+  */
+  const adv = advance ?? ['doing', 'done'];
+  if (adv.indexOf(status) >= 0) {
     const lock = lockOf(board, id);
     if (lock.cyclic) warnings.push('⚠ 前置任务成环，这条无法解锁');
     if (lock.pending.length > 0) {
@@ -699,9 +796,50 @@ export function setTaskStatus(board: TaskBoard, id: string, status: BoardStatus)
     if (lock.missing.length > 0) warnings.push(`⚠ 前置任务不存在：${lock.missing.join('、')}`);
   }
   const b = clone(board);
-  b.nodes[id] = { ...n, status };
+  b.nodes[id] = { ...n, status, updatedAt: Date.now() };
   b.updatedAt = Date.now();
   return { board: b, id, warnings };
+}
+
+/**
+ * 改任务的任意标量字段（说明 / 备注 / 负责人 / 截止 / 优先级）。
+ *
+ * 统一走这一个函数，是为了让 updatedAt **不可能被漏掉** ——
+ * 分散在各处 `b.nodes[id] = {...n, xxx}` 的写法，加一个字段就多一处
+ * 可能忘记推进更新时间的地方，而"最后更新于"显示成一周前会让人
+ * 以为这条没人动过。
+ */
+export function patchTask(
+  board: TaskBoard,
+  id: string,
+  patch: Partial<Pick<BoardTask, 'desc' | 'note' | 'assignee' | 'due' | 'priority' | 'title'>>,
+): OpResult {
+  const n = board.nodes[id];
+  if (!isTask(n)) return { board, id, warnings: ['只有任务能改这些字段'] };
+  const b = clone(board);
+  b.nodes[id] = { ...n, ...patch, updatedAt: Date.now() };
+  b.updatedAt = Date.now();
+  return { board: b, id, warnings: [] };
+}
+
+/**
+ * 挂 / 摘一个标签。
+ *
+ * ⛔ 只改任务上的引用，不动 boardMeta 里的标签定义 ——
+ * 摘标签不等于删标签：别人任务上还挂着同一个标签。
+ */
+export function toggleTag(board: TaskBoard, id: string, tagId: string): OpResult {
+  const n = board.nodes[id];
+  if (!isTask(n)) return { board, id, warnings: ['只有任务能挂标签'] };
+  const has = n.tags.indexOf(tagId) >= 0;
+  const b = clone(board);
+  b.nodes[id] = {
+    ...n,
+    tags: has ? n.tags.filter((x) => x !== tagId) : [...n.tags, tagId],
+    updatedAt: Date.now(),
+  };
+  b.updatedAt = Date.now();
+  return { board: b, id, warnings: [] };
 }
 
 export function setDeps(board: TaskBoard, id: string, deps: string[]): OpResult {

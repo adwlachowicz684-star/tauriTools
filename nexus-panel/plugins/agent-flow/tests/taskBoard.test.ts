@@ -10,15 +10,22 @@ import {
   type TaskBoard, type BoardNode,
 } from '../engine/taskBoard';
 
+/** 一条任务节点的完整字段。新字段补不全的话往返测试会对不上 */
+const task = (title: string, patch: Record<string, unknown> = {}): BoardNode => ({
+  kind: 'task', title, status: 'todo', deps: [], assignee: '', note: '',
+  desc: '', tags: [], createdAt: 0, updatedAt: 0, due: 0, priority: 0,
+  ...patch,
+} as BoardNode);
+
 /** 一棵现成的树：g1[t1, g2[t2, t3]], t4 */
 function board(): TaskBoard {
   const b = emptyBoard('p1', '项目甲');
   const r1 = addNode(b, null, { kind: 'group', title: '登录', children: [] });
-  const r2 = addNode(r1.board, r1.id, { kind: 'task', title: '设计表', status: 'todo', deps: [], assignee: '', note: '' });
+  const r2 = addNode(r1.board, r1.id, task('设计表'));
   const r3 = addNode(r2.board, r1.id, { kind: 'group', title: '接口', children: [] });
-  const r4 = addNode(r3.board, r3.id, { kind: 'task', title: '写接口', status: 'todo', deps: [], assignee: '', note: '' });
-  const r5 = addNode(r4.board, r3.id, { kind: 'task', title: '补测试', status: 'todo', deps: [], assignee: '', note: '' });
-  const r6 = addNode(r5.board, null, { kind: 'task', title: '发版', status: 'todo', deps: [], assignee: '', note: '' });
+  const r4 = addNode(r3.board, r3.id, task('写接口'));
+  const r5 = addNode(r4.board, r3.id, task('补测试'));
+  const r6 = addNode(r5.board, null, task('发版'));
   return r6.board;
 }
 
