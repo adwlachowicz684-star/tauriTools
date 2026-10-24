@@ -422,11 +422,11 @@ test('连接管理器分密钥与服务两页', () => {
  * 曾经的表现：参数设置与运行日志**叠在一起**。
  *
  * 链条是：
- *   .af-right-insp  flex:1 min-height:0   ← 限高了
+ *   .af-right-body  flex:1 min-height:0  ← 限高了
  *     └ .insp-slot  flex:none             ← 高度=内容高，父级限高失效
  *         └ .inspector  overflow-y:auto   ← 永远不触发（高度没被约束）
  *
- * 于是内容一多就撑出 .af-right-insp，而它没有 overflow:hidden，
+ * 于是内容一多就撑出 .af-right-body，而它没有 overflow:hidden，
  * 直接盖到下面的日志上。
  *
  * 这类问题**测不出来**（要肉眼看到），而且改 CSS 时极易回退 ——
@@ -441,11 +441,43 @@ function ruleOf(sel: string): string {
   return m ? m[1] : '';
 }
 
-test('.af-right-insp 有 overflow:hidden（缺了就会盖住日志）', () => {
+/*
+ * 右栏改成页签之后（属性 / 日志 / 附属文件），旧的
+ * `.af-right-insp` / `.af-right-split` / `.af-right-log` 三块上下分栏
+ * 已经没人用了，死规则已删。兜底责任落到新容器 `.af-right-body` 上 ——
+ * 断言迁到这里，而不是跟着旧类名一起删：
+ * 少了 overflow:hidden，内容照样会溢出盖住下面的日志。
+ */
+/*
+ * 上面那条断言本身也要有人在 ——
+ * 只查"规则存在"的断言（把 overflow 那条删掉、留个 r.length > 0）
+ * 是守不住的：规则在，缺了 overflow 照样盖住日志。
+ *
+ * 判据钉的是**断言里那段正则**，不是"文件里出现过 .af-right-body"。
+ */
+test('右栏兜底断言不许退化成只查规则存在', () => {
   if (!hasSrc) return;
-  const r = ruleOf('.af-right-insp');
-  assert.ok(r, '找不到 .af-right-insp');
-  assert.ok(/overflow\s*:\s*hidden/.test(r), '.af-right-insp 必须有 overflow:hidden 兜底');
+  const t = read(path.join(ROOT, 'tests/classNames.test.ts'));
+  /*
+   * 必须按**测试标题**定位，不能按 ".af-right-body'" 这个子串 ——
+   * 那条子串在本守卫自己身上就有一份，indexOf 会先找到自己，
+   * 截出来的 400 字里带着守卫自己的 assert.ok(/overflow/) ——
+   * 于是断言被删光了守卫还是绿的（这条第一版就是这么假的）。
+   */
+  const TITLE = ".af-right-body 有 overflow:hidden（缺了就会盖住日志）";
+  const at = t.indexOf(TITLE);
+  assert.ok(at >= 0, '找不到该测试');
+  const seg = t.slice(at, at + 400);
+  assert.ok(/overflow\s*:\s*hidden/.test(seg), '断言里必须真的查 overflow:hidden');
+  assert.ok(/min-height\s*:\s*0/.test(seg), '断言里必须真的查 min-height:0');
+});
+
+test('.af-right-body 有 overflow:hidden（缺了就会盖住日志）', () => {
+  if (!hasSrc) return;
+  const r = ruleOf('.af-right-body');
+  assert.ok(r, '找不到 .af-right-body');
+  assert.ok(/overflow\s*:\s*hidden/.test(r), '.af-right-body 必须有 overflow:hidden 兜底');
+  assert.ok(/min-height\s*:\s*0/.test(r), '.af-right-body 缺 min-height:0');
 });
 
 /** 高度必须受父级约束，否则子级限高全部失效 */
@@ -481,9 +513,10 @@ test('限高不写两处（没有 .insp-slot .inspector 这类覆盖）', () => 
 
 test('日志区自己也要能裁剪（内容多时不外溢）', () => {
   if (!hasSrc) return;
-  const r = ruleOf('.af-right-log');
-  assert.ok(r, '找不到 .af-right-log');
-  assert.ok(/overflow\s*:\s*hidden/.test(r), '.af-right-log 缺 overflow:hidden');
+  const r = ruleOf('.af-right-body .logpane');
+  assert.ok(r, '找不到 .af-right-body .logpane');
+  assert.ok(/flex\s*:\s*1/.test(r), '.af-right-body .logpane 必须 flex:1');
+  assert.ok(/min-height\s*:\s*0/.test(r), '.af-right-body .logpane 缺 min-height:0');
 });
 
 test('MCP 状态位不假装', () => {
