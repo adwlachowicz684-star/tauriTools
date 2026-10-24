@@ -243,13 +243,28 @@ export async function deleteGroup(id) {
   if (groups[i].builtin) return { ok: false, error: '内置分组不可删除。' };
   if (groups.length <= 1) return { ok: false, error: '至少保留一个分组。' };
   const removed = groups.splice(i, 1)[0];
-  // 清掉该组里的用户图标资产（只清自己组的；内置图标无资产）
+  /*
+   * 清掉该组里的用户图标资产（只清自己组的；内置图标无资产）。
+   *
+   * ⚠️ 早先这里写的是
+   *     try { await store.del('asset:' + ic.assetId); } catch (e) { 注释写着「清理失败不拦删除」 }
+   * 而那个 catch **永远不会执行** —— store.del 是吞异常、**返回 false** 的
+   * （见 store.js），它不抛。于是"清理失败"既没被拦住、也没被看见：
+   * 分组条目已从图标库里写掉，函数返回 ok:true，界面照说「已删除分组：X」，
+   * 而字节仍躺在 IndexedDB 里变成孤儿，白占配额 —— 图标库没有撤销，
+   * 用户连"是不是删干净了"都无从核对。
+   *
+   * 「不拦删除」这个意图是对的（字节删不掉不该让整个删除失败，那是把
+   * 一个小问题变成大问题），错的是**不回话**。所以改成计数带回，
+   * 由调用方决定怎么说。
+   */
+  let assetFailed = 0;
   for (const ic of removed.icons || []) {
     if (ic.kind === 'user' && ic.assetId) {
-      try { await store.del('asset:' + ic.assetId); } catch (e) { /* 清理失败不拦删除 */ }
+      if (!await store.del('asset:' + ic.assetId)) assetFailed++;
     }
   }
-  return { ok: await saveUserGroups(groups) };
+  return { ok: await saveUserGroups(groups), assetFailed };
 }
 
 /** 调整分组顺序（对齐 WPF `MoveGroup`） */
@@ -304,10 +319,12 @@ export async function removeIcon(groupId, iconId) {
   const i = (g.icons || []).findIndex((x) => x.id === iconId);
   if (i < 0) return { ok: false, error: '图标不存在。' };
   const [rm] = g.icons.splice(i, 1);
+  let assetFailed = 0;
   if (rm?.kind === 'user' && rm.assetId) {
-    try { await store.del('asset:' + rm.assetId); } catch (e) { /* 同上 */ }
+    // 同 deleteGroup：store.del 不抛，只能看返回值；删不掉要带回话，不能静默
+    if (!await store.del('asset:' + rm.assetId)) assetFailed++;
   }
-  return { ok: await saveUserGroups(groups) };
+  return { ok: await saveUserGroups(groups), assetFailed };
 }
 
 /** 重命名图标：同名则加序号（对齐 WPF `RenameIcon` 的冲突处理） */

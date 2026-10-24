@@ -1263,6 +1263,87 @@ group('图标库写路径 · 读不出来就不许落盘（BUG 166）');
 }
 
 /* ============================================================
+   图标库删路径：字节删不掉必须回话（BUG 174）
+   ============================================================ */
+
+group('图标库删路径 · 字节删不掉必须回话（BUG 174）');
+
+{
+  // 块内自取：本组位于文件靠前处，外层的这两个 import 还在 TDZ 里
+  const picons = await import('./preset-icons.js');
+  const io = await import('./io.js');
+  const psrc = fs.readFileSync(path.join(HERE, 'preset-icons.js'), 'utf8').replace(/\r\n/g, '\n');
+  const pnsrc = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8').replace(/\r\n/g, '\n');
+  const clean = async () => {
+    for (const g of (await picons.loadLibrary()).filter((x) => !x.builtin)) await picons.deleteGroup(g.id);
+  };
+
+  // ---- ① 对照：正常情况字节被一起清掉，且不误报 ----
+  await clean();
+  const aid = await io.putAsset(new Blob(['png-x'], { type: 'image/png' }));
+  const gA = await picons.addGroup('甲组');
+  await picons.addIcon(gA.id, { kind: 'user', name: '图标1', assetId: aid });
+  {
+    const r = await picons.deleteGroup(gA.id);
+    eq(r.ok, true, '（对照）正常情况 deleteGroup 成功');
+    eq(r.assetFailed, 0, '（对照）正常情况 assetFailed 为 0（不许误报）');
+    eq(rawDb().has('asset:' + aid), false, '（对照）正常情况字节被一起清掉');
+  }
+
+  // ---- ② 删不掉：不拦删除，但必须回话 ----
+  await clean();
+  const aid2 = await io.putAsset(new Blob(['png-y'], { type: 'image/png' }));
+  const gB = await picons.addGroup('乙组');
+  await picons.addIcon(gB.id, { kind: 'user', name: '图标2', assetId: aid2 });
+  let r2;
+  ctl.failDel = true;
+  try { r2 = await picons.deleteGroup(gB.id); } finally { ctl.failDel = false; store.resetStoreError(); }
+  eq(r2.ok, true, '字节删不掉**不拦删除**（这个意图是对的：不能因字节删不掉让整个删除失败）');
+  eq(r2.assetFailed, 1, '★ 字节删不掉时 assetFailed 计数（不回话界面就会说「已删除分组：X」）');
+  eq(rawDb().has('asset:' + aid2), true, '★ 字节确实还留在库里（成了孤儿，白占配额）');
+
+  // ---- ③ removeIcon 是同一条规矩（UI 暂无入口，但同一处写法必须一起修） ----
+  await clean();
+  const aid3 = await io.putAsset(new Blob(['png-z'], { type: 'image/png' }));
+  const gC = await picons.addGroup('丙组');
+  const ic3 = await picons.addIcon(gC.id, { kind: 'user', name: '图标3', assetId: aid3 });
+  let r3;
+  ctl.failDel = true;
+  try { r3 = await picons.removeIcon(gC.id, ic3.icon.id); } finally { ctl.failDel = false; store.resetStoreError(); }
+  eq(r3.ok, true, '（同上）removeIcon 的字节删不掉也不拦删除');
+  eq(r3.assetFailed, 1, '★ removeIcon 字节删不掉时 assetFailed 计数');
+
+  // ---- ④ 源码契约：不得再出现「接不住失败」的写法 ----
+  //     store.del 是吞异常返回 false，放进 try/catch 时那个 catch **永远不执行** ——
+  //     它不是"兜住了失败"，是把失败彻底藏起来。所以只能看返回值。
+  //     ⓘ 必须剥注释：下面几段注释里就写着旧写法，不剥会数到注释自身。
+  const pcode = stripCommentsFlatJs(psrc);
+  ok(!/store\.del\([^)]*\)\s*;\s*\}\s*catch/.test(pcode),
+    '★ preset-icons.js 不再有「store.del 放 try/catch 里」的写法（catch 永不执行，等于静默）');
+  {
+    const i = psrc.indexOf('export async function deleteGroup(');
+    ok(i >= 0, '定位到 deleteGroup');
+    const seg = stripCommentsFlatJs(psrc.slice(i, i + 1600));
+    ok(/assetFailed/.test(seg), '★ deleteGroup 带回 assetFailed');
+    ok(/if\s*\(\s*!\s*await store\.del\(/.test(seg) || /!\s*await store\.del\(/.test(seg),
+      '★ deleteGroup 看 store.del 的**返回值**（不是靠 catch）');
+  }
+
+  // ---- ⑤ 界面侧：提示必须带上未清理的份数与后果 ----
+  {
+    const j = pnsrc.indexOf('const delCur = async () => {');
+    ok(j >= 0, '定位到 panels.js 的 delCur');
+    const seg = stripCommentsFlatJs(pnsrc.slice(j, j + 900));
+    ok(/assetFailed/.test(seg), '★ 删除分组的提示带上 assetFailed（不能只说「已删除分组：X」）');
+    ok(/未能清理|未清理|仍占用/.test(seg), '★ 提示说明后果（字节仍占用本地存储空间）');
+  }
+
+  await clean();
+  await store.del('asset:' + aid2);
+  await store.del('asset:' + aid3);
+}
+
+/* ============================================================
    八、Tab 建下级节点（焦点被工具栏按钮抢走时）
    ============================================================ */
 
@@ -21289,7 +21370,10 @@ group('BUG 158：清空快照 —— 不能按「删之前数出来的份数」�
   /* ⑤ 连份数都读不出来：不能说「没有可清空的快照」（那是按空数组得出的假话） */
   {
     const r = await run({ cleared: 0, failed: 0 }, 3, true);
-    ok(/未清空/.test(r?.m || ''), '★ 读不出快照列表时必须说「未清空」',
+    /* ⓘ 钉**意图**不钉写法：早先这条钉的是「未清空」三个连字，而真身文案
+     *   写的是「未能清空」——多一个「能」字就红了，意图（必须明说没清空、
+     *   不许报成已清空）一点没变。两种写法都认。 */
+    ok(/(未能清空|未清空)/.test(r?.m || ''), '★ 读不出快照列表时必须说没清空',
       '实际：' + JSON.stringify(r?.m));
     ok(!/没有可清空的快照/.test(r?.m || ''),
       '★ 读不出快照列表时**不能**说「没有可清空的快照」（快照可能都还在库里）',
