@@ -2365,7 +2365,7 @@ input.mono, textarea.mono {
 
 /* 子标签在表格视图下失效（表格本就覆盖全部数据）：失效必须看得出来，
    否则"点了没反应"会被当成切换坏了 —— 而实际是那个选择对表格不存在 */
-.pane-tabs button:disabled { opacity: 0.45; cursor: default; }
+.pane-tabs button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabled-cursor); }
 .pane-tabs button:disabled:hover { color: var(--af-dim, #9aa); }
 
 /* ---------- 项目切换（= 画布分组）---------- */
@@ -2379,7 +2379,7 @@ input.mono, textarea.mono {
 .bdt-bar { flex: none; display: flex; align-items: center; gap: 4px;
   padding: 5px 8px; border-bottom: 1px solid var(--af-divider); }
 .bdt-search { flex: none; padding: 5px 8px; border-bottom: 1px solid var(--af-divider); }
-.bdt-search .p-input { width: 100%; font-size: var(--fs-note, 11px); padding: 3px 6px; }
+.bdt-search .p-input { width: 100%; font-size: var(--fs-body, 12px); padding: 3px 6px; }
 .bdt-scroll { flex: 1; min-height: 0; overflow: auto; }
 .bdt-empty { font-size: var(--fs-note, 11px); padding: 18px 14px; }
 
@@ -2391,7 +2391,7 @@ input.mono, textarea.mono {
 /* 缩进写在自定义属性里：层级是数据，不能用一串写死的 margin 类 */
 .bdt-indent { flex: none; width: var(--bdt-indent, 0px); }
 .bdt-caret { flex: none; width: 12px; padding: 0; background: none; border: none;
-  color: var(--af-mute); font-size: 9px; cursor: pointer; }
+  color: var(--af-mute); font-size: var(--fs-micro, 10px); cursor: pointer; }
 .bdt-caret.is-leaf { cursor: default; }
 
 .bdt-group { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2439,11 +2439,11 @@ input.mono, textarea.mono {
   font-size: var(--fs-micro, 10px); color: var(--af-soft); }
 .bdd-dep-g { color: var(--af-mute); }
 .bdd-dep-x { background: none; border: none; padding: 0 1px; color: var(--af-mute);
-  font-size: 9px; cursor: pointer; }
+  font-size: var(--fs-micro, 10px); cursor: pointer; }
 .bdd-dep-x:hover { color: var(--af-bad); }
 .bdd-dep-add { flex: 1; min-width: 0; font-size: var(--fs-note, 11px); padding: 2px 4px; }
 .bdd-note-input { flex: 1; min-width: 0; min-height: 54px; resize: vertical;
-  font-size: var(--fs-note, 11px); padding: 4px 7px; }
+  font-size: var(--fs-body, 12px); padding: 4px 7px; }
 .bdd-note, .bdd-mute { font-size: var(--fs-note, 11px); color: var(--af-mute);
   line-height: var(--lh-relaxed, 1.6); }
 .bdd-stats { display: flex; gap: 10px; font-size: var(--fs-note, 11px); color: var(--af-mute); }
@@ -2478,9 +2478,9 @@ input.mono, textarea.mono {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ttb-th.is-right .ttb-th-label { text-align: right; }
 .ttb-th-label:hover { color: var(--af-fg); }
-.ttb-arrow { flex: none; font-size: 8px; color: var(--af-accent); }
+.ttb-arrow { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-accent); }
 .ttb-funnel { flex: none; background: none; border: none; padding: 0 2px;
-  color: var(--af-dim); font-size: 10px; cursor: pointer; }
+  color: var(--af-dim); font-size: var(--fs-micro, 10px); cursor: pointer; }
 .ttb-funnel:hover { color: var(--af-fg); }
 .ttb-funnel.is-on { color: var(--af-accent); }
 .ttb-funnel.is-open { color: var(--af-fg); }
@@ -2497,7 +2497,7 @@ input.mono, textarea.mono {
   font-size: var(--fs-note, 11px); color: var(--af-soft); }
 .ttb-pop-row { display: flex; align-items: center; gap: 4px; }
 .ttb-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.ttb-pop-input { width: 100%; font-size: var(--fs-note, 11px); padding: 2px 6px; }
+.ttb-pop-input { width: 100%; font-size: var(--fs-body, 12px); padding: 2px 6px; }
 .ttb-pop-num { width: 60px; font-size: var(--fs-note, 11px); padding: 2px 4px; }
 .ttb-pop-date { font-size: var(--fs-note, 11px); padding: 2px 4px; }
 .ttb-hint { font-size: var(--fs-micro, 10px); color: var(--af-mute); }
@@ -2509,7 +2509,7 @@ input.mono, textarea.mono {
   padding: 1px 6px; border-radius: var(--r-pill, 999px);
   background: var(--af-item); color: var(--af-soft); font-size: var(--fs-micro, 10px); }
 .ttb-chip-x { background: none; border: none; padding: 0 1px;
-  color: var(--af-mute); font-size: 9px; cursor: pointer; }
+  color: var(--af-mute); font-size: var(--fs-micro, 10px); cursor: pointer; }
 .ttb-chip-x:hover { color: var(--af-bad); }
 
 /* 行**绝对定位**而不是凑够总高再 translateY：行高恒定，top 直接算得出来 */
@@ -3552,7 +3552,7 @@ input.mono, textarea.mono {
 
 /* MCP 工具检索：连几个服务就有上百条，不搜只能靠眼睛扫 */
 .mcp-search { display: flex; align-items: center; gap: 4px; padding: 2px 0 4px; }
-.mcp-search .p-input { flex: 1; min-width: 0; font-size: var(--fs-note, 11px); padding: 3px 6px; }
+.mcp-search .p-input { flex: 1; min-width: 0; font-size: var(--fs-body, 12px); padding: 3px 6px; }
 .mcp-search-note { padding: 0 2px 4px; font-size: var(--fs-micro, 10px); color: var(--af-mute); }
 .mcp-sec-title {
   display: flex; align-items: center; gap: var(--sp-3); width: 100%;
@@ -4461,7 +4461,7 @@ input.mono, textarea.mono {
   font-size: var(--fs-note, 11px);
 }
 .att-by { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-mute); }
-.att-x { flex: none; background: none; border: none; color: var(--af-mute); cursor: pointer; padding: 0 2px; font-size: 10px; }
+.att-x { flex: none; background: none; border: none; color: var(--af-mute); cursor: pointer; padding: 0 2px; font-size: var(--fs-micro, 10px); }
 .att-x:hover { color: var(--af-bad); }
 
 /* 预览区 */
