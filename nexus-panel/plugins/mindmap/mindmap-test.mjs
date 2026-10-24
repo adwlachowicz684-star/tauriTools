@@ -21827,6 +21827,87 @@ group('BUG 170 · 多画布 .md 分块前必须先跳过 YAML frontmatter');
 }
 
 
+/* ============================================================
+   BUG 172 · 节点文字里的字面 <br/> 被 unescMermaid 并成空格
+   ============================================================ */
+
+group('Mermaid 字面 <br/> 被 unescMermaid 并成空格，往返改内容（BUG 172）');
+
+/*
+ * Mermaid 里 `<br/>` 是**换行标记**（官方 mindmap 文档：传统字符串要靠标签
+ * 换行），所以 unescMermaid 把它并成空格是对的 —— 那是读**别人的**文件。
+ *
+ * 但节点文字里**真写着** `<br/>` 时，写侧照样裸写出去，导回来就被吃掉：
+ *   实测 `第一行<br/>第二行` → `第一行 第二行`，内容被静默改掉、不报错。
+ * 这与 BUG 73（字面 `#quot;` 被还原）同一类：读侧认得的东西，写侧必须先转义。
+ *
+ * 修法沿用 BUG 73 的机制：字面 `<` 写成 Mermaid 自己的十进制实体 `#60;`
+ * （官方 flowchart 一节写明「Numbers given are base 10」，`#35;` 就是 `#`），
+ * 渲染出来仍是 `<`。**只加引号不够** —— 引号内的 `<br/>` 同样是换行标记。
+ */
+{
+  const f = await import('./formats.js');
+  const mk = (t) => JSON.stringify({
+    root: { data: { text: 'R' }, children: [{ data: { text: t }, children: [] }] },
+    template: 'default', theme: 'fresh-blue-compat',
+  });
+  const back1 = (t) => {
+    const b = f.fromMermaid(f.toMermaid(mk(t)));
+    if (!b) return null;
+    const k = JSON.parse(b).root.children || [];
+    return k.length === 1 ? k[0].data.text : null;
+  };
+
+  // ① 字面换行标记往返原样回来（修复前被并成空格）
+  for (const t of ['第一行<br/>第二行', 'a<br>b', 'a<br/>b', 'A<br>B']) {
+    eq(back1(t), t, `字面 ${t} 往返原样回来（修复前被并成空格）`);
+  }
+
+  // ② 真换行用法照旧：读别人的文件时 <br/> 仍并成空格
+  eq(f.unescMermaid('x<br>y'), 'x y', 'unescMermaid 把 <br> 并成空格（读别人的文件照旧）');
+  eq(f.mermaidTextOf('a[第一行<br/>第二行]'), '第一行 第二行',
+    '★ 别人的 .mmd 里的 <br/> 仍是换行（没被当成字面内容留住）');
+
+  // ③ 字面 < 走 #60;，且往返正确
+  ok(f.mermaidLabel('a<b').includes('#60;'), '字面 < 用 #60; 转义');
+  eq(f.mermaidLabel('a<b'), '["a#60;b"]', 'a<b 的写法');
+  eq(back1('a<b'), 'a<b', 'a<b 往返正确');
+  eq(f.unescMermaid('a#60;b'), 'a<b', '#60; 还原成 <');
+
+  // ④ 顺序断言：< 的转义必须排在 # 与引号之后（反了自己的 # 会被再拆开）
+  {
+    const lbl = f.mermaidLabel('a<b#c"d');
+    ok(lbl.includes('#35;'), '同时含 < 与 # 时，#35; 仍出现');
+    ok(!/#35;60;/.test(lbl), '★ 不得把 < 的产物 #60; 再拆成 #35;60;');
+    eq(back1('a<b#c"d'), 'a<b#c"d', '< 与 # 与引号同时出现时往返正确');
+  }
+
+  // ⑤ 一趟扫描：字面 #60; 不被还原成 <（BUG 73 那条机制不能改坏）
+  eq(f.unescMermaid('a#35;60;b'), 'a#60;b', '★ 一趟扫描：#35; 的产物不再被后一条吃掉');
+  eq(back1('#60;'), '#60;', '★ 字面 #60; 往返仍是 #60;（不还原成 <）');
+
+  // ⑥ 源码契约：转义顺序 + 字符集带 <
+  {
+    const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8').replace(/\r\n/g, '\n');
+    const i = src.indexOf('export function mermaidLabel');
+    ok(i > 0, '能定位 mermaidLabel');
+    const code = stripCommentsFlatJs(src.slice(i, i + 1500));
+    ok(code.length > 0, '能剥出 mermaidLabel 的代码体（注释里同样写着 #60;，必须先剥）');
+    const iHash = code.indexOf("replace(/#/g, '#35;')");
+    const iLt = code.indexOf("replace(/</g, '#60;')");
+    ok(iHash > 0, 'mermaidLabel 有 # → #35; 的转义');
+    ok(iLt > 0, '★ mermaidLabel 有 < → #60; 的转义（那正是修 BUG 172 加的）');
+    ok(iLt > iHash, '★ < 的转义必须排在 # 之后（反了自己的 # 会被再拆开）');
+    const head = stripCommentsFlatJs(src.slice(0, i));
+    const iQ = head.indexOf('MERMAID_NEEDS_QUOTE');
+    ok(iQ > 0, '能定位 MERMAID_NEEDS_QUOTE');
+    const qline = head.slice(iQ, head.indexOf('\n', iQ));
+    ok(/[<]/.test(qline),
+      '★ MERMAID_NEEDS_QUOTE 必须含 <（否则含 < 的文字走裸写、转义不生效）');
+  }
+}
+
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

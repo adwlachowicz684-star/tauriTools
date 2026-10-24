@@ -754,7 +754,13 @@ function readOpmlNote(el) {
  * 节点消失、子树抬层。加引号后行首是 `[`，不再命中注释判定。
  * 只管**开头**：中间的 `50%` 之类在 Mermaid 里没有语法含义，照旧裸写。
  */
-const MERMAID_NEEDS_QUOTE = /[()[\]{}"#;:,`]|^\s|\s$|\s\s|^%/;
+/*
+ * `<`（BUG 172）：它本身在 Mermaid 里没有语法含义，但 `<br/>` 是**换行标记**
+ * —— unescMermaid 会把它并成空格。于是节点文字里真写着 `<br/>` 时，
+ * 导出再导回就被吃掉（实测 `第一行<br/>第二行` → `第一行 第二行`）。
+ * 加引号还不够：引号内的 `<br/>` 同样是换行标记，必须连 `<` 一起转义。
+ */
+const MERMAID_NEEDS_QUOTE = /[()[\]{}"#;:,<`]|^\s|\s$|\s\s|^%/;
 
 /** 单个节点文字 → 安全的 Mermaid 写法（纯函数，可测） */
 export function mermaidLabel(text) {
@@ -773,8 +779,11 @@ export function mermaidLabel(text) {
      *
      * `#35;` 是 Mermaid 自己的数字实体（# 的转义），渲染出来就是 `#`，
      * 所以转义后给别的软件看也不会变样。
+     *
+     * **`<` → `#60;` 必须排在这两条之后**（BUG 172）：它自己的产物就带着
+     * `#`，排在前面会被 `#` 的转义再拆成 `#35;60;`。
      */
-    return `["${t.replace(/#/g, '#35;').replace(/"/g, '#quot;')}"]`;
+    return `["${t.replace(/#/g, '#35;').replace(/"/g, '#quot;').replace(/</g, '#60;')}"]`;
   }
   return t;
 }
@@ -882,12 +891,13 @@ export function mermaidTextOf(line) {
  * 实测 `a#40;b` 被还原成 `a(b`。单趟匹配下每处只被认领一次，不重入。
  */
 export function unescMermaid(s) {
-  return String(s ?? '').replace(/#(?:quot|35|40|41);|<br\s*\/?>/gi, (m) => {
+  return String(s ?? '').replace(/#(?:quot|35|40|41|60);|<br\s*\/?>/gi, (m) => {
     switch (m.toLowerCase()) {
       case '#quot;': return '"';
       case '#35;': return '#';
       case '#40;': return '(';
       case '#41;': return ')';
+      case '#60;': return '<';      // BUG 172：写侧把字面 `<` 转成 #60;，这里还原
       default: return ' ';          // <br> / <br/>：Mermaid 的换行，这里并成一个空格
     }
   });
