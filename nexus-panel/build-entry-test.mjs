@@ -437,6 +437,98 @@ for (const [id, entry] of iframeIds) {
     ok ? how : '三者皆无 → 打开只有文字，且不报错');
 }
 
+/* ---------------------------------------------------------------- */
+console.log('\n=== 7. 原样拷贝名单不得含 Vite 入口插件 ===');
+/*
+ * 用户实测：「示例·原生沙箱」「示例·浅色插件」打开报
+ *   Error: iframe 插件握手超时（10s）
+ * 根因不是网络、也不是握手逻辑，是**构建配置**：
+ *   这两个插件有 index.html → 被 buildInputs() 收成 Vite 入口 →
+ *   产出 dist/plugins/<id>/index.html（引用 /assets/... chunk）；
+ *   而它们又被列进 PLAIN_PLUGINS，closeBundle 的整目录原样拷贝
+ *   （打包之后执行）把**源码版**盖了回去 —— 里面那句
+ *     import ... from '../../js/plugin-sdk.js'
+ *   在 dist 里指向不存在的 dist/js/plugin-sdk.js。
+ * 脚本 404 → 从不执行 → 不发 ready → 等满 10s 才报握手超时。
+ * 这类错**完全看不出是构建问题**，所以必须在构建期就拦住。
+ */
+
+for (const id of ['demo-iframe', 'demo-light']) {
+  t(`${id} 已从 PLAIN_PLUGINS 移除`,
+    !new RegExp(`PLAIN_PLUGINS\\s*=\\s*\\[[^\\]]*'${id}'`).test(cfg));
+}
+t('closeBundle 里有构建期断言（有 index.html 就报错）',
+  /index\.html[\s\S]{0,400}throw new Error/.test(src('vite.config.ts'))
+  && /PLAIN_PLUGINS/.test(src('vite.config.ts')),
+  '静默放过 = 把排查成本转嫁给下一次');
+t('断言错误信息点明后果（握手超时）', /握手超时/.test(src('vite.config.ts')),
+  '报错里不写清后果，下一个人不知道为什么要拦');
+
+/* ---------------------------------------------------------------- */
+console.log('\n=== 8. iframe 插件必须自带样式来源 ===');
+/*
+ * 用户实测：「示例·原生沙箱」打开后**只有文字** —— 计数、invoke、toast
+ * 全都正常（插件确实挂载了），但 .p-card / .p-btn / .p-stat 这些类名
+ * 没有任何样式定义，按钮退化成浏览器默认外观、文字堆成一列。
+ *
+ * 根因：iframe 是**独立文档**，主页面 CSS 进不来。同页（module）插件与
+ * 宿主同文档、天然继承，什么都不用写；iframe 插件则必须自己引。
+ * home / settings / project-group / agent-flow / demo-react 都引了，
+ * 只有 demo-iframe 这个"最简示例"漏了 —— 而它此前又因为构建配置问题
+ * 根本打不开，所以这个样式缺失一直没被看到。
+ *
+ * 这类错**不报错、不超时**，只是页面丑得不像话，所以必须在构建期钉住：
+ * 凡是 iframe 类型、且入口是本地 index.html 的插件，要么引了外链 CSS，
+ * 要么自带了足够的内联样式。
+ */
+const fs2 = fs;
+const regSrc = src('plugins/registry.js');
+const iframeIds = [];
+for (const mm of regSrc.matchAll(/id:\s*'([^']+)'/g)) {
+  const i = regSrc.indexOf(mm[0]);
+  const seg = regSrc.slice(i, i + 900);
+  if (!/type:\s*'iframe'/.test(seg)) continue;
+  const em = seg.match(/entry:\s*'([^']+)'/);
+  if (!em || !em[1].endsWith('.html')) continue;
+  iframeIds.push([mm[1], em[1].replace(/^\.\//, '')]);
+}
+t('扫到 iframe + html 入口的插件（判据本身要有货）', iframeIds.length >= 3,
+  `实到 ${iframeIds.length} 个`);
+
+for (const [id, entry] of iframeIds) {
+  const f = path.join(HERE, entry);
+  if (!fs2.existsSync(f)) continue;
+  const html = fs2.readFileSync(f, 'utf8');
+
+  let ok = /<link[^>]+rel=["']stylesheet["']/.test(html);
+  let how = 'index.html 外链';
+
+  /*
+   * 样式也可能在**打包入口**里 import —— Vite 会把 CSS 抽成 <link>
+   * 注进产出的 html。所以光扫 index.html 会误报（home / agent-flow /
+   * project-group / demo-react / color-picker 都是这条路径）。
+   * 顺着 <script src="./main.tsx"> 找下去，最多跟一层。
+   */
+  if (!ok) {
+    const sm = html.match(/<script[^>]+src=["'](\.\/[^"']+)["']/);
+    if (sm) {
+      const ef = path.join(path.dirname(f), sm[1]);
+      if (fs2.existsSync(ef)) {
+        const esrc = fs2.readFileSync(ef, 'utf8');
+        if (/import\s+['"][^'"]+\.css['"]/.test(esrc)) {
+          ok = true; how = `${sm[1]} 里 import CSS`;
+        }
+      }
+    }
+  }
+  if (!ok) {
+    const inlineLen = (html.match(/<style[\s\S]*?<\/style>/g) || []).join('').length;
+    if (inlineLen > 400) { ok = true; how = `内联 ${inlineLen} 字符`; }
+  }
+  t(`${id} 有样式来源（外链 / 入口 import / 足量内联）`, ok,
+    ok ? how : '三者皆无 → 打开只有文字，且不报错');
+}
+
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
