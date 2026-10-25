@@ -27,6 +27,7 @@ const REAL = {
   fileOp: (tauri as never as Record<string, unknown>).fileOp,
   canExportToFile: (tauri as never as Record<string, unknown>).canExportToFile,
   ensureDir: (tauri as never as Record<string, unknown>).ensureDir,
+  writeTextFile: (tauri as never as Record<string, unknown>).writeTextFile,
 };
 const T = tauri as never as Record<string, unknown>;
 
@@ -35,10 +36,20 @@ function stubFs(on: boolean): void {
     T.fileOp = REAL.fileOp;
     T.canExportToFile = REAL.canExportToFile;
     T.ensureDir = REAL.ensureDir;
+    T.writeTextFile = REAL.writeTextFile;
     return;
   }
   T.canExportToFile = () => true;
   T.ensureDir = async () => ({ ok: true, text: 'ok' });
+  /*
+   * writeTextFile 也要接：写路径是 tauri.js **内部**直接调自己的 fileOp
+   * （不是走 exports.fileOp），只打 fileOp 的话写操作会落到真实通道上，
+   * 在 node 里抛"需要运行在桌面端"。
+   */
+  T.writeTextFile = async (p2: string, content: string) => {
+    fs.writeFileSync(p2, content ?? '');
+    return { ok: true, text: 'ok' };
+  };
   T.fileOp = async (req: Req) => {
     if (req.op === 'read') {
       if (!fs.existsSync(req.path)) return { ok: false, text: 'No such file or directory' };
