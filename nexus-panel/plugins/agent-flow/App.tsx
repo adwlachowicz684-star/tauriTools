@@ -27,6 +27,10 @@ import {
 } from './engine/duplicate';
 import { CredentialPanel, canUse } from './components/CredentialPanel';
 import { BoardMetaPanel } from './components/BoardMetaPanel';
+import { BoardTable } from './components/BoardTable';
+// 别名：下面有个同名的交互回调 toggleTag(taskId, tagId)，直接导入会自己调自己
+import { toggleTag as toggleBoardTag } from './engine/taskBoard';
+import { addTag } from './engine/boardMeta';
 // 卡片上的参数格要能就地改，得拿到 App 的 patchNode ——
 // 卡片是经 nodeTypes 交给 xyflow 渲染的，不是 App 的直接子组件，只能走 Context
 import { NodePatchProvider } from './components/ArgCell';
@@ -1089,6 +1093,19 @@ export default function App() {
   const [metaOpen, setMetaOpen] = useState(false);
 
   /*
+    任务板内部的两种看法：树形（能嵌套、能拖）与表格（能筛能排）。
+
+    加个子切换而不是替换掉树形：嵌套层级在树形里最直观，
+    而"找没人认领的高优先级任务"只有表格做得了 —— 两个都要。
+    切过之后会记住（和 taskView 一样存 kv）。
+  */
+  const [boardModeRaw, setBoardModeRaw] = useState<'tree' | 'table'>(
+    () => (kvStore().get('agent-flow.boardMode.v1') === 'table' ? 'table' : 'tree'),
+  );
+  useEffect(() => { kvStore().set('agent-flow.boardMode.v1', boardModeRaw); }, [boardModeRaw]);
+  const boardMode = boardModeRaw;
+
+  /*
     换项目 = 换一个文件，旧的选中项与勾选在这个文件里不存在。
     不清理的话：选中项指着一个不存在的 id（详情空着），
     勾选集合里留着别项目的 id（下次点"合并"会静默少合几项）。
@@ -1141,6 +1158,38 @@ export default function App() {
     enabled: view === 'tasks',
   });
 
+
+  /** 挂 / 摘一个标签 */
+  const toggleTag = useCallback((taskId: string, tagId: string) => {
+    board.apply((b) => toggleBoardTag(b, taskId, tagId).board);
+  }, [board]);
+
+  /** 新建标签。返回新 id，让调用方能立刻把它挂到刚点的那一行上 */
+  const createTag = useCallback((name: string, color: string): string | null => {
+    let newId: string | null = null;
+    meta.apply((m) => {
+      const r = addTag(m, name, color);
+      newId = r.id;
+      return r.meta;
+    });
+    return newId;
+  }, [meta]);
+
+  /*
+    每个任务挂了几个附件 —— 表格的附件列要显示它。
+
+    按**任务 id** 索引（不是 owner 串）：附件面板那边用 owner 串，
+    但表格是按任务行查的，用 id 直接查更直接，也不必关心 owner 的拼法。
+  */
+  const attachCountsByTask = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const id of Object.keys(attach.file.items)) {
+      const it = attach.file.items[id];
+      if (!it?.owner) continue;
+      out[it.owner] = (out[it.owner] ?? 0) + 1;
+    }
+    return out;
+  }, [attach.file]);
 
   /*
     元数据的写入提示。
@@ -3724,6 +3773,26 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               那种一致迟早会漏。放标签行只有一处，且与子标签同排，
               位置固定，切过去不会因为头部高度变化而跳。
             */}
+            {view === 'tasks' && taskView === 'board' ? (
+              /*
+                任务板内部的两种看法：树形看嵌套、表格筛排。
+                放在这一排（"看哪批数据"）旁边而不是任务板组件里 ——
+                紧接着再放一个"这批数据怎么看"，位置上是连贯的。
+              */
+              <div className="ttb-switch">
+                {(['tree', 'table'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={boardMode === v ? 'on' : ''}
+                    onClick={() => setBoardModeRaw(v)}
+                    title={v === 'table' ? '一行一条，每列可筛选与排序' : '树形，看嵌套层级'}
+                  >
+                    {v === 'tree' ? '树形' : '表格'}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {view === 'tasks' ? (
               <div className="ttb-switch">
                 {TASK_VIEWS.map((v) => (
@@ -3741,7 +3810,19 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             ) : null}
           </div>
           <div className="pane-body">
-            {view === 'tasks' && taskView === 'board' ? (
+            {view === 'tasks' && taskView === 'board' && boardMode === 'table' ? (
+              <BoardTable
+                board={board.board}
+                meta={meta.meta}
+                attach={attachCountsByTask}
+                sessionId={sessionId}
+                selectedId={boardSel}
+                onSelect={setBoardSel}
+                onToggleTag={toggleTag}
+                onCreateTag={createTag}
+                canWrite={board.canWrite}
+              />
+            ) : view === 'tasks' && taskView === 'board' ? (
               <BoardTree
                 board={board.board}
                 expanded={board.expanded}
