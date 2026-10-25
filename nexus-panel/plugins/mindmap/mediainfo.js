@@ -13,6 +13,7 @@
 
 export {
   parseMp4, parseWebm, parseContainer, probeByElement, probeVideo,
+  canDecodeMedia,
   formatDuration, formatBitrate, formatFps, formatDateTime,
   formatChannels, shortType,
 } from '../../js/media-info.js';

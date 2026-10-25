@@ -597,12 +597,42 @@ async function readChunk(blob, start, end) {
 /* --------------------------- 对外：video 元素探测 --------------------------- */
 
 /**
+ * 环境是否**真的能解码**媒体（jsdom 只有 DOM 壳子，没有解码能力）。
+ *
+ * ⛔ 为什么需要这一问：jsdom 的 `HTMLMediaElement.prototype.load` 是
+ *    「未实现」桩，而它**不抛异常**——是通过虚拟控制台往 stderr 打一条
+ *    `Not implemented: HTMLMediaElement.prototype.load`。try/catch 抓不住
+ *    这类上报。
+ *
+ *    实测后果（本轮完整复现）：mindmap 测试 **4880 项全过、退出码 0**，
+ *    尾部却挂着一条红字报错（8 秒兜底定时器在测试收尾后才触发）。
+ *    读报告的人据此判断「mindmap 崩在 media-info.js」，于是整轮拿来排查
+ *    一个根本没崩的东西 —— **没崩但看起来像崩，和有崩一样费事**。
+ *
+ * 判据用 `canPlayType` 而不是 UA 字符串：前者问的是能力本身，后者只是环境名字。
+ */
+export function canDecodeMedia() {
+  if (typeof document === 'undefined') return false;
+  if (typeof HTMLMediaElement === 'undefined') return false;
+  try {
+    const probe = document.createElement('video');
+    // jsdom 不实现任何编解码器 → 恒为 ''；真实浏览器返回 maybe / probably
+    return typeof probe.canPlayType === 'function' && probe.canPlayType('video/mp4') !== '';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 用 HTMLVideoElement 拿时长与分辨率（容器解析拿不到时需要它兜底）。
- * jsdom 等无解码能力的环境会走 error 或超时，返回 null。
+ *
+ * 无解码能力的环境直接返回 null —— **既不建元素也不挂定时器**。
+ * 建了定时器就得等它 8 秒后触发，而触发时会去调 load() 打出上面那条红字。
  */
 export function probeByElement(blob, timeoutMs = 8000) {
   return new Promise((resolve) => {
     if (typeof document === 'undefined' || !blob) { resolve(null); return; }
+    if (!canDecodeMedia()) { resolve(null); return; }
     let v = null;
     let url = null;
     let settled = false;

@@ -1057,12 +1057,20 @@ export function buildSide(app, opts = {}) {
       video.muted = false;
       video.currentTime = 0;
       box.classList.add('playing');
+      // ⛔ 无解码能力时**连 play() 都别调**：jsdom 的 play 是「未实现」桩，
+      //    它并不抛异常（所以下面的 try/catch 抓不住 —— 旧注释写"jsdom 直接
+      //    抛 Not implemented"是错的），而是通过虚拟控制台往 stderr 打一条
+      //    `Not implemented: HTMLMediaElement.prototype.play`。
+      //    后果与 media-info 那处同源：mindmap 测试 4880 项全过、退出码 0，
+      //    尾部却挂着红字，读报告的人据此判断"崩在半路"。
+      //    判据与共享层的兜底探测同源（mi.canDecodeMedia），不另立一份。
+      if (!mi.canDecodeMedia()) return;
       try {
         const p = video.play();
         // 自动播放可能被浏览器策略拒绝；controls 已经出来了，用户能自己点
         if (p && p.catch) p.catch(() => {});
       } catch {
-        // 环境根本没实现 play（jsdom 直接抛 Not implemented）。
+        // 真实环境里的其它原因（元素已被移除等）。
         // 控件已经挂上，不影响手动播放。
       }
     };
@@ -2554,6 +2562,10 @@ export function openVideo(app, asset, opt = {}) {
 
   // 有声自动播放被拒 → 转静音。不处理的话用户看到的就是一动不动的首帧
   const tryPlay = () => {
+    // ⛔ 与 start() 里那处同源：无解码能力时**别调 play()**。jsdom 的 play
+    //    不抛异常（下面的 try/catch 抓不住），而是往 stderr 打一条
+    //    Not implemented —— 测试全过却挂着红字，容易被当成"崩在半路"。
+    if (!mi.canDecodeMedia()) return;
     try {
       const p = v.play?.();
       if (!p || typeof p.catch !== 'function') return;
