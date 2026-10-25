@@ -50,6 +50,24 @@ if [ ! -f "$AF_SRC/App.tsx" ]; then
 fi
 
 # ------------------------------------------------------------------
+# 让产物目录里的 require() 还能找到仓库的 node_modules
+#
+# 产物默认落在 /tmp/afts，而 CommonJS 是从**文件所在目录**逐级向上找
+# node_modules 的：/tmp/afts → /tmp → / ，都没有 —— 装没装依赖都一样。
+#
+# 于是任何（直接或间接）import 'lib/tauri' 的测试都会 MODULE_NOT_FOUND，
+# 报的样子是"依赖没装"，实际是"产物放错了地方"。
+# 实测：boardMetaFile.test.js 是第一个踩到的（2875 项中 1 红）。
+#
+# NODE_PATH 是 CJS 的兜底查找路径，指回仓库即可；不改动产物目录，
+# prune-orphans / gen-node-docs 的行为都不受影响。
+# ------------------------------------------------------------------
+REPO_MODULES="$(cd "$HERE/../.." && pwd)/node_modules"
+if [ -d "$REPO_MODULES" ]; then
+  export NODE_PATH="${NODE_PATH:+$NODE_PATH:}$REPO_MODULES"
+fi
+
+# ------------------------------------------------------------------
 # 生成测试专用的 tsconfig。
 #
 # 放在 /tmp 而不是仓库里：这是**沙盒验证用**的配置，
