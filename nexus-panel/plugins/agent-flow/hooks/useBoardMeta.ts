@@ -80,6 +80,15 @@ export function useBoardMeta(opts: {
           ? { kind: 'overwritten' }
           : { kind: 'saved', at: Date.now() });
       } catch (e: unknown) {
+        /*
+         * 失败要退回到**已落盘的那份**。
+         *
+         * 不退回的话界面停在"没存成的值"上：报错归报错，
+         * 状态名/标签照样显示成改过的样子，看着像"报了错但其实是改了"。
+         * 与 useTaskBoard / useAttachments 同一形状 ——
+         * 本文件开头承诺了三个 hook 规则一致，这里以前是唯一不一致的一处。
+         */
+        setBoth(baseRef.current);
         setState({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
       }
     });

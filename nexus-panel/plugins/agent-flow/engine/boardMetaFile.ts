@@ -26,6 +26,15 @@ import {
   parseMeta, serializeMeta, emptyMeta, type BoardMeta,
 } from './boardMeta';
 import { readTextFile, writeTextFile } from './attachmentFile';
+/*
+ * "坏没坏"的判据**不在这里另写** —— 复用任务板那一份。
+ *
+ * 三份清单（tasks / attachments / boardmeta）并排放**在同一个导出目录**里，
+ * 口径分叉的后果见 taskBoardFile.ts 里的说明：同一个损坏的文件
+ * 在这个面板报"读不出来"、在那个面板当"没有"，是最难自查的不一致。
+ * 而这个文件曾经就是那个漏掉的一份（另两份早已守卫）。
+ */
+import { isParseableJson } from './taskBoardFile';
 
 export function metaFileName(projectKey: string, projectName: string): string {
   const label = safeFilePart(projectName || projectKey || 'all', 'all');
@@ -54,6 +63,21 @@ export async function commitMeta(
   mine: BoardMeta,
 ): Promise<MetaSave> {
   const raw = await readTextFile(path);
+  /*
+   * ⛔ 写前先看文件坏没坏：坏的直接抛错、**一个字节都不写**。
+   *
+   *    坏文件被 parseMeta 解成默认配置（updatedAt 归 0），于是
+   *    `theirs.updatedAt > base.updatedAt` 恒为假 —— 判定成"没人改过"，
+   *    照常写回即整份覆盖；而损坏的 JSON 往往手改几行就能救回来。
+   *
+   *    这一条对**本文件尤其要命**：状态集与标签是用户盯着设置界面
+   *    一条条改出来的，一盖就是从头再配一遍，且没有任何提示 ——
+   *    不抛错的话调用方拿到 `overwritten: false`（"没覆盖任何东西"），
+   *    那句话在文件刚被整份盖掉的这一刻是假的。
+   */
+  if (!isParseableJson(raw)) {
+    throw new Error(`清单文件已损坏，已中止写入（原文件未改动）：${path}`);
+  }
   const theirs = parseMeta(raw || null, mine.project, mine.projectName);
   if (raw.trim() && theirs.updatedAt > base.updatedAt) {
     return { meta: theirs, overwritten: true };
@@ -71,5 +95,13 @@ export async function loadMeta(
 ): Promise<BoardMeta> {
   const raw = await readTextFile(path);
   if (!raw.trim()) return emptyMeta(project, projectName);
+  /*
+   * ⛔ "文件在、内容是坏的"不能也当默认配置 —— 那等于告诉用户
+   *    「这个项目还没配过状态」，而磁盘上其实有一整套。
+   *    用户照着"没配过"去加第一条，就把那份还能救的 JSON 整份盖掉了。
+   */
+  if (!isParseableJson(raw)) {
+    throw new Error(`清单文件已损坏（未读取，原文件未改动）：${path}`);
+  }
   return parseMeta(raw, project, projectName);
 }
