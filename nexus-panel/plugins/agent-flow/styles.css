@@ -4555,7 +4555,7 @@ input.mono, textarea.mono {
   max-width: 100%;
   padding: 0 6px;
   border: 1px solid transparent;
-  border-radius: var(--af-r-tag, 4px);
+  border-radius: var(--af-r-xs, 4px);
   font-size: var(--fs-micro, 10px);
   line-height: 16px;
   white-space: nowrap;
@@ -4601,7 +4601,7 @@ input.mono, textarea.mono {
   flex: none;
   background: none;
   border: 1px dashed var(--af-line, #444);
-  border-radius: var(--af-r-tag, 4px);
+  border-radius: var(--af-r-xs, 4px);
   color: var(--af-mute);
   font-size: var(--fs-micro, 10px);
   line-height: 14px;
@@ -4666,7 +4666,7 @@ input.mono, textarea.mono {
 .ttb-pri {
   display: inline-block;
   padding: 0 6px;
-  border-radius: var(--af-r-tag, 4px);
+  border-radius: var(--af-r-xs, 4px);
   font-size: var(--fs-micro, 10px);
   line-height: 16px;
   white-space: nowrap;
@@ -4765,7 +4765,7 @@ input.mono, textarea.mono {
 
 /* ---------- 窗口号（sessionID）---------- */
 .ttb-sid {
-  font-family: var(--af-font-mono, ui-monospace, monospace);
+  font-family: var(--af-mono, ui-monospace, monospace);
   font-size: var(--fs-micro, 10px);
   color: var(--af-mute);
   white-space: nowrap;
