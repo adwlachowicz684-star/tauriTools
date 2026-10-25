@@ -65,6 +65,16 @@ export type TableRow = {
    * 附件这类"挂在某个东西上"的数据用它查，调用方不用再判 origin。
    */
   ownerId: string;
+  /**
+   * 所属**组**的标题链，如"登录 › 接口"。顶层任务为空串。
+   *
+   * 组本身不占行（它的状态由下面的任务决定，单独一行会显示成"待办"误导人），
+   * 但没有这一列的话，嵌套结构在表格里**完全不可见** ——
+   * 两条同名任务分不出谁在哪个组下。
+   */
+  groupPath: string;
+  /** 嵌套深度。0 = 顶层。用于需要区分层级的地方 */
+  depth: number;
 };
 
 export function buildTableRows(
@@ -78,21 +88,38 @@ export function buildTableRows(
       任务板是**树**（root + children），没有扁平的 order 数组。
       按先序遍历取任务节点 —— 顺序即树上的上下顺序，
       与列表视图里看到的次序一致，两个视图对同一条任务不会各排各的。
+
+      遍历时把**祖先组的标题**带下来（而不是事后对每个任务回溯 parent）：
+      一次遍历顺手就有的东西，回溯会把这里变成 O(行 × 深度)，
+      而深层嵌套时深度并不小。
     */
-    const walk = (parent: string | null): void => {
+    const walk = (parent: string | null, trail: string[], depth: number): void => {
       for (const id of childrenOf(board, parent)) {
         const n = board.nodes[id];
         if (!n) continue;
-        if (isGroup(n)) { walk(id); continue; }
-        rows.push({ key: `board:${id}`, origin: 'board', record: null, task: n, ownerId: id });
+        if (isGroup(n)) { walk(id, [...trail, n.title], depth + 1); continue; }
+        rows.push({
+          key: `board:${id}`, origin: 'board', record: null, task: n, ownerId: id,
+          groupPath: trail.join(GROUP_SEP),
+          depth,
+        });
       }
     };
-    walk(null);
+    walk(null, [], 0);
   }
-  for (const t of live) rows.push({ key: `live:${t.id}`, origin: 'live', record: t, task: null, ownerId: t.id });
-  for (const t of archived) rows.push({ key: `archived:${t.id}`, origin: 'archived', record: t, task: null, ownerId: t.id });
+  for (const t of live) rows.push({
+    key: `live:${t.id}`, origin: 'live', record: t, task: null, ownerId: t.id,
+    groupPath: '', depth: 0,
+  });
+  for (const t of archived) rows.push({
+    key: `archived:${t.id}`, origin: 'archived', record: t, task: null, ownerId: t.id,
+    groupPath: '', depth: 0,
+  });
   return rows;
 }
+
+/** 组路径的分隔符。用 › 而不是 / —— 后者与文件路径混淆 */
+export const GROUP_SEP = ' › ';
 
 /** 反解 key：详情面板要知道选中的那条该按"运行中"还是"归档"渲染 */
 export function parseRowKey(key: string): { origin: TaskOrigin; id: string } | null {
@@ -113,7 +140,7 @@ export type TableColumnId =
   | 'started' | 'ended' | 'elapsed' | 'progress' | 'nodes'
   /* 下面这些是**任务级**列：值在任务板条目上，运行记录行没有 */
   | 'planStatus' | 'desc' | 'note' | 'tags' | 'created' | 'updated' | 'attach'
-  | 'priority' | 'assignee' | 'session';
+  | 'priority' | 'assignee' | 'session' | 'group';
 
 /**
  * 列的取值类型，决定它配什么样的筛选控件与排序方式：
@@ -189,6 +216,16 @@ export const TABLE_COLUMNS: TableColumn[] = [
     rank: ORIGIN_ORDER,
   },
   { id: 'name', label: '流程', kind: 'text', width: 150 },
+  /*
+    所属组。用 text（关键词包含）而不是 enum（下拉勾选）：
+    组可以任意嵌套，路径组合数随深度增长，做成下拉会冒出几十个
+    "登录 › 接口 › 鉴权"这类条目，选起来比打字慢得多。
+
+    ⛔ 这一列与"组标题不参与筛选"那条规定**不冲突**：
+    那条说的是搜**任务名**时不该把挂在组下的任务全带出来（name 列的行为）；
+    而这里是用户显式地"按所属组找"，是有意为之。
+  */
+  { id: 'group', label: '所属组', kind: 'text', width: 150 },
   {
     id: 'status', label: '状态', kind: 'enum', width: 84,
     options: STATUS_OPTIONS,
@@ -267,6 +304,7 @@ export function cellValue(
     case 'origin': return ORIGIN_LABEL[row.origin];
     // 任务条目行显示任务标题；运行行显示流程名
     case 'name': return k ? (k.title || '未命名任务') : (t ? (t.canvasName || '未命名流程') : '');
+    case 'group': return row.groupPath;
     case 'status': return t ? t.status : '';
     case 'source': return t ? t.source : '';
     case 'started': return t ? t.startedAt : 0;

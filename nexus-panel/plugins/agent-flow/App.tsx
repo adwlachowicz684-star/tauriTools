@@ -3806,16 +3806,39 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                     // 不写就 TS2345（缺必填），而 engine 内三处默认构造也都给 ''。
                     session: '', prevSession: '', tookAt: 0,
                   }).board);
+                  // 父组折叠着的话，新任务加进去等于看不见
+                  if (parent) board.ensureExpanded([parent]);
                 }}
                 onAddGroup={() => {
                   const parent = boardSel && board.board.nodes[boardSel]?.kind === 'group' ? boardSel : null;
-                  board.apply((b) => addNode(b, parent, { kind: 'group', title: '新任务组', children: [] }).board);
+                  let gid = '';
+                  board.apply((b) => {
+                    const r = addNode(b, parent, { kind: 'group', title: '新任务组', children: [] });
+                    gid = r.id;
+                    return r.board;
+                  });
+                  // 新组自身 + 它的父组都要展开，否则新组建出来就"消失"
+                  board.ensureExpanded(parent ? [gid, parent] : [gid]);
                 }}
                 onMerge={(ids, title) => {
-                  board.apply((b) => mergeIntoGroup(b, ids, title).board);
+                  let gid = '';
+                  board.apply((b) => {
+                    const r = mergeIntoGroup(b, ids, title);
+                    gid = r.id;
+                    return r.board;
+                  });
+                  /*
+                    新组必须展开 —— 不展开的话被合并的任务会收进一个折叠的组里，
+                    界面上表现为"刚点的合并，任务全没了"。
+                  */
+                  board.ensureExpanded([gid]);
                   setBoardChecked(new Set());
                 }}
-                onSplit={(id, titles) => board.apply((b) => splitTask(b, id, titles).board)}
+                onSplit={(id, titles) => {
+                  board.apply((b) => splitTask(b, id, titles).board);
+                  // 拆完原任务变成组，折叠着的话子任务就看不见了
+                  board.ensureExpanded([id]);
+                }}
                 onRemove={(id) => {
                   board.apply((b) => removeNode(b, id));
                   if (boardSel === id) setBoardSel(null);
