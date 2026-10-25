@@ -4629,7 +4629,7 @@ input.mono, textarea.mono {
   background: var(--af-pop, #1c1f27);
   border: 1px solid var(--af-line, #444);
   border-radius: var(--af-r-ctl, 6px);
-  box-shadow: var(--af-shadow, 0 6px 20px rgba(0, 0, 0, .45));
+  box-shadow: var(--af-cast-sm);
   cursor: default;
 }
 .ttb-tagpop-title { font-size: var(--fs-micro, 10px); color: var(--af-mute); }
@@ -4694,7 +4694,7 @@ input.mono, textarea.mono {
   background: var(--af-panel);
   border: 1px solid var(--af-line, #444);
   border-radius: var(--af-r-ctl, 8px);
-  box-shadow: var(--af-shadow, 0 12px 40px rgba(0, 0, 0, .5));
+  box-shadow: var(--af-cast-lg);
 }
 .bmp-head {
   flex: none;
