@@ -3802,6 +3802,9 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                   board.apply((b) => addNode(b, parent, {
                     kind: 'task', title: '新任务', status: 'todo', deps: [], assignee: '', note: '',
                     desc: '', tags: [], createdAt: now, updatedAt: now, due: 0, priority: 0,
+                    // session 是"认领者的窗口号"，BoardTask 的必填项；新任务没人领 → 空串。
+                    // 不写就 TS2345（缺必填），而 engine 内三处默认构造也都给 ''。
+                    session: '', prevSession: '', tookAt: 0,
                   }).board);
                 }}
                 onAddGroup={() => {
