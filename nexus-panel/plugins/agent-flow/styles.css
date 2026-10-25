@@ -4565,7 +4565,7 @@ input.mono, textarea.mono {
 }
 /* 可点的（标签列里那几个）：点一下摘掉，所以要给 hover 反馈 */
 .af-tag-btn { cursor: pointer; }
-.af-tag-btn:hover { filter: brightness(1.12); }
+.af-tag-btn:hover { filter: brightness(var(--hover-bright-strong, 1.15)); }
 /* 浮层里已挂上的那个：加个勾，与"能挂但没挂"区分开 */
 .af-tag-btn.is-on::after {
   content: ' ✓';
@@ -4600,7 +4600,7 @@ input.mono, textarea.mono {
 .ttb-tag-add {
   flex: none;
   background: none;
-  border: 1px dashed var(--af-line, #444);
+  border: 1px dashed var(--af-add-line, #444);
   border-radius: var(--af-r-xs, 4px);
   color: var(--af-mute);
   font-size: var(--fs-micro, 10px);
@@ -4620,7 +4620,7 @@ input.mono, textarea.mono {
   position: absolute;
   top: calc(100% + 2px);
   left: 0;
-  z-index: 40;
+  z-index: var(--af-z-float, 20);
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -4671,8 +4671,8 @@ input.mono, textarea.mono {
   line-height: 16px;
   white-space: nowrap;
 }
-.ttb-pri.p1 { background: rgba(239, 68, 68, .16); color: #ef4444; }
-.ttb-pri.p2 { background: rgba(245, 158, 11, .16); color: #f59e0b; }
+.ttb-pri.p1 { background: rgba(239, 68, 68, .16); color: var(--af-bad); }
+.ttb-pri.p2 { background: rgba(245, 158, 11, .16); color: var(--af-warn); }
 .ttb-pri.p3 { background: rgba(59, 130, 246, .16); color: #3b82f6; }
 .ttb-pri.p4 { background: rgba(139, 147, 167, .16); color: #8b93a7; }
 
@@ -4680,7 +4680,7 @@ input.mono, textarea.mono {
 .bmp-mask {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--af-z-mask, 60);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4761,12 +4761,12 @@ input.mono, textarea.mono {
 .bmp-next-v { display: flex; flex-wrap: wrap; gap: 3px; }
 
 .bmp-add { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding-top: 4px; }
-.bmp-add-input { flex: 1 1 110px; min-width: 90px; font-size: var(--fs-note, 11px); padding: 2px 5px; }
+.bmp-add-input { flex: 1 1 110px; min-width: 90px; font-size: var(--fs-body, 12px); padding: 2px 5px; }
 
 /* ---------- 窗口号（sessionID）---------- */
 .ttb-sid {
   font-family: var(--af-mono, ui-monospace, monospace);
-  font-size: var(--fs-micro, 10px);
+  font-size: var(--fs-code, 11px);
   color: var(--af-mute);
   white-space: nowrap;
 }
