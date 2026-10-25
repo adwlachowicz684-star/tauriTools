@@ -291,7 +291,6 @@
   /* --af-z-modal 已删：它只被 .modal-mask 用过（那套自写浮层已移除），
      现在没有任何 z-index 引用它。弹窗用 --z-mask / --z-dialog 那组。 */
 
-
   /*
    * 左侧栏宽度，节点库与任务 / 历史列表共用。
    *
@@ -555,7 +554,6 @@ body { background: var(--af-bg); color: var(--af-fg); }
    暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
 /*
 
-
 .node-line__op {
   flex: none; background: #1d4d5a; color: #bae6fd;
   border-radius: var(--af-r-xs); padding: 1px 6px; font-size: var(--fs-note, 11px);
@@ -579,7 +577,6 @@ body { background: var(--af-bg); color: var(--af-fg); }
 
 .node-line__arrow { flex: none; color: var(--af-dim); }
 */
-
 
 .node-line--preview {
   background: var(--af-sunk); border-radius: var(--af-r-sm);
@@ -1034,7 +1031,6 @@ textarea.p-input { height: auto; resize: vertical; line-height: var(--lh-normal,
   border-radius: var(--r-pill, 999px); padding: 1px 6px;
 }
 
-
 /* .modal-mask / .modal / .modal-head / .modal-body / .modal-foot 已删除：
    引用数为 0（全插件搜不到 modal 这个词），是上一版自写浮层的遗留。
    弹窗现在统一用 js/dialog.js + css/dialog.css（.nx-mask / .nx-dlg）。
@@ -1178,7 +1174,6 @@ textarea.p-input { height: auto; resize: vertical; line-height: var(--lh-normal,
   background: var(--af-raised); padding: 1px 4px; border-radius: 3px; font-family: var(--af-mono);
 }
 */
-
 
 button.mini {
   background: var(--af-raised); border: 1px solid var(--af-line); color: var(--af-fg);
@@ -1365,7 +1360,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
   line-height: 16px;
 }
 */
-
 
 /* 标签内容区：吃掉剩余高度，自己滚动 */
 .pane-body {
@@ -1640,7 +1634,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 .trig-check-label { flex: 1; }
 */
 
-
 /* 节点卡片上的方式清单 */
 .trig-list { display: flex; flex-direction: column; gap: 3px; margin: 4px 0 2px; }
 .trig-row {
@@ -1715,7 +1708,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
    暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
 /*
 
-
 .upd-foot { display: flex; align-items: center; gap: var(--sp-4); margin: 4px 0 2px; }
 */
 
@@ -1759,7 +1751,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
    暂不删除，仅注释；若确认仍需使用，取消下方注释即可。 */
 /*
 
-
 .upd-baseline {
   margin-top: 6px; padding: 7px 9px; border-radius: var(--af-r-sm);
   border: 1px solid var(--af-line); background: var(--af-sunk);
@@ -1784,7 +1775,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 /*
 .upd-baseline .dim { font-size: var(--fs-note, 11px); }
 */
-
 
 .upd-test {
   margin: 6px 0 0; padding: 8px 10px; border-radius: var(--af-r-sm);
@@ -1918,7 +1908,6 @@ button:disabled { opacity: var(--ctl-disabled-opacity); cursor: var(--ctl-disabl
 
 .cond-op-btn-icon { font-family: var(--af-mono); font-size: var(--fs-body, 12px); }
 */
-
 
 /* 算子语义提示 */
 .cond-hint {
@@ -2607,7 +2596,6 @@ input.mono, textarea.mono {
 .task-list-head strong { font-weight: var(--fw-strong, 600); color: var(--af-fg); }
 */
 
-
 /* 允许换行：任务行三列元信息在 280px 下放得开，
    但历史行还有两个操作按钮，挤的时候换行总比重叠好 */
 .task-item-meta { flex-wrap: wrap; gap: 4px 8px; }
@@ -2897,7 +2885,6 @@ input.mono, textarea.mono {
  * 上面的同名规则（只改窄栏下放不下的那几项），不是重复定义。
  */
 
-
 /* 属性面板宽度由 .af-right-pane 定（340px），
    上面 .insp-slot / .inspector 都用 100% 跟随，不再各写一份固定值。 */
 
@@ -3035,7 +3022,6 @@ input.mono, textarea.mono {
   color: var(--af-dim); margin-top: 2px; font-size: var(--fs-note, 11px);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
 
 /* ------------------------------------------------------------
    自建控件的键盘焦点环
@@ -3183,7 +3169,6 @@ input.mono, textarea.mono {
 }
 .node-chip.is-custom { border-style: dashed; }
 
-
 /* ============================================================
    响应式：窄屏紧凑
    ============================================================
@@ -3204,7 +3189,6 @@ input.mono, textarea.mono {
   :root { --af-side-w: 220px; }
   .toolbar .grow { display: none; }
 }
-
 
 /* ---------------- 模块 ---------------- */
 /*
@@ -3239,7 +3223,6 @@ input.mono, textarea.mono {
 .mod-btn.primary:hover { background: rgba(245, 158, 11, 0.45); }
 
 /* 侧栏的「节点库 / 模块库」切换 */
-
 
 /* ---------------- 配置预警圆点 ---------------- */
 /*
@@ -3282,7 +3265,6 @@ input.mono, textarea.mono {
 /*
 .node-card.size-sm .card-chip { font-size: var(--fs-micro, 10px); padding: 0 5px; }
 */
-
 
 .node-card.size-lg { padding: 12px 14px; }
 .node-card.size-lg .node-title { font-size: var(--fs-title, 13px); }
@@ -3339,7 +3321,6 @@ input.mono, textarea.mono {
 .insp-size-btn.on {
   color: var(--af-fg); border-color: var(--af-accent); background: var(--af-raised);
 }
-
 
 /* ---------------- 嵌合（Scratch 式上下吸附）---------------- */
 /*
@@ -3406,7 +3387,6 @@ input.mono, textarea.mono {
   background: var(--af-raised); color: var(--af-dim);
 }
 */
-
 
 /* ------------------------------------------------------------------ */
 /* 画布设置面板（MCP 服务 / 环境变量 / 导出脚本）                        */
@@ -3480,7 +3460,6 @@ input.mono, textarea.mono {
   background: var(--af-raised); color: var(--af-fg); border: 1px solid var(--af-line);
 }
 */
-
 
 .canvas-config .cfg-row input { flex: 1; min-width: 0; }
 .canvas-config .cfg-k {
@@ -3885,7 +3864,6 @@ input.mono, textarea.mono {
   min-height: 0;
 }
 
-
 /* ---------------- MCP 服务管理（凭据中心里） ---------------- */
 /*
  * 观感对齐「MCP Servers 管理」那类列表：每行 = 首字标 + 名称/命令 +
@@ -4140,7 +4118,6 @@ input.mono, textarea.mono {
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
   overflow: hidden; word-break: break-all;
 }
-
 
 /* ============================================================
  * 以下 7 个类是本地改动引入、远端尚没有的，合并时补回。
@@ -4539,23 +4516,14 @@ input.mono, textarea.mono {
 /* 无预览的文件：只显示记录的信息，容器与视频共用同一张元信息表 */
 .att-other { display: flex; flex-direction: column; gap: 6px; }
 
-/* ---------- 标签化展示（参考腾讯文档智能表的标签列）---------- */
-/*
-  样式要点（与腾讯文档一致的那部分）：
-    · 小圆角，不是全圆胶囊 —— 全圆在窄列里会挤掉两个字的空间
-    · **浅底深字 + 同色描边**：一眼能分类，又不像实心块那样糊成一片
-    · 高度紧凑，一行放得下三个
-
-  底色/字色/描边都由同一个 hex 现算（见 tintStyle），不另存一套浅色版 ——
-  存两套的话改颜色时只改一套，标签会变成深底深字，反而看不清。
-*/
+/* 可点的（标签列里那几个）：点一下摘掉，所以要给 hover 反馈 */
 .af-tag {
   display: inline-flex;
   align-items: center;
   max-width: 100%;
   padding: 0 6px;
   border: 1px solid transparent;
-  border-radius: var(--af-r-xs, 4px);
+  border-radius: var(--af-r-tag, 4px);
   font-size: var(--fs-micro, 10px);
   line-height: 16px;
   white-space: nowrap;
@@ -4563,7 +4531,7 @@ input.mono, textarea.mono {
   text-overflow: ellipsis;
   vertical-align: middle;
 }
-/* 可点的（标签列里那几个）：点一下摘掉，所以要给 hover 反馈 */
+/* 可点的（设置面板里那些）：点一下切换，所以要给 hover 反馈 */
 .af-tag-btn { cursor: pointer; }
 .af-tag-btn:hover { filter: brightness(var(--hover-bright-strong, 1.15)); }
 /* 浮层里已挂上的那个：加个勾，与"能挂但没挂"区分开 */
@@ -4584,59 +4552,7 @@ input.mono, textarea.mono {
   opacity: .8;
 }
 
-/* 表格里"这类数据没有这个字段"的占位 */
-.ttb-dim { color: var(--af-mute); opacity: .55; }
-
-/* ---------- 标签列 ---------- */
-.ttb-tags {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  flex-wrap: nowrap;
-  overflow: visible;
-}
-/* 「+」常驻但不抢戏：鼠标移上去才明显 —— 几十行都画个醒目的按钮会很吵 */
-.ttb-tag-add {
-  flex: none;
-  background: none;
-  border: 1px dashed var(--af-add-line, #444);
-  border-radius: var(--af-r-xs, 4px);
-  color: var(--af-mute);
-  font-size: var(--fs-micro, 10px);
-  line-height: 14px;
-  padding: 0 4px;
-  cursor: pointer;
-  opacity: .45;
-}
-.ttb-tags:hover .ttb-tag-add { opacity: 1; }
-.ttb-tag-add:hover { color: var(--af-accent); border-color: var(--af-accent); }
-
-/*
-  标签选择浮层 —— 开在单元格里，而不是弹到别处。
-  弹到设置页的话，改完要回来找刚才那一行在哪，几十行时根本找不到。
-*/
-.ttb-tagpop {
-  position: absolute;
-  top: calc(100% + 2px);
-  left: 0;
-  z-index: var(--af-z-float, 20);
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  width: 190px;
-  padding: 7px 8px;
-  background: var(--af-pop, #1c1f27);
-  border: 1px solid var(--af-line, #444);
-  border-radius: var(--af-r-ctl, 6px);
-  box-shadow: var(--af-cast-sm);
-  cursor: default;
-}
-.ttb-tagpop-title { font-size: var(--fs-micro, 10px); color: var(--af-mute); }
 /* 已存在的标签在这里横排，勾一个挂一个 */
-.ttb-tagpop .af-tag-btn { flex: none; }
-.ttb-tagpop-new { display: flex; flex-direction: column; gap: 4px; }
-.ttb-tagpop-name { width: 100%; font-size: var(--fs-micro, 10px); padding: 2px 5px; }
 
 /* 色板：12 个预设色，点一下选中 */
 .ttb-swatches { display: flex; flex-wrap: wrap; gap: 3px; }
@@ -4652,29 +4568,6 @@ input.mono, textarea.mono {
   border-color: var(--af-soft, #fff);
   box-shadow: 0 0 0 1px var(--af-pop, #1c1f27);
 }
-
-/* 附件计数：加个小图标，比光一个数字好认 */
-.ttb-attach { color: var(--af-accent); }
-
-/* ---------- 优先级 ---------- */
-/*
-  四档各给一个色，升序时 P1 在最前（最紧急先处理）。
-  ⛔ 不要靠字典序排 —— "P1/P2/P3/P4" 碰巧还好，
-  换成"高/中/低"就会排出"低 < 高 < 中"这种荒唐顺序。
-  排序权重定义在列的 rank 上（按数字档位），这里只管显示。
-*/
-.ttb-pri {
-  display: inline-block;
-  padding: 0 6px;
-  border-radius: var(--af-r-xs, 4px);
-  font-size: var(--fs-micro, 10px);
-  line-height: 16px;
-  white-space: nowrap;
-}
-.ttb-pri.p1 { background: rgba(239, 68, 68, .16); color: var(--af-bad); }
-.ttb-pri.p2 { background: rgba(245, 158, 11, .16); color: var(--af-warn); }
-.ttb-pri.p3 { background: rgba(59, 130, 246, .16); color: #3b82f6; }
-.ttb-pri.p4 { background: rgba(139, 147, 167, .16); color: #8b93a7; }
 
 /* ---------- 状态流程与标签设置 ---------- */
 .bmp-mask {
@@ -4763,30 +4656,3 @@ input.mono, textarea.mono {
 .bmp-add { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding-top: 4px; }
 .bmp-add-input { flex: 1 1 110px; min-width: 90px; font-size: var(--fs-body, 12px); padding: 2px 5px; }
 
-/* ---------- 窗口号（sessionID）---------- */
-.ttb-sid {
-  font-family: var(--af-mono, ui-monospace, monospace);
-  font-size: var(--fs-code, 11px);
-  color: var(--af-mute);
-  white-space: nowrap;
-}
-/*
-  自己那条标出来。
-  窗口号是 w_3f2a91 这种编号，几十行里靠肉眼找"哪个是我的"根本找不到 ——
-  没有这个锚点，"只看我的"等于没有实现。
-*/
-.ttb-sid.is-mine {
-  color: var(--af-accent);
-  font-weight: var(--fw-strong, 600);
-}
-
-/* ---------- 所属组路径 ---------- */
-.ttb-group {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--af-mute);
-  font-size: var(--fs-micro, 10px);
-}

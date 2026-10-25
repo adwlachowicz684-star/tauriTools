@@ -5,9 +5,6 @@ import {
   isGroup, isTask, childrenOf, parentOf, pathOf, descendantIds,
   boardRows, leafTaskIds, type TaskBoard, type BoardTask,
 } from '../engine/taskBoard';
-import {
-  buildTableRows, applyTable, emptyQuery, emptyFilter, GROUP_SEP,
-} from '../engine/taskTable';
 
 function task(title: string, p: Partial<BoardTask> = {}): BoardTask {
   return {
@@ -126,58 +123,4 @@ test('拆出的子任务之上是组，该组还能再加一层组', () => {
   const r = addNode(b, ids.支付, group('子步骤'));
   b = r.board;
   assert.equal(parentOf(b, r.id), ids.支付);
-});
-
-/* ---------- 表格：嵌套结构要看得见 ---------- */
-
-test('表格每行带上所属组路径（顶层为空）', () => {
-  const { b } = deep();
-  const rows = buildTableRows([], [], b);
-  const byTitle = new Map(rows.map((r) => [r.task?.title ?? '', r]));
-  assert.equal(byTitle.get('表单')?.groupPath, `容器${GROUP_SEP}登录`);
-  assert.equal(byTitle.get('支付')?.groupPath, '容器');
-  // 深度
-  assert.equal(byTitle.get('表单')?.depth, 2);
-  assert.equal(byTitle.get('支付')?.depth, 1);
-});
-
-test('所属组列能筛（按关键词包含，同组的一起出来）', () => {
-  const { b } = deep();
-  const rows = buildTableRows([], [], b);
-  const q = emptyQuery();
-  q.filters.group = { ...emptyFilter(), text: '登录' };
-  const hit = applyTable(rows, q, 0);
-  assert.equal(hit.length, 2, '登录组下的两条');
-  assert.ok(hit.every((r) => r.groupPath.includes('登录')));
-});
-
-test('所属组列能排序（同组的相邻，不是按任务名打散）', () => {
-  const { b } = deep();
-  const rows = buildTableRows([], [], b);
-  const q: typeof emptyQuery.prototype = { ...emptyQuery(), sortKey: 'group', sortDir: 'asc' };
-  const sorted = applyTable(rows, q, 0);
-  // "容器 › 登录" 开头的两条必须挨在一起
-  const login = sorted.filter((r) => r.groupPath.includes('登录'));
-  assert.equal(login.length, 2);
-  const i1 = sorted.indexOf(login[0]);
-  const i2 = sorted.indexOf(login[1]);
-  assert.equal(Math.abs(i1 - i2), 1, '同组的要相邻');
-});
-
-test('组本身不占行（它的状态由下面决定，单独成行会显示成待办误导人）', () => {
-  const { b, ids } = deep();
-  const rows = buildTableRows([], [], b);
-  assert.equal(rows.length, 3, '只有三个任务，组不占行');
-  assert.ok(!rows.some((r) => r.ownerId === ids.登录));
-});
-
-test('深层嵌套下 boardRows 逐层展开不漏', () => {
-  const { b, ids } = deep();
-  const expanded = new Set([ids.容器, ids.登录]);
-  const rows = boardRows(b, expanded);
-  const titles = rows.map((r) => r.node.title);
-  assert.deepEqual(titles, ['容器', '登录', '表单', '校验', '支付']);
-  // 折叠最内层时只剩组与另一个任务
-  const partial = boardRows(b, new Set([ids.容器]));
-  assert.deepEqual(partial.map((r) => r.node.title), ['容器', '登录', '支付']);
 });

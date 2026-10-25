@@ -10,7 +10,6 @@ import {
   isClaimedBy, takeOverNote, isTask,
   type BoardTask, type TaskBoard,
 } from '../engine/taskBoard';
-import { buildTableRows, sessionOptionsOf, applyTable, emptyQuery, emptyFilter } from '../engine/taskTable';
 
 /** 内存版 KV —— 不碰 localStorage，测试可重复 */
 function memKV(init: Record<string, string> = {}): { get: (k: string) => string | null; set: (k: string, v: string) => void; store: Record<string, string> } {
@@ -161,42 +160,4 @@ test('isClaimedBy 直接判归属；takeOverNote 给出人话说明', () => {
   const note = takeOverNote(taken.nodes[id]);
   assert.ok(note.includes('w_1_aaaaaa'), note);
   assert.ok(note.includes('接手自'), note);
-});
-
-/* ---------- 表格：窗口列 ---------- */
-
-test('窗口列：任务行取"谁负责"，运行行取"谁跑的"', () => {
-  const rows = buildTableRows([], [], boardOf([
-    task('甲', { session: 'w_1_aaaaaa' }),
-    task('乙', { session: 'w_2_bbbbbb' }),
-  ]));
-  assert.equal(rows.length, 2);
-  // 选项从数据去重，未知单独一项
-  const opts = sessionOptionsOf(rows);
-  assert.deepEqual(opts.map((o) => o.v).sort(), ['w_1_aaaaaa', 'w_2_bbbbbb']);
-});
-
-test('窗口列能筛出"我的"（这是加这个字段的主要用途）', () => {
-  const rows = buildTableRows([], [], boardOf([
-    task('甲', { session: 'w_1_aaaaaa' }),
-    task('乙', { session: 'w_2_bbbbbb' }),
-    task('丙', { session: '' }),
-  ]));
-  const q = emptyQuery();
-  q.filters.session = { ...emptyFilter(), values: ['w_1_aaaaaa'] };
-  const hit = applyTable(rows, q, 0);
-  assert.equal(hit.length, 1);
-  assert.equal(hit[0].task?.title, '甲');
-});
-
-test('窗口列能筛出没归属的（空串是有效选项，不是"没值"）', () => {
-  const rows = buildTableRows([], [], boardOf([
-    task('甲', { session: 'w_1_aaaaaa' }),
-    task('丙', { session: '' }),
-  ]));
-  const q = emptyQuery();
-  q.filters.session = { ...emptyFilter(), values: [''] };
-  const hit = applyTable(rows, q, 0);
-  assert.equal(hit.length, 1);
-  assert.equal(hit[0].task?.title, '丙');
 });
