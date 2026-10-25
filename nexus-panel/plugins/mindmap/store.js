@@ -263,12 +263,31 @@ export function docKeys() {
 /** 自定义主题数组 */
 export const themes = {
   load: () => get(K_THEMES, []),
+  /**
+   * 严格版（同上）：区分「没有自定义主题」与「读不出来」。
+   *
+   * ⓘ BUG 176：`themes.load()` 读失败返回 []，与「本来就没建过主题」
+   *   **长得一模一样** —— 于是 customThemes 是空数组，紧接着任何一次
+   *   主题操作（新建 / 改名 / 导入 / 删除）都会 saveThemes() 把这份空数组
+   *   **写回去**，用户精心调过的自定义主题**整份消失**。而写路径往往是好的
+   *   （单条记录损坏只坏那一条），所以写入成功、一句提示都没有。
+   */
+  loadStrict: () => getStrict(K_THEMES),
   save: (list) => set(K_THEMES, list),
 };
 
 /** 设置项：{ animate, autoBackup, ... } */
 export const settings = {
   load: () => get(K_SETTINGS, {}),
+  /**
+   * 严格版（同上）：读失败不能当成「用户没改过设置」。
+   *
+   * ⓘ BUG 176：settings 读失败时退化成**默认值对象**，随后任意一处
+   *   `store.settings.save(settings)`（勾选一个开关就触发）就会把这份默认值
+   *   写回，用户其余全部设置项被**静默重置**（backupMax、pdfChannel、
+   *   filesOpen、theme 等一起回到出厂值）。
+   */
+  loadStrict: () => getStrict(K_SETTINGS),
   save: (v) => set(K_SETTINGS, v),
 };
 

@@ -47,14 +47,6 @@ bootIframePlugin(async (ctx) => {
   ctx.setTitle('思维导图');
 
   /* ------------------------- 状态 ------------------------- */
-
-  let settings = (await store.settings.load())
-    || { animate: false, backupMinutes: 2, backupMax: 3, pdfChannel: 'vector' };
-  // filesOpen 默认关：文件库是 Web 版多文档功能，C# 原版没有左栏。
-  // 收起时画布左右只剩「属性侧栏」一侧占位，更接近原版观感；需要切换脑图时
-  // 点 📚 展开。老配置里没有这个字段时 undefined 会走 falsy 分支，正是想要的默认收起。
-  if (settings.filesOpen === undefined) settings.filesOpen = false;
-
   /*
    * 启动期攒下的警告（BUG 163）。
    *
@@ -63,6 +55,28 @@ bootIframePlugin(async (ctx) => {
    * 所以这里只能先记下来，等 UI 建好再摆上去（见文末 flushBootWarn）。
    */
   let bootWarn = '';
+
+  /*
+   * BUG 176：启动时**设置没读出来**的标记。读失败时照样用默认值让界面跑起来，
+   * 但本次会话一律**拒写** —— 否则勾选一个开关就触发 save，把这份默认值写回，
+   * 用户其余全部设置项会被静默重置（backupMax / pdfChannel / filesOpen / theme 等）。
+   */
+  let bootSettingsUnread = false;
+  /** BUG 176：启动时**自定义主题没读出来**的标记（同 settings，标记后拒写） */
+  let bootThemesUnread = false;
+  const setRes = await store.settings.loadStrict();
+  bootSettingsUnread = !setRes.ok;
+  if (bootSettingsUnread) {
+    // 排在最早：后面任何一条更严重的都会盖掉它
+    bootWarn = '设置读取失败：为避免把默认值写回覆盖你的设置，本次会话不会保存设置改动，请刷新重试';
+  }
+  let settings = setRes.value
+    || { animate: false, backupMinutes: 2, backupMax: 3, pdfChannel: 'vector' };
+  // filesOpen 默认关：文件库是 Web 版多文档功能，C# 原版没有左栏。
+  // 收起时画布左右只剩「属性侧栏」一侧占位，更接近原版观感；需要切换脑图时
+  // 点 📚 展开。老配置里没有这个字段时 undefined 会走 falsy 分支，正是想要的默认收起。
+  if (settings.filesOpen === undefined) settings.filesOpen = false;
+
   /*
    * BUG 175：启动时**内容没读出来**的标记。
    *
@@ -139,6 +153,19 @@ bootIframePlugin(async (ctx) => {
     ? settings.lastFileId
     : fileIndex[0].id;
 
+  /*
+   * BUG 176：原理同 BUG 175 —— themes 读失败时 customThemes 是**空数组**，
+   * 紧接着任何一次主题操作都会 saveThemes() 把它写回，用户所有自定义主题
+   * 整份消失。所以读不出来就标记，saveThemes 一律拒写（见下）。
+   * ⓘ 排在内容读取**之前**：bootWarn 是单一句，内容那条更要紧、要能盖住这条。
+   */
+  const themeRes = await store.themes.loadStrict();
+  bootThemesUnread = !themeRes.ok;
+  if (bootThemesUnread) {
+    bootWarn = '自定义主题读取失败：为避免覆盖已有主题，本次会话不会保存主题改动，请刷新重试';
+  }
+  let customThemes = themeRes.value || [];
+
   const dr = await store.doc(currentFileId).loadStrict();
   let workbook = dr.value || wb.newWorkbook();
   if (!dr.ok) {
@@ -147,7 +174,6 @@ bootIframePlugin(async (ctx) => {
     bootWarn = '脑图内容读取失败：为避免覆盖原内容，本次会话不会保存，请刷新重试';
   }
   workbook.sheets = wb.normalizeSheets(workbook.sheets);
-  let customThemes = (await store.themes.load()) || [];
   // 并入预置主题：必须在注册之前，否则面板读不到、core 里也没这个主题。
   customThemes = mergePresetThemes(
     customThemes,
@@ -1144,7 +1170,7 @@ bootIframePlugin(async (ctx) => {
     settings.lastFileId = id;
     // 写失败（配额）只是"下次启动回到上一个文件"，不拦住切换本身 ——
     // 但必须说出来，否则用户以为记住了。
-    const okSettings = await saveStore('设置', () => store.settings.save(settings));
+    const okSettings = await saveStore('设置', () => saveSettings());
     workbook = loaded || wb.newWorkbook();
     workbook.sheets = wb.normalizeSheets(workbook.sheets);
     resetHistory();
@@ -1617,7 +1643,7 @@ async function gcOrphanAssets(quiet = false) {
     settings.filesOpen = showing;
     // 早先这里连 await 都没有：写失败的话面板开关了、下次启动又回到默认，
     // 用户会以为「文件库开合记不住」。store.set 吞异常返回 false，不查就不知道。
-    await saveStore('设置', () => store.settings.save(settings));
+    await saveStore('设置', () => saveSettings());
     buildRail();
   }
 
@@ -2633,7 +2659,29 @@ async function gcOrphanAssets(quiet = false) {
       + (ok ? '' : '（未能保存：重载后会回到上一个布局）'));
   }
 
+  /**
+   * 写回设置（统一入口）。
+   *
+   * BUG 176：启动时设置没读出来 —— 此时 settings 是**默认值对象**，写回去
+   * 等于把用户其余全部设置项静默重置。宁可这次不存，也不能覆盖。
+   * 调用方拿到的 false 与「写失败」同义，各自的提示文案照旧生效。
+   */
+  async function saveSettings() {
+    if (bootSettingsUnread) return false;
+    // 结果赋给变量：源码契约要求「写入必须有人管返回值」
+    const ok = await store.settings.save(settings);
+    return ok;
+  }
+
   async function saveThemes() {
+    /*
+     * BUG 176：启动时主题没读出来 —— 此时 customThemes 是**空数组**，
+     * 写回去等于把用户所有自定义主题抹掉。宁可这次不存，也不能覆盖。
+     */
+    if (bootThemesUnread) {
+      status('自定义主题未保存：启动时没能读到主题列表，写入会覆盖已有主题（请刷新重试）', true);
+      return false;
+    }
     // store.set 失败返回 false 而非抛出，不检查就等于静默丢主题
     const ok = await store.themes.save(customThemes);
     if (!ok) status('自定义主题保存失败', true);
@@ -3493,7 +3541,7 @@ async function gcOrphanAssets(quiet = false) {
       const list = Array.isArray(settings.removedPresets) ? settings.removedPresets : [];
       if (!list.includes(id)) list.push(id);
       settings.removedPresets = list;
-      const ok = await store.settings.save(settings);
+      const ok = await saveSettings();
       if (!ok) status('移除记录未写入，该主题下次启动会重新出现', true);
       return !!ok;
     }),
@@ -3593,7 +3641,7 @@ async function gcOrphanAssets(quiet = false) {
     /** 修改设置项（自动快照间隔 / 布局动画），改完立即持久化并生效 */
     setBackupMinutes: guard('设置快照间隔', async (m) => {
       settings.backupMinutes = Number(m) || 0;
-      const ok = await store.settings.save(settings);
+      const ok = await saveSettings();
       if (!ok) { status('设置保存失败', true); return; }
       status(settings.backupMinutes === 0 ? '自动快照已关闭' : `自动快照间隔：${settings.backupMinutes} 分钟`);
     }),
@@ -3608,7 +3656,7 @@ async function gcOrphanAssets(quiet = false) {
      */
     setBackupPaused: guard('暂停快照', async (on) => {
       settings.backupPaused = !!on;
-      const ok = await store.settings.save(settings);
+      const ok = await saveSettings();
       if (!ok) { status('设置保存失败', true); return; }
       status(settings.backupPaused
         ? `自动快照已暂停（间隔仍为 ${settings.backupMinutes || 0} 分钟，恢复后继续）`
@@ -3616,7 +3664,7 @@ async function gcOrphanAssets(quiet = false) {
     }),
     setBackupMax: guard('设置保留份数', async (n) => {
       settings.backupMax = Number(n) || store.BACKUP_KEEP;
-      const ok = await store.settings.save(settings);
+      const ok = await saveSettings();
       if (!ok) { status('设置保存失败', true); return; }
       const trim = await trimBackups();
       /*
@@ -3663,7 +3711,7 @@ async function gcOrphanAssets(quiet = false) {
       const next = v === 'dialog' ? 'dialog' : 'vector';
       if (settings.pdfChannel === next) return;
       settings.pdfChannel = next;
-      const ok = await store.settings.save(settings);
+      const ok = await saveSettings();
       if (!ok) { status('设置保存失败', true); return; }
       status(next === 'vector'
         ? 'PDF 默认走矢量通道（不弹对话框，直接保存）'
@@ -3671,7 +3719,7 @@ async function gcOrphanAssets(quiet = false) {
     }),
     setAnimate: guard('设置布局动画', async (on) => {
       settings.animate = !!on;
-      const ok = await store.settings.save(settings);
+      const ok = await saveSettings();
       if (!ok) { status('设置保存失败', true); return; }
       applyOptions();
       status(settings.animate ? '布局动画已开启' : '布局动画已关闭');
