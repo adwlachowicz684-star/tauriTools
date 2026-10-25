@@ -943,6 +943,137 @@ group('M8 · 存储读写失败不再静默');
    七、回归：数据层既有行为没被改坏
    ============================================================ */
 
+
+group('BUG 176 · 启动时读不出来不许写回（主题 / 设置）');
+{
+  /*
+   * BUG 176：启动期两处宽松读 —— themes.load() 读失败返回 []、settings.load()
+   * 读失败返回 {}，都与「本来就是空的」**长得一模一样**。而紧接着的写操作
+   * 会把这份空值**原样写回** —— 前者抹掉用户所有自定义主题，后者把默认值
+   * 写回、用户其余设置项被静默重置。写路径往往是好的，所以一句提示都没有。
+   */
+  ok(typeof store.themes.loadStrict === 'function', '导出 themes.loadStrict');
+  ok(typeof store.settings.loadStrict === 'function', '导出 settings.loadStrict');
+
+  // 注入读失败（IndexedDB 被禁用 / 单条记录损坏）
+  store.resetStoreError();
+  ctl.failTx = true;
+  const tr = await store.themes.loadStrict();
+  const sr = await store.settings.loadStrict();
+  ctl.failTx = false;
+  eq(tr.ok, false, 'themes 读失败报 ok=false（不能当成「没有主题」）');
+  eq(sr.ok, false, 'settings 读失败报 ok=false（不能当成「没改过设置」）');
+  store.resetStoreError();
+
+  // 正常时不能误报
+  await store.themes.save([{ id: 't1', name: '甲' }]);
+  const tr2 = await store.themes.loadStrict();
+  eq(tr2.ok, true, 'themes 正常读出 ok=true');
+  eq(tr2.value.length, 1, 'themes 正常读出有内容');
+  await store.themes.save([]);
+  const sr2 = await store.settings.loadStrict();
+  eq(sr2.ok, true, 'settings 正常读出 ok=true');
+
+  /* ---- 行为级：读入真身的函数体，注入「启动没读出来」 ---- */
+  const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+  const idx = (fs.readFileSync(path.join(HERE, 'index.js'), 'utf8')).replace(/\r\n/g, '\n');
+  const grab = (name) => {
+    const a = idx.indexOf('  async function ' + name + '() {');
+    const b = idx.indexOf('\n  }\n', a);
+    return idx.slice(a, b) + '\n  }';
+  };
+
+  // ① 主题
+  let writtenTheme = null;
+  const stT = { themes: { save: async (v) => { writtenTheme = JSON.parse(JSON.stringify(v)); return true; } } };
+  const runSaveThemes = new AsyncFn('store', 'status', 'bootThemesUnread', 'customThemes',
+    grab('saveThemes') + '\nreturn await saveThemes();');
+  let msgT = null;
+  const r1 = await runSaveThemes(stT, (m) => { msgT = m; }, true, []);
+  eq(r1, false, '★ 主题没读出来时 saveThemes 拒写（返回 false）');
+  eq(writtenTheme, null, '★ 主题没读出来时一个字节都没写（不会抹掉已有主题）');
+  ok(/覆盖|没能读到/.test(msgT || ''), '★ 拒写时说清后果', msgT);
+
+  writtenTheme = null;
+  const r2 = await runSaveThemes(stT, (m) => { msgT = m; }, false, [{ id: 't1', name: '甲' }]);
+  eq(r2, true, '主题读出来了：saveThemes 照常写回（不误伤）');
+  /* 可空取值：断言写死 .length 的话，变异会让进程抛 TypeError 当场崩掉，
+     后面几条一条都跑不到 —— 「看着抓到了」其实漏掉大半 */
+  eq(writtenTheme?.length, 1, '主题读出来了：写回的是真内容');
+
+  // ② 设置
+  let writtenSet = null;
+  const stS = { settings: { save: async (v) => { writtenSet = JSON.parse(JSON.stringify(v)); return true; } } };
+  const runSaveSettings = new AsyncFn('store', 'bootSettingsUnread', 'settings',
+    grab('saveSettings') + '\nreturn await saveSettings();');
+  const DEFAULT_SET = { animate: false, backupMinutes: 2, backupMax: 3, pdfChannel: 'vector' };
+  const r3 = await runSaveSettings(stS, true, { ...DEFAULT_SET });
+  eq(r3, false, '★ 设置没读出来时 saveSettings 拒写（返回 false）');
+  eq(writtenSet, null, '★ 设置没读出来时一个字节都没写（不会把默认值写回）');
+
+  writtenSet = null;
+  const r4 = await runSaveSettings(stS, false, { ...DEFAULT_SET, backupMax: 8 });
+  eq(r4, true, '设置读出来了：saveSettings 照常写回');
+  eq(writtenSet.backupMax, 8, '设置读出来了：写回的是真值');
+
+  /*
+   * ③ 端到端：读失败 → 标志**真的被置上** → 写回被拒。
+   *
+   * 上面①②是**直接注入** bootXxxUnread=true，等于绕过了读取侧 —— 变异实测
+   * 把 `bootThemesUnread = !themeRes.ok` 改成恒 false 时全部断言照样绿（M7）。
+   * 所以这里把启动期那段读取真身抽出来跑，堵住「标志根本没被置上」这个洞。
+   */
+  /*
+   * 必须连「置标志」那行一起抽真身 —— 只抽读取行、赋值行自己写的话，
+   * 变异把 `bootThemesUnread = !themeRes.ok` 改成恒 false 时照样全绿（M7 实测 0 条）。
+   */
+  const readBoot = (name, flag) => {
+    const a = idx.indexOf('  const ' + name + ' = await store.');
+    const b = idx.indexOf('\n', idx.indexOf(flag + ' = ', a));
+    return idx.slice(a, b);
+  };
+  let bootFlag = null;
+  const runThemeRead = new AsyncFn('store', 'bootThemesUnread',
+    readBoot('themeRes', 'bootThemesUnread') + '\nreturn bootThemesUnread;');
+  {
+    ctl.failTx = true;
+    bootFlag = await runThemeRead(store, false);
+    ctl.failTx = false;
+    store.resetStoreError();
+    eq(bootFlag, true, '★ themes 读失败 → 标志真的被置上（端到端，不是注入）');
+  }
+  let setFlag = null;
+  const runSetRead = new AsyncFn('store', 'bootSettingsUnread',
+    readBoot('setRes', 'bootSettingsUnread') + '\nreturn bootSettingsUnread;');
+  {
+    ctl.failTx = true;
+    setFlag = await runSetRead(store, false);
+    ctl.failTx = false;
+    store.resetStoreError();
+    eq(setFlag, true, '★ settings 读失败 → 标志真的被置上（端到端）');
+  }
+  // 读得出来时不能误标
+  eq(await runThemeRead(store, false), false, 'themes 读得出来时不置标志（不误伤）');
+  eq(await runSetRead(store, false), false, 'settings 读得出来时不置标志（不误伤）');
+
+  /* ---- 源码契约 ---- */
+  const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const idxClean = strip(idx);
+  ok(!/store\.themes\.load\(\)/.test(idxClean), '启动不得再用宽松版 themes.load()');
+  ok(!/store\.settings\.load\(\)/.test(idxClean), '启动不得再用宽松版 settings.load()');
+  ok(/bootSettingsUnread/.test(idxClean) && /bootThemesUnread/.test(idxClean), '两个「没读出来」标记都在');
+  // 写回必须走统一入口，否则绕过拒写保护
+  // 全仓只应剩 saveSettings() 内那一处；多一处就是绕过拒写保护的裸写
+  const bare = (idxClean.match(/store\.settings\.save\(/g) || []).length;
+  eq(bare, 1, 'store.settings.save 只出现在 saveSettings() 内（当前 ' + bare + ' 处）');
+  /*
+   * TDZ 守卫：bootWarn 是 `let`，而 settings 是启动期最早的读取点。
+   * 声明若排在赋值之后，启动直接抛 ReferenceError（BUG 163 踩过同一处）。
+   */
+  ok(idxClean.indexOf('let bootWarn') < idxClean.indexOf('settings.loadStrict'),
+    'bootWarn 的声明必须排在 settings 读取之前（否则 TDZ 直接崩）');
+}
+
 group('回归 · workbook 序列化');
 {
   const wb = await import('./workbook.js');
@@ -5000,7 +5131,11 @@ group('SVG → PDF 矢量通道');
   ok(/setPdfChannel: guard/.test(idx), '新增 setPdfChannel API');
   const sp = idx.slice(idx.indexOf('setPdfChannel: guard'), idx.indexOf('setAnimate: guard'));
   ok(/v === 'dialog' \? 'dialog' : 'vector'/.test(sp), '未知值一律归一为 vector（不存脏值）');
-  ok(/await store\.settings\.save\(settings\)/.test(sp), 'setPdfChannel 立即持久化');
+  /*
+   * BUG 176：写回一律走统一入口 saveSettings() —— 它带「启动时没读出来就拒写」
+   * 的保护。钉死裸的 store.settings.save(settings) 会绕过那层保护。
+   */
+  ok(/await saveSettings\(\)/.test(sp), 'setPdfChannel 立即持久化（走统一入口，带未读保护）');
 
   const pn = fs.readFileSync(path.join(HERE, 'panels.js'), 'utf8');
   ok(/PDF 通道/.test(pn), '设置面板新增「PDF 通道」');
