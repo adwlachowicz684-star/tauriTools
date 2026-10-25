@@ -113,9 +113,7 @@ import { useAttachments } from './hooks/useAttachments';
 import { useBoardMeta } from './hooks/useBoardMeta';
 import { loadSession, saveSession, sessionName, type Session } from './engine/session';
 import { addAttachment, removeAttachment } from './engine/attachmentStore';
-// 别名：下面有个同名的交互回调 toggleTag(taskId, tagId)，直接导入会自己调自己
-import { toggleTag as toggleBoardTag } from './engine/taskBoard';
-import { addTag } from './engine/boardMeta';
+
 import { TaskBoardDetail } from './components/TaskBoardDetail';
 import { useTaskBoard } from './hooks/useTaskBoard';
 import {
@@ -965,19 +963,10 @@ export default function App() {
     const parsed = parseRowKey(tableSel);
     if (!parsed) return null;
     // 池子用**过滤后**的：切了项目还拿全量池去查，详情就会显示别的项目那条
-    //
-    // board 行不在这里查 —— 它是任务条目而不是运行记录，
-    // 没有 HistoryEntry 可给；它的详情走下方另一条分支（任务条目详情）。
-    const pool = parsed.origin === 'live' ? scopedTasks
-      : parsed.origin === 'archived' ? scopedHistory
-      : null;
-    if (!pool) return null;
+    const pool = parsed.origin === 'live' ? scopedTasks : scopedHistory;
     const rec = pool.find((t) => t.id === parsed.id);
     if (!rec) return null;
-    return {
-      row: { key: tableSel, origin: parsed.origin, record: rec, task: null, ownerId: parsed.id },
-      record: rec,
-    };
+    return { row: { key: tableSel, origin: parsed.origin, record: rec }, record: rec };
   }, [tableSel, scopedTasks, scopedHistory]);
 
   /*
@@ -1152,35 +1141,6 @@ export default function App() {
     enabled: view === 'tasks',
   });
 
-  /*
-    每个条目挂了几个附件 —— 表格的附件列要显示它。
-    按 ownerId 建索引而不是每次遍历清单：表格有几百行时，
-    每行都扫一遍清单是 O(行 × 附件)，滚动起来会卡。
-  */
-  const attachCounts = useMemo(() => {
-    const out: Record<string, number> = {};
-    for (const id of attach.file.order) {
-      const it = attach.file.items[id];
-      if (!it) continue;
-      out[it.owner] = (out[it.owner] ?? 0) + 1;
-    }
-    return out;
-  }, [attach.file]);
-
-  const toggleTag = useCallback((taskId: string, tagId: string) => {
-    board.apply((b) => toggleBoardTag(b, taskId, tagId).board);
-  }, [board]);
-
-  /** 新建标签。返回新 id，让调用方能立刻把它挂到刚点的那一行上 */
-  const createTag = useCallback((name: string, color: string): string | null => {
-    let newId: string | null = null;
-    meta.apply((m) => {
-      const r = addTag(m, name, color);
-      newId = r.id;
-      return r.meta;
-    });
-    return newId;
-  }, [meta]);
 
   /*
     元数据的写入提示。
@@ -3856,15 +3816,9 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               <TaskTable
                 live={scopedTasks}
                 archived={scopedHistory}
-                board={board.board}
-                meta={meta.meta}
-                attachCounts={attachCounts}
                 now={tick}
                 selectedKey={tableSel}
                 onSelect={selectTableRow}
-                onToggleTag={toggleTag}
-                onCreateTag={createTag}
-                sessionId={sessionId}
               />
             ) : view === 'tasks' ? (taskTab === 'done' ? (
               <HistoryList

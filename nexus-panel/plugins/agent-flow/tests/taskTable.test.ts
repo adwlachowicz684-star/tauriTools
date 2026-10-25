@@ -70,13 +70,13 @@ test('parseRowKey: 认不出就返回 null，不猜', () => {
 /* ---------- 取值 ---------- */
 
 test('cellValue: 未结束的记录 endedAt 取 0（排序稳定，不跟着 now 漂）', () => {
-  const row: TableRow = { key: 'live:a', origin: 'live', record: liveA, task: null, ownerId: 'a' };
+  const row: TableRow = { key: 'live:a', origin: 'live', record: liveA };
   assert.equal(cellValue(row, 'ended', T0), 0);
   assert.equal(cellValue(row, 'started', T0), T0);
 });
 
 test('cellValue: 进度与节点数取得到', () => {
-  const row: TableRow = { key: 'live:a', origin: 'live', record: liveA, task: null, ownerId: 'a' };
+  const row: TableRow = { key: 'live:a', origin: 'live', record: liveA };
   assert.equal(cellValue(row, 'progress', T0), 0);
   assert.equal(cellValue(row, 'nodes', T0), 2);
 });
