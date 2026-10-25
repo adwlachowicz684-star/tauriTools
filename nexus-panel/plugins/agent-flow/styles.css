@@ -4779,3 +4779,14 @@ input.mono, textarea.mono {
   color: var(--af-accent);
   font-weight: var(--fw-strong, 600);
 }
+
+/* ---------- 所属组路径 ---------- */
+.ttb-group {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--af-mute);
+  font-size: var(--fs-micro, 10px);
+}

@@ -167,8 +167,32 @@ export function useTaskBoard(opts: {
     });
   }, []);
 
+  /*
+    保证一组 id 处于展开状态。
+
+    ⛔ expanded 只在**载入时**初始化一次（defaultExpanded 展开所有组）。
+    之后新建的组不在里面 —— 于是：
+      · 往一个折叠的组里加任务，加了看不见，像"点了没反应"
+      · 合并出来的新组折叠着，被合并进去的任务**从界面上消失了**
+    后者尤其糟：用户刚做的操作，结果是东西不见了，无从判断是合并失败
+    还是收起来了。所以任何产生新组的操作都必须顺手展开它。
+  */
+  const ensureExpanded = useCallback((ids: string[]) => {
+    const want = ids.filter(Boolean);
+    if (want.length === 0) return;
+    setExpanded((prev) => {
+      let changed = false;
+      const s = new Set(prev);
+      for (const id of want) {
+        if (!s.has(id)) { s.add(id); changed = true; }
+      }
+      // 没变化就返回原对象 —— 换一个新的 Set 会让整个树白白重渲染
+      return changed ? s : prev;
+    });
+  }, []);
+
   return {
     path, board, state, expanded, canWrite,
-    apply, reload, toggle, setExpanded,
+    apply, reload, toggle, setExpanded, ensureExpanded,
   };
 }

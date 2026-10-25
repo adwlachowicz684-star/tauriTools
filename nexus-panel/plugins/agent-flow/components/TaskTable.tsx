@@ -76,6 +76,23 @@ function Cell({ row, col, now, meta, counts, onToggleTag, onCreateTag, sessionId
       const txt = k ? (k.title || '未命名任务') : t ? (t.canvasName || '未命名流程') : '';
       return <span className="ttb-text" title={txt}>{txt}</span>;
     }
+    /*
+      所属组：显示完整路径，并按深度缩进。
+      缩进是为了让"这条在第几层"一眼可见 —— 光看文字
+      "登录"与"登录 › 接口"在扫视时差别不够明显。
+    */
+    case 'group': {
+      if (!row.groupPath) return <span className="ttb-dim">—</span>;
+      return (
+        <span
+          className="ttb-group"
+          style={{ paddingLeft: Math.min(row.depth - 1, 4) * 8 }}
+          title={row.groupPath}
+        >
+          {row.groupPath}
+        </span>
+      );
+    }
     case 'status':
       return t ? <StatusPill status={t.status} /> : <span className="ttb-dim">—</span>;
     case 'source':
