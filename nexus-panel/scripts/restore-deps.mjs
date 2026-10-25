@@ -79,5 +79,11 @@ for (const [p, want] of Object.entries({ react: pkg.dependencies?.react, 'react-
   }
 }
 const still = Object.keys(all).filter((k) => !existsSync(join(ROOT, 'node_modules', k)));
+
+// ⛔ 必须放在安装**之后**：npm 装完会顺手在 react-markdown 下再放一份 react，
+//    那份副本混进来 md 三套必崩（两份 react 的元素符号不同族）。
+//    齐备分支里的那次调用只覆盖「本来就齐」的情况，装过包的情况靠这里。
+cleanNestedReact();
+
 console.log(still.length ? `仍缺失：${still.join(' ')}` : '✅ 全部就位');
 process.exit(still.length ? 1 : 0);
