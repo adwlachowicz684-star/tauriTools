@@ -11,10 +11,14 @@ import type { TbConfig, Task, TaskStore, Priority, TaskStatus } from './types';
 import {
   NOTAG,
   UNASSIGNED,
+  LIST_COLUMNS,
   actionsFor,
-  allTags,
+  activeColFilters,
   applyTransition,
-  filterTasks,
+  colFilterActive,
+  colFilterValues,
+  emptyColFilter,
+  filterTasksByColumns,
   fmtTime,
   groupTasks,
   relTime,
@@ -22,7 +26,7 @@ import {
   sortTasksBy,
   statsOf,
 } from './core';
-import type { GroupKey, SortField, TbStats } from './core';
+import type { ColFilter, GroupKey, ListColumn, SortField, TbStats } from './core';
 /* 输入法守卫：中文 / 日文输入时回车是「把候选词上屏」，不是界面上的「提交」。
    备注框回车直接落盘 tasks.json，不挡的话打一半的拼音会被当成一条备注写进去。 */
 import { isComposing } from '../../js/ime.js';
@@ -51,7 +55,7 @@ const VIEWS: { key: TbView; label: string; title: string }[] = [
 
 const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'tag'];
 
-const SORT_FIELDS: SortField[] = ['priority', 'status', 'assignee', 'updatedAt', 'createdAt', 'title', 'id'];
+const SORT_FIELDS: SortField[] = ['priority', 'status', 'assignee', 'tags', 'updatedAt', 'createdAt', 'title', 'id'];
 
 /** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
 function groupLabel(key: string, by: GroupKey): string {
@@ -61,17 +65,40 @@ function groupLabel(key: string, by: GroupKey): string {
   if (key === NOTAG) return '无标签';
   return key;
 }
+/** 排序字段 → 展示名。与列头用的是同一套名字，两处说法必须一致 */
+const SORT_LABEL: Record<SortField, string> = {
+  priority: '优先级',
+  id: 'ID',
+  title: '标题',
+  status: '状态',
+  assignee: '认领人',
+  tags: '标签',
+  createdAt: '创建',
+  updatedAt: '更新',
+};
+function sortLabel(f: SortField): string {
+  return SORT_LABEL[f] || f;
+}
+
 export default function App() {
   const ctx = useNexus();
   const [cfg, setCfg] = useState<TbConfig | null>(null);
   const [store, setStore] = useState<TaskStore | null>(null);
   const [me, setMe] = useState('manual');
-  const [filter, setFilter] = useState<{ priority: string; tag: string; assignee: string; q: string }>({
-    priority: '',
-    tag: '',
-    assignee: '',
-    q: '',
-  });
+  /*
+    筛选**按列存**，不再是一排顶栏下拉。
+
+    顶栏摆四个下拉时只有那四件事筛得了，"创建于上周 + 没人认领 + P0"
+    这种组合根本填不进去。改成每列一份条件之后，任何列的组合都能表达。
+
+    q 是全局搜索（跨 id / 标题 / 详情）—— 它是"找某一条东西"的入口，
+    不属于"按列筛"，所以单独留着。
+
+    ⛔ 筛选不持久化：它是"这一眼想看什么"，不是偏好。
+    存下来下次打开还生效会让人以为任务少了。
+  */
+  const [q, setQ] = useState('');
+  const [colFilters, setColFilters] = useState<Partial<Record<SortField, ColFilter>>>({});
   const [newOpen, setNewOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectFor, setRejectFor] = useState<{ id: string } | null>(null);
@@ -162,9 +189,11 @@ export default function App() {
   }), [ctx]);
 
   /* ---------- 派生数据 ---------- */
-  const tags = useMemo(() => (store ? allTags(store.tasks) : []), [store]);
   /* 四视图共用同一份筛选结果；统计视图例外（它看全量，语义是「账本」不是「查询」） */
-  const filtered = useMemo(() => (store ? filterTasks(store.tasks, filter) : []), [store, filter]);
+  const filtered = useMemo(
+    () => (store ? filterTasksByColumns(store.tasks, colFilters, q) : []),
+    [store, colFilters, q],
+  );
   const byColumn = useMemo(() => {
     const map: Record<TaskStatus, Task[]> = { todo: [], claimed: [], doing: [], review: [], done: [] };
     if (store) {
@@ -174,6 +203,25 @@ export default function App() {
     return map;
   }, [store, filtered]);
   const listRows = useMemo(() => sortTasksBy(filtered, sort.field, sort.dir), [filtered, sort]);
+
+  /* ---------- 列级筛选的操作 ---------- */
+  const activeCols = useMemo(() => activeColFilters(colFilters), [colFilters]);
+
+  const setColFilter = (field: SortField, f: ColFilter) => {
+    setColFilters((prev) => ({ ...prev, [field]: f }));
+  };
+  const clearColFilter = (field: SortField) => {
+    setColFilters((prev) => {
+      const next: Partial<Record<SortField, ColFilter>> = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+  const clearAllFilters = () => {
+    setColFilters({});
+    setQ('');
+  };
+  const filteredOn = activeCols.length > 0 || q.trim() !== '';
   const groups = useMemo(() => groupTasks(listRows, groupBy), [listRows, groupBy]);
   const stats = useMemo<TbStats | null>(() => (store ? statsOf(store) : null), [store]);
 
@@ -331,45 +379,17 @@ export default function App() {
               ))}
             </select>
           </label>
-          <label className="tb-field">
-            <span>优先级</span>
-            <select value={filter.priority} onChange={(e) => setFilter({ ...filter, priority: e.target.value })}>
-              <option value="">全部</option>
-              {PRIORITY_ORDER.map((p) => (
-                <option key={p} value={p}>
-                  {p} {PRIORITY_LABEL[p]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="tb-field">
-            <span>标签</span>
-            <select value={filter.tag} onChange={(e) => setFilter({ ...filter, tag: e.target.value })}>
-              <option value="">全部</option>
-              {tags.map((tag) => (
-                <option key={tag} value={tag}>
-                  {tag}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="tb-field">
-            <span>认领</span>
-            <select value={filter.assignee} onChange={(e) => setFilter({ ...filter, assignee: e.target.value })}>
-              <option value="">全部</option>
-              <option value="__none__">未认领</option>
-              {store.agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.id}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/*
+            顶栏**只留身份与全局搜索**。
+            优先级 / 标签 / 认领那三个下拉移到各自列头上了 ——
+            留在这儿的话，"筛哪件事"取决于顶栏摆了哪几个框，
+            而没摆上去的列（创建时间、ID）就永远筛不了。
+          */}
           <input
             className="tb-search"
             placeholder="搜索标题 / 详情 / id"
-            value={filter.q}
-            onChange={(e) => setFilter({ ...filter, q: e.target.value })}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
           />
           <button
             className={'tb-svc' + (serviceOn ? ' on' : '')}
@@ -413,30 +433,65 @@ export default function App() {
               </select>
             </label>
           )}
-          {view === 'list' && (
-            <>
-              <label className="tb-field">
-                <span>排序</span>
-                <select value={sort.field} onChange={(e) => changeSort(e.target.value as SortField)}>
-                  <option value="priority">优先级</option>
-                  <option value="status">状态</option>
-                  <option value="assignee">认领人</option>
-                  <option value="updatedAt">更新时间</option>
-                  <option value="createdAt">创建时间</option>
-                  <option value="title">标题</option>
-                  <option value="id">ID</option>
-                </select>
-              </label>
-              <button className="tb-act sm" title="切换升序 / 降序" onClick={() => changeSort(sort.field)}>
-                {sort.dir === 'asc' ? '↑ 升序' : '↓ 降序'}
-              </button>
-            </>
-          )}
+          {/*
+            排序**不在顶栏摆下拉** —— 列表每一列的表头都能点排序，
+            顶栏再放一个只会让人以为"只能在这儿选那七个"。
+            这里只把当前排序**显示**出来（分组视图也吃同一个排序状态，
+            不显示的话切过去顺序变了却看不出为什么）。
+          */}
+          <span className="tb-views-sort" title="点列表表头可改排序">
+            排序：{sortLabel(sort.field)} {sort.dir === 'asc' ? '↑' : '↓'}
+          </span>
           <span className="tb-views-count" title="当前筛选命中 / 总任务">
             {filtered.length} / {store.tasks.length}
           </span>
+          <button className="tb-act sm" onClick={clearAllFilters} disabled={!filteredOn} title="清除所有列上的筛选与搜索">
+            重置
+          </button>
         </div>
       </div>
+
+      {/*
+        已生效的筛选列成 chip。
+        筛选一旦分散到各列，就没人知道"现在到底筛了什么" ——
+        列头漏斗只能一个一个点开看。集中显示在这里，
+        且每个 chip 能单独摘掉。
+      */}
+      {activeCols.length > 0 ? (
+        <div className="tb-chips">
+          {activeCols.map((c) => {
+            const f = colFilters[c.field] as ColFilter;
+            return (
+              <span key={c.field} className="tb-chip">
+                {c.label}：{filterSummary(c, f)}
+                <button
+                  type="button"
+                  className="tb-chip-x"
+                  onClick={() => clearColFilter(c.field)}
+                  title={`清除「${c.label}」的筛选`}
+                >
+                  ✕
+                </button>
+              </span>
+            );
+          })}
+          {view !== 'list' ? (
+            /*
+              筛选入口在列表的列头上，但四视图**共用同一份筛选结果**。
+              所以在别的视图里看到"3/20"却找不到地方改 —— 给一个跳转，
+              否则用户只能干瞪着命中数，以为筛选坏了。
+            */
+            <button
+              type="button"
+              className="tb-act sm"
+              onClick={() => changeView('list')}
+              title="按列筛选（在列表视图的列头上）"
+            >
+              去列表筛选
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* 看板五列 */}
       {view === 'board' && (
@@ -468,7 +523,16 @@ export default function App() {
 
       {/* 列表：平铺 + 表头排序 */}
       {view === 'list' && (
-        <ListView rows={listRows} sort={sort} onSort={changeSort} onOpen={(id) => setDetailId(id)} />
+        <ListView
+          rows={listRows}
+          allTasks={store.tasks}
+          sort={sort}
+          filters={colFilters}
+          onSort={changeSort}
+          onFilter={setColFilter}
+          onClearFilter={clearColFilter}
+          onOpen={(id) => setDetailId(id)}
+        />
       )}
 
       {/* 分组：按一个字段聚合，组内沿用当前排序 */}
@@ -603,46 +667,215 @@ function TaskCard({
 
 /* ================================================================ 列表视图 */
 
-const LIST_COLS: { field: SortField; label: string }[] = [
-  { field: 'priority', label: '优先级' },
-  { field: 'id', label: 'ID' },
-  { field: 'title', label: '标题' },
-  { field: 'status', label: '状态' },
-  { field: 'assignee', label: '认领人' },
-  { field: 'updatedAt', label: '更新' },
-];
+/**
+ * 筛选项的显示文案。
+ *
+ * core.mjs 只给**值**（它刻意不抄 STATUS_LABEL / PRIORITY_LABEL），
+ * 映射在这一处完成 —— 列头的下拉、已生效筛选的摘要都用同一份，
+ * 否则同一个值在两个地方说法不一样。
+ */
+function optionLabel(field: SortField, v: string): string {
+  if (field === 'priority') return `${v} ${PRIORITY_LABEL[v as Priority] || ''}`.trim();
+  if (field === 'status') return STATUS_LABEL[v as TaskStatus] || v;
+  if (field === 'assignee') return v || '未认领';
+  return v;
+}
+
+/** 已生效筛选的一句摘要，写在 chip 上 */
+function filterSummary(col: ListColumn, f: ColFilter): string {
+  if (col.kind === 'enum') {
+    return f.values.map((v) => optionLabel(col.field, v)).join('、');
+  }
+  if (col.kind === 'text') return f.text.trim();
+  const lo = f.min.trim();
+  const hi = f.max.trim();
+  if (lo && hi) return `${lo} ~ ${hi}`;
+  if (lo) return `${lo} 起`;
+  return `至 ${hi}`;
+}
+
+/**
+ * 列头的筛选面板。
+ *
+ * 开在**单元格里**而不是弹到别处：弹到设置页或顶栏的话，
+ * 改完要回来找刚才那一列在哪；而这里是"点哪列筛哪列"，位置自解释。
+ *
+ * 末尾几列贴右边展开 —— 表比容器宽（要横向滚动），
+ * 从左边展开的话大半会落到可视区外面。
+ */
+function ColFilterPop({
+  col, filter, options, onChange, onClear, anchorRight,
+}: {
+  col: ListColumn;
+  filter: ColFilter;
+  options: string[];
+  onChange: (f: ColFilter) => void;
+  onClear: () => void;
+  anchorRight?: boolean;
+}) {
+  const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
+  const cls = 'tb-lpop' + (anchorRight ? ' is-right' : '');
+
+  if (col.kind === 'enum') {
+    return (
+      <div className={cls} onClick={(e) => e.stopPropagation()}>
+        <div className="tb-lpop-title">按{col.label}筛选</div>
+        {options.length === 0 ? (
+          <div className="tb-lpop-hint">这一列当前没有可选的值</div>
+        ) : (
+          options.map((v) => {
+            const on = filter.values.indexOf(v) >= 0;
+            return (
+              <label key={v || '__none__'} className="tb-lpop-item">
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={() => set({
+                    values: on ? filter.values.filter((x) => x !== v) : [...filter.values, v],
+                  })}
+                />
+                <span>{optionLabel(col.field, v)}</span>
+              </label>
+            );
+          })
+        )}
+        <div className="tb-lpop-foot">
+          <span className="tb-lpop-hint">不选 = 不限</span>
+          <button type="button" className="tb-act sm" onClick={onClear}>清除</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (col.kind === 'text') {
+    return (
+      <div className={cls} onClick={(e) => e.stopPropagation()}>
+        <div className="tb-lpop-title">按{col.label}筛选</div>
+        <input
+          className="tb-lpop-input"
+          value={filter.text}
+          placeholder="包含关键词"
+          onChange={(e) => set({ text: e.target.value })}
+        />
+        <div className="tb-lpop-foot">
+          <span className="tb-lpop-hint">不区分大小写</span>
+          <button type="button" className="tb-act sm" onClick={onClear}>清除</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cls} onClick={(e) => e.stopPropagation()}>
+      <div className="tb-lpop-title">按{col.label}筛选</div>
+      <div className="tb-lpop-row">
+        <input
+          className="tb-lpop-date"
+          type="date"
+          value={filter.min}
+          onChange={(e) => set({ min: e.target.value })}
+        />
+        <span className="tb-lpop-hint">~</span>
+        <input
+          className="tb-lpop-date"
+          type="date"
+          value={filter.max}
+          onChange={(e) => set({ max: e.target.value })}
+        />
+      </div>
+      <div className="tb-lpop-foot">
+        <span className="tb-lpop-hint">只填一边也行</span>
+        <button type="button" className="tb-act sm" onClick={onClear}>清除</button>
+      </div>
+    </div>
+  );
+}
 
 function ListView({
   rows,
+  allTasks,
   sort,
+  filters,
   onSort,
+  onFilter,
+  onClearFilter,
   onOpen,
 }: {
   rows: Task[];
+  /** 全量任务。筛选项从它去重 —— 用过滤后的会漏掉已被筛掉的值 */
+  allTasks: Task[];
   sort: { field: SortField; dir: 'asc' | 'desc' };
+  filters: Partial<Record<SortField, ColFilter>>;
   onSort: (field: SortField) => void;
+  onFilter: (field: SortField, f: ColFilter) => void;
+  onClearFilter: (field: SortField) => void;
   onOpen: (id: string) => void;
 }) {
+  const [openCol, setOpenCol] = useState<SortField | ''>('');
+
+  /*
+    点面板外关闭。
+    面板开在表头单元格里，所以点那个单元格（含漏斗按钮自身）不算"外面" ——
+    否则点一下关、再点一下又开，看起来像按钮坏了。
+  */
+  useEffect(() => {
+    if (!openCol) return;
+    const onDown = (e: MouseEvent) => {
+      const el = document.getElementById('tb-lpop-host-' + openCol);
+      if (el && e.target instanceof Node && el.contains(e.target)) return;
+      setOpenCol('');
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [openCol]);
+
   return (
     <div className="tb-list">
       <div className="tb-list-head tb-lgrid">
-        {LIST_COLS.map((c) => (
-          <button
-            key={c.field}
-            className={'tb-lh c-' + c.field + (sort.field === c.field ? ' on' : '')}
-            title={`按${c.label}排序（再次点击切换方向）`}
-            onClick={() => onSort(c.field)}
-          >
-            {c.label}
-            <span className="tb-lh-dir">{sort.field === c.field ? (sort.dir === 'asc' ? '↑' : '↓') : '↕'}</span>
-          </button>
-        ))}
+        {LIST_COLUMNS.map((c, ci) => {
+          const f = filters[c.field];
+          const on = colFilterActive(c, f);
+          const isOpen = openCol === c.field;
+          return (
+            <div
+              key={c.field}
+              id={'tb-lpop-host-' + c.field}
+              className={'tb-lhcell c-' + c.field}
+            >
+              <button
+                className={'tb-lh' + (sort.field === c.field ? ' on' : '')}
+                title={`按${c.label}排序（再次点击切换方向）`}
+                onClick={() => onSort(c.field)}
+              >
+                {c.label}
+                <span className="tb-lh-dir">{sort.field === c.field ? (sort.dir === 'asc' ? '↑' : '↓') : '↕'}</span>
+              </button>
+              <button
+                className={'tb-lfunnel' + (on ? ' on' : '') + (isOpen ? ' open' : '')}
+                title={`按${c.label}筛选`}
+                onClick={() => setOpenCol(isOpen ? '' : c.field)}
+              >
+                ⛏
+              </button>
+              {isOpen ? (
+                <ColFilterPop
+                  col={c}
+                  filter={f || emptyColFilter()}
+                  options={colFilterValues(c.field, allTasks)}
+                  onChange={(nf) => onFilter(c.field, nf)}
+                  onClear={() => onClearFilter(c.field)}
+                  anchorRight={ci >= LIST_COLUMNS.length - 3}
+                />
+              ) : null}
+            </div>
+          );
+        })}
       </div>
       <div className="tb-list-body">
         {rows.length === 0 && <div className="tb-col-empty">没有符合条件的任务</div>}
         {rows.map((t) => (
           <div key={t.id} className="tb-lrow tb-lgrid" onClick={() => onOpen(t.id)} title="点击查看详情">
-            <span className="tb-lc">
+            <span className="tb-lc c-priority">
               <PriorityBadge p={t.priority} />
             </span>
             <span className="tb-lc c-id">{t.id}</span>
@@ -663,6 +896,12 @@ function ListView({
               {STATUS_LABEL[t.status]}
             </span>
             <span className="tb-lc c-assignee">{t.assignee ? '@' + t.assignee : '未认领'}</span>
+            <span className="tb-lc c-tags">
+              {t.tags.length > 0 ? t.tags.join('、') : <span className="tb-ldim">—</span>}
+            </span>
+            <span className="tb-lc c-createdAt" title={fmtTime(t.createdAt)}>
+              {t.createdAt ? relTime(t.createdAt) : <span className="tb-ldim">—</span>}
+            </span>
             <span className="tb-lc c-updatedAt" title={fmtTime(t.updatedAt)}>
               {relTime(t.updatedAt)}
             </span>

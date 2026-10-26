@@ -21,6 +21,13 @@ import {
   statsOf,
   UNASSIGNED,
   NOTAG,
+  LIST_COLUMNS,
+  emptyColFilter,
+  colFilterActive,
+  colRawValues,
+  colFilterValues,
+  activeColFilters,
+  filterTasksByColumns,
 } from './core.mjs';
 
 let pass = 0;
@@ -196,6 +203,115 @@ t('statsOf stale 按 updatedAt 升序（最僵硬在前）', (() => {
 t('statsOf 边界：刚满 7 天不算陈旧', statsOf({ tasks: [mk('edge', 'P1', NOW - 7 * DAY)] }, NOW).stale.length === 0);
 t('statsOf agents 透传', st.agents.length === 1 && st.agents[0].name === '甲');
 t('statsOf 空库不炸', statsOf({ v: 1, nextId: 1, tasks: [], agents: [] }, NOW).total === 0);
+
+
+/* ============================================================ 列级筛选 */
+
+const TB_TASKS = [
+  normalizeTask({ id: 'tb-0001', title: '质量门禁', detail: '门禁脚本', status: 'done', priority: 'P0', tags: ['ci'], assignee: 'w1', createdAt: Date.parse('2026-10-01T10:00:00'), updatedAt: Date.parse('2026-10-20T10:00:00') }),
+  normalizeTask({ id: 'tb-0002', title: '数据持久化', detail: '', status: 'todo', priority: 'P2', tags: ['db'], assignee: null, createdAt: Date.parse('2026-10-05T10:00:00'), updatedAt: Date.parse('2026-10-21T10:00:00') }),
+  normalizeTask({ id: 'tb-0003', title: '新手引导', detail: '引导流程', status: 'doing', priority: 'P1', tags: ['ui', 'db'], assignee: 'w2', createdAt: Date.parse('2026-10-08T10:00:00'), updatedAt: Date.parse('2026-10-22T10:00:00') }),
+];
+
+/** 造一份只有某列生效的筛选 */
+function onlyFilter(field, patch) {
+  const f = {};
+  f[field] = { ...emptyColFilter(), ...patch };
+  return f;
+}
+
+const COL = (k) => ({ field: 'priority', label: '', kind: k });
+
+t('列定义：八列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
+  LIST_COLUMNS.length === 8 && LIST_COLUMNS.every((c) => ['enum', 'text', 'time'].indexOf(c.kind) >= 0));
+
+t('列定义：覆盖优先级/ID/标题/状态/认领人/标签/创建/更新', (() => {
+  const fields = LIST_COLUMNS.map((c) => c.field);
+  return ['priority', 'id', 'title', 'status', 'assignee', 'tags', 'createdAt', 'updatedAt']
+    .every((f) => fields.indexOf(f) >= 0);
+})());
+
+t('colFilterActive：各类型只认自己那几个字段', (() => {
+  const e = emptyColFilter();
+  return colFilterActive(COL('enum'), e) === false
+    && colFilterActive(COL('enum'), { ...e, values: ['P0'] }) === true
+    && colFilterActive(COL('text'), { ...e, text: '门禁' }) === true
+    && colFilterActive(COL('time'), { ...e, min: '2026-10-01' }) === true
+    && colFilterActive(COL('time'), { ...e, min: '不是日期' }) === false;
+})());
+
+t('colRawValues：认领人空串表示未认领；标签是多值',
+  colRawValues(TB_TASKS[0], 'assignee')[0] === 'w1'
+  && colRawValues(TB_TASKS[1], 'assignee')[0] === ''
+  && colRawValues(TB_TASKS[0], 'status')[0] === 'done'
+  && colRawValues(TB_TASKS[2], 'tags').length === 2);
+
+t('按优先级筛：只留命中的',
+  filterTasksByColumns(TB_TASKS, onlyFilter('priority', { values: ['P0', 'P1'] }), '').length === 2);
+
+t('按优先级筛：拿显示文案去筛不该命中（筛选按原始值）',
+  filterTasksByColumns(TB_TASKS, onlyFilter('priority', { values: ['紧急'] }), '').length === 0);
+
+t('按状态筛', filterTasksByColumns(TB_TASKS, onlyFilter('status', { values: ['todo'] }), '').length === 1);
+
+t('按认领人筛：空串能筛出没人认领的（"找没人领的"是常用查询）', (() => {
+  const hit = filterTasksByColumns(TB_TASKS, onlyFilter('assignee', { values: [''] }), '');
+  return hit.length === 1 && hit[0].id === 'tb-0002';
+})());
+
+t('按认领人筛：能筛出具体某人', (() => {
+  const hit = filterTasksByColumns(TB_TASKS, onlyFilter('assignee', { values: ['w2'] }), '');
+  return hit.length === 1 && hit[0].id === 'tb-0003';
+})());
+
+t('按标签筛：多值命中任一即可（不是要全部命中）',
+  filterTasksByColumns(TB_TASKS, onlyFilter('tags', { values: ['db'] }), '').length === 2);
+
+t('文本列：ID 与标题按关键词包含，不区分大小写',
+  filterTasksByColumns(TB_TASKS, onlyFilter('id', { text: 'TB-0002' }), '').length === 1
+  && filterTasksByColumns(TB_TASKS, onlyFilter('title', { text: '门禁' }), '').length === 1);
+
+t('时间列：区间筛选，上界含当天',
+  filterTasksByColumns(TB_TASKS, onlyFilter('createdAt', { min: '2026-10-05', max: '2026-10-08' }), '').length === 2);
+
+t('时间列：没有时间戳的不参与区间筛选（不该被带出来）', (() => {
+  const noTime = [normalizeTask({ id: 'tb-0009', title: 'x', status: 'todo', priority: 'P2', tags: [], assignee: null, createdAt: 0, updatedAt: 0 })];
+  return filterTasksByColumns(noTime, onlyFilter('createdAt', { min: '2026-10-01' }), '').length === 0;
+})());
+
+t('组合筛选是"且"（收窄而不是变宽）', (() => {
+  const f = { priority: { ...emptyColFilter(), values: ['P1'] }, status: { ...emptyColFilter(), values: ['doing'] } };
+  const hit = filterTasksByColumns(TB_TASKS, f, '');
+  return hit.length === 1 && hit[0].id === 'tb-0003';
+})());
+
+t('全局搜索跨 id / 标题 / 详情', filterTasksByColumns(TB_TASKS, {}, '门禁脚本').length === 1);
+
+t('空的 filter 对象不会让整表变空（最难自查的那类 bug）', (() => {
+  const f = { priority: emptyColFilter(), status: emptyColFilter(), tags: emptyColFilter() };
+  return filterTasksByColumns(TB_TASKS, f, '').length === TB_TASKS.length;
+})());
+
+t('activeColFilters：只数真正生效的列', (() => {
+  const f = { tags: { ...emptyColFilter(), values: ['db'] }, priority: emptyColFilter() };
+  const act = activeColFilters(f).map((c) => c.field);
+  return act.length === 1 && act[0] === 'tags';
+})());
+
+t('colFilterValues：优先级/状态取全量；认领人从数据去重且未认领排最后', (() => {
+  const pri = colFilterValues('priority', TB_TASKS);
+  const st = colFilterValues('status', TB_TASKS);
+  const as = colFilterValues('assignee', TB_TASKS);
+  return pri.length === 4 && st.length === 5
+    && as[as.length - 1] === '' && as.indexOf('w1') >= 0 && as.indexOf('w2') >= 0;
+})());
+
+t('colFilterValues：标签取全部去重', colFilterValues('tags', TB_TASKS).indexOf('ui') >= 0);
+
+t('标签列能排序（多值按拼串，不是按第一个）', (() => {
+  const asc = sortTasksBy(TB_TASKS, 'tags', 'asc');
+  return asc[0].id === 'tb-0001' && asc[2].id === 'tb-0003';
+})());
 
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
