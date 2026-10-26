@@ -114,6 +114,172 @@ export function filterTasks(tasks, f) {
   });
 }
 
+/* ============================================================ 列级筛选
+ *
+ * 每一列都能筛 —— "哪些任务该出现"由列上的筛选决定，不由顶栏那排
+ * 下拉决定。顶栏摆四个下拉时，只有那四件事筛得了；而"创建于上周、
+ * 没人认领的 P0"这种组合根本填不进去。
+ *
+ * 所以这里给每一列都配一份筛选条件，顶栏只留一个**全局搜索**
+ * （跨 id / 标题 / 详情，那是一次性找某条东西的入口，不属于"按列筛"）。
+ *
+ * kind 决定这一列配什么控件：
+ *   enum → 多选（优先级 / 状态 / 认领人 / 标签）
+ *   text → 关键词包含（ID / 标题）
+ *   time → 起止日期（创建 / 更新）
+ */
+
+/** 列表视图的列。顺序即界面上的列序 */
+export const LIST_COLUMNS = [
+  { field: 'priority', label: '优先级', kind: 'enum' },
+  { field: 'id', label: 'ID', kind: 'text' },
+  { field: 'title', label: '标题', kind: 'text' },
+  { field: 'status', label: '状态', kind: 'enum' },
+  { field: 'assignee', label: '认领人', kind: 'enum' },
+  { field: 'tags', label: '标签', kind: 'enum' },
+  { field: 'createdAt', label: '创建', kind: 'time' },
+  { field: 'updatedAt', label: '更新', kind: 'time' },
+];
+
+/** 一列的筛选条件。四种字段全放在一个对象里 —— 换来的是一份判空、一份清空 */
+export function emptyColFilter() {
+  return { text: '', values: [], min: '', max: '' };
+}
+
+/** 'YYYY-MM-DD' → 当天 00:00:00。解析不出来返回 null（不当成 0 去卡死筛选） */
+function dayStart(s) {
+  const t = (s || '').trim();
+  if (!t) return null;
+  const ms = Date.parse(`${t}T00:00:00`);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** 'YYYY-MM-DD' → 当天 23:59:59.999。上界要含当天，否则选"到今天"会把今天排除掉 */
+function dayEnd(s) {
+  const t = (s || '').trim();
+  if (!t) return null;
+  const ms = Date.parse(`${t}T23:59:59.999`);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** 这一列的筛选是否生效。判空只写这一处，UI 与过滤共用 */
+export function colFilterActive(col, f) {
+  if (!f) return false;
+  if (col.kind === 'enum') return (f.values || []).length > 0;
+  if (col.kind === 'text') return (f.text || '').trim() !== '';
+  if (col.kind === 'time') return dayStart(f.min) !== null || dayEnd(f.max) !== null;
+  return false;
+}
+
+/**
+ * 该列用于**筛选**的原始值（可能多个）。
+ *
+ * 返回数组是因为标签是多值的：拼成串之后"选中 A 和 B"会变成要匹配
+ * "A,B" 这个整体，而用户要的是"挂着 A 或 B 的都算"。
+ *
+ * 认领人用空串表示"未认领" —— 它得能单独被筛出来（"找没人认领的"
+ * 是很常用的查询），所以不能返回空数组：空数组在这里表示
+ * "这行在该列上没有值，不匹配任何选项"。
+ */
+export function colRawValues(task, field) {
+  switch (field) {
+    case 'priority': return [task.priority];
+    case 'status': return [task.status];
+    case 'assignee': return [task.assignee || ''];
+    case 'tags': return task.tags || [];
+    default: return [];
+  }
+}
+
+/** 单列匹配 */
+function matchesCol(t, col, f) {
+  switch (col.kind) {
+    case 'enum': {
+      const raws = colRawValues(t, col.field);
+      if (raws.length === 0) return false;
+      // 多值列（标签）命中任一即可
+      return raws.some((x) => f.values.indexOf(x) >= 0);
+    }
+    case 'text': {
+      const kw = (f.text || '').trim().toLowerCase();
+      if (!kw) return true;
+      return String(t[col.field] || '').toLowerCase().indexOf(kw) >= 0;
+    }
+    case 'time': {
+      const n = t[col.field] || 0;
+      /*
+        时间为 0（老数据没记）**不参与**区间筛选 ——
+        "找上周创建的"不该带出一堆没时间戳的，
+        它们根本没有创建时间，放进结果里只是一条永远排在最后的噪音。
+      */
+      if (n <= 0) return false;
+      const lo = dayStart(f.min);
+      const hi = dayEnd(f.max);
+      if (lo !== null && n < lo) return false;
+      if (hi !== null && n > hi) return false;
+      return true;
+    }
+    default:
+      return true;
+  }
+}
+
+/**
+ * 按列筛选。
+ *
+ * 只判**生效**的列：某列 filter 对象存在但全空时，若照样拿去匹配，
+ * enum 列的 values 是空数组 → 全部不匹配 → 整表变空。
+ * 那是最难自查的一类 bug：看起来"什么都没筛，却一条都没有"。
+ *
+ * @param q 全局关键词（跨 id / 标题 / 详情），可空
+ */
+export function filterTasksByColumns(tasks, filters, q) {
+  const active = LIST_COLUMNS.filter((c) => colFilterActive(c, filters[c.field]));
+  const kw = (q || '').trim().toLowerCase();
+  if (active.length === 0 && !kw) return tasks;
+  return tasks.filter((t) => {
+    for (const c of active) {
+      if (!matchesCol(t, c, filters[c.field])) return false;
+    }
+    if (kw) {
+      const hay = `${t.id} ${t.title} ${t.detail}`.toLowerCase();
+      if (hay.indexOf(kw) < 0) return false;
+    }
+    return true;
+  });
+}
+
+/** 生效的筛选列（按列序）。头部与摘要用 */
+export function activeColFilters(filters) {
+  return LIST_COLUMNS.filter((c) => colFilterActive(c, filters[c.field]));
+}
+
+/**
+ * 某一列的候选值（原始值，不含显示文案）。
+ *
+ * ⛔ 这里**只给值不给 label** —— 状态名与优先级名的映射在 types.ts，
+ * core.mjs 刻意不抄第二份（抄了就会漂移，见 core.mjs 顶部注释）。
+ * 前端拿值去映射文案。
+ *
+ * 认领人从**当前这批任务**里去重，而不是取 agents 表：
+ * 表里没有、但任务上写着的名字（外部 API 写的）照样要能筛；
+ * 反过来表里有、但没人领过任务的名字，列出来选中就是零行。
+ */
+export function colFilterValues(field, tasks) {
+  switch (field) {
+    case 'priority': return [...PRIORITIES];
+    case 'status': return [...STATUSES];
+    case 'assignee': {
+      const names = [...new Set((tasks || []).map((t) => t.assignee).filter(Boolean))];
+      names.sort((a, b) => a.localeCompare(b));
+      // 未认领（空串）排最后：它是"没人"，不该顶在名单前面
+      return [...names, ''];
+    }
+    case 'tags': return allTags(tasks || []);
+    default: return [];
+  }
+}
+
 /** 全部标签（去重，按出现次数倒序，最多 20 个） */
 export function allTags(tasks) {
   const cnt = new Map();
@@ -263,6 +429,17 @@ export function sortTasksBy(tasks, field, dir = 'asc') {
       case 'id':
         r = a.id.localeCompare(b.id);
         break;
+      case 'tags': {
+        /*
+          标签是多值的，排序键取"拼起来的串"。
+          按第一个标签比会让 [b,a] 与 [a,b] 排在不同位置 ——
+          同一个任务自己跟自己不一致；拼串是唯一确定的。
+        */
+        const ta = (a.tags || []).slice().sort().join(',');
+        const tb = (b.tags || []).slice().sort().join(',');
+        r = ta.localeCompare(tb, 'zh-Hans-CN');
+        break;
+      }
       default:
         r = 0;
     }

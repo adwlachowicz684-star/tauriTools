@@ -794,10 +794,11 @@
    免得「各写一半」被 regression 守卫盯上） */
 .tb-lgrid {
   display: grid;
-  grid-template-columns: 64px 76px minmax(0, 1fr) 96px 110px 88px;
+  /* 8 列：优先级 / ID / 标题 / 状态 / 认领人 / 标签 / 创建 / 更新 */
+  grid-template-columns: 60px 74px minmax(0, 1fr) 92px 100px 120px 88px 88px;
   gap: var(--sp-2);
   align-items: center;
-  min-width: 620px;
+  min-width: 780px;
 }
 
 .tb-list-head {
@@ -836,6 +837,201 @@
 
 .tb-lh-dir {
   font-size: var(--fs-micro);
+}
+
+/* ------------------------------------------------ 列级筛选 */
+
+/* 列头单元格：一个排序按钮 + 一个漏斗。两个都常驻，
+   免得"能排序但不能筛"这种半截状态 —— 看着能点却点不动比没有更难受 */
+.tb-lhcell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.tb-lhcell .tb-lh {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+/* 漏斗常驻但不抢戏：没生效时压得很淡，生效了才显出来 */
+.tb-lfunnel {
+  flex: none;
+  padding: 0 var(--sp-1);
+  border: none;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  cursor: pointer;
+  opacity: .35;
+}
+.tb-lhcell:hover .tb-lfunnel { opacity: .8; }
+.tb-lfunnel.on {
+  color: var(--accent);
+  opacity: 1;
+}
+.tb-lfunnel.open {
+  color: var(--accent);
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/*
+  筛选面板开在列头单元格里。
+  末尾三列贴右边展开 —— 表比容器宽时要横向滚动，
+  从左边展开的话那几列的面板大半会落到可视区外面。
+*/
+.tb-lpop {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  left: 0;
+  z-index: var(--z-pop);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: 190px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--sh-cast-md);
+  cursor: default;
+}
+.tb-lpop.is-right {
+  left: auto;
+  right: 0;
+}
+.tb-lpop-title {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+.tb-lpop-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.tb-lpop-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tb-lpop-input {
+  width: 100%;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-micro);
+}
+.tb-lpop-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.tb-lpop-date {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: var(--sp-1);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-micro);
+}
+.tb-lpop-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-mute);
+}
+.tb-lpop-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding-block-start: var(--sp-1);
+  border-block-start: 1px solid var(--divider);
+}
+
+/* 已生效的筛选：列头漏斗只能一个一个点开看，
+   集中成 chip 才知道"现在到底筛了什么" */
+.tb-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-4);
+  border-block-end: 1px solid var(--divider);
+}
+.tb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: 260px;
+  padding: 0 var(--sp-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+  font-size: var(--fs-micro);
+  line-height: 1.7;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tb-chip-x {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.tb-chip-x:hover {
+  color: var(--danger);
+}
+
+/* 单元格里"这一格没有值"的占位。留空白会分不清是"没填"还是"没加载出来" */
+.tb-ldim {
+  color: var(--text-mute);
+}
+
+/* 标签列：多值，超出省略 */
+.tb-lc.c-tags {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
+/* 优先级列：徽章居左，列宽固定 */
+.tb-lc.c-priority {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* 时间列：等宽数字（相对时间长度不一，不等宽会左右抖） */
+.tb-lc.c-createdAt,
+.tb-lc.c-updatedAt {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-views-sort {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
 }
 
 .tb-list-body {
