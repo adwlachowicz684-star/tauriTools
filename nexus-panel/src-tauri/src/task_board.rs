@@ -37,7 +37,10 @@ use tauri::{Manager, State};
 /// 每个任务保留的历史事件上限（防无限增长）。
 const HISTORY_CAP: usize = 100;
 /// 合法任务状态（前端状态机与此一致，双端各自校验）。
-const STATUSES: [&str; 5] = ["todo", "claimed", "doing", "review", "done"];
+/// 合法任务状态（**默认值**；用户可在界面上改，改后存在 tasks.json 的 flow 里）。
+///
+/// 前端 core.mjs 的 STATUSES 与本行逐项同序（守卫第 22 节盯着）。
+const STATUSES: [&str; 7] = ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"];
 
 /// 文件级全局锁：看板 UI 与 HTTP 服务两条写通道都要过它，
 /// 否则「读-改-写」序列会被对方插在半途。
@@ -518,7 +521,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "tb_list_tasks",
             "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）",
             json!({
-                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "review", "done"], "description": "按状态过滤，缺省=全部" },
+                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "按优先级过滤" },
                 "tag":      { "type": "string", "description": "按标签过滤" },
                 "assignee": { "type": "string", "description": "按认领人过滤；传 \"__none__\" 查未认领" },
@@ -549,7 +552,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "流转/修改任务：认领、开工、提交审查、通过、打回、退回、改字段",
             json!({
                 "id":       { "type": "string", "description": "任务 id" },
-                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "review", "done"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）" },
+                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）" },
                 "assignee": { "type": "string", "description": "认领人；已被他人认领会被拒绝；空串=释放认领" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
@@ -836,16 +839,85 @@ fn str_field(body: &Value, key: &str) -> Option<String> {
 /// 有守卫盯着：regression-guard-test.mjs 第 22 节会逐档比对这张表，
 /// 连 MCP schema 里的 enum 一起盯（改了它们 AI 就调不通）。
 /// 反向路径都在：claimed→todo / doing→todo 退回，review→doing 打回，done→review 重开。
+/// 读**用户自定义**的状态清单（tasks.json → flow.statuses）。没配过返回 None。
+///
+/// 为什么双端都要认它：只前端认的话，AI 经 HTTP/MCP 写一个自定义状态
+/// 会被这里拒掉，表现为"界面上能选、API 写不进去"——两边都不报错，
+/// 只是一个写不进去，这种不一致最难自查。
+///
+/// 认两种写法：`[{"id":"todo",...}]`（界面写的）和 `["todo",...]`（手写图省事）。
+fn flow_statuses(store: &Value) -> Option<Vec<String>> {
+    let arr = store.get("flow")?.get("statuses")?.as_array()?;
+    let mut out: Vec<String> = Vec::new();
+    for one in arr.iter() {
+        let id = match one.as_str() {
+            Some(s) => s.to_string(),
+            None => one.get("id")?.as_str()?.to_string(),
+        };
+        if !id.is_empty() && !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+/// 这份数据认哪些状态：自定义优先，没配过用默认那套。
+fn statuses_for(store: &Value) -> Vec<String> {
+    match flow_statuses(store) {
+        Some(v) => v,
+        None => STATUSES.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+/// 自定义流转表（tasks.json → flow.transitions）。**先拷成自有数据**再返回：
+/// 调用点在 `store["tasks"].as_array_mut()` 的可变借用之内，
+/// 那时候再借 &store 会被借用检查器拒（E0502）。
+fn flow_transitions(store: &Value) -> Option<HashMap<String, Vec<String>>> {
+    let obj = store.get("flow")?.get("transitions")?.as_object()?;
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for (k, v) in obj.iter() {
+        let arr: Vec<String> = match v.as_array() {
+            Some(a) => a.iter().filter_map(|x| x.as_str()).map(|x| x.to_string()).collect(),
+            None => continue,
+        };
+        out.insert(k.clone(), arr);
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+/// 按这份数据的配置判断能不能流转。没配过流转表就走默认那张图。
+///
+/// ⛔ 表里写了起点但没列目标 → **不放行**：
+/// 那是"配了这个状态却什么都不能走"，照默认放行等于配错了还照旧运行。
+fn can_flow(
+    table: Option<&HashMap<String, Vec<String>>>,
+    from: &str,
+    to: &str,
+) -> bool {
+    if from == to {
+        return true;
+    }
+    match table {
+        Some(t) => match t.get(from) {
+            Some(arr) => arr.iter().any(|x| x == to),
+            None => false,
+        },
+        None => can_transition(from, to),
+    }
+}
+
 fn can_transition(from: &str, to: &str) -> bool {
     if from == to {
         return true;
     }
     let allowed: &[(&str, &[&str])] = &[
-        ("todo", &["claimed", "doing"]),
-        ("claimed", &["doing", "todo"]),
-        ("doing", &["review", "todo"]),
-        ("review", &["done", "doing"]),
+        ("todo", &["claimed", "doing", "hold", "cancelled"]),
+        ("claimed", &["doing", "todo", "hold", "cancelled"]),
+        ("doing", &["review", "todo", "hold", "cancelled"]),
+        ("hold", &["doing", "todo", "cancelled"]),
+        ("review", &["done", "doing", "hold", "cancelled"]),
         ("done", &["review"]),
+        ("cancelled", &["todo"]),
     ];
     allowed
         .iter()
@@ -859,20 +931,29 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     if title.trim().is_empty() {
         return Err("title 不能为空".to_string());
     }
-    // 新建只允许 todo：想认领/开工/送审走 PATCH，别在建任务时一步跳过整个流程
-    if let Some(s) = str_field(body, "status") {
-        if s != "todo" {
-            return Err(format!(
-                "新建任务只允许 status=todo（收到 {}）；后续流转走 PATCH",
-                s
-            ));
-        }
-    }
     let priority = str_field(body, "priority").unwrap_or_else(|| "P2".to_string());
     if !["P0", "P1", "P2", "P3"].contains(&priority.as_str()) {
         return Err(format!("非法优先级 {}（合法值: P0/P1/P2/P3）", priority));
     }
     let mut store = load_tasks(dir)?;
+    /*
+      新建只允许落在**初始状态**：想认领/开工/送审走 PATCH，
+      别在建任务时一步跳过整个流程。
+      初始状态 = 本项目状态清单的第一个（配过自定义流程时不一定是 todo），
+      所以这段必须放在 load_tasks 之后 —— 得先知道这个项目配了哪些状态。
+    */
+    let initial = statuses_for(&store)
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "todo".to_string());
+    if let Some(s) = str_field(body, "status") {
+        if s != initial {
+            return Err(format!(
+                "新建任务只允许 status={}（收到 {}）；后续流转走 PATCH",
+                initial, s
+            ));
+        }
+    }
     let next_id = store.get("nextId").and_then(|v| v.as_u64()).unwrap_or(1);
     let id = format!("tb-{:04}", next_id);
     store["nextId"] = json!(next_id + 1);
@@ -885,7 +966,7 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
         "detail".to_string(),
         json!(str_field(body, "detail").unwrap_or_default()),
     );
-    task.insert("status".to_string(), json!("todo"));
+    task.insert("status".to_string(), json!(initial));
     task.insert("priority".to_string(), json!(priority));
     task.insert(
         "tags".to_string(),
@@ -911,6 +992,12 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
 /// 返回 (任务快照, 是否本次进入 review)——后者驱动 webhook 通知。
 fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), String> {
     let mut store = load_tasks(dir)?;
+    /*
+      **在进入可变借用之前**把配置取成自有数据：下面 `store["tasks"].as_array_mut()`
+      会一直持有 &mut store，那时候再借 &store 会被借用检查器拒（E0502）。
+    */
+    let allowed = statuses_for(&store);
+    let flow = flow_transitions(&store);
     let by = str_field(body, "by").unwrap_or_else(|| "manual".to_string());
     let note = str_field(body, "note").unwrap_or_default();
 
@@ -949,18 +1036,19 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
             }
         }
         if let Some(status) = str_field(body, "status") {
-            if !STATUSES.contains(&status.as_str()) {
+            // 认这份数据自己配的状态（没配过就是默认那七个）
+            if !allowed.iter().any(|x| x == &status) {
                 return Err(format!(
-                    "非法状态 {}（合法值: {}）",
+                    "非法状态 {}（本项目合法值: {}）",
                     status,
-                    STATUSES.join("/")
+                    allowed.join("/")
                 ));
             }
             let old = obj.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
             if old != status {
-                if !can_transition(&old, &status) {
+                if !can_flow(flow.as_ref(), &old, &status) {
                     return Err(format!(
-                        "不允许的流转 {} -> {}（合法路径见 docs/AI-CONVENTIONS.md 状态图）",
+                        "不允许的流转 {} -> {}（合法路径见本项目流程配置或 docs/AI-CONVENTIONS.md 状态图）",
                         old, status
                     ));
                 }

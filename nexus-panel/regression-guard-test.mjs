@@ -1972,8 +1972,16 @@ console.log('\n=== 21. 两个外壳入口必须对用户看到的东西达成一
        * 于是扫描结果只是"少了一处"，断言照样绿（破坏验证时实测踩到过）。
        * 改成先按形状认出"这像一份状态清单 / 优先级清单"，再逐条比内容。
        */
+      /*
+        ⛔ 为什么加"首项是初始态"和"含 done"这两条限定：
+        流转表**单行**的值（如 ["doing","todo","hold","cancelled"]）同样满足
+        "≥4 项、全小写、含 todo"，光靠形状会和状态清单混淆 ——
+        加了挂起/已取消之后流转行变长到 4 项，混淆第一次真的发生了
+        （判据把流转行当成状态清单去比对，22.4 恒红而两侧其实一致）。
+        状态清单都是从初始态起头、且一定含终态 done；流转单行不会同时占这两条。
+      */
       const statusLike = (a) => a.length >= 4 && a.every((x) => /^[a-z]+$/.test(x))
-        && (a.includes('todo') || a.includes('done'));
+        && a[0] === jsStatus[0] && a.includes('done');
       const prioLike = (a) => a.length >= 3 && a.every((x) => /^P\d$/.test(x));
       const rsStatus = strArrays(tbRs).filter(statusLike);
       const rsPrio = strArrays(tbRs).filter(prioLike);

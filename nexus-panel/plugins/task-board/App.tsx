@@ -8,7 +8,9 @@ import {
   PRIORITY_LABEL,
 } from './types';
 import { TAG_COLORS } from './types';
-import type { TbConfig, Task, TaskStore, Priority, TaskStatus, TagDef } from './types';
+import type {
+  TbConfig, Task, TaskStore, Priority, TaskStatus, TagDef, TaskFlow, StatusDef,
+} from './types';
 import {
   NOTAG,
   UNASSIGNED,
@@ -20,8 +22,11 @@ import {
   colFilterValues,
   emptyColFilter,
   filterTasksByColumns,
+  actionsForIn,
   ancestorChain,
+  canTransitionIn,
   createGroup,
+  DEFAULT_FLOW,
   dissolveGroup,
   flattenTasks,
   mergeIntoGroup,
@@ -29,12 +34,16 @@ import {
   groupStatus,
   groupTasks,
   indexTasks,
+  initialStatus,
   lockOf,
+  normalizeFlow,
   relTime,
   sortRowsBy,
   sortTasks,
   splitTask,
   statsOf,
+  statusColor,
+  statusName,
 } from './core';
 import type { ColFilter, FlatRow, GroupKey, ListColumn, SortField, TbStats } from './core';
 /* 输入法守卫：中文 / 日文输入时回车是「把候选词上屏」，不是界面上的「提交」。
@@ -64,6 +73,9 @@ const VIEWS: { key: TbView; label: string; title: string }[] = [
 ];
 
 const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'tag'];
+
+/** 流程配置的最小形状（组件只用到 statuses / transitions / edges） */
+type FlowLike = ReturnType<typeof normalizeFlow>;
 
 const SORT_FIELDS: SortField[] = ['priority', 'status', 'assignee', 'tags', 'groupPath', 'summary', 'updatedAt', 'createdAt', 'title', 'id'];
 
@@ -114,6 +126,8 @@ export default function App() {
     不持久化：勾选是"这一手要动哪几条"，不是偏好。
   */
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
+  /** 流程设置面板 */
+  const [flowOpen, setFlowOpen] = useState(false);
   /** 新建/合并组的弹窗。null = 关着 */
   const [groupDraft, setGroupDraft] = useState<{ mode: 'merge' | 'new' } | null>(null);
 
@@ -217,20 +231,36 @@ export default function App() {
     其它三个视图要的是 Task[]，从行上取回（filteredTasks）——
     它们不显示层级，用行反而多一层。
   */
+  /*
+    流程配置（自定义状态与流转）。store.flow 由 normalizeStore 保证存在 ——
+    缺字段的老文件给的是默认那套，行为与以前完全一致。
+  */
+  const flow = store ? store.flow : DEFAULT_FLOW;
+  const statusIds = flow.statuses.map((s) => s.id);
+
   const flatRows = useMemo(() => flattenTasks(store ? store.tasks : []), [store]);
   const filteredRows = useMemo(
     () => filterTasksByColumns(flatRows, colFilters, q),
     [flatRows, colFilters, q],
   );
   const filtered = useMemo(() => filteredRows.map((r) => r.task), [filteredRows]);
+  /*
+    看板的列 = 用户配了几个状态就有几列。
+    写死五列的话，用户新增的状态在看板上根本没有落脚的地方 ——
+    那些任务会"消失"（不在任何一列里）。
+  */
   const byColumn = useMemo(() => {
-    const map: Record<TaskStatus, Task[]> = { todo: [], claimed: [], doing: [], review: [], done: [] };
+    const map: Record<string, Task[]> = {};
+    for (const s of flow.statuses) map[s.id] = [];
     if (store) {
       const list = sortTasks(filtered);
-      for (const t of list) map[t.status].push(t);
+      for (const t of list) {
+        if (!map[t.status]) map[t.status] = [];   // 配置里没有的状态也要有地方放
+        map[t.status].push(t);
+      }
     }
     return map;
-  }, [store, filtered]);
+  }, [store, filtered, flow]);
   const listRows = useMemo(
     () => sortRowsBy(filteredRows, sort.field, sort.dir),
     [filteredRows, sort],
@@ -362,6 +392,19 @@ export default function App() {
         return { ...st, tasks: r.tasks };
       });
       await refresh();
+    })();
+
+  /*
+    存流程配置。整份覆盖（不像任务那样逐条合并）——
+    配置是"当前应该是什么样"，不是"谁改了哪一条"，
+    逐条合并反而会把"删掉一个状态"合并回成"还在"。
+  */
+  const doSaveFlow = (next: TaskFlow) =>
+    withErr(async () => {
+      if (!cfg) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => ({ ...st, flow: normalizeFlow(next) }));
+      await refresh();
+      ctx.toast('流程已保存', 'ok');
     })();
 
   const doSplit = (id: string, titles: string[]) =>
@@ -530,6 +573,13 @@ export default function App() {
           >
             ●
           </button>
+          <button
+            className="tb-act"
+            onClick={() => setFlowOpen(true)}
+            title="自定义状态、流转与按钮文案"
+          >
+            流程设置
+          </button>
           <button className="tb-act primary" onClick={() => setNewOpen(true)}>
             ＋ 新建
           </button>
@@ -625,23 +675,24 @@ export default function App() {
         </div>
       ) : null}
 
-      {/* 看板五列 */}
+      {/* 看板：一列一个状态（列是用户配的，不是写死五列） */}
       {view === 'board' && (
         <div className="tb-board">
-          {STATUS_ORDER.map((st) => (
-            <section key={st} className="tb-col">
+          {flow.statuses.map((sd) => (
+            <section key={sd.id} className="tb-col">
               <header className="tb-col-head">
-                <span className={'tb-col-dot s-' + st} />
-                {STATUS_LABEL[st]}
-                <span className="tb-col-num">{byColumn[st].length}</span>
+                <span className="tb-col-dot" style={{ background: sd.color }} />
+                {sd.name}
+                <span className="tb-col-num">{(byColumn[sd.id] || []).length}</span>
               </header>
               <div className="tb-col-body">
-                {byColumn[st].length === 0 && <div className="tb-col-empty">空</div>}
-                {byColumn[st].map((t) => (
+                {(byColumn[sd.id] || []).length === 0 && <div className="tb-col-empty">空</div>}
+                {(byColumn[sd.id] || []).map((t) => (
                   <TaskCard
                     key={t.id}
                     task={t}
                     me={me}
+                    flow={flow}
                     onOpen={() => setDetailId(t.id)}
                     onAction={(to, needNote) => (needNote ? setRejectFor({ id: t.id }) : doTransition(t.id, to))}
                     onClaim={() => doClaim(t.id)}
@@ -659,6 +710,8 @@ export default function App() {
           rows={listRows}
           allRows={flatRows}
           store={store.tasks}
+          flow={flow}
+          statusIds={statusIds}
           tagDefs={store.tagDefs}
           onCreateTag={doAddTag}
           onTagColor={doSetTagColor}
@@ -684,6 +737,7 @@ export default function App() {
         <GroupView
           groups={groups}
           groupBy={groupBy}
+          flow={flow}
           me={me}
           onOpen={(id) => setDetailId(id)}
           onAction={(id, to, needNote) => (needNote ? setRejectFor({ id }) : doTransition(id, to))}
@@ -692,7 +746,9 @@ export default function App() {
       )}
 
       {/* 统计：看全量，不受顶部筛选影响 */}
-      {view === 'stats' && stats && <StatsView stats={stats} onOpen={(id) => setDetailId(id)} />}
+      {view === 'stats' && stats && (
+        <StatsView stats={stats} flow={flow} onOpen={(id) => setDetailId(id)} />
+      )}
 
       {/* 新建任务 */}
       {newOpen && (
@@ -710,6 +766,18 @@ export default function App() {
       )}
 
       {/* 任务详情 */}
+      {flowOpen && store ? (
+        <FlowSettingsModal
+          flow={flow}
+          tasks={store.tasks}
+          onClose={() => setFlowOpen(false)}
+          onSave={(next) => {
+            setFlowOpen(false);
+            doSaveFlow(next);
+          }}
+        />
+      ) : null}
+
       {groupDraft ? (
         <GroupNameModal
           mode={groupDraft.mode}
@@ -730,6 +798,7 @@ export default function App() {
           me={me}
           tasks={store.tasks}
           tagDefs={store.tagDefs}
+          flow={flow}
           onClose={() => setDetailId(null)}
           onComment={(note) => doComment(detail.id, note)}
           onDelete={() => doDelete(detail.id)}
@@ -769,17 +838,19 @@ function PriorityBadge({ p }: { p: Priority }) {
 function TaskCard({
   task,
   me,
+  flow,
   onOpen,
   onAction,
   onClaim,
 }: {
   task: Task;
   me: string;
+  flow: FlowLike;
   onOpen: () => void;
   onAction: (to: TaskStatus, needNote?: boolean) => void;
   onClaim: () => void;
 }) {
-  const acts = actionsFor(task.status);
+  const acts = actionsForIn(flow, task.status);
   return (
     <article className="tb-task">
       <div className="tb-task-top" onClick={onOpen}>
@@ -873,6 +944,261 @@ function lockTitle(lock: { pending: string[]; missing: string[]; cyclic: boolean
   if (lock.missing.length > 0) parts.push(`前置不存在（可能已被删除）：${lock.missing.join('、')}`);
   if (lock.pending.length > 0) parts.push(`等 ${lock.pending.length} 个前置完成：${lock.pending.join('、')}`);
   return parts.join('；') || '被前置任务卡住';
+}
+
+/* ================================================================ 流程设置 */
+
+/**
+ * 流程设置：增删改状态、调色、设流转、改按钮文案。
+ *
+ * 状态是**用户自己的**，不是这份工具预设的五个 ——
+ * 不同团队的流程差得很远（有的要评审、有的要验收、有的有"挂起"），
+ * 写死就只能靠标签和备注去凑，凑出来的东西筛不了也统计不了。
+ */
+function FlowSettingsModal({
+  flow, tasks, onClose, onSave,
+}: {
+  flow: TaskFlow;
+  /** 全量任务：判断某个状态里还有没有任务（有就不能删） */
+  tasks: Task[];
+  onClose: () => void;
+  onSave: (next: TaskFlow) => void;
+}) {
+  const [draft, setDraft] = useState<TaskFlow>(() => ({
+    statuses: flow.statuses.map((s) => ({ ...s })),
+    transitions: Object.fromEntries(
+      Object.keys(flow.transitions).map((k) => [k, [...flow.transitions[k]]]),
+    ),
+    edges: Object.fromEntries(
+      Object.keys(flow.edges).map((k) => [k, { ...flow.edges[k] }]),
+    ),
+  }));
+  const [newName, setNewName] = useState('');
+
+  const ids = draft.statuses.map((s) => s.id);
+  const usedCount = (id: string) => tasks.filter((t) => t.status === id).length;
+
+  const patchStatus = (id: string, patch: Partial<StatusDef>) => {
+    setDraft((d) => ({
+      ...d,
+      statuses: d.statuses.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    }));
+  };
+
+  const toggleEdge = (from: string, to: string) => {
+    setDraft((d) => {
+      const cur = d.transitions[from] || [];
+      const next = cur.includes(to) ? cur.filter((x) => x !== to) : [...cur, to];
+      return { ...d, transitions: { ...d.transitions, [from]: next } };
+    });
+  };
+
+  const moveStatus = (i: number, delta: number) => {
+    setDraft((d) => {
+      const j = i + delta;
+      if (j < 0 || j >= d.statuses.length) return d;
+      const list = [...d.statuses];
+      const [one] = list.splice(i, 1);
+      list.splice(j, 0, one);
+      return { ...d, statuses: list };
+    });
+  };
+
+  const addStatus = () => {
+    const name = newName.trim();
+    if (!name) return;
+    /* id 用名字的拼音不行（没那个库），用稳定后缀 + 序号，用户可在下面改名 */
+    let id = `s${draft.statuses.length + 1}`;
+    while (ids.includes(id)) id += '_';
+    setDraft((d) => ({
+      ...d,
+      statuses: [...d.statuses, {
+        id, name, color: TAG_COLORS[d.statuses.length % TAG_COLORS.length], enter: `标为「${name}」`, done: false,
+      }],
+    }));
+    setNewName('');
+  };
+
+  const removeStatus = (id: string) => {
+    if (usedCount(id) > 0) return;   // 按钮已禁用，这里是双保险
+    setDraft((d) => ({
+      statuses: d.statuses.filter((s) => s.id !== id),
+      transitions: Object.fromEntries(
+        Object.keys(d.transitions)
+          .filter((k) => k !== id)
+          .map((k) => [k, (d.transitions[k] || []).filter((x) => x !== id)]),
+      ),
+      edges: Object.fromEntries(
+        Object.keys(d.edges).filter((k) => !k.startsWith(`${id}>`) && !k.endsWith(`>${id}`))
+          .map((k) => [k, d.edges[k]]),
+      ),
+    }));
+  };
+
+  /* 所有已开启的边 —— 按钮文案与"要不要填原因"在这里逐条设 */
+  const liveEdges: { from: string; to: string }[] = [];
+  for (const from of ids) {
+    for (const to of draft.transitions[from] || []) {
+      if (from !== to && ids.includes(to)) liveEdges.push({ from, to });
+    }
+  }
+
+  const nameOf = (id: string) => (draft.statuses.find((s) => s.id === id) || { name: id }).name;
+
+  return (
+    <Modal title="流程设置" onClose={onClose} wide>
+      <section className="tb-flow-sec">
+        <header className="tb-flow-head">状态（顺序 = 看板列顺序，第一个是新建任务的初始态）</header>
+        {draft.statuses.map((st, i) => {
+          const used = usedCount(st.id);
+          return (
+            <div key={st.id} className="tb-flow-row">
+              <span className="tb-flow-swatches">
+                {TAG_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={'tb-swatch' + (st.color === c ? ' on' : '')}
+                    style={{ background: c }}
+                    title={`把「${st.name}」改成这个颜色`}
+                    onClick={() => patchStatus(st.id, { color: c })}
+                  />
+                ))}
+              </span>
+              <input
+                className="tb-flow-name"
+                value={st.name}
+                onChange={(e) => patchStatus(st.id, { name: e.target.value })}
+              />
+              <input
+                className="tb-flow-enter"
+                value={st.enter}
+                title="进入这个状态时按钮上写什么"
+                onChange={(e) => patchStatus(st.id, { enter: e.target.value })}
+              />
+              <label className="tb-flow-done" title="依赖它的任务在这个状态下算解锁">
+                <input
+                  type="checkbox"
+                  checked={st.done}
+                  onChange={(e) => patchStatus(st.id, { done: e.target.checked })}
+                />
+                算完成
+              </label>
+              <span className="tb-flow-ops">
+                <button type="button" className="tb-act sm" disabled={i === 0} onClick={() => moveStatus(i, -1)}>↑</button>
+                <button type="button" className="tb-act sm" disabled={i === draft.statuses.length - 1} onClick={() => moveStatus(i, 1)}>↓</button>
+                <button
+                  type="button"
+                  className="tb-act sm warn"
+                  disabled={used > 0}
+                  title={used > 0 ? `还有 ${used} 条任务处于此状态，先转走才能删` : '删除这个状态'}
+                  onClick={() => removeStatus(st.id)}
+                >
+                  删除
+                </button>
+              </span>
+              {used > 0 ? <span className="tb-flow-used">{used} 条在用</span> : null}
+            </div>
+          );
+        })}
+        <div className="tb-flow-row">
+          <input
+            className="tb-flow-name"
+            value={newName}
+            placeholder="新状态名…"
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (!isComposing(e.nativeEvent) && e.key === 'Enter') addStatus();
+            }}
+          />
+          <button type="button" className="tb-act sm" onClick={addStatus}>＋ 加状态</button>
+        </div>
+      </section>
+
+      <section className="tb-flow-sec">
+        <header className="tb-flow-head">流转（每行 = 从这个状态能走到哪）</header>
+        <div className="tb-flow-matrix">
+          <div className="tb-flow-mrow">
+            <span className="tb-flow-mcorner" />
+            {ids.map((id) => (
+              <span key={id} className="tb-flow-mhead" title={nameOf(id)}>{nameOf(id)}</span>
+            ))}
+          </div>
+          {ids.map((from) => (
+            <div key={from} className="tb-flow-mrow">
+              <span className="tb-flow-mrowhead" title={nameOf(from)}>{nameOf(from)}</span>
+              {ids.map((to) => (
+                <span key={to} className="tb-flow-mcell">
+                  {from === to ? (
+                    <span className="tb-flow-mself">—</span>
+                  ) : (
+                    <input
+                      type="checkbox"
+                      checked={(draft.transitions[from] || []).includes(to)}
+                      onChange={() => toggleEdge(from, to)}
+                      title={`${nameOf(from)} → ${nameOf(to)}`}
+                    />
+                  )}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="tb-flow-sec">
+        <header className="tb-flow-head">按钮文案（默认用「进入那个状态」的动词，特殊的边在这里改）</header>
+        <div className="tb-flow-edges">
+          {liveEdges.length === 0 ? (
+            <span className="tb-flow-hint">还没开任何流转 —— 上面矩阵里勾选后这里才有东西</span>
+          ) : liveEdges.map(({ from, to }) => {
+            const key = `${from}>${to}`;
+            const e = draft.edges[key] || { label: '', note: false };
+            const fallback = (draft.statuses.find((s) => s.id === to) || { enter: '' }).enter;
+            return (
+              <div key={key} className="tb-flow-erow">
+                <span className="tb-flow-ename">{nameOf(from)} → {nameOf(to)}</span>
+                <input
+                  className="tb-flow-elabel"
+                  value={e.label}
+                  placeholder={fallback}
+                  onChange={(ev) => setDraft((d) => ({
+                    ...d, edges: { ...d.edges, [key]: { ...e, label: ev.target.value } },
+                  }))}
+                />
+                <label className="tb-flow-enote" title="勾选后走这条边必须填原因">
+                  <input
+                    type="checkbox"
+                    checked={e.note}
+                    onChange={(ev) => setDraft((d) => ({
+                      ...d, edges: { ...d.edges, [key]: { ...e, note: ev.target.checked } },
+                    }))}
+                  />
+                  需填原因
+                </label>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="tb-macts">
+        <span className="tb-flex" />
+        <button className="tb-act sm" onClick={onClose}>取消</button>
+        <button
+          className="tb-act sm primary"
+          disabled={draft.statuses.length === 0 || draft.statuses.some((x) => !x.name.trim())}
+          onClick={() => onSave(draft)}
+        >
+          保存
+        </button>
+      </div>
+      <p className="tb-hint">
+        已取消默认**不算**完成 —— 依赖它的任务会继续卡住并提示人来处理，
+        而不是悄悄解锁让人以为上游已经交付。想让它算完成就勾上「算完成」。
+      </p>
+    </Modal>
+  );
 }
 
 /**
@@ -1114,6 +1440,8 @@ function ListView({
   rows,
   allRows,
   store,
+  flow,
+  statusIds,
   tagDefs,
   onCreateTag,
   onTagColor,
@@ -1133,6 +1461,9 @@ function ListView({
   allRows: FlatRow[];
   /** 全量任务，用于算前置锁定 */
   store: Task[];
+  flow: FlowLike;
+  /** 状态筛选的候选值（用户配了哪些状态） */
+  statusIds: string[];
   /** 标签定义（名字 + 颜色） */
   tagDefs: TagDef[];
   onCreateTag: (name: string, color: string) => void;
@@ -1227,7 +1558,7 @@ function ListView({
                 <ColFilterPop
                   col={c}
                   filter={f || emptyColFilter()}
-                  options={colFilterValues(c.field, allRows)}
+                  options={colFilterValues(c.field, allRows, statusIds)}
                   onChange={(nf) => onFilter(c.field, nf)}
                   onClear={() => onClearFilter(c.field)}
                   anchorRight={ci >= LIST_COLUMNS.length - 3}
@@ -1284,8 +1615,8 @@ function ListView({
               )}
             </span>
             <span className="tb-lc c-status">
-              <span className={'tb-col-dot s-' + t.status} />
-              {STATUS_LABEL[t.status]}
+              <span className="tb-col-dot" style={{ background: statusColor(flow, t.status) }} />
+              {statusName(flow, t.status)}
             </span>
             <span className="tb-lc c-assignee">{t.assignee ? '@' + t.assignee : '未认领'}</span>
             <span className="tb-lc c-tags">
@@ -1319,6 +1650,7 @@ function ListView({
 /* ================================================================ 分组视图 */
 
 function GroupView({
+  flow,
   groups,
   groupBy,
   me,
@@ -1326,6 +1658,7 @@ function GroupView({
   onAction,
   onClaim,
 }: {
+  flow: FlowLike;
   groups: { key: string; tasks: Task[] }[];
   groupBy: GroupKey;
   me: string;
@@ -1349,6 +1682,7 @@ function GroupView({
                 key={t.id}
                 task={t}
                 me={me}
+                flow={flow}
                 onOpen={() => onOpen(t.id)}
                 onAction={(to, needNote) => onAction(t.id, to, needNote)}
                 onClaim={() => onClaim(t.id)}
@@ -1363,22 +1697,46 @@ function GroupView({
 
 /* ================================================================ 统计视图 */
 
-function BarRow({ label, count, max, dot }: { label: string; count: number; max: number; dot?: string }) {
+function BarRow({
+  label, count, max, dot, color,
+}: {
+  label: string;
+  count: number;
+  max: number;
+  dot?: string;
+  color?: string;
+}) {
   return (
     <div className="tb-bar-row">
       <span className="tb-bar-label">
-        {dot && <span className={'tb-col-dot ' + dot} />}
+        {(dot || color) && (
+          <span className="tb-col-dot" style={color ? { background: color } : undefined}>
+            {!color && dot ? null : null}
+          </span>
+        )}
         {label}
       </span>
       <span className="tb-bar-track">
-        <span className="tb-bar-fill" style={{ width: `${max > 0 ? Math.round((count / max) * 100) : 0}%` }} />
+        <span
+          className="tb-bar-fill"
+          style={{
+            width: `${max > 0 ? Math.round((count / max) * 100) : 0}%`,
+            background: color || undefined,
+          }}
+        />
       </span>
       <span className="tb-bar-num">{count}</span>
     </div>
   );
 }
 
-function StatsView({ stats, onOpen }: { stats: TbStats; onOpen: (id: string) => void }) {
+function StatsView({
+  stats, flow, onOpen,
+}: {
+  stats: TbStats;
+  flow: { statuses: { id: string; name: string; color: string }[] };
+  onOpen: (id: string) => void;
+}) {
   const maxStatus = Math.max(1, ...Object.values(stats.byStatus));
   const maxPrio = Math.max(1, ...Object.values(stats.byPriority));
   const maxWho = Math.max(1, ...stats.byAssignee.map((x) => x.count));
@@ -1405,8 +1763,14 @@ function StatsView({ stats, onOpen }: { stats: TbStats; onOpen: (id: string) => 
       <div className="tb-stat-grid">
         <section className="tb-stat-panel">
           <header className="tb-stat-panel-head">状态分布</header>
-          {STATUS_ORDER.map((s) => (
-            <BarRow key={s} label={STATUS_LABEL[s]} count={stats.byStatus[s] || 0} max={maxStatus} dot={'s-' + s} />
+          {flow.statuses.map((sd) => (
+            <BarRow
+              key={sd.id}
+              label={sd.name}
+              count={stats.byStatus[sd.id] || 0}
+              max={maxStatus}
+              color={sd.color}
+            />
           ))}
         </section>
         <section className="tb-stat-panel">
@@ -1547,6 +1911,7 @@ function DetailModal({
   me,
   tasks,
   tagDefs,
+  flow,
   onClose,
   onComment,
   onDelete,
@@ -1562,6 +1927,8 @@ function DetailModal({
   /** 全量任务：算所属组路径与前置锁定要用 */
   tasks: Task[];
   tagDefs: TagDef[];
+  /** 流程配置（状态名/颜色/可用操作都由它决定） */
+  flow: FlowLike;
   onClose: () => void;
   onComment: (note: string) => void;
   onDelete: () => void;
@@ -1594,7 +1961,7 @@ function DetailModal({
     <Modal title={`${task.id} · ${task.title}`} onClose={onClose} wide>
       <div className="tb-dmeta">
         <PriorityBadge p={task.priority} />
-        <span className="tb-dtag">状态：{STATUS_LABEL[task.status]}</span>
+        <span className="tb-dtag">状态：{statusName(flow, task.status)}</span>
         <span className="tb-dtag">报告人：{task.reporter}</span>
         <span className="tb-dtag">认领人：{task.assignee || '未认领'}</span>
         <span className="tb-dtag">更新：{fmtTime(task.updatedAt)}</span>
@@ -1612,7 +1979,7 @@ function DetailModal({
           <span className="tb-dhint">
             状态由下面的任务推导：
             {groupStatus(task.id, tasks)
-              ? STATUS_LABEL[groupStatus(task.id, tasks) as TaskStatus]
+              ? statusName(flow, groupStatus(task.id, tasks) as string)
               : '（空组，没有状态）'}
           </span>
           <button

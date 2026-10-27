@@ -72,6 +72,46 @@ export declare function isAncestor(
 /** 锁定状态是算出来的，不存字段 */
 export declare function lockOf(task: Task, tasks: Task[]): LockInfo;
 
+/* ---------------------------------------------------- 流程配置 */
+
+export interface StatusDef {
+  id: string;
+  name: string;
+  color: string;
+  enter: string;
+  done: boolean;
+}
+
+export interface TaskFlow {
+  statuses: StatusDef[];
+  transitions: Record<string, string[]>;
+  edges: Record<string, { label: string; note: boolean }>;
+}
+
+export declare const DEFAULT_FLOW: TaskFlow;
+
+/** 解析流程配置；坏/缺 → 默认那套（不会让整份文件打不开） */
+export declare function normalizeFlow(raw: unknown): TaskFlow;
+
+/** 状态 id → 显示名。没配过的原样显示 id */
+export declare function statusName(flow: TaskFlow | null | undefined, id: string): string;
+
+export declare function statusColor(flow: TaskFlow | null | undefined, id: string): string;
+
+/** 这个状态算不算"完成"（已取消不算） */
+export declare function statusDone(flow: TaskFlow | null | undefined, id: string): boolean;
+
+/** 初始状态 = 列表第一个 */
+export declare function initialStatus(flow: TaskFlow | null | undefined): string;
+
+/** 按配置判断能否流转 */
+export declare function canTransitionIn(flow: TaskFlow | null | undefined, from: string, to: string): boolean;
+
+/** 当前状态下界面上的操作按钮（由流转表推导） */
+export declare function actionsForIn(
+  flow: TaskFlow | null | undefined, status: string,
+): { to: string; label: string; needNote?: boolean }[];
+
 /* ---------------------------------------------------- 列级筛选 */
 
 /** 列表视图的列定义。kind 决定这一列配什么筛选控件 */
@@ -110,7 +150,9 @@ export declare function filterTasksByColumns(
 export declare function activeColFilters(filters: Partial<Record<SortField, ColFilter>>): ListColumn[];
 
 /** 某一列的候选值（原始值，显示文案由 UI 用 types.ts 映射） */
-export declare function colFilterValues(field: SortField, rows: FlatRow[] | Task[]): string[];
+export declare function colFilterValues(
+  field: SortField, rows: FlatRow[] | Task[], statusIds?: string[],
+): string[];
 export declare function nextTaskId(store: { nextId: number }): string;
 export declare function pushHistory(task: any, by: string, action: string, note: string, at?: number): any;
 export declare function applyTransition(task: any, to: string, by: string, note?: string, at?: number): any;
