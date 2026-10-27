@@ -38,6 +38,13 @@ import {
   dissolveGroup,
   isAncestor,
   splitTask,
+  DEFAULT_FLOW,
+  normalizeFlow,
+  canTransitionIn,
+  actionsForIn,
+  statusName,
+  statusDone,
+  initialStatus,
 } from './core.mjs';
 
 let pass = 0;
@@ -315,7 +322,7 @@ t('colFilterValues：优先级/状态取全量；认领人从数据去重且未�
   const pri = colFilterValues('priority', TB_ROWS);
   const st = colFilterValues('status', TB_ROWS);
   const as = colFilterValues('assignee', TB_ROWS);
-  return pri.length === 4 && st.length === 5
+  return pri.length === 4 && st.length === STATUSES.length
     && as[as.length - 1] === '' && as.indexOf('w1') >= 0 && as.indexOf('w2') >= 0;
 })());
 
@@ -550,6 +557,97 @@ t('拆分：没给子任务名就不动（不能把一条任务变成空组）',
   const src = normalizeTask({ id: 'a', title: '登录' });
   const r = splitTask([src], 'a', []);
   return r.tasks.length === 1 && r.tasks[0].kind === 'task';
+})());
+
+
+/* ============================================================ 自定义流程 */
+
+t('默认流程含挂起与已取消（两种"不推进"要分开）', (() => {
+  const ids = DEFAULT_FLOW.statuses.map((s) => s.id);
+  return ids.indexOf('hold') >= 0 && ids.indexOf('cancelled') >= 0;
+})());
+
+t('默认流程：挂起能回到进行中（不是死路）',
+  DEFAULT_FLOW.transitions.hold.indexOf('doing') >= 0);
+
+t('默认流程：已取消能重开（误取消要有救）',
+  DEFAULT_FLOW.transitions.cancelled.indexOf('todo') >= 0);
+
+t('normalizeFlow：缺省给默认那套（老文件行为不变）', (() => {
+  const f = normalizeFlow(null);
+  return f.statuses.length === DEFAULT_FLOW.statuses.length
+    && f.transitions.todo.join(',') === DEFAULT_FLOW.transitions.todo.join(',');
+})());
+
+t('normalizeFlow：认纯字符串数组（手写文件图省事的写法）', (() => {
+  const f = normalizeFlow({ statuses: ['a', 'b'] });
+  return f.statuses.length === 2 && f.statuses[0].id === 'a' && f.statuses[0].name === 'a';
+})());
+
+t('normalizeFlow：配了状态没配流转 → 默认表裁到还剩的状态', (() => {
+  const f = normalizeFlow({ statuses: ['todo', 'done'] });
+  const outs = f.transitions.todo || [];
+  return outs.every((x) => x === 'todo' || x === 'done');
+})());
+
+t('normalizeFlow：流转表里指向已删状态的边会被丢掉', (() => {
+  const f = normalizeFlow({
+    statuses: ['todo', 'done'],
+    transitions: { todo: ['done', 'review'] },
+  });
+  return f.transitions.todo.join(',') === 'done';
+})());
+
+t('normalizeFlow：配置坏了不牵连任务（整份文件不能打不开）', (() => {
+  const f = normalizeFlow({ statuses: '不是数组' });
+  return f.statuses.length === DEFAULT_FLOW.statuses.length;
+})());
+
+t('canTransitionIn：按配置判定，不再认写死的表', (() => {
+  const f = normalizeFlow({ statuses: ['a', 'b'], transitions: { a: ['b'] } });
+  return canTransitionIn(f, 'a', 'b') === true && canTransitionIn(f, 'b', 'a') === false;
+})());
+
+t('canTransitionIn：目标状态不在清单里就是不行', (() => {
+  const f = normalizeFlow({ statuses: ['a', 'b'], transitions: { a: ['b'] } });
+  return canTransitionIn(f, 'a', 'zzz') === false;
+})());
+
+t('canTransitionIn：原地不动总是允许（改别的字段不该被拦）',
+  canTransitionIn(DEFAULT_FLOW, 'doing', 'doing') === true);
+
+t('actionsForIn：按钮由流转表推导', (() => {
+  const f = normalizeFlow({ statuses: ['a', 'b'], transitions: { a: ['b'] } });
+  const acts = actionsForIn(f, 'a');
+  return acts.length === 1 && acts[0].to === 'b';
+})());
+
+t('actionsForIn：边上的文案覆盖默认动词（打回不是"开始"）', (() => {
+  const acts = actionsForIn(DEFAULT_FLOW, 'review');
+  const back = acts.find((a) => a.to === 'doing');
+  return back && back.label === '打回' && back.needNote === true;
+})());
+
+t('actionsForIn：挂起后按钮是"继续"而不是"开始"', (() => {
+  const acts = actionsForIn(DEFAULT_FLOW, 'hold');
+  const go = acts.find((a) => a.to === 'doing');
+  return go && go.label === '继续';
+})());
+
+t('statusName：没配过的状态原样显示 id（认不出比认错好）',
+  statusName(DEFAULT_FLOW, 'zzz') === 'zzz');
+
+t('statusDone：已取消**不**算完成（依赖它的任务应继续卡住）',
+  statusDone(DEFAULT_FLOW, 'cancelled') === false && statusDone(DEFAULT_FLOW, 'done') === true);
+
+t('initialStatus：取列表第一个（自定义流程的初始态不一定是 todo）', (() => {
+  const f = normalizeFlow({ statuses: ['x', 'y'] });
+  return initialStatus(f) === 'x';
+})());
+
+t('自定义状态能活过 normalizeTask（不被退回 todo）', (() => {
+  const t = normalizeTask({ id: 'a', status: 'hold' });
+  return t.status === 'hold';
 })());
 
 /* ---------------- 汇总 ---------------- */

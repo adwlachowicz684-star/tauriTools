@@ -879,6 +879,135 @@
   min-width: 940px;
 }
 
+/* ---------- 流程设置面板 ---------- */
+.tb-flow-sec {
+  padding-block-end: var(--sp-3);
+  border-block-end: 1px solid var(--divider);
+  margin-block-end: var(--sp-3);
+}
+.tb-flow-head {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  padding-block-end: var(--sp-2);
+}
+.tb-flow-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding-block: var(--sp-1);
+}
+.tb-flow-swatches {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  flex: none;
+}
+.tb-flow-name,
+.tb-flow-enter {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-micro);
+}
+.tb-flow-name { width: 7em; }
+.tb-flow-enter { width: 8em; }
+.tb-flow-done,
+.tb-flow-enote {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+.tb-flow-ops {
+  display: inline-flex;
+  gap: var(--sp-1);
+}
+.tb-flow-used {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+}
+
+/* 流转矩阵：行=从哪个状态出发，列=能走到哪 */
+.tb-flow-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-x: auto;
+}
+.tb-flow-mrow {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(46px, 1fr);
+  align-items: center;
+  gap: 2px;
+}
+.tb-flow-mcorner { min-width: 5em; }
+.tb-flow-mrowhead {
+  min-width: 5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.tb-flow-mhead {
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.tb-flow-mcell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tb-flow-mself {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+}
+
+/* 逐边改按钮文案 */
+.tb-flow-edges {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-height: 15em;
+  overflow-y: auto;
+}
+.tb-flow-erow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.tb-flow-ename {
+  flex: none;
+  width: 11em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-micro);
+}
+.tb-flow-elabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-micro);
+}
+.tb-flow-hint {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+}
+
 /* 组的两个入口，摆在表头上方 —— 它们作用于"勾选的那些行"，
    位置紧挨着行，不放顶栏（顶栏那排是筛选，混进去分不清谁管谁） */
 .tb-ltools {

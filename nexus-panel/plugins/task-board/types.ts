@@ -1,15 +1,38 @@
 // task-board 数据模型（与 Rust task_board.rs 的双端约定）
 
-export type TaskStatus = 'todo' | 'claimed' | 'doing' | 'review' | 'done';
+/*
+  状态清单与 core.mjs 的 STATUSES **逐项同序**（守卫第 22 节盯着）。
+  状态不再写死 —— 用户可以在界面上增删改，这里只是默认值。
+  挂起（hold）与已取消（cancelled）是默认就给的两种：
+  挂起 = 还要做但推不动；取消 = 不做了。合成一个"不推进"的话，
+  复盘时根本分不清哪些是暂时卡住、哪些已经放弃。
+*/
+export type TaskStatus =
+  | 'todo' | 'claimed' | 'doing' | 'hold' | 'review' | 'done' | 'cancelled';
 
-export const STATUS_ORDER: TaskStatus[] = ['todo', 'claimed', 'doing', 'review', 'done'];
+export const STATUS_ORDER: TaskStatus[] = [
+  'todo', 'claimed', 'doing', 'hold', 'review', 'done', 'cancelled',
+];
 
 export const STATUS_LABEL: Record<TaskStatus, string> = {
   todo: '待办',
   claimed: '已认领',
   doing: '进行中',
+  hold: '挂起',
   review: '待审查',
   done: '已完成',
+  cancelled: '已取消',
+};
+
+/** 默认状态色。用户可在流程设置里改 —— 这里是初始值 */
+export const STATUS_COLOR: Record<TaskStatus, string> = {
+  todo: '#78716c',
+  claimed: '#0ea5e9',
+  doing: '#3b82f6',
+  hold: '#f59e0b',
+  review: '#a855f7',
+  done: '#22c55e',
+  cancelled: '#ef4444',
 };
 
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
@@ -97,6 +120,26 @@ export interface TaskStore {
   agents: Agent[];
   /** 标签定义表。任务上只存 id，颜色统一在这里改 */
   tagDefs: TagDef[];
+  /** 流程配置：自定义状态 / 流转 / 边的文案。缺省为默认那套 */
+  flow: TaskFlow;
+}
+
+/** 一个状态的定义 */
+export interface StatusDef {
+  id: string;
+  name: string;
+  color: string;
+  /** 进入这个状态的按钮文案（"认领"/"开始"…） */
+  enter: string;
+  /** 算不算"完成"（依赖解锁与陈旧判定都看它） */
+  done: boolean;
+}
+
+/** 流程配置。transitions 双端都认；edges 只影响界面 */
+export interface TaskFlow {
+  statuses: StatusDef[];
+  transitions: Record<string, string[]>;
+  edges: Record<string, { label: string; note: boolean }>;
 }
 
 export interface TbConfig {

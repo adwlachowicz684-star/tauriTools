@@ -3,19 +3,217 @@
 // 有守卫盯着：regression-guard-test.mjs 第 22 节会逐项比对两侧清单与流转图
 // （此前这条约定靠人记得同步 —— 实测 346 个测试里 0 个读 task_board.rs）。
 
-export const STATUSES = ['todo', 'claimed', 'doing', 'review', 'done'];
+export const STATUSES = ['todo', 'claimed', 'doing', 'hold', 'review', 'done', 'cancelled'];
 export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
+
+/* ============================================================ 流程配置
+ *
+ * 状态与流转**由用户在界面上定**，不再写死。默认这一套只是初始值。
+ *
+ * 存在 tasks.json 的 `flow` 字段里，与任务同库 ——
+ * 单独一个配置文件的话，AI 或另一个窗口改了流程而这边没读到，
+ * 就会出现"状态名改了但旧的还在用"的半新半旧状态。
+ *
+ * ⛔ `transitions` 是**双端都认**的（Rust 侧同样校验）；
+ *    `edges`（按钮文案 / 要不要填原因）只影响界面，Rust 不读 ——
+ *    它没有"两份真相"的问题，所以不放进双端契约里。
+ */
+
+export const DEFAULT_FLOW = {
+  statuses: [
+    { id: 'todo', name: '待办', color: '#78716c', enter: '退回', done: false },
+    { id: 'claimed', name: '已认领', color: '#0ea5e9', enter: '认领', done: false },
+    { id: 'doing', name: '进行中', color: '#3b82f6', enter: '开始', done: false },
+    { id: 'hold', name: '挂起', color: '#f59e0b', enter: '挂起', done: false },
+    { id: 'review', name: '待审查', color: '#a855f7', enter: '提交审查', done: false },
+    { id: 'done', name: '已完成', color: '#22c55e', enter: '通过', done: true },
+    { id: 'cancelled', name: '已取消', color: '#ef4444', enter: '取消', done: false },
+  ],
+  transitions: {
+    todo: ['claimed', 'doing', 'hold', 'cancelled'],
+    claimed: ['doing', 'todo', 'hold', 'cancelled'],
+    doing: ['review', 'todo', 'hold', 'cancelled'],
+    hold: ['doing', 'todo', 'cancelled'],
+    review: ['done', 'doing', 'hold', 'cancelled'],
+    done: ['review'],
+    cancelled: ['todo'],
+  },
+  /*
+    边的额外配置。默认是"进入那个状态"的动词，
+    但有几条边用通用动词讲不通（review→doing 是"打回"不是"开始"），
+    所以允许逐边覆盖。
+  */
+  edges: {
+    'review>doing': { label: '打回', note: true },
+    'done>review': { label: '重开' },
+    'hold>doing': { label: '继续' },
+  },
+};
+
+const FLOW_COLORS = Object.fromEntries(
+  DEFAULT_FLOW.statuses.map((s) => [s.id, s.color]),
+);
+
+/**
+ * 解析流程配置。
+ *
+ * 认两种写法：对象数组（界面写的）和纯字符串数组（手写文件图省事）。
+ * 解析不出来就用默认那套 —— **不会因为配置坏了就整份任务打不开**。
+ */
+export function normalizeFlow(raw) {
+  const f = raw && typeof raw === 'object' ? raw : null;
+  const stRaw = f && Array.isArray(f.statuses) ? f.statuses : null;
+  let statuses = null;
+  if (stRaw && stRaw.length > 0) {
+    const seen = new Set();
+    const out = [];
+    for (const one of stRaw) {
+      const o = one && typeof one === 'object' ? one : {};
+      const id = typeof o.id === 'string' && o.id.trim()
+        ? o.id.trim()
+        : (typeof one === 'string' && one.trim() ? one.trim() : '');
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const name = typeof o.name === 'string' && o.name ? o.name : id;
+      out.push({
+        id,
+        name,
+        color: typeof o.color === 'string' && o.color ? o.color : (FLOW_COLORS[id] || '#78716c'),
+        enter: typeof o.enter === 'string' && o.enter ? o.enter : `标为「${name}」`,
+        done: o.done === true,
+      });
+    }
+    if (out.length > 0) statuses = out;
+  }
+  const list = statuses || DEFAULT_FLOW.statuses;
+  const ids = new Set(list.map((s) => s.id));
+
+  /*
+    只配了状态、没配流转时，用默认流转**裁到还剩的那些状态**——
+    直接照搬默认表的话，表里会留着已被删掉的状态，
+    那些按钮点下去会走到一个不存在的地方。
+  */
+  const clip = (table) => {
+    const out = {};
+    for (const from of Object.keys(table)) {
+      if (!ids.has(from)) continue;
+      out[from] = (table[from] || []).filter((x) => ids.has(x));
+    }
+    return out;
+  };
+
+  const tr = {};
+  const rawTr = f && f.transitions && typeof f.transitions === 'object' ? f.transitions : null;
+  if (rawTr) {
+    for (const from of Object.keys(rawTr)) {
+      if (!ids.has(from)) continue;
+      const arr = Array.isArray(rawTr[from]) ? rawTr[from] : [];
+      tr[from] = arr.filter((x) => typeof x === 'string' && ids.has(x));
+    }
+  }
+  const transitions = Object.keys(tr).length > 0
+    ? tr
+    : clip(DEFAULT_FLOW.transitions);
+
+  const edges = {};
+  if (f && f.edges && typeof f.edges === 'object') {
+    for (const k of Object.keys(f.edges)) {
+      const e = f.edges[k];
+      if (!e || typeof e !== 'object') continue;
+      edges[k] = {
+        label: typeof e.label === 'string' ? e.label : '',
+        note: e.note === true,
+      };
+    }
+  }
+  return { statuses: list, transitions, edges };
+}
+
+/**
+ * 没给流程就用默认那套。
+ *
+ * ⛔ 不能简单地"`flow.statuses` 为空就算都没配" ——
+ * 那样只传了 store 没传 flow 的调用（statsOf 就是）会把
+ * "已完成"也判成未完成，陈旧列表里混进一堆早就做完的任务。
+ */
+function flowOf(flow) {
+  return (flow && Array.isArray(flow.statuses) && flow.statuses.length)
+    ? flow
+    : DEFAULT_FLOW;
+}
+
+/** 状态 id → 显示名。没配过的状态（AI 手写出来的）原样显示，不假装认识 */
+export function statusName(flow, id) {
+  const s = flowOf(flow).statuses.find((x) => x.id === id);
+  return s ? s.name : id;
+}
+
+export function statusColor(flow, id) {
+  const s = flowOf(flow).statuses.find((x) => x.id === id);
+  return (s && s.color) || FLOW_COLORS[id] || '#78716c';
+}
+
+/**
+ * 这个状态算不算"完成"。
+ *
+ * 只有界面上标了「算完成」的那些才算 ——
+ * **已取消刻意不算**：它被取消说明这事不做了，
+ * 依赖它的任务应当继续卡住并提示人来处理，
+ * 而不是悄悄解锁、让人以为上游已经交付。
+ */
+export function statusDone(flow, id) {
+  const s = flowOf(flow).statuses.find((x) => x.id === id);
+  return !!(s && s.done);
+}
+
+/** 初始状态 = 列表第一个 */
+export function initialStatus(flow) {
+  const f = flowOf(flow);
+  return (f.statuses[0] && f.statuses[0].id) || 'todo';
+}
+
+/** 按**配置**判断能不能流转（默认流程走 canTransition） */
+export function canTransitionIn(flow, from, to) {
+  const f = flowOf(flow);
+  if (from === to) return true;
+  const ids = (f.statuses || []).map((s) => s.id);
+  if (ids.indexOf(from) < 0 || ids.indexOf(to) < 0) return false;
+  return ((f.transitions || {})[from] || []).indexOf(to) >= 0;
+}
+
+/**
+ * 当前状态下界面上要显示的操作按钮（按配置推导）。
+ *
+ * 不再写死"认领/开始/提交审查"——那些是默认流程的动词，
+ * 用户改了流程之后它们就不适用了。
+ */
+export function actionsForIn(flow, status) {
+  const f = flowOf(flow);
+  const byId = Object.fromEntries((f.statuses || []).map((s) => [s.id, s]));
+  const outs = ((f.transitions || {})[status] || []).filter((to) => to !== status);
+  return outs.map((to) => {
+    const edge = (f.edges || {})[`${status}>${to}`] || {};
+    const tgt = byId[to];
+    return {
+      to,
+      label: edge.label || (tgt && tgt.enter) || `标为「${tgt ? tgt.name : to}」`,
+      needNote: edge.note === true,
+    };
+  });
+}
 
 /** 允许的状态流转（不在表内的直接拒） */
 export function canTransition(from, to) {
   if (!STATUSES.includes(from) || !STATUSES.includes(to)) return false;
   if (from === to) return true;
   const allowed = {
-    todo: ['claimed', 'doing'],
-    claimed: ['doing', 'todo'],
-    doing: ['review', 'todo'],
-    review: ['done', 'doing'],
+    todo: ['claimed', 'doing', 'hold', 'cancelled'],
+    claimed: ['doing', 'todo', 'hold', 'cancelled'],
+    doing: ['review', 'todo', 'hold', 'cancelled'],
+    hold: ['doing', 'todo', 'cancelled'],
+    review: ['done', 'doing', 'hold', 'cancelled'],
     done: ['review'],
+    cancelled: ['todo'],
   };
   return (allowed[from] || []).includes(to);
 }
@@ -37,14 +235,20 @@ export function actionsFor(status) {
       return [
         { to: 'review', label: '提交审查' },
         { to: 'todo', label: '退回' },
+        { to: 'hold', label: '挂起' },
+        { to: 'cancelled', label: '取消' },
       ];
     case 'review':
       return [
         { to: 'done', label: '通过' },
         { to: 'doing', label: '打回', needNote: true },
+        { to: 'hold', label: '挂起' },
+        { to: 'cancelled', label: '取消' },
       ];
     case 'done':
       return [{ to: 'review', label: '重开' }];
+    case 'cancelled':
+      return [{ to: 'todo', label: '重开' }];
     default:
       return [];
   }
@@ -67,7 +271,12 @@ export function normalizeTask(raw) {
     kind: t.kind === 'group' ? 'group' : 'task',
     parent: typeof t.parent === 'string' && t.parent ? t.parent : null,
     deps: Array.isArray(t.deps) ? t.deps.filter((x) => typeof x === 'string') : [],
-    status: STATUSES.includes(t.status) ? t.status : 'todo',
+    /*
+      状态**不校验白名单**：自定义状态是用户自己起的 id，
+      这里按固定清单过滤的话，用户新增的状态会被悄悄退回 todo。
+      展示层查不到就原样显示 id —— 认不出来比认错要好。
+    */
+    status: typeof t.status === 'string' && t.status ? t.status : 'todo',
     priority: PRIORITIES.includes(t.priority) ? t.priority : 'P2',
     tags: Array.isArray(t.tags) ? t.tags.filter((x) => typeof x === 'string') : [],
     reporter: typeof t.reporter === 'string' ? t.reporter : 'manual',
@@ -114,6 +323,12 @@ export function normalizeStore(raw) {
           }))
       : [],
     tagDefs: normalizeTagDefs(s.tagDefs),
+    /*
+      流程配置（自定义状态与流转）。
+      没配过 → normalizeFlow 给默认那套，行为与以前完全一致 ——
+      不能让"打开一份老文件"就因为缺这个字段而变了样。
+    */
+    flow: normalizeFlow(s.flow),
   };
 }
 
@@ -322,11 +537,16 @@ export function activeColFilters(filters) {
  * 表里没有、但任务上写着的名字（外部 API 写的）照样要能筛；
  * 反过来表里有、但没人领过任务的名字，列出来选中就是零行。
  */
-export function colFilterValues(field, rows) {
+export function colFilterValues(field, rows, statusIds) {
   const tasks = (rows || []).map((r) => (r && r.task ? r.task : r));
   switch (field) {
     case 'priority': return [...PRIORITIES];
-    case 'status': return [...STATUSES];
+    /*
+      状态取**用户配的**那份（statusIds），不是写死的清单 ——
+      否则用户在界面上新增了状态，筛选下拉里却选不到它，
+      而列表里明明能看到那个状态的任务。
+    */
+    case 'status': return statusIds && statusIds.length ? [...statusIds] : [...STATUSES];
     case 'assignee': {
       const names = [...new Set(tasks.map((t) => t.assignee).filter(Boolean))];
       names.sort((a, b) => a.localeCompare(b));
@@ -930,7 +1150,7 @@ export function statsOf(store, now = Date.now()) {
   const tasks = store.tasks || [];
   const byStatus = {};
   const byPriority = {};
-  for (const s of STATUSES) byStatus[s] = 0;
+  for (const s of flowOf(store.flow).statuses) byStatus[s.id] = 0;
   for (const p of PRIORITIES) byPriority[p] = 0;
   const byAssignee = new Map();
   const tagCnt = new Map();
@@ -941,7 +1161,7 @@ export function statsOf(store, now = Date.now()) {
     const who = t.assignee || UNASSIGNED;
     byAssignee.set(who, (byAssignee.get(who) || 0) + 1);
     for (const tag of t.tags) tagCnt.set(tag, (tagCnt.get(tag) || 0) + 1);
-    if (t.status !== 'done' && (now - (t.updatedAt || 0)) > STALE_MS) stale.push(t);
+    if (!statusDone(store.flow, t.status) && (now - (t.updatedAt || 0)) > STALE_MS) stale.push(t);
   }
   const assignees = [...byAssignee.entries()]
     .sort((a, b) => {
