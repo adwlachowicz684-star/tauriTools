@@ -26,11 +26,6 @@ import {
   duplicateElements, stripRuntime, type DupNode, type DupEdge,
 } from './engine/duplicate';
 import { CredentialPanel, canUse } from './components/CredentialPanel';
-import { BoardMetaPanel } from './components/BoardMetaPanel';
-import { BoardTable } from './components/BoardTable';
-// 别名：下面有个同名的交互回调 toggleTag(taskId, tagId)，直接导入会自己调自己
-import { toggleTag as toggleBoardTag } from './engine/taskBoard';
-import { addTag } from './engine/boardMeta';
 // 卡片上的参数格要能就地改，得拿到 App 的 patchNode ——
 // 卡片是经 nodeTypes 交给 xyflow 渲染的，不是 App 的直接子组件，只能走 Context
 import { NodePatchProvider } from './components/ArgCell';
@@ -111,18 +106,9 @@ import { TaskList } from './components/TaskPanel';
 import { TaskDetail } from './components/TaskDetail';
 import { HistoryList } from './components/HistoryPanel';
 import { TaskTable } from './components/TaskTable';
-import { BoardTree } from './components/TaskBoard';
 import { AttachPanel } from './components/AttachPanel';
 import { useAttachments } from './hooks/useAttachments';
-import { useBoardMeta } from './hooks/useBoardMeta';
-import { loadSession, saveSession, sessionName, type Session } from './engine/session';
 import { addAttachment, removeAttachment } from './engine/attachmentStore';
-
-import { TaskBoardDetail } from './components/TaskBoardDetail';
-import { useTaskBoard } from './hooks/useTaskBoard';
-import {
-  addNode, removeNode, mergeIntoGroup, splitTask,
-} from './engine/taskBoard';
 import { parseRowKey, type TableRow } from './engine/taskTable';
 import {
   parseScopeKey, scopeKeyOf, normalizeScope, scopeOptions, scopeLabel,
@@ -1072,7 +1058,6 @@ export default function App() {
   });
 
   /*
-   * 任务板（计划态任务）。
    *
    * 按项目一个文件 —— AI 只读自己项目那份，不同项目的任务不会
    * 互相占用上下文。文件落在导出目录里，AI 不打开界面也能直接改。
@@ -1080,41 +1065,6 @@ export default function App() {
   const boardKey = project.kind === 'group' ? project.groupId
     : project.kind === 'ungrouped' ? 'ungrouped' : 'all';
   const boardName = scopeLabel(project, canvasGroups);
-  const board = useTaskBoard({
-    dir: exportDir,
-    project: boardKey,
-    projectName: boardName,
-    enabled: view === 'tasks',
-  });
-  const [boardSel, setBoardSel] = useState<string | null>(null);
-  const [boardChecked, setBoardChecked] = useState<Set<string>>(() => new Set());
-  const [boardKw, setBoardKw] = useState('');
-  /** 状态流程与标签的设置面板 */
-  const [metaOpen, setMetaOpen] = useState(false);
-
-  /*
-    任务板内部的两种看法：树形（能嵌套、能拖）与表格（能筛能排）。
-
-    加个子切换而不是替换掉树形：嵌套层级在树形里最直观，
-    而"找没人认领的高优先级任务"只有表格做得了 —— 两个都要。
-    切过之后会记住（和 taskView 一样存 kv）。
-  */
-  const [boardModeRaw, setBoardModeRaw] = useState<'tree' | 'table'>(
-    () => (kvStore().get('agent-flow.boardMode.v1') === 'table' ? 'table' : 'tree'),
-  );
-  useEffect(() => { kvStore().set('agent-flow.boardMode.v1', boardModeRaw); }, [boardModeRaw]);
-  const boardMode = boardModeRaw;
-
-  /*
-    换项目 = 换一个文件，旧的选中项与勾选在这个文件里不存在。
-    不清理的话：选中项指着一个不存在的 id（详情空着），
-    勾选集合里留着别项目的 id（下次点"合并"会静默少合几项）。
-  */
-  useEffect(() => {
-    setBoardSel(null);
-    setBoardChecked(new Set());
-  }, [board.path]);
-
   /*
     右栏页签：属性 / 日志 / 文件。
     存 kv 记住上次的选择 —— 右栏是长时间停留的地方，
@@ -1127,8 +1077,7 @@ export default function App() {
   const rightTab = normalizeRightTab(rightTabRaw);
 
   /*
-    附属文件清单 —— 与任务板同一个项目、同一套落盘规则，
-    只是另一个文件（attachments-<项目>.json）。
+    附属文件清单 —— 与运行记录同一个项目、同一套落盘规则。
   */
   const attach = useAttachments({
     dir: exportDir,
@@ -1136,75 +1085,6 @@ export default function App() {
     projectName: boardName,
     enabled: view === 'tasks',
   });
-
-  /*
-    本窗口的身份（sessionID）。
-
-    自动生一次、存本地。认领任务、发起运行都带上它 ——
-    这样"只看我的""接手窗口乙那条"才能查。
-  */
-  const [session, setSession] = useState<Session>(() => loadSession());
-  const sessionId = session.id;
-  const sessionLabel = sessionName(session);
-
-  /*
-    项目元数据：自定义状态流程 + 标签定义。
-    与任务板、附件清单同一个项目、同一套落盘规则，第三个文件。
-  */
-  const meta = useBoardMeta({
-    dir: exportDir,
-    project: boardKey,
-    projectName: boardName,
-    enabled: view === 'tasks',
-  });
-
-
-  /** 挂 / 摘一个标签 */
-  const toggleTag = useCallback((taskId: string, tagId: string) => {
-    board.apply((b) => toggleBoardTag(b, taskId, tagId).board);
-  }, [board]);
-
-  /** 新建标签。返回新 id，让调用方能立刻把它挂到刚点的那一行上 */
-  const createTag = useCallback((name: string, color: string): string | null => {
-    let newId: string | null = null;
-    meta.apply((m) => {
-      const r = addTag(m, name, color);
-      newId = r.id;
-      return r.meta;
-    });
-    return newId;
-  }, [meta]);
-
-  /*
-    每个任务挂了几个附件 —— 表格的附件列要显示它。
-
-    按**任务 id** 索引（不是 owner 串）：附件面板那边用 owner 串，
-    但表格是按任务行查的，用 id 直接查更直接，也不必关心 owner 的拼法。
-  */
-  const attachCountsByTask = useMemo(() => {
-    const out: Record<string, number> = {};
-    for (const id of Object.keys(attach.file.items)) {
-      const it = attach.file.items[id];
-      if (!it?.owner) continue;
-      out[it.owner] = (out[it.owner] ?? 0) + 1;
-    }
-    return out;
-  }, [attach.file]);
-
-  /*
-    元数据的写入提示。
-    被覆盖是**整份**的（配置不像任务那样逐条合并），
-    所以提示要说得比任务板那边更重 —— 用户刚改完几个状态名被盖掉，
-    是最难解释的那种丢失。
-  */
-  const metaNotice = useMemo(() => {
-    const s = meta.state;
-    if (s.kind === 'error') return `⛔ ${s.message}`;
-    if (s.kind === 'overwritten') return '⚠ 磁盘上有一份更新的配置，你的改动没写入 —— 刷新后再改一次';
-    if (s.kind === 'loading') return '读取中…';
-    if (s.kind === 'saving') return '写入中…';
-    return '';
-  }, [meta.state]);
 
   const attachNotice = useMemo(() => {
     const s = attach.state;
@@ -1214,17 +1094,6 @@ export default function App() {
     if (s.kind === 'saving') return '写入中…';
     return '';
   }, [attach.state]);
-
-  const boardNotice = useMemo(() => {
-    const s = board.state;
-    if (s.kind === 'error') return `⛔ ${s.message}`;
-    if (s.kind === 'overwritten') {
-      return `⚠ 有 ${s.ids.length} 项被文件里的新版本盖掉了（AI 或别处刚改过同一条）`;
-    }
-    if (s.kind === 'loading') return '读取中…';
-    if (s.kind === 'saving') return '写入中…';
-    return '';
-  }, [board.state]);
 
   /**
    * 存画布配置（MCP 服务 / 环境变量）。
@@ -2669,11 +2538,6 @@ function reportSkipped(
       source,
       total: scopeTotal,
       /*
-       * 记下这次是谁发起的（窗口号）。
-       * 不记的话，"我刚才跑的那几次"无从查起 —— 只能靠流程名和时间猜。
-       */
-      session: session.id,
-      /*
        * 标题与连线一起抄进任务记录 —— 任务窗口与历史要画流程图。
        * 只存 id 的话图上写的就是 mamu7obyv93 这种乱码，看不出这一步干什么；
        * 只存顺序不存连线的话，那是一列而不是图，分不出"等待"和"阻断"。
@@ -3515,21 +3379,15 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         : (scopedActiveTask ? { task: scopedActiveTask, archived: false, empty: '选一条任务看细节。' } : null);
 
   /*
-    附属文件挂在哪条任务上。
+    附属文件挂在哪条运行记录上。
 
-    任务板视图用**计划态**那条（boardSel，稳定 id，AI 能在文件里写）；
-    列表 / 表格视图用运行记录那条。两者不会同时有 —— 一个视图只选一种。
-
-    都没选时 owner 是空串，面板显示"未挂在任何任务上"的那批。
-    刻意不隐藏面板：AI 可能先写了附件、任务还没建，
+    用运行记录的 id（detail?.task.id）。没选时 owner 是空串，
+    面板显示"未挂在任何记录上"的那批 ——
+    刻意不隐藏面板：AI 可能先写了附件、流程还没跑，
     那时什么都不显示会让人以为写入失败了。
   */
-  const attachOwner = taskView === 'board'
-    ? (boardSel ?? '')
-    : (detail?.task.id ?? '');
-  const attachOwnerTitle = taskView === 'board'
-    ? (boardSel ? (board.board.nodes[boardSel]?.title ?? '') : '')
-    : (detail?.task.canvasName ?? '');
+  const attachOwner = detail?.task.id ?? '';
+  const attachOwnerTitle = detail?.task.canvasName ?? '';
   const attachCount = useMemo(
     () => attach.file.order.filter((id) => attach.file.items[id]?.owner === attachOwner).length,
     [attach.file, attachOwner],
@@ -3611,20 +3469,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
         </div>
         {histWarn ? (
           <span className="hist-warn-inline" title={histWarn}>⚠ 归档存储</span>
-        ) : null}
-        {/*
-          流程设置的入口只在**任务视图**出现。
-          状态与标签都是任务板的东西，在流程视图里放这个按钮，
-          点了会打开一个跟画布毫无关系的面板 —— 看着像按错了。
-        */}
-        {view === 'tasks' ? (
-          <button
-            className="mini"
-            onClick={() => setMetaOpen(true)}
-            title="自定义状态流程（含挂起、取消）与标签"
-          >
-            流程设置
-          </button>
         ) : null}
         <strong className="brand">Agent Flow</strong>
         {/*
@@ -3752,7 +3596,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                 */
                 disabled={view === 'tasks' && taskView !== 'list'}
                 title={view === 'tasks' && taskView !== 'list'
-                  ? '表格视图包含进行中与已归档；任务板是计划态任务，与运行记录不是同一批数据'
+                  ? '表格视图包含进行中与已归档，"看哪一段"由筛选决定'
                   : undefined}
                 onClick={() => {
                   if (view === 'tasks') setTaskTabRaw(t as TaskTab);
@@ -3773,26 +3617,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
               那种一致迟早会漏。放标签行只有一处，且与子标签同排，
               位置固定，切过去不会因为头部高度变化而跳。
             */}
-            {view === 'tasks' && taskView === 'board' ? (
-              /*
-                任务板内部的两种看法：树形看嵌套、表格筛排。
-                放在这一排（"看哪批数据"）旁边而不是任务板组件里 ——
-                紧接着再放一个"这批数据怎么看"，位置上是连贯的。
-              */
-              <div className="ttb-switch">
-                {(['tree', 'table'] as const).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    className={boardMode === v ? 'on' : ''}
-                    onClick={() => setBoardModeRaw(v)}
-                    title={v === 'table' ? '一行一条，每列可筛选与排序' : '树形，看嵌套层级'}
-                  >
-                    {v === 'tree' ? '树形' : '表格'}
-                  </button>
-                ))}
-              </div>
-            ) : null}
             {view === 'tasks' ? (
               <div className="ttb-switch">
                 {TASK_VIEWS.map((v) => (
@@ -3810,84 +3634,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
             ) : null}
           </div>
           <div className="pane-body">
-            {view === 'tasks' && taskView === 'board' && boardMode === 'table' ? (
-              <BoardTable
-                board={board.board}
-                meta={meta.meta}
-                attach={attachCountsByTask}
-                sessionId={sessionId}
-                selectedId={boardSel}
-                onSelect={setBoardSel}
-                onToggleTag={toggleTag}
-                onCreateTag={createTag}
-                canWrite={board.canWrite}
-              />
-            ) : view === 'tasks' && taskView === 'board' ? (
-              <BoardTree
-                board={board.board}
-                expanded={board.expanded}
-                onToggle={board.toggle}
-                selectedId={boardSel}
-                onSelect={setBoardSel}
-                checked={boardChecked}
-                onCheck={(id, on) => setBoardChecked((prev) => {
-                  const s = new Set(prev);
-                  if (on) s.add(id); else s.delete(id);
-                  return s;
-                })}
-                kw={boardKw}
-                onKw={setBoardKw}
-                onAddTask={() => {
-                  const parent = boardSel && board.board.nodes[boardSel]?.kind === 'group' ? boardSel : null;
-                  const now = Date.now();
-                  board.apply((b) => addNode(b, parent, {
-                    kind: 'task', title: '新任务', status: 'todo', deps: [], assignee: '', note: '',
-                    desc: '', tags: [], createdAt: now, updatedAt: now, due: 0, priority: 0,
-                    // session 是"认领者的窗口号"，BoardTask 的必填项；新任务没人领 → 空串。
-                    // 不写就 TS2345（缺必填），而 engine 内三处默认构造也都给 ''。
-                    session: '', prevSession: '', tookAt: 0,
-                  }).board);
-                  // 父组折叠着的话，新任务加进去等于看不见
-                  if (parent) board.ensureExpanded([parent]);
-                }}
-                onAddGroup={() => {
-                  const parent = boardSel && board.board.nodes[boardSel]?.kind === 'group' ? boardSel : null;
-                  let gid = '';
-                  board.apply((b) => {
-                    const r = addNode(b, parent, { kind: 'group', title: '新任务组', children: [] });
-                    gid = r.id;
-                    return r.board;
-                  });
-                  // 新组自身 + 它的父组都要展开，否则新组建出来就"消失"
-                  board.ensureExpanded(parent ? [gid, parent] : [gid]);
-                }}
-                onMerge={(ids, title) => {
-                  let gid = '';
-                  board.apply((b) => {
-                    const r = mergeIntoGroup(b, ids, title);
-                    gid = r.id;
-                    return r.board;
-                  });
-                  /*
-                    新组必须展开 —— 不展开的话被合并的任务会收进一个折叠的组里，
-                    界面上表现为"刚点的合并，任务全没了"。
-                  */
-                  board.ensureExpanded([gid]);
-                  setBoardChecked(new Set());
-                }}
-                onSplit={(id, titles) => {
-                  board.apply((b) => splitTask(b, id, titles).board);
-                  // 拆完原任务变成组，折叠着的话子任务就看不见了
-                  board.ensureExpanded([id]);
-                }}
-                onRemove={(id) => {
-                  board.apply((b) => removeNode(b, id));
-                  if (boardSel === id) setBoardSel(null);
-                }}
-                onReload={board.reload}
-                canWrite={board.canWrite}
-              />
-            ) : view === 'tasks' && taskView === 'table' ? (
+            {view === 'tasks' && taskView === 'table' ? (
               /*
                 表格视图**不看子标签**：它本就覆盖全部数据
                 （进行中 + 已归档），"看哪一段"由筛选决定。
@@ -3970,19 +3717,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
           这里只写一份 —— 三个入口的详情能力必须完全一致，
           否则"从表格点进去看不到取消按钮"这类差别无从排查。
         */}
-        {view === 'tasks' && taskView === 'board' ? (
-          <div className="bdd-wrap">
-            {boardNotice ? <div className="bdd-notice">{boardNotice}</div> : null}
-            <div className="bdd-path" title={board.path}>{board.path || '（未设置导出目录）'}</div>
-            <TaskBoardDetail
-              board={board.board}
-              selectedId={boardSel}
-              onApply={board.apply}
-              canWrite={board.canWrite}
-              sessionId={sessionId}
-            />
-          </div>
-        ) : view === 'tasks' ? (
+        {view === 'tasks' ? (
           <div className="task-detail">
             {!detail ? (
               <div className="nx-empty task-empty">
@@ -4268,21 +4003,6 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
       </div>
       </div>
       </div>
-
-      {/*
-        流程设置（状态 + 标签）同凭据中心一样挂在这层：
-        它是全屏遮罩（position:fixed），放哪一层都显示，
-        不依赖右栏或任务视图的布局 —— 从顶栏按钮点进来一定能看到。
-      */}
-      {metaOpen ? (
-        <BoardMetaPanel
-          meta={meta.meta}
-          canWrite={meta.canWrite}
-          notice={metaNotice}
-          onChange={meta.apply}
-          onClose={() => setMetaOpen(false)}
-        />
-      ) : null}
 
       {/*
         凭据中心挂在这里（af-body-row 之外），不跟着右栏走。
