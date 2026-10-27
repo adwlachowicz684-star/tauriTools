@@ -28,6 +28,16 @@ import {
   colFilterValues,
   activeColFilters,
   filterTasksByColumns,
+  indexTasks,
+  ancestorChain,
+  flattenTasks,
+  groupStatus,
+  lockOf,
+  mergeIntoGroup,
+  createGroup,
+  dissolveGroup,
+  isAncestor,
+  splitTask,
 } from './core.mjs';
 
 let pass = 0;
@@ -213,6 +223,8 @@ const TB_TASKS = [
   normalizeTask({ id: 'tb-0003', title: '新手引导', detail: '引导流程', status: 'doing', priority: 'P1', tags: ['ui', 'db'], assignee: 'w2', createdAt: Date.parse('2026-10-08T10:00:00'), updatedAt: Date.parse('2026-10-22T10:00:00') }),
 ];
 
+const TB_ROWS = TB_TASKS.map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+
 /** 造一份只有某列生效的筛选 */
 function onlyFilter(field, patch) {
   const f = {};
@@ -222,12 +234,13 @@ function onlyFilter(field, patch) {
 
 const COL = (k) => ({ field: 'priority', label: '', kind: k });
 
-t('列定义：八列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
-  LIST_COLUMNS.length === 8 && LIST_COLUMNS.every((c) => ['enum', 'text', 'time'].indexOf(c.kind) >= 0));
+t('列定义：十列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
+  LIST_COLUMNS.length === 10 && LIST_COLUMNS.every((c) => ['enum', 'text', 'time'].indexOf(c.kind) >= 0));
 
-t('列定义：覆盖优先级/ID/标题/状态/认领人/标签/创建/更新', (() => {
+t('列定义：覆盖优先级/ID/标题/所属组/状态/认领人/标签/说明/创建/更新', (() => {
   const fields = LIST_COLUMNS.map((c) => c.field);
-  return ['priority', 'id', 'title', 'status', 'assignee', 'tags', 'createdAt', 'updatedAt']
+  return ['priority', 'id', 'title', 'groupPath', 'status', 'assignee', 'tags',
+          'summary', 'createdAt', 'updatedAt']
     .every((f) => fields.indexOf(f) >= 0);
 })());
 
@@ -247,49 +260,49 @@ t('colRawValues：认领人空串表示未认领；标签是多值',
   && colRawValues(TB_TASKS[2], 'tags').length === 2);
 
 t('按优先级筛：只留命中的',
-  filterTasksByColumns(TB_TASKS, onlyFilter('priority', { values: ['P0', 'P1'] }), '').length === 2);
+  filterTasksByColumns(TB_ROWS, onlyFilter('priority', { values: ['P0', 'P1'] }), '').length === 2);
 
 t('按优先级筛：拿显示文案去筛不该命中（筛选按原始值）',
-  filterTasksByColumns(TB_TASKS, onlyFilter('priority', { values: ['紧急'] }), '').length === 0);
+  filterTasksByColumns(TB_ROWS, onlyFilter('priority', { values: ['紧急'] }), '').length === 0);
 
-t('按状态筛', filterTasksByColumns(TB_TASKS, onlyFilter('status', { values: ['todo'] }), '').length === 1);
+t('按状态筛', filterTasksByColumns(TB_ROWS, onlyFilter('status', { values: ['todo'] }), '').length === 1);
 
 t('按认领人筛：空串能筛出没人认领的（"找没人领的"是常用查询）', (() => {
-  const hit = filterTasksByColumns(TB_TASKS, onlyFilter('assignee', { values: [''] }), '');
-  return hit.length === 1 && hit[0].id === 'tb-0002';
+  const hit = filterTasksByColumns(TB_ROWS, onlyFilter('assignee', { values: [''] }), '');
+  return hit.length === 1 && hit[0].task.id === 'tb-0002';
 })());
 
 t('按认领人筛：能筛出具体某人', (() => {
-  const hit = filterTasksByColumns(TB_TASKS, onlyFilter('assignee', { values: ['w2'] }), '');
-  return hit.length === 1 && hit[0].id === 'tb-0003';
+  const hit = filterTasksByColumns(TB_ROWS, onlyFilter('assignee', { values: ['w2'] }), '');
+  return hit.length === 1 && hit[0].task.id === 'tb-0003';
 })());
 
 t('按标签筛：多值命中任一即可（不是要全部命中）',
-  filterTasksByColumns(TB_TASKS, onlyFilter('tags', { values: ['db'] }), '').length === 2);
+  filterTasksByColumns(TB_ROWS, onlyFilter('tags', { values: ['db'] }), '').length === 2);
 
 t('文本列：ID 与标题按关键词包含，不区分大小写',
-  filterTasksByColumns(TB_TASKS, onlyFilter('id', { text: 'TB-0002' }), '').length === 1
-  && filterTasksByColumns(TB_TASKS, onlyFilter('title', { text: '门禁' }), '').length === 1);
+  filterTasksByColumns(TB_ROWS, onlyFilter('id', { text: 'TB-0002' }), '').length === 1
+  && filterTasksByColumns(TB_ROWS, onlyFilter('title', { text: '门禁' }), '').length === 1);
 
 t('时间列：区间筛选，上界含当天',
-  filterTasksByColumns(TB_TASKS, onlyFilter('createdAt', { min: '2026-10-05', max: '2026-10-08' }), '').length === 2);
+  filterTasksByColumns(TB_ROWS, onlyFilter('createdAt', { min: '2026-10-05', max: '2026-10-08' }), '').length === 2);
 
 t('时间列：没有时间戳的不参与区间筛选（不该被带出来）', (() => {
   const noTime = [normalizeTask({ id: 'tb-0009', title: 'x', status: 'todo', priority: 'P2', tags: [], assignee: null, createdAt: 0, updatedAt: 0 })];
-  return filterTasksByColumns(noTime, onlyFilter('createdAt', { min: '2026-10-01' }), '').length === 0;
+  return filterTasksByColumns(noTime.map((t) => ({ task: t, depth: 0, path: [], groupPath: '' })), onlyFilter('createdAt', { min: '2026-10-01' }), '').length === 0;
 })());
 
 t('组合筛选是"且"（收窄而不是变宽）', (() => {
   const f = { priority: { ...emptyColFilter(), values: ['P1'] }, status: { ...emptyColFilter(), values: ['doing'] } };
-  const hit = filterTasksByColumns(TB_TASKS, f, '');
-  return hit.length === 1 && hit[0].id === 'tb-0003';
+  const hit = filterTasksByColumns(TB_ROWS, f, '');
+  return hit.length === 1 && hit[0].task.id === 'tb-0003';
 })());
 
-t('全局搜索跨 id / 标题 / 详情', filterTasksByColumns(TB_TASKS, {}, '门禁脚本').length === 1);
+t('全局搜索跨 id / 标题 / 详情', filterTasksByColumns(TB_ROWS, {}, '门禁脚本').length === 1);
 
 t('空的 filter 对象不会让整表变空（最难自查的那类 bug）', (() => {
   const f = { priority: emptyColFilter(), status: emptyColFilter(), tags: emptyColFilter() };
-  return filterTasksByColumns(TB_TASKS, f, '').length === TB_TASKS.length;
+  return filterTasksByColumns(TB_ROWS, f, '').length === TB_ROWS.length;
 })());
 
 t('activeColFilters：只数真正生效的列', (() => {
@@ -299,18 +312,244 @@ t('activeColFilters：只数真正生效的列', (() => {
 })());
 
 t('colFilterValues：优先级/状态取全量；认领人从数据去重且未认领排最后', (() => {
-  const pri = colFilterValues('priority', TB_TASKS);
-  const st = colFilterValues('status', TB_TASKS);
-  const as = colFilterValues('assignee', TB_TASKS);
+  const pri = colFilterValues('priority', TB_ROWS);
+  const st = colFilterValues('status', TB_ROWS);
+  const as = colFilterValues('assignee', TB_ROWS);
   return pri.length === 4 && st.length === 5
     && as[as.length - 1] === '' && as.indexOf('w1') >= 0 && as.indexOf('w2') >= 0;
 })());
 
-t('colFilterValues：标签取全部去重', colFilterValues('tags', TB_TASKS).indexOf('ui') >= 0);
+t('colFilterValues：标签取全部去重', colFilterValues('tags', TB_ROWS).indexOf('ui') >= 0);
 
 t('标签列能排序（多值按拼串，不是按第一个）', (() => {
   const asc = sortTasksBy(TB_TASKS, 'tags', 'asc');
   return asc[0].id === 'tb-0001' && asc[2].id === 'tb-0003';
+})());
+
+
+/* ============================================================ 任务组嵌套 + 前置依赖 */
+
+const T1 = normalizeTask({ id: 'tb-0001', title: '登录', kind: 'task', parent: null, deps: [], status: 'done' });
+const T2 = normalizeTask({ id: 'tb-0002', title: '鉴权', kind: 'task', parent: 'g1', deps: ['tb-0001'], status: 'todo' });
+const T3 = normalizeTask({ id: 'tb-0003', title: '改密', kind: 'task', parent: 'g2', deps: [], status: 'doing' });
+const G1 = normalizeTask({ id: 'g1', title: '账户', kind: 'group', parent: null, deps: [] });
+const G2 = normalizeTask({ id: 'g2', title: '安全', kind: 'group', parent: 'g1', deps: [] });
+
+const NEST = [T1, T2, T3, G1, G2];
+
+t('indexTasks：组内嵌套（安全在账户下）', (() => {
+  const { parentOf } = indexTasks(NEST);
+  return parentOf['g2'] === 'g1' && parentOf['g1'] === undefined && parentOf['tb-0002'] === 'g1';
+})());
+
+t('ancestorChain：三层嵌套给出完整链', (() => {
+  const { parentOf } = indexTasks(NEST);
+  const chain = ancestorChain('tb-0003', parentOf);
+  return chain.join(',') === 'g1,g2';
+})());
+
+t('祖先链是环也不会死循环（AI 拼 JSON 不校验全局唯一）', (() => {
+  const a = normalizeTask({ id: 'a', title: 'a', parent: 'b' });
+  const b = normalizeTask({ id: 'b', title: 'b', parent: 'a' });
+  const { parentOf } = indexTasks([a, b]);
+  // 认领时先到先得：a 的父是 b；b 的父是 a 会在断环时被拆掉
+  return ancestorChain('a', parentOf).length < 8;
+})());
+
+t('摊平：组不占行，任务带上所属组路径', (() => {
+  const rows = flattenTasks(NEST);
+  const r3 = rows.find((r) => r.task.id === 'tb-0003');
+  return rows.length === 3 && r3 && r3.groupPath === '账户 › 安全' && r3.depth === 2;
+})());
+
+t('摊平：不在任何组里的任务 path 为空', (() => {
+  const rows = flattenTasks(NEST);
+  const r1 = rows.find((r) => r.task.id === 'tb-0001');
+  return r1.groupPath === '' && r1.depth === 0;
+})());
+
+t('组的状态由下面推导：全部完成才是 done', (() => {
+  const all = [normalizeTask({ id: 'x', parent: 'g1', status: 'done' }),
+               normalizeTask({ id: 'y', parent: 'g1', status: 'done' }), G1];
+  return groupStatus('g1', all) === 'done';
+})());
+
+t('组的状态：有一个在做就是 doing', (() => {
+  const all = [normalizeTask({ id: 'x', parent: 'g1', status: 'done' }),
+               normalizeTask({ id: 'y', parent: 'g1', status: 'doing' }), G1];
+  return groupStatus('g1', all) === 'doing';
+})());
+
+t('组的状态：嵌套组把下面所有层的任务都算进来', (() => {
+  const all = [normalizeTask({ id: 'x', parent: 'g1', status: 'done' }),
+               normalizeTask({ id: 'y', parent: 'g2', status: 'doing' }), G1, G2];
+  return groupStatus('g1', all) === 'doing';
+})());
+
+t('空组没有状态（不能凭空说它是待办）', groupStatus('g1', [G1]) === null);
+
+t('前置未完成 → 锁定', (() => {
+  const t = normalizeTask({ id: 'z', deps: ['tb-0003'], status: 'todo' });   // tb-0003 是 doing
+  const l = lockOf(t, NEST);
+  return l.locked === true && l.pending.length === 1 && l.pending[0] === 'tb-0003';
+})());
+
+t('前置已完成 → 不锁定', (() => {
+  const t = normalizeTask({ id: 'z', deps: ['tb-0001'], status: 'todo' });
+  return lockOf(t, NEST).locked === false;
+})());
+
+t('前置不存在 → 锁定且单列 missing（不能静默当完成）', (() => {
+  const t = normalizeTask({ id: 'z', deps: ['不存在'], status: 'todo' });
+  const l = lockOf(t, NEST);
+  return l.locked === true && l.missing.length === 1 && l.missing[0] === '不存在';
+})());
+
+t('依赖成环 → 报 cyclic（否则永远等不到解锁）', (() => {
+  const a = normalizeTask({ id: 'a', deps: ['b'] });
+  const b = normalizeTask({ id: 'b', deps: ['a'] });
+  return lockOf(a, [a, b]).cyclic === true;
+})());
+
+t('没有前置的任务不成环，也不白跑检测', (() => {
+  const a = normalizeTask({ id: 'a', deps: [] });
+  return lockOf(a, [a]).cyclic === false;
+})());
+
+t('依赖组 = 等组里全部完成', (() => {
+  const g = normalizeTask({ id: 'gg', kind: 'group', title: '组' });
+  const x = normalizeTask({ id: 'x', parent: 'gg', status: 'done' });
+  const y = normalizeTask({ id: 'y', parent: 'gg', status: 'todo' });
+  const t = normalizeTask({ id: 'z', deps: ['gg'] });
+  const l = lockOf(t, [g, x, y, t]);
+  return l.locked === true && l.pending.indexOf('gg') >= 0;
+})());
+
+
+/* ============================================================ 合并 / 拆组 */
+
+const MA = normalizeTask({ id: 'a', title: 'A' });
+const MB = normalizeTask({ id: 'b', title: 'B' });
+const MC = normalizeTask({ id: 'c', title: 'C' });
+
+t('合并成组：被合并的任务改挂到新组下', (() => {
+  const r = mergeIntoGroup([MA, MB, MC], ['a', 'b'], '账户');
+  const a = r.tasks.find((t) => t.id === 'a');
+  return a.parent === r.groupId && r.tasks.filter((t) => t.kind === 'group').length === 1;
+})());
+
+t('合并成组：组可以建在另一个组下（于是能一层层套）', (() => {
+  const g0 = normalizeTask({ id: 'g0', title: '外层', kind: 'group' });
+  const r = mergeIntoGroup([MA, MB, g0], ['a'], '内层', 'g0');
+  const grp = r.tasks.find((t) => t.id === r.groupId);
+  return grp.parent === 'g0';
+})());
+
+t('合并成组：不把组塞进组（那是另一种语义）', (() => {
+  const g0 = normalizeTask({ id: 'g0', title: 'G', kind: 'group' });
+  const r = mergeIntoGroup([MA, g0], ['a', 'g0'], 'X');
+  const still = r.tasks.find((t) => t.id === 'g0');
+  return still.parent === null;
+})());
+
+t('合并成组：跳过会成环的组合（不能让自己当自己的祖先）', (() => {
+  const g0 = normalizeTask({ id: 'g0', title: 'G', kind: 'group' });
+  const kid = normalizeTask({ id: 'k', title: 'K', parent: 'g0' });
+  // 把 g0 并进一个新建在 g0 下面的组 —— 实际发生不了，但逻辑要挡
+  const r = mergeIntoGroup([g0, kid], ['k'], '内', 'g0');
+  return r.tasks.find((t) => t.id === 'k').parent === r.groupId;
+})());
+
+t('isAncestor：识别祖先关系', (() => {
+  const g1 = normalizeTask({ id: 'g1', kind: 'group' });
+  const g2 = normalizeTask({ id: 'g2', kind: 'group', parent: 'g1' });
+  const x = normalizeTask({ id: 'x', parent: 'g2' });
+  const { parentOf, byId } = indexTasks([g1, g2, x]);
+  return isAncestor('g1', 'x', parentOf, byId) === true
+    && isAncestor('x', 'g1', parentOf, byId) === false;
+})());
+
+t('新建组：空组也要能建（先建好再把任务放进去）', (() => {
+  const r = createGroup([MA], '账户');
+  return r.tasks.length === 2 && r.tasks[1].kind === 'group';
+})());
+
+t('新建组：不能建在自己下面（当场成环）', (() => {
+  const r = createGroup([], 'X', 'self');
+  return r.tasks[0].parent === 'self';   // groupId 是新生成的，不会等于传入值
+})());
+
+t('拆组：组没了，任务上提一层（不是连任务一起删）', (() => {
+  const r = mergeIntoGroup([MA, MB], ['a', 'b'], '账户');
+  const d = dissolveGroup(r.tasks, r.groupId);
+  const a = d.tasks.find((t) => t.id === 'a');
+  return d.tasks.length === 2 && a.parent === null;
+})());
+
+t('拆组：嵌套组拆掉后，任务挂到**它上一层**（不是回到顶层）', (() => {
+  const g0 = normalizeTask({ id: 'g0', title: '外', kind: 'group' });
+  const g1 = normalizeTask({ id: 'g1', title: '内', kind: 'group', parent: 'g0' });
+  const x = normalizeTask({ id: 'x', parent: 'g1' });
+  const d = dissolveGroup([g0, g1, x], 'g1');
+  const xx = d.tasks.find((t) => t.id === 'x');
+  return xx.parent === 'g0';
+})());
+
+t('拆组：拆的不是组就原样返回', (() => {
+  const d = dissolveGroup([MA, MB], 'a');
+  return d.tasks.length === 2;
+})());
+
+
+/* ============================================================ 拆分 */
+
+t('拆分：原任务变成组，子任务挂在它下面', (() => {
+  const src = normalizeTask({ id: 'a', title: '登录', status: 'doing', priority: 'P1', tags: ['ui'] });
+  const r = splitTask([src], 'a', ['表单', '校验', '跳转']);
+  const g = r.tasks.find((t) => t.id === 'a');
+  return g.kind === 'group' && r.childIds.length === 3
+    && r.tasks.filter((t) => t.parent === 'a').length === 3;
+})());
+
+t('拆分：保留原 id（依赖它、引用它的地方不用改）', (() => {
+  const src = normalizeTask({ id: 'a', title: '登录' });
+  const r = splitTask([src], 'a', ['x', 'y']);
+  return r.groupId === 'a';
+})());
+
+t('拆分：子任务继承标签与优先级（上下文要带过去）', (() => {
+  const src = normalizeTask({ id: 'a', title: '登录', priority: 'P1', tags: ['ui'] });
+  const r = splitTask([src], 'a', ['x']);
+  const kid = r.tasks.find((t) => t.parent === 'a');
+  return kid.priority === 'P1' && kid.tags.indexOf('ui') >= 0;
+})());
+
+t('拆分：子任务不继承状态（否则一出生就是已完成）', (() => {
+  const src = normalizeTask({ id: 'a', title: '登录', status: 'doing' });
+  const r = splitTask([src], 'a', ['x']);
+  const kid = r.tasks.find((t) => t.parent === 'a');
+  return kid.status === 'todo';
+})());
+
+t('拆分：子任务不继承前置（否则全卡在同一处）', (() => {
+  const src = normalizeTask({ id: 'a', title: '登录', deps: ['b'] });
+  const r = splitTask([src], 'a', ['x']);
+  const kid = r.tasks.find((t) => t.parent === 'a');
+  return kid.deps.length === 0;
+})());
+
+t('拆分后可以再拆（子任务也能变成组）', (() => {
+  const src = normalizeTask({ id: 'a', title: '登录' });
+  const r1 = splitTask([src], 'a', ['x', 'y']);
+  const kid = r1.tasks.find((t) => t.parent === 'a');
+  const r2 = splitTask(r1.tasks, kid.id, ['x1', 'x2']);
+  return r2.tasks.filter((t) => t.parent === kid.id).length === 2;
+})());
+
+t('拆分：没给子任务名就不动（不能把一条任务变成空组）', (() => {
+  const src = normalizeTask({ id: 'a', title: '登录' });
+  const r = splitTask([src], 'a', []);
+  return r.tasks.length === 1 && r.tasks[0].kind === 'task';
 })());
 
 /* ---------------- 汇总 ---------------- */

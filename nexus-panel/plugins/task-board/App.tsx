@@ -7,7 +7,8 @@ import {
   PRIORITY_ORDER,
   PRIORITY_LABEL,
 } from './types';
-import type { TbConfig, Task, TaskStore, Priority, TaskStatus } from './types';
+import { TAG_COLORS } from './types';
+import type { TbConfig, Task, TaskStore, Priority, TaskStatus, TagDef } from './types';
 import {
   NOTAG,
   UNASSIGNED,
@@ -19,14 +20,23 @@ import {
   colFilterValues,
   emptyColFilter,
   filterTasksByColumns,
+  ancestorChain,
+  createGroup,
+  dissolveGroup,
+  flattenTasks,
+  mergeIntoGroup,
   fmtTime,
+  groupStatus,
   groupTasks,
+  indexTasks,
+  lockOf,
   relTime,
+  sortRowsBy,
   sortTasks,
-  sortTasksBy,
+  splitTask,
   statsOf,
 } from './core';
-import type { ColFilter, GroupKey, ListColumn, SortField, TbStats } from './core';
+import type { ColFilter, FlatRow, GroupKey, ListColumn, SortField, TbStats } from './core';
 /* 输入法守卫：中文 / 日文输入时回车是「把候选词上屏」，不是界面上的「提交」。
    备注框回车直接落盘 tasks.json，不挡的话打一半的拼音会被当成一条备注写进去。 */
 import { isComposing } from '../../js/ime.js';
@@ -55,7 +65,7 @@ const VIEWS: { key: TbView; label: string; title: string }[] = [
 
 const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'tag'];
 
-const SORT_FIELDS: SortField[] = ['priority', 'status', 'assignee', 'tags', 'updatedAt', 'createdAt', 'title', 'id'];
+const SORT_FIELDS: SortField[] = ['priority', 'status', 'assignee', 'tags', 'groupPath', 'summary', 'updatedAt', 'createdAt', 'title', 'id'];
 
 /** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
 function groupLabel(key: string, by: GroupKey): string {
@@ -70,9 +80,11 @@ const SORT_LABEL: Record<SortField, string> = {
   priority: '优先级',
   id: 'ID',
   title: '标题',
+  groupPath: '所属组',
   status: '状态',
   assignee: '认领人',
   tags: '标签',
+  summary: '说明',
   createdAt: '创建',
   updatedAt: '更新',
 };
@@ -97,6 +109,14 @@ export default function App() {
     ⛔ 筛选不持久化：它是"这一眼想看什么"，不是偏好。
     存下来下次打开还生效会让人以为任务少了。
   */
+  /*
+    列表里勾选的任务 —— 只有"合并成组"用得上。
+    不持久化：勾选是"这一手要动哪几条"，不是偏好。
+  */
+  const [checked, setChecked] = useState<Set<string>>(() => new Set());
+  /** 新建/合并组的弹窗。null = 关着 */
+  const [groupDraft, setGroupDraft] = useState<{ mode: 'merge' | 'new' } | null>(null);
+
   const [q, setQ] = useState('');
   const [colFilters, setColFilters] = useState<Partial<Record<SortField, ColFilter>>>({});
   const [newOpen, setNewOpen] = useState(false);
@@ -190,10 +210,19 @@ export default function App() {
 
   /* ---------- 派生数据 ---------- */
   /* 四视图共用同一份筛选结果；统计视图例外（它看全量，语义是「账本」不是「查询」） */
-  const filtered = useMemo(
-    () => (store ? filterTasksByColumns(store.tasks, colFilters, q) : []),
-    [store, colFilters, q],
+  /*
+    摊平 → 筛选 → 排序。三步都作用在**行**上（行 = 任务 + 所属组路径），
+    因为"所属组"是摊平时才有的派生值，光拿 Task 筛不到它。
+
+    其它三个视图要的是 Task[]，从行上取回（filteredTasks）——
+    它们不显示层级，用行反而多一层。
+  */
+  const flatRows = useMemo(() => flattenTasks(store ? store.tasks : []), [store]);
+  const filteredRows = useMemo(
+    () => filterTasksByColumns(flatRows, colFilters, q),
+    [flatRows, colFilters, q],
   );
+  const filtered = useMemo(() => filteredRows.map((r) => r.task), [filteredRows]);
   const byColumn = useMemo(() => {
     const map: Record<TaskStatus, Task[]> = { todo: [], claimed: [], doing: [], review: [], done: [] };
     if (store) {
@@ -202,7 +231,10 @@ export default function App() {
     }
     return map;
   }, [store, filtered]);
-  const listRows = useMemo(() => sortTasksBy(filtered, sort.field, sort.dir), [filtered, sort]);
+  const listRows = useMemo(
+    () => sortRowsBy(filteredRows, sort.field, sort.dir),
+    [filteredRows, sort],
+  );
 
   /* ---------- 列级筛选的操作 ---------- */
   const activeCols = useMemo(() => activeColFilters(colFilters), [colFilters]);
@@ -222,7 +254,11 @@ export default function App() {
     setQ('');
   };
   const filteredOn = activeCols.length > 0 || q.trim() !== '';
-  const groups = useMemo(() => groupTasks(listRows, groupBy), [listRows, groupBy]);
+  /* 分组视图要的是 Task[]（它自己按字段聚合，不看层级） */
+  const groups = useMemo(
+    () => groupTasks(listRows.map((r) => r.task), groupBy),
+    [listRows, groupBy],
+  );
   const stats = useMemo<TbStats | null>(() => (store ? statsOf(store) : null), [store]);
 
   /* 偏好落盘：store 是异步桥接，失败只意味着「下次不记得」，不该弹错打扰用户 */
@@ -293,6 +329,102 @@ export default function App() {
       });
       await refresh();
       ctx.toast(`${id} 已由 ${me} 认领`, 'ok');
+    })();
+
+  const doMergeGroup = (ids: string[], title: string) =>
+    withErr(async () => {
+      if (!cfg || ids.length === 0) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const r = mergeIntoGroup(st.tasks, ids, title || '新任务组');
+        return { ...st, tasks: r.tasks };
+      });
+      setChecked(new Set());
+      await refresh();
+      ctx.toast(`已把 ${ids.length} 条合并成「${title}」`, 'ok');
+    })();
+
+  const doNewGroup = (title: string) =>
+    withErr(async () => {
+      if (!cfg) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const r = createGroup(st.tasks, title || '新任务组');
+        return { ...st, tasks: r.tasks };
+      });
+      await refresh();
+      ctx.toast(`已新建组「${title}」`, 'ok');
+    })();
+
+  const doDissolveGroup = (groupId: string) =>
+    withErr(async () => {
+      if (!cfg) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const r = dissolveGroup(st.tasks, groupId);
+        return { ...st, tasks: r.tasks };
+      });
+      await refresh();
+    })();
+
+  const doSplit = (id: string, titles: string[]) =>
+    withErr(async () => {
+      if (!cfg || titles.length === 0) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const r = splitTask(st.tasks, id, titles);
+        return { ...st, tasks: r.tasks };
+      });
+      await refresh();
+      ctx.toast(`已拆成 ${titles.length} 条子任务`, 'ok');
+    })();
+
+  /*
+    标签定义落在 store.tagDefs（任务上只存 id）。
+    颜色改一处、所有挂这个标签的行一起变 —— 这是"标签"该有的行为，
+    逐行不同色就丢掉了"一眼分类"这个作用。
+  */
+  const doAddTag = (name: string, color: string) =>
+    withErr(async () => {
+      if (!cfg || !name.trim()) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
+        if (defs.some((d) => d.name === name.trim())) return null;   // 同名不重复建
+        const id = `tg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        defs.push({ id, name: name.trim(), color });
+        return { ...st, tagDefs: defs };
+      });
+      await refresh();
+    })();
+
+  const doSetTagColor = (id: string, color: string) =>
+    withErr(async () => {
+      if (!cfg || !id) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
+        /* 标签还没建过（任务上直接写了个裸名字）→ 补一条定义 */
+        const idx = defs.findIndex((d) => d.id === id);
+        if (idx < 0) defs.push({ id, name: id, color });
+        else defs[idx] = { ...defs[idx], color };
+        return { ...st, tagDefs: defs };
+      });
+      await refresh();
+    })();
+
+  /*
+    改字段（说明 / 所属组 / 前置）。
+
+    与流转分开：流转走 applyTransition（有状态机校验、要写历史），
+    这几个字段是纯编辑 —— 走状态机会把"改一句话说明"也记成一次状态变更，
+    历史里全是噪音，反而看不出真正的流转。
+  */
+  const doPatch = (id: string, patch: Partial<Task>) =>
+    withErr(async () => {
+      if (!cfg) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const idx = st.tasks.findIndex((t) => t.id === id);
+        if (idx < 0) return null;
+        const tasks = [...st.tasks];
+        tasks[idx] = { ...tasks[idx], ...patch, updatedAt: Date.now() };
+        return { ...st, tasks };
+      });
+      await refresh();
     })();
 
   const doComment = (id: string, note: string) =>
@@ -525,7 +657,19 @@ export default function App() {
       {view === 'list' && (
         <ListView
           rows={listRows}
-          allTasks={store.tasks}
+          allRows={flatRows}
+          store={store.tasks}
+          tagDefs={store.tagDefs}
+          onCreateTag={doAddTag}
+          onTagColor={doSetTagColor}
+          checked={checked}
+          onCheck={(id, on) => setChecked((prev) => {
+            const next = new Set(prev);
+            if (on) next.add(id); else next.delete(id);
+            return next;
+          })}
+          onNewGroup={() => setGroupDraft({ mode: 'new' })}
+          onMerge={() => setGroupDraft({ mode: 'merge' })}
           sort={sort}
           filters={colFilters}
           onSort={changeSort}
@@ -566,15 +710,38 @@ export default function App() {
       )}
 
       {/* 任务详情 */}
+      {groupDraft ? (
+        <GroupNameModal
+          mode={groupDraft.mode}
+          count={checked.size}
+          onClose={() => setGroupDraft(null)}
+          onOk={(title) => {
+            const mode = groupDraft.mode;
+            setGroupDraft(null);
+            if (mode === 'merge') doMergeGroup([...checked], title);
+            else doNewGroup(title);
+          }}
+        />
+      ) : null}
+
       {detail && (
         <DetailModal
           task={detail}
           me={me}
+          tasks={store.tasks}
+          tagDefs={store.tagDefs}
           onClose={() => setDetailId(null)}
           onComment={(note) => doComment(detail.id, note)}
           onDelete={() => doDelete(detail.id)}
           onAction={(to, needNote) => (needNote ? setRejectFor({ id: detail.id }) : doTransition(detail.id, to))}
           onClaim={() => doClaim(detail.id)}
+          onPatch={(patch) => doPatch(detail.id, patch)}
+          onOpen={(id) => setDetailId(id)}
+          onDissolve={(id) => {
+            doDissolveGroup(id);
+            setDetailId(null);
+          }}
+          onSplit={(id, titles) => doSplit(id, titles)}
         />
       )}
 
@@ -665,6 +832,97 @@ function TaskCard({
   );
 }
 
+/* ================================================================ 展示件 */
+
+/** 由同一个色相算出浅底/深字/描边 —— 不另存一套浅色版 */
+function tintOf(hex: string): { bg: string; fg: string; bd: string } {
+  return {
+    bg: `color-mix(in srgb, ${hex} 16%, transparent)`,
+    fg: `color-mix(in srgb, ${hex} 78%, var(--text))`,
+    bd: `color-mix(in srgb, ${hex} 42%, transparent)`,
+  };
+}
+
+/**
+ * 标签。
+ *
+ * 样式参考腾讯文档智能表：小圆角（不是全圆胶囊 —— 全圆在窄列里会挤掉
+ * 两个字的空间）、浅底深字 + 同色描边。一眼能分类，
+ * 又不像实心块那样糊成一片。
+ */
+function TagChip({ id, defs }: { id: string; defs: TagDef[] }) {
+  const d = defs.find((x) => x.id === id);
+  const name = d ? d.name : id;
+  const color = d ? d.color : '#78716c';
+  const t = tintOf(color);
+  return (
+    <span
+      className="tb-tag"
+      style={{ background: t.bg, color: t.fg, borderColor: t.bd }}
+      title={name}
+    >
+      {name}
+    </span>
+  );
+}
+
+/** 被卡住的原因要说得清，否则用户只能看到一把锁，不知道在等谁 */
+function lockTitle(lock: { pending: string[]; missing: string[]; cyclic: boolean }): string {
+  const parts: string[] = [];
+  if (lock.cyclic) parts.push('前置互相依赖成环，永远等不到解锁');
+  if (lock.missing.length > 0) parts.push(`前置不存在（可能已被删除）：${lock.missing.join('、')}`);
+  if (lock.pending.length > 0) parts.push(`等 ${lock.pending.length} 个前置完成：${lock.pending.join('、')}`);
+  return parts.join('；') || '被前置任务卡住';
+}
+
+/**
+ * 组名弹窗。新建组与合并成组共用 ——
+ * 两件事的差别只是"要不要带上已勾选的任务"，界面完全一样。
+ */
+function GroupNameModal({
+  mode, count, onClose, onOk,
+}: {
+  mode: 'merge' | 'new';
+  count: number;
+  onClose: () => void;
+  onOk: (title: string) => void;
+}) {
+  const [title, setTitle] = useState('');
+  return (
+    <Modal title={mode === 'merge' ? `合并 ${count} 条为一个任务组` : '新建任务组'} onClose={onClose}>
+      <div className="tb-mfield">
+        <span>组名</span>
+        <input
+          autoFocus
+          value={title}
+          placeholder="例如：账户体系"
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            /* 输入法守卫：中文输入时回车是上屏，不是提交 */
+            if (!isComposing(e.nativeEvent) && e.key === 'Enter' && title.trim()) onOk(title.trim());
+          }}
+        />
+      </div>
+      <div className="tb-macts">
+        <span className="tb-flex" />
+        <button className="tb-act sm" onClick={onClose}>取消</button>
+        <button
+          className="tb-act sm primary"
+          disabled={!title.trim()}
+          onClick={() => onOk(title.trim())}
+        >
+          {mode === 'merge' ? '合并' : '新建'}
+        </button>
+      </div>
+      {mode === 'merge' ? (
+        <p className="tb-hint">
+          组里还能再建组 —— 合并出来的这个组可以再挂到别的组下面。
+        </p>
+      ) : null}
+    </Modal>
+  );
+}
+
 /* ================================================================ 列表视图 */
 
 /**
@@ -704,7 +962,7 @@ function filterSummary(col: ListColumn, f: ColFilter): string {
  * 从左边展开的话大半会落到可视区外面。
  */
 function ColFilterPop({
-  col, filter, options, onChange, onClear, anchorRight,
+  col, filter, options, onChange, onClear, anchorRight, tagDefs, onCreateTag, onTagColor,
 }: {
   col: ListColumn;
   filter: ColFilter;
@@ -712,11 +970,21 @@ function ColFilterPop({
   onChange: (f: ColFilter) => void;
   onClear: () => void;
   anchorRight?: boolean;
+  /** 标签定义。只标签列用得到 */
+  tagDefs?: TagDef[];
+  /** 新建标签（名字 + 颜色）。返回后由调用方把它挂到当前行 */
+  onCreateTag?: (name: string, color: string) => void;
+  /** 改某个标签的颜色 */
+  onTagColor?: (id: string, color: string) => void;
 }) {
   const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
   const cls = 'tb-lpop' + (anchorRight ? ' is-right' : '');
+  const [newName, setNewName] = useState('');
+  const [newColor, setNewColor] = useState(TAG_COLORS[6]);
+  const colorOf = (id: string) => (tagDefs || []).find((d) => d.id === id)?.color || '';
 
   if (col.kind === 'enum') {
+    const isTag = col.field === 'tags';
     return (
       <div className={cls} onClick={(e) => e.stopPropagation()}>
         <div className="tb-lpop-title">按{col.label}筛选</div>
@@ -726,19 +994,70 @@ function ColFilterPop({
           options.map((v) => {
             const on = filter.values.indexOf(v) >= 0;
             return (
-              <label key={v || '__none__'} className="tb-lpop-item">
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={() => set({
-                    values: on ? filter.values.filter((x) => x !== v) : [...filter.values, v],
-                  })}
-                />
-                <span>{optionLabel(col.field, v)}</span>
-              </label>
+              <div key={v || '__none__'} className="tb-lpop-item">
+                <label className="tb-lpop-pick">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={() => set({
+                      values: on ? filter.values.filter((x) => x !== v) : [...filter.values, v],
+                    })}
+                  />
+                  <span>{optionLabel(col.field, v)}</span>
+                </label>
+                {/*
+                  标签列才给调色。
+                  颜色是标签**定义**的一部分（不是这一行的事），
+                  所以改一处、所有挂这个标签的行一起变 ——
+                  做成逐行改色的结果就是同一个标签在不同行颜色不同，
+                  那就丢掉了"一眼分类"这个作用。
+                */}
+                {isTag && onTagColor ? (
+                  <span className="tb-lpop-swatches">
+                    {TAG_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        className={'tb-swatch' + (colorOf(v) === c ? ' on' : '')}
+                        style={{ background: c }}
+                        title={`把「${optionLabel(col.field, v)}」改成这个颜色`}
+                        onClick={() => onTagColor(v, c)}
+                      />
+                    ))}
+                  </span>
+                ) : null}
+              </div>
             );
           })
         )}
+        {isTag && onCreateTag ? (
+          <div className="tb-lpop-new">
+            <input
+              className="tb-lpop-input"
+              value={newName}
+              placeholder="新建标签…"
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => {
+                if (!isComposing(e.nativeEvent) && e.key === 'Enter' && newName.trim()) {
+                  onCreateTag(newName.trim(), newColor);
+                  setNewName('');
+                }
+              }}
+            />
+            <div className="tb-lpop-swatches">
+              {TAG_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={'tb-swatch' + (newColor === c ? ' on' : '')}
+                  style={{ background: c }}
+                  title={`新标签用这个颜色`}
+                  onClick={() => setNewColor(c)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div className="tb-lpop-foot">
           <span className="tb-lpop-hint">不选 = 不限</span>
           <button type="button" className="tb-act sm" onClick={onClear}>清除</button>
@@ -793,7 +1112,15 @@ function ColFilterPop({
 
 function ListView({
   rows,
-  allTasks,
+  allRows,
+  store,
+  tagDefs,
+  onCreateTag,
+  onTagColor,
+  checked,
+  onCheck,
+  onNewGroup,
+  onMerge,
   sort,
   filters,
   onSort,
@@ -801,9 +1128,19 @@ function ListView({
   onClearFilter,
   onOpen,
 }: {
-  rows: Task[];
-  /** 全量任务。筛选项从它去重 —— 用过滤后的会漏掉已被筛掉的值 */
-  allTasks: Task[];
+  rows: FlatRow[];
+  /** 全量（未筛）的行。筛选项从它去重 —— 用过滤后的会漏掉已被筛掉的值 */
+  allRows: FlatRow[];
+  /** 全量任务，用于算前置锁定 */
+  store: Task[];
+  /** 标签定义（名字 + 颜色） */
+  tagDefs: TagDef[];
+  onCreateTag: (name: string, color: string) => void;
+  onTagColor: (id: string, color: string) => void;
+  checked: Set<string>;
+  onCheck: (id: string, on: boolean) => void;
+  onNewGroup: () => void;
+  onMerge: () => void;
   sort: { field: SortField; dir: 'asc' | 'desc' };
   filters: Partial<Record<SortField, ColFilter>>;
   onSort: (field: SortField) => void;
@@ -829,8 +1166,37 @@ function ListView({
     return () => document.removeEventListener('mousedown', onDown);
   }, [openCol]);
 
+  const picked = [...checked].filter((id) => rows.some((r) => r.task.id === id));
+
   return (
     <div className="tb-list">
+      {/*
+        组的两个入口。
+        「新建组」常驻（先建好再把任务指派进去，是常见路径）；
+        「合并为组」只在勾了东西时出现 —— 没勾还摆着，
+        点下去只会得到一个空组，那是个没用的按钮。
+      */}
+      <div className="tb-ltools">
+        <button type="button" className="tb-act sm" onClick={onNewGroup}>
+          ＋ 新建组
+        </button>
+        {picked.length > 0 ? (
+          <>
+            <button type="button" className="tb-act sm primary" onClick={onMerge}>
+              合并 {picked.length} 条为组
+            </button>
+            <button
+              type="button"
+              className="tb-act sm"
+              onClick={() => { for (const id of picked) onCheck(id, false); }}
+            >
+              取消勾选
+            </button>
+          </>
+        ) : (
+          <span className="tb-ltools-hint">勾选几条后可合并为一个任务组</span>
+        )}
+      </div>
       <div className="tb-list-head tb-lgrid">
         {LIST_COLUMNS.map((c, ci) => {
           const f = filters[c.field];
@@ -861,10 +1227,13 @@ function ListView({
                 <ColFilterPop
                   col={c}
                   filter={f || emptyColFilter()}
-                  options={colFilterValues(c.field, allTasks)}
+                  options={colFilterValues(c.field, allRows)}
                   onChange={(nf) => onFilter(c.field, nf)}
                   onClear={() => onClearFilter(c.field)}
                   anchorRight={ci >= LIST_COLUMNS.length - 3}
+                  tagDefs={tagDefs}
+                  onCreateTag={onCreateTag}
+                  onTagColor={onTagColor}
                 />
               ) : null}
             </div>
@@ -873,22 +1242,45 @@ function ListView({
       </div>
       <div className="tb-list-body">
         {rows.length === 0 && <div className="tb-col-empty">没有符合条件的任务</div>}
-        {rows.map((t) => (
+        {rows.map((row) => {
+          const t = row.task;
+          const lock = lockOf(t, store);
+          return (
           <div key={t.id} className="tb-lrow tb-lgrid" onClick={() => onOpen(t.id)} title="点击查看详情">
+            <label className="tb-lpick" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                checked={checked.has(t.id)}
+                onChange={(e) => onCheck(t.id, e.target.checked)}
+              />
+            </label>
             <span className="tb-lc c-priority">
               <PriorityBadge p={t.priority} />
             </span>
             <span className="tb-lc c-id">{t.id}</span>
             <span className="tb-lc c-title">
+              {lock.locked ? (
+                <span
+                  className="tb-lock"
+                  title={lockTitle(lock)}
+                >
+                  🔒
+                </span>
+              ) : null}
               <span className="tb-ltitle">{t.title}</span>
               {t.tags.length > 0 && (
                 <span className="tb-ltags">
                   {t.tags.map((tag) => (
-                    <span key={tag} className="tb-tag">
-                      {tag}
-                    </span>
+                    <TagChip key={tag} id={tag} defs={tagDefs} />
                   ))}
                 </span>
+              )}
+            </span>
+            <span className="tb-lc c-groupPath" title={row.groupPath}>
+              {row.groupPath ? (
+                <span style={{ paddingInlineStart: row.depth * 8 }}>{row.groupPath}</span>
+              ) : (
+                <span className="tb-ldim">—</span>
               )}
             </span>
             <span className="tb-lc c-status">
@@ -897,7 +1289,18 @@ function ListView({
             </span>
             <span className="tb-lc c-assignee">{t.assignee ? '@' + t.assignee : '未认领'}</span>
             <span className="tb-lc c-tags">
-              {t.tags.length > 0 ? t.tags.join('、') : <span className="tb-ldim">—</span>}
+              {t.tags.length > 0 ? (
+                <span className="tb-ltags">
+                  {t.tags.map((tag) => (
+                    <TagChip key={tag} id={tag} defs={tagDefs} />
+                  ))}
+                </span>
+              ) : (
+                <span className="tb-ldim">—</span>
+              )}
+            </span>
+            <span className="tb-lc c-summary" title={t.summary}>
+              {t.summary || <span className="tb-ldim">—</span>}
             </span>
             <span className="tb-lc c-createdAt" title={fmtTime(t.createdAt)}>
               {t.createdAt ? relTime(t.createdAt) : <span className="tb-ldim">—</span>}
@@ -906,7 +1309,8 @@ function ListView({
               {relTime(t.updatedAt)}
             </span>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1141,24 +1545,50 @@ function NewTaskModal({
 function DetailModal({
   task,
   me,
+  tasks,
+  tagDefs,
   onClose,
   onComment,
   onDelete,
   onAction,
   onClaim,
+  onPatch,
+  onOpen,
+  onDissolve,
+  onSplit,
 }: {
   task: Task;
   me: string;
+  /** 全量任务：算所属组路径与前置锁定要用 */
+  tasks: Task[];
+  tagDefs: TagDef[];
   onClose: () => void;
   onComment: (note: string) => void;
   onDelete: () => void;
   onAction: (to: TaskStatus, needNote?: boolean) => void;
   onClaim: () => void;
+  /** 打开另一条（点所属组名跳过去） */
+  onOpen: (id: string) => void;
+  /** 拆散这个组：组删掉，下面的任务上提一层 */
+  onDissolve: (groupId: string) => void;
+  /** 拆成子任务：原任务变成组，子任务挂在它下面 */
+  onSplit: (id: string, titles: string[]) => void;
+  /** 改字段（说明 / 所属组 / 前置） */
+  onPatch: (patch: Partial<Task>) => void;
 }) {
   const [note, setNote] = useState('');
   const [confirmDel, setConfirmDel] = useState(false);
+  /** 拆分输入框。null = 收起 */
+  const [splitText, setSplitText] = useState<string | null>(null);
   const acts = actionsFor(task.status);
   const hist = [...task.history].reverse();
+
+  const { byId, parentOf } = indexTasks(tasks);
+  const chain = ancestorChain(task.id, parentOf);
+  const groupPath = chain.map((id) => byId[id]?.title || id).join(' › ');
+  const lock = lockOf(task, tasks);
+  /* 可选的前置：排除自己、排除已成环的（选了就永远解锁不了） */
+  const depChoices = tasks.filter((t) => t.id !== task.id && t.id !== task.parent);
 
   return (
     <Modal title={`${task.id} · ${task.title}`} onClose={onClose} wide>
@@ -1168,12 +1598,168 @@ function DetailModal({
         <span className="tb-dtag">报告人：{task.reporter}</span>
         <span className="tb-dtag">认领人：{task.assignee || '未认领'}</span>
         <span className="tb-dtag">更新：{fmtTime(task.updatedAt)}</span>
+        <span className="tb-dtag">创建：{task.createdAt ? fmtTime(task.createdAt) : '—'}</span>
         {task.tags.map((tag) => (
-          <span key={tag} className="tb-tag">
-            {tag}
-          </span>
+          <TagChip key={tag} id={tag} defs={tagDefs} />
         ))}
       </div>
+
+      {task.kind === 'group' ? (
+        <div className="tb-dgroup">
+          <span className="tb-dtag">
+            组内有 {tasks.filter((t) => t.parent === task.id).length} 条直接成员
+          </span>
+          <span className="tb-dhint">
+            状态由下面的任务推导：
+            {groupStatus(task.id, tasks)
+              ? STATUS_LABEL[groupStatus(task.id, tasks) as TaskStatus]
+              : '（空组，没有状态）'}
+          </span>
+          <button
+            type="button"
+            className="tb-act sm warn"
+            onClick={() => onDissolve(task.id)}
+            title="删掉这个组，下面的任务上提一层（不会删任务）"
+          >
+            拆散组
+          </button>
+        </div>
+      ) : (
+        <div className="tb-dgroup">
+          {splitText === null ? (
+            <button
+              type="button"
+              className="tb-act sm"
+              onClick={() => setSplitText('')}
+              title="原任务变成组，下面挂你写的这几条子任务"
+            >
+              拆为子任务…
+            </button>
+          ) : (
+            <>
+              <input
+                autoFocus
+                className="tb-dinput"
+                value={splitText}
+                placeholder="子任务名，逗号分隔（如：表单,校验,跳转）"
+                onChange={(e) => setSplitText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (isComposing(e.nativeEvent)) return;
+                  if (e.key === 'Escape') { setSplitText(null); return; }
+                  if (e.key !== 'Enter') return;
+                  const names = splitText.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+                  if (names.length === 0) return;
+                  onSplit(task.id, names);
+                  setSplitText(null);
+                }}
+              />
+              <button
+                type="button"
+                className="tb-act sm primary"
+                disabled={splitText.split(/[,，]/).map((x) => x.trim()).filter(Boolean).length === 0}
+                onClick={() => {
+                  const names = splitText.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+                  if (names.length === 0) return;
+                  onSplit(task.id, names);
+                  setSplitText(null);
+                }}
+              >
+                拆分
+              </button>
+              <button type="button" className="tb-act sm" onClick={() => setSplitText(null)}>
+                取消
+              </button>
+            </>
+          )}
+          <span className="tb-dhint">
+            拆完这条变成组，组的状态由子任务推导。子任务还能再拆。
+          </span>
+        </div>
+      )}
+
+      {/*
+        任务说明与备注分开两栏：
+        说明是"要做什么"（原始要求），备注是"过程中记的"。
+        混一起的话做完没人清理说明，下次分不清哪些是原始要求。
+      */}
+      <div className="tb-dfield">
+        <span className="tb-dlabel">任务说明</span>
+        <input
+          className="tb-dinput"
+          value={task.summary || ''}
+          placeholder="一句话说清这条要做什么"
+          onChange={(e) => onPatch({ summary: e.target.value })}
+        />
+      </div>
+
+      <div className="tb-dfield">
+        <span className="tb-dlabel">所属组</span>
+        <select
+          className="tb-dinput"
+          value={task.parent || ''}
+          onChange={(e) => onPatch({ parent: e.target.value || null })}
+        >
+          <option value="">（不在任何组里）</option>
+          {tasks.filter((t) => t.kind === 'group' && t.id !== task.id).map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.title}
+            </option>
+          ))}
+        </select>
+        {task.parent ? (
+          <button
+            type="button"
+            className="tb-act sm"
+            onClick={() => onOpen(task.parent as string)}
+          >
+            打开「{byId[task.parent]?.title || task.parent}」
+          </button>
+        ) : null}
+        {groupPath ? <span className="tb-dhint">路径：{groupPath}</span> : null}
+      </div>
+
+      <div className="tb-dfield">
+        <span className="tb-dlabel">前置任务</span>
+        <div className="tb-ddep-wrap">
+          {(task.deps || []).map((d) => (
+            <span key={d} className="tb-ddep">
+              {byId[d]?.title || d}
+              {!byId[d] ? <span className="tb-ddep-gone">（已删除）</span> : null}
+              <button
+                type="button"
+                className="tb-ddep-x"
+                onClick={() => onPatch({ deps: (task.deps || []).filter((x) => x !== d) })}
+                title="移除这个前置"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+          <select
+            className="tb-dinput"
+            value=""
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) return;
+              if ((task.deps || []).indexOf(v) >= 0) return;
+              onPatch({ deps: [...(task.deps || []), v] });
+            }}
+          >
+            <option value="">＋ 添加前置…</option>
+            {depChoices.map((t) => (
+              <option key={t.id} value={t.id}>
+                {(t.kind === 'group' ? '［组］' : '') + t.title}
+              </option>
+            ))}
+          </select>
+        </div>
+        {lock.locked ? (
+          <span className="tb-dhint warn">🔒 {lockTitle(lock)}</span>
+        ) : (
+          <span className="tb-dhint">未被前置卡住</span>
+        )}
+      </div>
+
       {task.detail && <div className="tb-ddetail">{task.detail}</div>}
 
       <div className="tb-dacts">

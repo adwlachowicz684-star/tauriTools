@@ -53,10 +53,20 @@ export function actionsFor(status) {
 export function normalizeTask(raw) {
   const t = raw && typeof raw === 'object' ? raw : {};
   const num = (v, d) => (Number.isFinite(v) ? v : d);
+  /*
+    parent / deps 指向的 id 可能已经不存在（任务被删了）。
+    这里**不清理**引用：清了就无从知道"这里原本挂着什么"，
+    而界面上显式标出"前置已被删除"比静默消失要好 ——
+    后者会让人以为这条本来就没有前置。
+  */
   return {
     id: typeof t.id === 'string' ? t.id : '',
     title: typeof t.title === 'string' ? t.title : '(无标题)',
+    summary: typeof t.summary === 'string' ? t.summary : '',
     detail: typeof t.detail === 'string' ? t.detail : '',
+    kind: t.kind === 'group' ? 'group' : 'task',
+    parent: typeof t.parent === 'string' && t.parent ? t.parent : null,
+    deps: Array.isArray(t.deps) ? t.deps.filter((x) => typeof x === 'string') : [],
     status: STATUSES.includes(t.status) ? t.status : 'todo',
     priority: PRIORITIES.includes(t.priority) ? t.priority : 'P2',
     tags: Array.isArray(t.tags) ? t.tags.filter((x) => typeof x === 'string') : [],
@@ -66,6 +76,25 @@ export function normalizeTask(raw) {
     updatedAt: num(t.updatedAt, 0),
     history: Array.isArray(t.history) ? t.history.filter((h) => h && typeof h === 'object') : [],
   };
+}
+
+/** 归一化标签定义表。缺颜色给一档中性色，不让它变成"没定义" */
+function normalizeTagDefs(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const d of raw) {
+    if (!d || typeof d !== 'object') continue;
+    const id = typeof d.id === 'string' ? d.id : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: typeof d.name === 'string' && d.name ? d.name : id,
+      color: typeof d.color === 'string' && d.color ? d.color : '#78716c',
+    });
+  }
+  return out;
 }
 
 export function normalizeStore(raw) {
@@ -84,6 +113,7 @@ export function normalizeStore(raw) {
             lastSeen: Number.isFinite(a.lastSeen) ? a.lastSeen : 0,
           }))
       : [],
+    tagDefs: normalizeTagDefs(s.tagDefs),
   };
 }
 
@@ -134,9 +164,16 @@ export const LIST_COLUMNS = [
   { field: 'priority', label: '优先级', kind: 'enum' },
   { field: 'id', label: 'ID', kind: 'text' },
   { field: 'title', label: '标题', kind: 'text' },
+  /*
+    所属组**只作显示与筛选**，组标题本身不参与标题搜索 ——
+    搜"登录"不该把挂在登录组下的所有任务全带出来，
+    那是"扩展范围"，而搜索是"收窄范围"。
+  */
+  { field: 'groupPath', label: '所属组', kind: 'text' },
   { field: 'status', label: '状态', kind: 'enum' },
   { field: 'assignee', label: '认领人', kind: 'enum' },
   { field: 'tags', label: '标签', kind: 'enum' },
+  { field: 'summary', label: '说明', kind: 'text' },
   { field: 'createdAt', label: '创建', kind: 'time' },
   { field: 'updatedAt', label: '更新', kind: 'time' },
 ];
@@ -191,8 +228,21 @@ export function colRawValues(task, field) {
   }
 }
 
+/**
+ * 一行在某个字段上的值。
+ *
+ * 接的是**摊平行**（{task, groupPath}）而不是裸 Task ——
+ * 所属组是摊平时才有的派生值，Task 上没有这个字段。
+ * 若在这里拿 Task，那一列就只能永远筛不到东西。
+ */
+export function rowValue(row, field) {
+  if (field === 'groupPath') return row.groupPath || '';
+  return row.task ? row.task[field] : undefined;
+}
+
 /** 单列匹配 */
-function matchesCol(t, col, f) {
+function matchesCol(row, col, f) {
+  const t = row.task;
   switch (col.kind) {
     case 'enum': {
       const raws = colRawValues(t, col.field);
@@ -203,7 +253,7 @@ function matchesCol(t, col, f) {
     case 'text': {
       const kw = (f.text || '').trim().toLowerCase();
       if (!kw) return true;
-      return String(t[col.field] || '').toLowerCase().indexOf(kw) >= 0;
+      return String(rowValue(row, col.field) || '').toLowerCase().indexOf(kw) >= 0;
     }
     case 'time': {
       const n = t[col.field] || 0;
@@ -233,16 +283,23 @@ function matchesCol(t, col, f) {
  *
  * @param q 全局关键词（跨 id / 标题 / 详情），可空
  */
-export function filterTasksByColumns(tasks, filters, q) {
+/**
+ * 按列筛选（作用在**摊平行**上）。
+ *
+ * 全局搜索也刻意**不搜组标题**：那会让"找一条任务"变成
+ * "找出一整个组下面所有东西"，与搜索的语义相反。
+ */
+export function filterTasksByColumns(rows, filters, q) {
   const active = LIST_COLUMNS.filter((c) => colFilterActive(c, filters[c.field]));
   const kw = (q || '').trim().toLowerCase();
-  if (active.length === 0 && !kw) return tasks;
-  return tasks.filter((t) => {
+  if (active.length === 0 && !kw) return rows;
+  return rows.filter((row) => {
     for (const c of active) {
-      if (!matchesCol(t, c, filters[c.field])) return false;
+      if (!matchesCol(row, c, filters[c.field])) return false;
     }
     if (kw) {
-      const hay = `${t.id} ${t.title} ${t.detail}`.toLowerCase();
+      const t = row.task;
+      const hay = `${t.id} ${t.title} ${t.detail} ${t.summary || ''}`.toLowerCase();
       if (hay.indexOf(kw) < 0) return false;
     }
     return true;
@@ -265,12 +322,13 @@ export function activeColFilters(filters) {
  * 表里没有、但任务上写着的名字（外部 API 写的）照样要能筛；
  * 反过来表里有、但没人领过任务的名字，列出来选中就是零行。
  */
-export function colFilterValues(field, tasks) {
+export function colFilterValues(field, rows) {
+  const tasks = (rows || []).map((r) => (r && r.task ? r.task : r));
   switch (field) {
     case 'priority': return [...PRIORITIES];
     case 'status': return [...STATUSES];
     case 'assignee': {
-      const names = [...new Set((tasks || []).map((t) => t.assignee).filter(Boolean))];
+      const names = [...new Set(tasks.map((t) => t.assignee).filter(Boolean))];
       names.sort((a, b) => a.localeCompare(b));
       // 未认领（空串）排最后：它是"没人"，不该顶在名单前面
       return [...names, ''];
@@ -278,6 +336,415 @@ export function colFilterValues(field, tasks) {
     case 'tags': return allTags(tasks || []);
     default: return [];
   }
+}
+
+/* ============================================================ 任务组嵌套
+ *
+ * 组就是一条 kind='group' 的记录，别的记录用 parent 指向它。
+ * 组自己也可以有 parent —— 于是可以一直套下去。
+ *
+ * 为什么不让 group 单独成一个数组：那样"把两条任务并成一个组"
+ * 就要在两种数据结构之间搬，而分组/拆组是高频操作。
+ */
+
+/**
+ * id → 任务的索引。
+ *
+ * 顺带**认领**父子关系：一个 id 被两条记录同时指为 parent 时，
+ * 只认第一个。不认的话同一个任务会在两处各显示一遍，
+ * 状态还各自独立 —— 改了一处另一处不动。
+ *
+ * 顺带**截断环**：A 的父是 B、B 的父是 A 这种（AI 拼 JSON 时不校验全局唯一，
+ * 很容易写出），不截断会让下面的路径构造永远退不出去。
+ */
+export function indexTasks(tasks) {
+  const byId = Object.create(null);
+  for (const t of tasks || []) byId[t.id] = t;
+  const parentOf = Object.create(null);
+  for (const t of tasks || []) {
+    const p = t.parent;
+    if (!p || !byId[p] || p === t.id) continue;
+    if (parentOf[t.id] !== undefined) continue;   // 重复父级：先到先得
+    parentOf[t.id] = p;
+  }
+  /* 断环：从每个节点往上走，一旦转回来就把这一条父指针拆掉 */
+  for (const t of tasks || []) {
+    const seen = new Set();
+    let cur = t.id;
+    while (parentOf[cur] !== undefined) {
+      if (seen.has(cur)) { delete parentOf[cur]; break; }
+      seen.add(cur);
+      cur = parentOf[cur];
+    }
+  }
+  return { byId, parentOf };
+}
+
+/** 从根到该节点的组链（不含自己）。是环也不会死循环 —— 构造时已断 */
+export function ancestorChain(id, parentOf, limit = 32) {
+  const out = [];
+  const seen = new Set();
+  let cur = parentOf[id];
+  while (cur !== undefined && !seen.has(cur) && out.length < limit) {
+    seen.add(cur);
+    out.unshift(cur);
+    cur = parentOf[cur];
+  }
+  return out;
+}
+
+/**
+ * 摊平成表格行：组不占行（状态由下面决定，单独成行会显示成一个误导的值），
+ * 层级显示在 path 上并按深度缩进。
+ *
+ * @returns {{task, depth, path, groupPath}[]}
+ */
+export function flattenTasks(tasks) {
+  const { byId, parentOf } = indexTasks(tasks || []);
+  const rows = [];
+  const visit = (parentId, depth, names) => {
+    for (const t of tasks || []) {
+      const pid = parentOf[t.id] === undefined ? null : parentOf[t.id];
+      if ((parentId || null) !== (pid || null)) continue;
+      if (t.kind === 'group') {
+        const next = [...names, t.title];
+        visit(t.id, depth + 1, next);
+        continue;
+      }
+      rows.push({
+        task: t,
+        depth,
+        path: [...names],
+        groupPath: names.join(' › '),
+      });
+    }
+  };
+  visit(null, 0, []);
+  return rows;
+}
+
+/** 组的状态：由它下面所有任务**推导**，不存字段 */
+export function groupStatus(groupId, tasks) {
+  const { parentOf } = indexTasks(tasks || []);
+  const kids = (tasks || []).filter((t) => {
+    if (t.kind === 'group') return false;
+    let cur = t.id;
+    const seen = new Set();
+    while (parentOf[cur] !== undefined && !seen.has(cur)) {
+      seen.add(cur);
+      if (parentOf[cur] === groupId) return true;
+      cur = parentOf[cur];
+    }
+    return false;
+  });
+  if (kids.length === 0) return null;
+  if (kids.every((t) => t.status === 'done')) return 'done';
+  if (kids.some((t) => t.status === 'review')) return 'review';
+  if (kids.some((t) => t.status === 'doing')) return 'doing';
+  if (kids.some((t) => t.status === 'claimed')) return 'claimed';
+  return 'todo';
+}
+
+/* ============================================================ 前置任务
+ *
+ * 锁定状态是**算出来的**，不存字段。
+ *
+ * 存的话就有两份真相：前置标成 done 之后，这条的 locked 字段
+ * 若没人同步，界面永远显示"被卡住" —— 那种错查不出原因。
+ */
+
+/** 一条任务/组是否算"完成"。组 = 它下面全部完成 */
+export function isDone(id, tasks, ctx) {
+  const t = ctx.byId[id];
+  if (!t) return false;                       // 已删除：算没完成
+  if (t.kind === 'group') {
+    const kids = (tasks || []).filter((x) => x.kind !== 'group' && parentChainHas(x.id, id, ctx.parentOf));
+    return kids.length > 0 && kids.every((x) => x.status === 'done');
+  }
+  return t.status === 'done';
+}
+
+function parentChainHas(id, want, parentOf) {
+  const seen = new Set();
+  let cur = parentOf[id];
+  while (cur !== undefined && !seen.has(cur)) {
+    seen.add(cur);
+    if (cur === want) return true;
+    cur = parentOf[cur];
+  }
+  return false;
+}
+
+/**
+ * 这条被哪些前置卡住。
+ *
+ * @returns {{locked:boolean, pending:string[], missing:string[], cyclic:boolean}}
+ *   pending —— 存在但还没完成
+ *   missing —— 引用了不存在的 id（前置被删了）
+ *   cyclic  —— 互相依赖成环，永远等不到解锁
+ */
+export function lockOf(task, tasks) {
+  const ctx = indexTasks(tasks || []);
+  const deps = task?.deps || [];
+  const pending = [];
+  const missing = [];
+  for (const d of deps) {
+    if (!ctx.byId[d]) { missing.push(d); continue; }
+    if (!isDone(d, tasks, ctx)) pending.push(d);
+  }
+  /* 成环检测：只在有前置时才跑 —— 没有依赖的任务不可能成环，
+     几百条任务时这笔开销全白花 */
+  let cyclic = false;
+  if (deps.length > 0) {
+    const seen = new Set();
+    const walk = (id, depth) => {
+      if (depth > 64) return true;
+      if (seen.has(id)) return true;
+      seen.add(id);
+      const t = ctx.byId[id];
+      if (!t) return false;
+      for (const d of t.deps || []) {
+        if (walk(d, depth + 1)) return true;
+      }
+      seen.delete(id);
+      return false;
+    };
+    cyclic = walk(task.id, 0);
+  }
+  return {
+    locked: pending.length > 0 || missing.length > 0 || cyclic,
+    pending,
+    missing,
+    cyclic,
+  };
+}
+
+/**
+ * 按列排序（作用在**摊平行**上）。
+ *
+ * 与 sortTasksBy 的区别：它认 groupPath，且排序后同组的挨在一起
+ * （groupPath 相同则按深度、再按 id），不会把同一个组下的任务打散。
+ */
+export function sortRowsBy(rows, field, dir = 'asc') {
+  const sign = dir === 'desc' ? -1 : 1;
+  const cmp = (ra, rb) => {
+    let r = 0;
+    switch (field) {
+      case 'groupPath':
+        r = String(ra.groupPath || '').localeCompare(String(rb.groupPath || ''), 'zh-Hans-CN');
+        if (r === 0) r = ra.depth - rb.depth;
+        break;
+      case 'summary':
+        r = String(ra.task.summary || '').localeCompare(String(rb.task.summary || ''), 'zh-Hans-CN');
+        break;
+      default:
+        r = 0;
+    }
+    if (r !== 0) return r * sign;
+    return cmpTask(ra.task, rb.task, field, sign);
+  };
+  return [...rows].sort(cmp);
+}
+
+/** 落到任务字段上的比较（sortTasksBy 与 sortRowsBy 共用，不写两遍） */
+function cmpTask(a, b, field, sign) {
+  let r = 0;
+  switch (field) {
+    case 'priority':
+      r = (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
+      break;
+    case 'status':
+      r = (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
+      break;
+    case 'assignee': {
+      if (!a.assignee && !b.assignee) r = 0;
+      else if (!a.assignee) return 1;
+      else if (!b.assignee) return -1;
+      else r = a.assignee.localeCompare(b.assignee);
+      break;
+    }
+    case 'updatedAt':
+    case 'createdAt':
+      r = (a[field] || 0) - (b[field] || 0);
+      break;
+    case 'title':
+      r = a.title.localeCompare(b.title, 'zh-Hans-CN');
+      break;
+    case 'id':
+      r = a.id.localeCompare(b.id);
+      break;
+    case 'tags': {
+      const ta = (a.tags || []).slice().sort().join(',');
+      const tb = (b.tags || []).slice().sort().join(',');
+      r = ta.localeCompare(tb, 'zh-Hans-CN');
+      break;
+    }
+    default:
+      r = 0;
+  }
+  if (r !== 0) return r * sign;
+  if (field === 'updatedAt' || field === 'createdAt') return a.id.localeCompare(b.id);
+  return (b.updatedAt || 0) - (a.updatedAt || 0);
+}
+
+/* ============================================================ 合并成组 */
+
+/**
+ * 把若干任务并进一个新组。
+ *
+ * 组**新建**在给定的父组下（parentId 为空则建在顶层），
+ * 被合并的任务改挂到它下面 —— 于是可以一层层套下去。
+ *
+ * ⛔ 跳过被合并任务里的**组**：把组塞进组会让"组里有组"和
+ * "任务被归拢"两种语义混在一起，而合并通常指"这几条活归成一批"。
+ *
+ * ⛔ 跳过祖先：把 A 并进一个挂在 A 下面的组，等于让 A 成为自己的祖先，
+ * 之后任何沿父链向上走的代码都会绕不出来。
+ *
+ * @returns {{tasks, groupId}}
+ */
+export function mergeIntoGroup(tasks, ids, title, parentId = null) {
+  const list = tasks || [];
+  const want = new Set(ids || []);
+  const { byId, parentOf } = indexTasks(list);
+  const groupId = `grp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = Date.now();
+  const group = normalizeTask({
+    id: groupId,
+    title: title || '新任务组',
+    kind: 'group',
+    parent: parentId || null,
+    deps: [],
+    status: 'todo',
+    priority: 'P2',
+    tags: [],
+    reporter: 'manual',
+    assignee: null,
+    createdAt: now,
+    updatedAt: now,
+    history: [],
+  });
+  const out = [group];
+  for (const t of list) {
+    if (!want.has(t.id)) { out.push(t); continue; }
+    if (t.kind === 'group') { out.push(t); continue; }                 // 不合并组
+    if (isAncestor(groupId, t.id, parentOf, byId)) { out.push(t); continue; }
+    out.push({ ...t, parent: groupId, updatedAt: now });
+  }
+  return { tasks: out, groupId };
+}
+
+/** a 是否是 b 的祖先（沿父链向上找） */
+export function isAncestor(a, b, parentOf, byId) {
+  const seen = new Set();
+  let cur = parentOf[b];
+  while (cur !== undefined && !seen.has(cur)) {
+    seen.add(cur);
+    if (cur === a) return true;
+    cur = parentOf[cur];
+  }
+  return false;
+}
+
+/**
+ * 新建一个空组（之后再把任务拖/指派进去）。
+ *
+ * ⛔ 不能建在自己下面 —— 那会当场成环。
+ */
+export function createGroup(tasks, title, parentId = null) {
+  const list = tasks || [];
+  const groupId = `grp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = Date.now();
+  const group = normalizeTask({
+    id: groupId,
+    title: title || '新任务组',
+    kind: 'group',
+    parent: parentId && parentId !== groupId ? parentId : null,
+    deps: [],
+    status: 'todo',
+    priority: 'P2',
+    tags: [],
+    reporter: 'manual',
+    assignee: null,
+    createdAt: now,
+    updatedAt: now,
+    history: [],
+  });
+  return { tasks: [...list, group], groupId };
+}
+
+/**
+ * 拆散一个组：组本身删掉，它下面的任务**上提一层**
+ * （挂到这个组的父组下，没有父组就回到顶层）。
+ *
+ * 为什么不是连任务一起删：拆组是"不要这个归拢了"，
+ * 不是"这些活也别干了"。删掉整棵子树是最难挽回的一种误操作。
+ */
+export function dissolveGroup(tasks, groupId) {
+  const list = tasks || [];
+  const { parentOf } = indexTasks(list);
+  const g = list.find((t) => t.id === groupId);
+  if (!g || g.kind !== 'group') return { tasks: list };
+  const now = Date.now();
+  const out = [];
+  for (const t of list) {
+    if (t.id === groupId) continue;
+    if (parentOf[t.id] === groupId) {
+      out.push({ ...t, parent: g.parent || null, updatedAt: now });
+      continue;
+    }
+    out.push(t);
+  }
+  return { tasks: out };
+}
+
+/**
+ * 把一个任务拆成若干子任务。
+ *
+ * 原任务**变成组**（保留它的 id —— 这样依赖它、引用它的地方不用改），
+ * 子任务新建在它下面。于是可以一直拆下去：子任务本身也能再拆。
+ *
+ * 为什么不保留原任务为"活"、另建子任务：
+ *   那样原任务与子任务会并存，两边都有进度，
+ *   而"这条到底算做完了没有"要看哪一边就成了新的问题。
+ *   变成组之后，组的状态由子任务推导，只有一个答案。
+ *
+ * @returns {{tasks, groupId, childIds}}
+ */
+export function splitTask(tasks, id, titles) {
+  const list = tasks || [];
+  const names = (titles || []).map((x) => String(x || '').trim()).filter(Boolean);
+  const src = list.find((t) => t.id === id);
+  if (!src || names.length === 0) return { tasks: list, groupId: '', childIds: [] };
+  const now = Date.now();
+  const childIds = [];
+  const kids = names.map((title, i) => {
+    const cid = `sub_${id}_${i + 1}_${Math.random().toString(36).slice(2, 6)}`;
+    childIds.push(cid);
+    /*
+      子任务继承父任务的**上下文**（标签、优先级、认领人），
+      但不继承状态与前置 ——
+      继承状态会让几条新子任务一出生就是"已完成"，
+      继承前置会让它们全部卡在同一处。
+    */
+    return normalizeTask({
+      ...src,
+      id: cid,
+      title,
+      kind: 'task',
+      parent: id,
+      deps: [],
+      summary: '',
+      status: 'todo',
+      createdAt: now,
+      updatedAt: now,
+      history: [],
+    });
+  });
+  const out = list.map((t) => (t.id === id
+    ? { ...t, kind: 'group', deps: [], tags: [], assignee: null, updatedAt: now }
+    : t));
+  return { tasks: [...out, ...kids], groupId: id, childIds };
 }
 
 /** 全部标签（去重，按出现次数倒序，最多 20 个） */
