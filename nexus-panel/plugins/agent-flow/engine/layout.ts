@@ -90,13 +90,13 @@ export function normalizeTaskTab(v: unknown): TaskTab {
 /* ------------------------------------------------------------------ */
 
 /**
- * 任务视图的呈现方式：分组列表 / 表格 / 任务板。
+ * 任务视图的呈现方式：分组列表 / 表格。
  *
  * 列表与表格看的是**同一批数据**（已跑过的运行记录），不是两个功能：
  *   列表 = 按流程分组、带进度条，用来盯正在跑的
  *   表格 = 一行一条、每列可筛可排，用来找特定的某条
  *
- * 任务板是**另一批数据**（计划态：打算做什么，还没跑），
+
  * 放同一排切换，是因为它同样按项目分开、同样占这一条左栏 ——
  * 单独开一个顶层入口的话，同一个"任务"概念要分两处找。
  *
@@ -104,24 +104,23 @@ export function normalizeTaskTab(v: unknown): TaskTab {
  * 做成子标签的话，表格下还要再来一遍「进行中/已完成」的选择，
  * 而表格本就覆盖全部数据，那个选择是纯负担。
  */
-export type TaskView = 'list' | 'table' | 'board';
+export type TaskView = 'list' | 'table';
 
-export const TASK_VIEWS: TaskView[] = ['list', 'table', 'board'];
+export const TASK_VIEWS: TaskView[] = ['list', 'table'];
 
 export const TASK_VIEW_LABEL: Record<TaskView, string> = {
   list: '列表',
   table: '表格',
-  board: '任务板',
 };
 
 /**
- * 默认 **list**：表格与任务板都是后加的视图，而列表那套
+ * 默认 **list**：表格是后加的视图，而列表那套
  * （分组 + 进度条 + 实时耗时）是盯运行时最常用的。
  * 新视图不该一上来就顶掉它 ——
  * 想用的人自己切一次即可，且切过之后会记住。
  */
 export function normalizeTaskView(v: unknown): TaskView {
-  return v === 'table' ? 'table' : v === 'board' ? 'board' : 'list';
+  return v === 'table' ? 'table' : 'list';
 }
 
 /* ------------------------------------------------------------------ */

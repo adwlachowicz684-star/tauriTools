@@ -8,7 +8,7 @@ import { canExportToFile } from '../lib/tauri';
 /**
  * 附属文件清单的持有者。
  *
- * 与 useTaskBoard 同构（同样的 base / 同步副本 / 串行写队列），
+ * 结构与其它清单 hook 同构（同样的 base / 同步副本 / 串行写队列），
  * 理由也完全一样：写前要三方合并，而合并需要 base。
  * 两份 hook 刻意保持同样的形状 —— AI 改这两个文件时，
  * 学会一个就懂另一个，不会在两处遇到不同的规则。
@@ -38,7 +38,7 @@ export function useAttachments(opts: {
   const [file, setFile] = useState<AttachmentFile>(() => emptyAttachments(project, projectName));
   const [state, setState] = useState<AttachState>({ kind: 'idle' });
 
-  /** 当前值的同步副本 —— 理由同 useTaskBoard：写盘要用"改完的那一刻"的值 */
+  /** 当前值的同步副本 —— 写盘要用"改完的那一刻"的值，不能等 React 重渲染 */
   const fileRef = useRef<AttachmentFile>(file);
   /** 上次读到的内容。三方合并靠它分清"我改了"和"别人改了" */
   const baseRef = useRef<AttachmentFile>(emptyAttachments(project, projectName));
