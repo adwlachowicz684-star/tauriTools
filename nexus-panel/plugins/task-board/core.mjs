@@ -278,6 +278,13 @@ export function normalizeTask(raw) {
     */
     status: typeof t.status === 'string' && t.status ? t.status : 'todo',
     priority: PRIORITIES.includes(t.priority) ? t.priority : 'P2',
+    /*
+      预估工作量，单位**人日**，允许小数（半天 = 0.5）。
+      不设上限也不校验整数 —— 任务大到几十人日、小到 0.25 都有，
+      强校验只会逼人去备注里偷偷记，那就没法汇总了。
+      负数按 0 处理：负的工作量没有意义，且会把合计往回拉。
+    */
+    estimate: Number.isFinite(t.estimate) && t.estimate > 0 ? t.estimate : 0,
     tags: Array.isArray(t.tags) ? t.tags.filter((x) => typeof x === 'string') : [],
     reporter: typeof t.reporter === 'string' ? t.reporter : 'manual',
     assignee: typeof t.assignee === 'string' && t.assignee ? t.assignee : null,
@@ -389,6 +396,7 @@ export const LIST_COLUMNS = [
   { field: 'assignee', label: '认领人', kind: 'enum' },
   { field: 'tags', label: '标签', kind: 'enum' },
   { field: 'summary', label: '说明', kind: 'text' },
+  { field: 'estimate', label: '预估(人日)', kind: 'num' },
   { field: 'createdAt', label: '创建', kind: 'time' },
   { field: 'updatedAt', label: '更新', kind: 'time' },
 ];
@@ -415,11 +423,33 @@ function dayEnd(s) {
 }
 
 /** 这一列的筛选是否生效。判空只写这一处，UI 与过滤共用 */
+/** 数值列里代表「没估」的那个选项。它是"缺失"，不是 0 */
+export const UNESTIMATED = '__none__';
+
+/** 区间输入框里的东西是不是个数。空串**不算**数（那是"没填"） */
+export function numOrNull(v) {
+  const s2 = String(v ?? '').trim();
+  if (!s2) return null;
+  const n = Number(s2);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** 人日显示：去掉浮点尾巴（0.1+0.2 会算出 0.30000000000000004） */
+export function fmtEstimate(n) {
+  const v = Number(n) || 0;
+  if (v <= 0) return '';
+  return String(Math.round(v * 100) / 100);
+}
+
 export function colFilterActive(col, f) {
   if (!f) return false;
   if (col.kind === 'enum') return (f.values || []).length > 0;
   if (col.kind === 'text') return (f.text || '').trim() !== '';
   if (col.kind === 'time') return dayStart(f.min) !== null || dayEnd(f.max) !== null;
+  if (col.kind === 'num') {
+    return numOrNull(f.min) !== null || numOrNull(f.max) !== null
+      || (f.values || []).length > 0;   // 「没估」是个勾选项，也算生效
+  }
   return false;
 }
 
@@ -480,6 +510,26 @@ function matchesCol(row, col, f) {
       if (n <= 0) return false;
       const lo = dayStart(f.min);
       const hi = dayEnd(f.max);
+      if (lo !== null && n < lo) return false;
+      if (hi !== null && n > hi) return false;
+      return true;
+    }
+    case 'num': {
+      const lo = numOrNull(f.min);
+      const hi = numOrNull(f.max);
+      const n = Number(t[col.field]) || 0;
+      const wantNone = (f.values || []).indexOf(UNESTIMATED) >= 0;
+      /*
+        ⛔ 没填预估（0）**不参与区间筛选** ——
+        "找 3 人日以上的大活"不该带出一堆压根没估过的，
+        它们不是"0 人日"，是"没估"。当成 0 混进结果里是假数据。
+
+        所以要找没估的，走单独的勾选项（UNESTIMATED），
+        并且**勾了它就只看没估的** —— 两个条件语义不同，
+        混在一起会变成"要么没估、要么在区间内"，没人能预测出这个结果。
+      */
+      if (lo === null && hi === null) return n <= 0 ? wantNone : !wantNone;
+      if (n <= 0) return false;
       if (lo !== null && n < lo) return false;
       if (hi !== null && n > hi) return false;
       return true;
@@ -554,6 +604,12 @@ export function colFilterValues(field, rows, statusIds) {
       return [...names, ''];
     }
     case 'tags': return allTags(tasks || []);
+    /*
+      数值列没有"候选值"可枚举，但**"没估"是个要能筛的选项** ——
+      "找那些还没估工作量的"是排期前最常见的一次查询。
+      它不是 0，是缺失，所以必须单列，不能混进区间里。
+    */
+    case 'estimate': return [UNESTIMATED];
     default: return [];
   }
 }
@@ -787,6 +843,9 @@ function cmpTask(a, b, field, sign) {
     case 'createdAt':
       r = (a[field] || 0) - (b[field] || 0);
       break;
+    case 'estimate':
+      r = (Number(a.estimate) || 0) - (Number(b.estimate) || 0);
+      break;
     case 'title':
       r = a.title.localeCompare(b.title, 'zh-Hans-CN');
       break;
@@ -965,6 +1024,32 @@ export function splitTask(tasks, id, titles) {
     ? { ...t, kind: 'group', deps: [], tags: [], assignee: null, updatedAt: now }
     : t));
   return { tasks: [...out, ...kids], groupId: id, childIds };
+}
+
+/**
+ * 一个组的预估工作量 = 它下面**所有层**叶子任务的和。
+ *
+ * 组自己不存预估 —— 存了就有两个可改的地方，改了子任务组不变、
+ * 改了组子任务不动，最后不知道该信哪个。组是容器，工作量永远从底下算。
+ *
+ * 逐层累加而不是只算直接子任务：拆分出来的嵌套组，
+ * 只看一层会把下面几层的活全漏掉，合计偏小。
+ */
+export function groupEstimate(groupId, tasks) {
+  const ctx = indexTasks(tasks || []);
+  let sum = 0;
+  for (const t of tasks || []) {
+    if (t.kind === 'group') continue;
+    if (parentChainHas(t.id, groupId, ctx.parentOf)) sum += Number(t.estimate) || 0;
+  }
+  return Math.round(sum * 100) / 100;
+}
+
+/** 全部任务的工作量合计（组不计 —— 会计双份） */
+export function totalEstimate(tasks) {
+  let sum = 0;
+  for (const t of tasks || []) if (t.kind !== 'group') sum += Number(t.estimate) || 0;
+  return Math.round(sum * 100) / 100;
 }
 
 /** 全部标签（去重，按出现次数倒序，最多 20 个） */
@@ -1149,6 +1234,7 @@ const STALE_MS = 7 * 24 * 3600 * 1000;
 export function statsOf(store, now = Date.now()) {
   const tasks = store.tasks || [];
   const byStatus = {};
+  const estimateByStatus = {};
   const byPriority = {};
   for (const s of flowOf(store.flow).statuses) byStatus[s.id] = 0;
   for (const p of PRIORITIES) byPriority[p] = 0;
@@ -1157,9 +1243,18 @@ export function statsOf(store, now = Date.now()) {
   const stale = [];
   for (const t of tasks) {
     byStatus[t.status] = (byStatus[t.status] || 0) + 1;
+    if (t.kind !== 'group') {
+      estimateByStatus[t.status] = Math.round(
+        ((estimateByStatus[t.status] || 0) + (Number(t.estimate) || 0)) * 100,
+      ) / 100;
+    }
     byPriority[t.priority] = (byPriority[t.priority] || 0) + 1;
     const who = t.assignee || UNASSIGNED;
-    byAssignee.set(who, (byAssignee.get(who) || 0) + 1);
+    const ae = byAssignee.get(who) || { id: who, count: 0, est: 0 };
+    ae.count += 1;
+    /* 组不计 —— 组的工作量是子任务的和，算进来会双份 */
+    if (t.kind !== 'group') ae.est = Math.round((ae.est + (Number(t.estimate) || 0)) * 100) / 100;
+    byAssignee.set(who, ae);
     for (const tag of t.tags) tagCnt.set(tag, (tagCnt.get(tag) || 0) + 1);
     if (!statusDone(store.flow, t.status) && (now - (t.updatedAt || 0)) > STALE_MS) stale.push(t);
   }
@@ -1167,9 +1262,9 @@ export function statsOf(store, now = Date.now()) {
     .sort((a, b) => {
       if (a[0] === UNASSIGNED) return -1;
       if (b[0] === UNASSIGNED) return 1;
-      return b[1] - a[1] || a[0].localeCompare(b[0]);
+      return b[1].count - a[1].count || a[0].localeCompare(b[0]);
     })
-    .map(([id, count]) => ({ id, count }));
+    .map(([, v]) => ({ id: v.id, count: v.count, est: v.est }));
   const topTags = [...tagCnt.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, 10)
@@ -1186,6 +1281,8 @@ export function statsOf(store, now = Date.now()) {
     active: tasks.filter((t) => t.status === 'doing' || t.status === 'review').length,
     done: byStatus.done,
     byStatus,
+    estimateByStatus,
+    estimateTotal: totalEstimate(tasks),
     byPriority,
     byAssignee: assignees,
     topTags,

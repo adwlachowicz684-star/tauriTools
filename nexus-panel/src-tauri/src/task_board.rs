@@ -926,6 +926,27 @@ fn can_transition(from: &str, to: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 人日显示：去掉浮点尾巴（0.1+0.2 会算出 0.30000000000000004）
+fn fmt_est(n: f64) -> String {
+    let r = (n * 100.0).round() / 100.0;
+    format!("{}", r)
+}
+
+/// 取预估工作量（人日，可小数）。非法/负数 → 0（"没估"）。
+///
+/// ⛔ 不报错：这只是个估算字段，因为填了 -1 或 "三天" 就让 AI 建任务失败，
+/// 代价远大于把它当"没估"处理 —— 后者至少任务建成了，人能看到并改。
+fn estimate_of(body: &Value) -> f64 {
+    let n = match body.get("estimate") {
+        Some(v) => v.as_f64().or_else(|| v.as_i64().map(|x| x as f64)),
+        None => None,
+    };
+    match n {
+        Some(x) if x.is_finite() && x > 0.0 => x,
+        _ => 0.0,
+    }
+}
+
 fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     let title = str_field(body, "title").unwrap_or_default();
     if title.trim().is_empty() {
@@ -968,6 +989,8 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     );
     task.insert("status".to_string(), json!(initial));
     task.insert("priority".to_string(), json!(priority));
+    // 预估工作量（人日，可小数）。缺省 0 = 没估。
+    task.insert("estimate".to_string(), json!(estimate_of(body)));
     task.insert(
         "tags".to_string(),
         body.get("tags")
@@ -1033,6 +1056,15 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
             if obj.get("assignee").and_then(|x| x.as_str()).unwrap_or("") != v.as_str() {
                 obj.insert("assignee".to_string(), if v.is_empty() { json!(null) } else { json!(v) });
                 changed = true;
+            }
+        }
+        if let Some(v) = body.get("estimate") {
+            let cur = obj.get("estimate").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let next = estimate_of(&json!({ "estimate": v.clone() }));
+            if (cur - next).abs() > 1e-9 {
+                obj.insert("estimate".to_string(), json!(next));
+                changed = true;
+                push_history(obj, &by, "estimate", &format!("{} -> {}", fmt_est(cur), fmt_est(next)));
             }
         }
         if let Some(status) = str_field(body, "status") {
@@ -1176,6 +1208,34 @@ mod tests {
     use super::can_transition;
 
     #[test]
+    /* 预估工作量（人日，可小数） */
+    #[test]
+    fn estimate_accepts_fraction() {
+        assert_eq!(estimate_of(&serde_json::json!({"estimate": 2.5})), 2.5);
+        assert_eq!(estimate_of(&serde_json::json!({"estimate": 0.5})), 0.5);
+    }
+
+    #[test]
+    fn estimate_missing_is_zero() {
+        assert_eq!(estimate_of(&serde_json::json!({})), 0.0);
+        assert_eq!(estimate_of(&serde_json::json!({"estimate": null})), 0.0);
+    }
+
+    #[test]
+    fn estimate_invalid_becomes_zero_not_error() {
+        // 没估 / 负数 / 非数字都不报错，一律记 0 —— 这只是估算字段，
+        // 因为填了 -1 或 "三天" 就让建任务失败，代价远大于当"没估"
+        assert_eq!(estimate_of(&serde_json::json!({"estimate": -3})), 0.0);
+        assert_eq!(estimate_of(&serde_json::json!({"estimate": "三天"})), 0.0);
+    }
+
+    #[test]
+    fn fmt_est_drops_float_tail() {
+        // 0.1+0.2 不该显示成 0.30000000000000004
+        assert_eq!(fmt_est(0.1 + 0.2), "0.3");
+        assert_eq!(fmt_est(2.0), "2");
+    }
+
     fn forward_paths_match_frontend() {
         assert!(can_transition("todo", "claimed"));
         assert!(can_transition("todo", "doing"));

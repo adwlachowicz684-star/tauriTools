@@ -118,7 +118,7 @@ export declare function actionsForIn(
 export interface ListColumn {
   field: SortField;
   label: string;
-  kind: 'enum' | 'text' | 'time';
+  kind: 'enum' | 'text' | 'time' | 'num';
 }
 
 export declare const LIST_COLUMNS: ListColumn[];
@@ -150,6 +150,22 @@ export declare function filterTasksByColumns(
 export declare function activeColFilters(filters: Partial<Record<SortField, ColFilter>>): ListColumn[];
 
 /** 某一列的候选值（原始值，显示文案由 UI 用 types.ts 映射） */
+/* ---------------------------------------------------- 预估工作量（人日） */
+
+/** 数值列里代表「没估」的选项。是"缺失"，不是 0 */
+export declare const UNESTIMATED: string;
+
+export declare function numOrNull(v: unknown): number | null;
+
+/** 人日显示：去掉浮点尾巴。0 → ''（没估 ≠ 0 人日） */
+export declare function fmtEstimate(n: number): string;
+
+/** 组的预估 = 下面所有层叶子任务的和（组自己不存预估） */
+export declare function groupEstimate(groupId: string, tasks: Task[]): number;
+
+/** 全部叶子任务的工作量合计 */
+export declare function totalEstimate(tasks: Task[]): number;
+
 export declare function colFilterValues(
   field: SortField, rows: FlatRow[] | Task[], statusIds?: string[],
 ): string[];
@@ -173,7 +189,7 @@ export interface TaskGroup<K extends string = string> {
 export declare function groupTasks(tasks: Task[], key: GroupKey): TaskGroup[];
 
 export type SortField =
-  | 'priority' | 'status' | 'assignee' | 'tags' | 'groupPath' | 'summary'
+  | 'priority' | 'status' | 'assignee' | 'tags' | 'groupPath' | 'summary' | 'estimate'
   | 'updatedAt' | 'createdAt' | 'title' | 'id';
 
 /** 多字段排序；assignee 未认领恒排最后；同级按 updatedAt 倒序兜底 */
@@ -193,8 +209,12 @@ export interface TbStats {
   active: number;
   done: number;
   byStatus: Record<string, number>;
+  /** 每个状态下叶子任务的工作量合计（人日） */
+  estimateByStatus: Record<string, number>;
+  /** 全部叶子任务的工作量合计（人日） */
+  estimateTotal: number;
   byPriority: Record<string, number>;
-  byAssignee: { id: string; count: number }[];
+  byAssignee: { id: string; count: number; est: number }[];
   topTags: { tag: string; count: number }[];
   recent: RecentEntry[];
   stale: Task[];

@@ -45,6 +45,11 @@ import {
   statusName,
   statusDone,
   initialStatus,
+  groupEstimate,
+  totalEstimate,
+  fmtEstimate,
+  numOrNull,
+  sortRowsBy,
 } from './core.mjs';
 
 let pass = 0;
@@ -241,13 +246,14 @@ function onlyFilter(field, patch) {
 
 const COL = (k) => ({ field: 'priority', label: '', kind: k });
 
-t('列定义：十列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
-  LIST_COLUMNS.length === 10 && LIST_COLUMNS.every((c) => ['enum', 'text', 'time'].indexOf(c.kind) >= 0));
+t('列定义：十一列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
+  LIST_COLUMNS.length === 11
+  && LIST_COLUMNS.every((c) => ['enum', 'text', 'time', 'num'].indexOf(c.kind) >= 0));
 
-t('列定义：覆盖优先级/ID/标题/所属组/状态/认领人/标签/说明/创建/更新', (() => {
+t('列定义：覆盖优先级/ID/标题/所属组/状态/认领人/标签/说明/预估/创建/更新', (() => {
   const fields = LIST_COLUMNS.map((c) => c.field);
   return ['priority', 'id', 'title', 'groupPath', 'status', 'assignee', 'tags',
-          'summary', 'createdAt', 'updatedAt']
+          'summary', 'estimate', 'createdAt', 'updatedAt']
     .every((f) => fields.indexOf(f) >= 0);
 })());
 
@@ -648,6 +654,87 @@ t('initialStatus：取列表第一个（自定义流程的初始态不一定是 
 t('自定义状态能活过 normalizeTask（不被退回 todo）', (() => {
   const t = normalizeTask({ id: 'a', status: 'hold' });
   return t.status === 'hold';
+})());
+
+
+/* ============================================================ 预估工作量（人日） */
+
+const E1 = normalizeTask({ id: 'e1', title: 'A', estimate: 2.5 });
+const E2 = normalizeTask({ id: 'e2', title: 'B', estimate: 0.5 });
+const E3 = normalizeTask({ id: 'e3', title: 'C' });
+
+t('预估：允许小数（半天 = 0.5）', E1.estimate === 2.5 && E2.estimate === 0.5);
+
+t('预估：没填是 0，不是 NaN', E3.estimate === 0);
+
+t('预估：负数按 0 处理（负工作量无意义，且会把合计往回拉）',
+  normalizeTask({ estimate: -3 }).estimate === 0);
+
+t('预估：非数字按 0 处理', normalizeTask({ estimate: '三天' }).estimate === 0);
+
+t('fmtEstimate：去掉浮点尾巴（0.1+0.2 不该显示 0.30000000000000004）',
+  fmtEstimate(0.1 + 0.2) === '0.3');
+
+t('fmtEstimate：0 显示为空（没估 ≠ 0 人日）', fmtEstimate(0) === '');
+
+t('groupEstimate：累加直接子任务', (() => {
+  const g = normalizeTask({ id: 'ge', kind: 'group', title: '组' });
+  const a = normalizeTask({ id: 'a', parent: 'ge', estimate: 2 });
+  const b = normalizeTask({ id: 'b', parent: 'ge', estimate: 3 });
+  return groupEstimate('ge', [g, a, b]) === 5;
+})());
+
+t('groupEstimate：嵌套的也要算进来（只看一层会漏掉下面几层）', (() => {
+  const g1 = normalizeTask({ id: 'g1', kind: 'group' });
+  const g2 = normalizeTask({ id: 'g2', kind: 'group', parent: 'g1' });
+  const x = normalizeTask({ id: 'x', parent: 'g1', estimate: 1 });
+  const y = normalizeTask({ id: 'y', parent: 'g2', estimate: 2 });
+  return groupEstimate('g1', [g1, g2, x, y]) === 3;
+})());
+
+t('groupEstimate：组自己不重复计入（否则双份）', (() => {
+  const g = normalizeTask({ id: 'ge', kind: 'group', estimate: 99 });
+  const a = normalizeTask({ id: 'a', parent: 'ge', estimate: 2 });
+  return groupEstimate('ge', [g, a]) === 2;
+})());
+
+t('totalEstimate：只算叶子任务', (() => {
+  const g = normalizeTask({ id: 'ge', kind: 'group', estimate: 99 });
+  const a = normalizeTask({ id: 'a', parent: 'ge', estimate: 2 });
+  return totalEstimate([g, a]) === 2;
+})());
+
+t('按预筛选：区间命中', (() => {
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const f = { ...emptyColFilter(), min: '2', max: '3' };
+  const hit = filterTasksByColumns(rows, { estimate: f }, '');
+  return hit.length === 1 && hit[0].task.id === 'e1';
+})());
+
+t('按预筛选：没估的不当 0 混进区间结果', (() => {
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const hit = filterTasksByColumns(rows, { estimate: { ...emptyColFilter(), max: '100' } }, '');
+  return hit.every((r) => r.task.id !== 'e3');
+})());
+
+t('按预筛选：能专门筛出"没估的"（排期前最常用的查询）', (() => {
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const hit = filterTasksByColumns(rows, { estimate: { ...emptyColFilter(), values: ['__none__'] } }, '');
+  return hit.length === 1 && hit[0].task.id === 'e3';
+})());
+
+t('按预筛选：只填一边也行', (() => {
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const hit = filterTasksByColumns(rows, { estimate: { ...emptyColFilter(), min: '1' } }, '');
+  return hit.length === 1 && hit[0].task.id === 'e1';
+})());
+
+t('numOrNull：空串不算数（那是"没填"）', numOrNull('') === null && numOrNull('2.5') === 2.5);
+
+t('预估列可排序（按数值而不是字典序）', (() => {
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const asc = sortRowsBy(rows, 'estimate', 'asc');
+  return asc[asc.length - 1].task.id === 'e1';
 })());
 
 /* ---------------- 汇总 ---------------- */

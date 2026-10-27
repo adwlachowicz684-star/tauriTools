@@ -31,9 +31,11 @@ import {
   flattenTasks,
   mergeIntoGroup,
   fmtTime,
+  groupEstimate,
   groupStatus,
   groupTasks,
   indexTasks,
+  fmtEstimate,
   initialStatus,
   lockOf,
   normalizeFlow,
@@ -42,6 +44,7 @@ import {
   sortTasks,
   splitTask,
   statsOf,
+  UNESTIMATED,
   statusColor,
   statusName,
 } from './core';
@@ -77,7 +80,10 @@ const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'tag'];
 /** 流程配置的最小形状（组件只用到 statuses / transitions / edges） */
 type FlowLike = ReturnType<typeof normalizeFlow>;
 
-const SORT_FIELDS: SortField[] = ['priority', 'status', 'assignee', 'tags', 'groupPath', 'summary', 'updatedAt', 'createdAt', 'title', 'id'];
+const SORT_FIELDS: SortField[] = [
+  'priority', 'status', 'assignee', 'tags', 'groupPath', 'summary',
+  'estimate', 'updatedAt', 'createdAt', 'title', 'id',
+];
 
 /** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
 function groupLabel(key: string, by: GroupKey): string {
@@ -97,6 +103,7 @@ const SORT_LABEL: Record<SortField, string> = {
   assignee: '认领人',
   tags: '标签',
   summary: '说明',
+  estimate: '预估',
   createdAt: '创建',
   updatedAt: '更新',
 };
@@ -1410,6 +1417,59 @@ function ColFilterPop({
     );
   }
 
+  if (col.kind === 'num') {
+    const none = (filter.values || []).indexOf(UNESTIMATED) >= 0;
+    return (
+      <div className={cls} onClick={(e) => e.stopPropagation()}>
+        <div className="tb-lpop-title">按{col.label}筛选</div>
+        <div className="tb-lpop-row">
+          <input
+            className="tb-lpop-num"
+            type="number"
+            step="0.5"
+            min="0"
+            placeholder="最小"
+            value={filter.min}
+            onChange={(e) => set({ min: e.target.value })}
+          />
+          <span className="tb-lpop-hint">~</span>
+          <input
+            className="tb-lpop-num"
+            type="number"
+            step="0.5"
+            min="0"
+            placeholder="最大"
+            value={filter.max}
+            onChange={(e) => set({ max: e.target.value })}
+          />
+        </div>
+        {/*
+          「没估」单列一个勾选项，不混进区间 ——
+          没估是"缺失"，不是 0。混在一起会变成
+          "要么没估、要么在区间内"，没人能预测出这个结果。
+        */}
+        <label className="tb-lpop-item">
+          <span className="tb-lpop-pick">
+            <input
+              type="checkbox"
+              checked={none}
+              onChange={() => set({
+                values: none
+                  ? (filter.values || []).filter((x) => x !== UNESTIMATED)
+                  : [...(filter.values || []), UNESTIMATED],
+              })}
+            />
+            <span>只要没估的</span>
+          </span>
+        </label>
+        <div className="tb-lpop-foot">
+          <span className="tb-lpop-hint">只填一边也行</span>
+          <button type="button" className="tb-act sm" onClick={onClear}>清除</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cls} onClick={(e) => e.stopPropagation()}>
       <div className="tb-lpop-title">按{col.label}筛选</div>
@@ -1633,6 +1693,9 @@ function ListView({
             <span className="tb-lc c-summary" title={t.summary}>
               {t.summary || <span className="tb-ldim">—</span>}
             </span>
+            <span className="tb-lc c-estimate">
+              {fmtEstimate(t.estimate) || <span className="tb-ldim">—</span>}
+            </span>
             <span className="tb-lc c-createdAt" title={fmtTime(t.createdAt)}>
               {t.createdAt ? relTime(t.createdAt) : <span className="tb-ldim">—</span>}
             </span>
@@ -1698,21 +1761,21 @@ function GroupView({
 /* ================================================================ 统计视图 */
 
 function BarRow({
-  label, count, max, dot, color,
+  label, count, max, dot, color, note,
 }: {
   label: string;
   count: number;
   max: number;
   dot?: string;
   color?: string;
+  /** 条右侧的补充量（这里显示人日）。0/空就不显示 —— 没有就别占位置 */
+  note?: string;
 }) {
   return (
     <div className="tb-bar-row">
       <span className="tb-bar-label">
         {(dot || color) && (
-          <span className="tb-col-dot" style={color ? { background: color } : undefined}>
-            {!color && dot ? null : null}
-          </span>
+          <span className="tb-col-dot" style={color ? { background: color } : undefined} />
         )}
         {label}
       </span>
@@ -1726,6 +1789,7 @@ function BarRow({
         />
       </span>
       <span className="tb-bar-num">{count}</span>
+      {note ? <span className="tb-bar-note">{note} 人日</span> : null}
     </div>
   );
 }
@@ -1783,8 +1847,17 @@ function StatsView({
           <header className="tb-stat-panel-head">认领人负载</header>
           {stats.byAssignee.length === 0 && <div className="tb-col-empty">暂无数据</div>}
           {stats.byAssignee.map((a) => (
-            <BarRow key={a.id} label={a.id === UNASSIGNED ? '未认领' : '@' + a.id} count={a.count} max={maxWho} />
+            <BarRow
+              key={a.id}
+              label={a.id === UNASSIGNED ? '未认领' : '@' + a.id}
+              count={a.count}
+              max={maxWho}
+              note={fmtEstimate(a.est)}
+            />
           ))}
+          <div className="tb-stat-total">
+            已估 {fmtEstimate(stats.byAssignee.reduce((n, a) => n + (a.est || 0), 0))} 人日
+          </div>
         </section>
         <section className="tb-stat-panel">
           <header className="tb-stat-panel-head">热门标签</header>
@@ -1836,13 +1909,21 @@ function NewTaskModal({
   agents: { id: string }[];
   me: string;
   onClose: () => void;
-  onCreate: (draft: { title: string; detail: string; priority: string; tags: string[]; assignee: string }) => void;
+  onCreate: (draft: {
+    title: string;
+    detail: string;
+    priority: string;
+    tags: string[];
+    assignee: string;
+    estimate: string;
+  }) => void;
 }) {
   const [title, setTitle] = useState('');
   const [detail, setDetail] = useState('');
   const [priority, setPriority] = useState<Priority>('P2');
   const [tagsText, setTagsText] = useState('');
   const [assignee, setAssignee] = useState('');
+  const [estimate, setEstimate] = useState('');
 
   return (
     <Modal title="新建任务" onClose={onClose}>
@@ -1871,6 +1952,17 @@ function NewTaskModal({
         </label>
       </div>
       <label className="tb-mfield">
+        <span>预估工作量（人日，可选）</span>
+        <input
+          type="number"
+          step="0.5"
+          min="0"
+          value={estimate}
+          onChange={(e) => setEstimate(e.target.value)}
+          placeholder="例如 2.5（0.5 = 半天）"
+        />
+      </label>
+      <label className="tb-mfield">
         <span>指派给（可选）</span>
         <select value={assignee} onChange={(e) => setAssignee(e.target.value)}>
           <option value="">不指派</option>
@@ -1894,8 +1986,9 @@ function NewTaskModal({
               title,
               detail,
               priority,
-              tags: tagsText.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+              tags: tagsText.split(/[,，]/).map((s2) => s2.trim()).filter(Boolean),
               assignee,
+              estimate,
             })
           }
         >

@@ -79,6 +79,8 @@ export interface Task {
   deps: string[];
   status: TaskStatus;
   priority: Priority;
+  /** 预估工作量，单位人日，允许小数（0.5 = 半天）。0 = 没估 */
+  estimate: number;
   tags: string[];
   reporter: string;
   assignee: string | null;

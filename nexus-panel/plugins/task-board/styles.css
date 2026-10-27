@@ -872,8 +872,8 @@
    免得「各写一半」被 regression 守卫盯上） */
 .tb-lgrid {
   display: grid;
-  /* 1 列勾选 + 10 列：优先级/ID/标题/所属组/状态/认领人/标签/说明/创建/更新 */
-  grid-template-columns: 26px 56px 70px minmax(0, 1fr) 108px 88px 96px 116px 132px 84px 84px;
+  /* 1 列勾选 + 11 列：优先级/ID/标题/所属组/状态/认领人/标签/说明/预估/创建/更新 */
+  grid-template-columns: 26px 56px 70px minmax(0, 1fr) 108px 88px 96px 116px 132px 62px 84px 84px;
   gap: var(--sp-2);
   align-items: center;
   min-width: 940px;
@@ -1328,6 +1328,47 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 预估工作量：右对齐 + 等宽数字。
+   右对齐是因为它要纵向比对（谁身上压得多），左对齐时位数不齐看不出来 */
+.tb-lc.c-estimate {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* 统计条右侧的人日 */
+.tb-bar-note {
+  flex: none;
+  min-width: 4.5em;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+.tb-stat-total {
+  padding-block-start: var(--sp-1);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  text-align: right;
+}
+
+/* 数值筛选框（人日区间）。窄一点 —— 只放得下几个数字 */
+.tb-lpop-num {
+  width: 5em;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-micro);
+}
+
+/* 详情里的数字输入 */
+.tb-dnum {
+  flex: 0 0 auto;
+  width: 8em;
 }
 
 /* 时间列：等宽数字（相对时间长度不一，不等宽会左右抖） */
