@@ -14,6 +14,64 @@ export declare function filterTasks<T extends { id: string; title: string; detai
 ): T[];
 export declare function allTags(tasks: { tags: string[] }[]): string[];
 
+/* ---------------------------------------------------- 任务组嵌套 */
+
+export declare function indexTasks(tasks: Task[]): {
+  byId: Record<string, Task>;
+  parentOf: Record<string, string | undefined>;
+};
+
+export declare function ancestorChain(id: string, parentOf: Record<string, string | undefined>, limit?: number): string[];
+
+export interface FlatRow {
+  task: Task;
+  depth: number;
+  path: string[];
+  groupPath: string;
+}
+
+/** 摊平成表格行：组不占行，层级显示在 path 上 */
+export declare function flattenTasks(tasks: Task[]): FlatRow[];
+
+/** 组的状态由下面推导；空组返回 null */
+export declare function groupStatus(groupId: string, tasks: Task[]): TaskStatus | null;
+
+/* ---------------------------------------------------- 前置任务 */
+
+export interface LockInfo {
+  locked: boolean;
+  pending: string[];
+  missing: string[];
+  cyclic: boolean;
+}
+
+/* ---------------------------------------------------- 合并 / 拆组 */
+
+export declare function mergeIntoGroup(
+  tasks: Task[], ids: string[], title: string, parentId?: string | null,
+): { tasks: Task[]; groupId: string };
+
+export declare function createGroup(
+  tasks: Task[], title: string, parentId?: string | null,
+): { tasks: Task[]; groupId: string };
+
+/** 拆成一个组 + 若干子任务。原任务变成组（保留原 id） */
+export declare function splitTask(
+  tasks: Task[], id: string, titles: string[],
+): { tasks: Task[]; groupId: string; childIds: string[] };
+
+/** 拆组：组删掉，下面的任务上提一层（不是连任务一起删） */
+export declare function dissolveGroup(tasks: Task[], groupId: string): { tasks: Task[] };
+
+export declare function isAncestor(
+  a: string, b: string,
+  parentOf: Record<string, string | undefined>,
+  byId: Record<string, Task>,
+): boolean;
+
+/** 锁定状态是算出来的，不存字段 */
+export declare function lockOf(task: Task, tasks: Task[]): LockInfo;
+
 /* ---------------------------------------------------- 列级筛选 */
 
 /** 列表视图的列定义。kind 决定这一列配什么筛选控件 */
@@ -41,18 +99,18 @@ export declare function colFilterActive(col: ListColumn, f: ColFilter | undefine
 /** 该列用于筛选的原始值（标签是多值） */
 export declare function colRawValues(task: Task, field: SortField): string[];
 
-/** 按列筛选；q 是跨 id/标题/详情的全局关键词 */
+/** 按列筛选（作用在摊平行上）；q 是跨 id/标题/详情/说明的全局关键词 */
 export declare function filterTasksByColumns(
-  tasks: Task[],
+  rows: FlatRow[],
   filters: Partial<Record<SortField, ColFilter>>,
   q?: string,
-): Task[];
+): FlatRow[];
 
 /** 生效的筛选列（按列序） */
 export declare function activeColFilters(filters: Partial<Record<SortField, ColFilter>>): ListColumn[];
 
 /** 某一列的候选值（原始值，显示文案由 UI 用 types.ts 映射） */
-export declare function colFilterValues(field: SortField, tasks: Task[]): string[];
+export declare function colFilterValues(field: SortField, rows: FlatRow[] | Task[]): string[];
 export declare function nextTaskId(store: { nextId: number }): string;
 export declare function pushHistory(task: any, by: string, action: string, note: string, at?: number): any;
 export declare function applyTransition(task: any, to: string, by: string, note?: string, at?: number): any;
@@ -72,10 +130,15 @@ export interface TaskGroup<K extends string = string> {
 /** 分组（只返回 key，label 由 UI 映射 types.ts 的 STATUS_LABEL / PRIORITY_LABEL） */
 export declare function groupTasks(tasks: Task[], key: GroupKey): TaskGroup[];
 
-export type SortField = 'priority' | 'status' | 'assignee' | 'tags' | 'updatedAt' | 'createdAt' | 'title' | 'id';
+export type SortField =
+  | 'priority' | 'status' | 'assignee' | 'tags' | 'groupPath' | 'summary'
+  | 'updatedAt' | 'createdAt' | 'title' | 'id';
 
 /** 多字段排序；assignee 未认领恒排最后；同级按 updatedAt 倒序兜底 */
 export declare function sortTasksBy(tasks: Task[], field: SortField, dir?: 'asc' | 'desc'): Task[];
+
+/** 按列排序（作用在摊平行上）：认 groupPath，且同组的挨在一起 */
+export declare function sortRowsBy(rows: FlatRow[], field: SortField, dir?: 'asc' | 'desc'): FlatRow[];
 
 export interface RecentEntry extends HistoryEntry {
   taskId: string;

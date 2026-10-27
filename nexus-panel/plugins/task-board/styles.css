@@ -509,6 +509,84 @@
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+/* 组自己的那一块：成员数 + 推导出来的状态 + 拆散 */
+.tb-dgroup {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: var(--sp-2) 0;
+  border-block-end: 1px solid var(--divider);
+}
+
+/* 详情里的可编辑字段：说明 / 所属组 / 前置 */
+.tb-dfield {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: var(--sp-2) 0;
+  border-block-end: 1px solid var(--divider);
+}
+.tb-dlabel {
+  flex: none;
+  width: 68px;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.tb-dinput {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-micro);
+}
+.tb-dhint {
+  flex: 1 1 100%;
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+}
+.tb-dhint.warn {
+  color: var(--danger);
+}
+
+/* 前置任务：一条一个小胶囊，可单独摘掉 */
+.tb-ddep-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.tb-ddep {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-micro);
+  line-height: 1.7;
+}
+.tb-ddep-gone {
+  color: var(--danger);
+}
+.tb-ddep-x {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+.tb-ddep-x:hover {
+  color: var(--danger);
+}
+
 .tb-ddetail {
   padding: var(--sp-3);
   border-radius: var(--r-xs);
@@ -794,11 +872,24 @@
    免得「各写一半」被 regression 守卫盯上） */
 .tb-lgrid {
   display: grid;
-  /* 8 列：优先级 / ID / 标题 / 状态 / 认领人 / 标签 / 创建 / 更新 */
-  grid-template-columns: 60px 74px minmax(0, 1fr) 92px 100px 120px 88px 88px;
+  /* 1 列勾选 + 10 列：优先级/ID/标题/所属组/状态/认领人/标签/说明/创建/更新 */
+  grid-template-columns: 26px 56px 70px minmax(0, 1fr) 108px 88px 96px 116px 132px 84px 84px;
   gap: var(--sp-2);
   align-items: center;
-  min-width: 780px;
+  min-width: 940px;
+}
+
+/* 组的两个入口，摆在表头上方 —— 它们作用于"勾选的那些行"，
+   位置紧挨着行，不放顶栏（顶栏那排是筛选，混进去分不清谁管谁） */
+.tb-ltools {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-block-end: var(--sp-2);
+}
+.tb-ltools-hint {
+  color: var(--text-mute);
+  font-size: var(--fs-micro);
 }
 
 .tb-list-head {
@@ -843,6 +934,14 @@
 
 /* 列头单元格：一个排序按钮 + 一个漏斗。两个都常驻，
    免得"能排序但不能筛"这种半截状态 —— 看着能点却点不动比没有更难受 */
+/* 行首的勾选框。独立一列而不是塞进优先级格里 ——
+   挤在一起会让人以为那个勾是"优先级"的一部分 */
+.tb-lpick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .tb-lhcell {
   position: relative;
   display: flex;
@@ -911,11 +1010,7 @@
   color: var(--text-dim);
 }
 .tb-lpop-item {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
   font-size: var(--fs-micro);
-  cursor: pointer;
 }
 .tb-lpop-item span {
   overflow: hidden;
@@ -946,6 +1041,52 @@
   color: var(--text);
   font-size: var(--fs-micro);
 }
+/* 列头面板里的勾选项：勾选区与调色区分开，
+   免得点色块时误触勾选（那个 checkbox 是控制筛选的，不是控制颜色的） */
+.tb-lpop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.tb-lpop-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  cursor: pointer;
+}
+/* 新建标签：名字输入 + 一排色块 */
+.tb-lpop-new {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-block-start: var(--sp-1);
+  border-block-start: 1px solid var(--divider);
+}
+.tb-lpop-swatches {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+/*
+  色块本身是**纯色**（不能走主题变量）——
+  它就是让用户挑颜色的，跟着主题变就没法挑了。
+  这属于"结构色"：与节点色板同类，不是文字/底板。
+*/
+.tb-swatch {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+}
+.tb-swatch.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .tb-lpop-hint {
   font-size: var(--fs-micro);
   color: var(--text-mute);
@@ -1016,6 +1157,48 @@
   display: flex;
   align-items: center;
   min-width: 0;
+}
+
+/* 所属组：多层级路径，超出省略（完整路径在 title 里） */
+.tb-lc.c-groupPath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
+/* 说明列：一句话，超出省略 */
+.tb-lc.c-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
+/* 被前置卡住的锁。放在标题前 —— 眼睛扫标题时就能看见，
+   不用去别处找"这条为什么做不了" */
+.tb-lock {
+  flex: none;
+  margin-inline-end: var(--sp-1);
+  font-size: var(--fs-micro);
+}
+
+/* 标签：浅底深字 + 同色描边（腾讯文档智能表那种）。
+   颜色由 TagChip 内联给（取自标签定义），这里只管形状 */
+.tb-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0 var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 时间列：等宽数字（相对时间长度不一，不等宽会左右抖） */
