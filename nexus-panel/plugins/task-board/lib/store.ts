@@ -3,6 +3,7 @@
 
 import type { PluginContext } from '../../../js/plugin-sdk.js';
 import {
+  initialStatus,
   normalizeStore,
   nextTaskId,
   pushHistory,
@@ -105,7 +106,15 @@ export async function createTask(
   ctx: PluginContext,
   dataDir: string,
   me: string,
-  draft: { title: string; detail?: string; priority?: string; tags?: string[]; assignee?: string },
+  draft: {
+    title: string;
+    detail?: string;
+    priority?: string;
+    tags?: string[];
+    assignee?: string;
+    /** 预估工作量（人日，可小数）。传空/非法 = 0（没估） */
+    estimate?: string | number;
+  },
 ): Promise<Task> {
   // 记录闭包实际使用的 id：乐观锁冲突重试时 id 会随最新快照重算，用它找回新建的任务
   let usedId = '';
@@ -113,12 +122,28 @@ export async function createTask(
     const id = nextTaskId(store);
     usedId = id;
     const at = Date.now();
+    /*
+      每个字段都显式写出来，不靠 normalizeTask 兜底 ——
+      这份 JSON 是要给 AI 直接读改的：字段在文件里**看得见**
+      它才会去填；靠默认值补出来的字段，AI 根本不知道有这一项。
+    */
+    const est = Number(draft.estimate);
     const base = {
       id,
       title: draft.title.trim(),
       detail: (draft.detail || '').trim(),
-      status: 'todo',
+      summary: '',
+      kind: 'task' as const,
+      parent: null,
+      deps: [] as string[],
+      /*
+        初始状态取本项目流程的第一个状态（自定义流程下不一定是 todo）。
+        Rust 侧 HTTP 通道同样是这个判据 —— 两边必须一致，
+        否则界面建出来的任务，AI 经 API 查出来的初始态对不上。
+      */
+      status: initialStatus(store.flow),
       priority: draft.priority || 'P2',
+      estimate: Number.isFinite(est) && est > 0 ? est : 0,
       tags: (draft.tags || []).filter(Boolean),
       reporter: me || 'manual',
       assignee: draft.assignee || null,
