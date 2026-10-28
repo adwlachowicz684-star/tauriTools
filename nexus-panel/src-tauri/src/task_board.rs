@@ -63,6 +63,18 @@ pub struct TbState {
     /// 文档目录（每个项目各自一个，改路径时用来搬文档）。
     /// 同样要显式授权 —— 不给自己开任意目录搬文件的后门。
     pub docs_dir: Mutex<Option<PathBuf>>,
+    /*
+      搬文档的**源**目录。tb_move_docs 需要同时授权两端，
+      而 tb_set_docs_dir 一旦把 docs_dir 改成新目录，
+      旧目录就掉出授权表了 —— 于是 from 端永远校验不过。
+
+      （2026-10-28 自查发现：授权旧值被覆盖，搬家功能 100% 失败，
+        且报错是"该目录尚未授权"，看着像设置没配好，实际是顺序问题。）
+    */
+    pub docs_dir_prev: Mutex<Option<PathBuf>>,
+    /// 扫描/预览用的目标目录（用户选了但还没确认成项目文档目录）。
+    /// 单独开一个槽：走 docs_dir 的话会顶掉当前项目真正的文档授权。
+    pub pending_dir: Mutex<Option<PathBuf>>,
 }
 
 pub struct TbServerEntry {
@@ -99,8 +111,21 @@ pub fn tb_set_docs_dir(state: State<'_, TbState>, dir: String) -> Result<String,
     }
     fs::create_dir_all(&path).map_err(|e| format!("创建文档目录失败 {}: {}", path.display(), e))?;
     let canon = path.canonicalize().unwrap_or(path);
-    let mut guard = state.docs_dir.lock().unwrap_or_else(|e| e.into_inner());
-    *guard = Some(canon.clone());
+    {
+        /*
+          ⛔ 旧值必须留一手：紧接着的 tb_move_docs 要用它当 **from**，
+          而这里一旦覆盖，from 就掉出授权表，搬家必然失败。
+          把它挪进 docs_dir_prev（仍算已授权），搬完自然失效。
+        */
+        let mut prev = state.docs_dir_prev.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = state.docs_dir.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(old) = guard.take() {
+            if old != canon {
+                *prev = Some(old);
+            }
+        }
+        *guard = Some(canon.clone());
+    }
     Ok(canon.to_string_lossy().to_string())
 }
 
@@ -114,8 +139,17 @@ fn authorized_any(state: &TbState, dir: &str) -> Result<PathBuf, String> {
     };
     let data = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let docs = state.docs_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let prev = state.docs_dir_prev.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let pend = state.pending_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    /*
+      四个槽都算已授权 —— 每个槽里的目录都是用户在界面上显式选过的，
+      不是任意路径：data_dir（任务库）/ docs_dir（当前文档）/
+      docs_dir_prev（搬家的源）/ pending_dir（扫描目标）。
+    */
     let ok = data.as_ref().map(|d| *d == canon).unwrap_or(false)
-        || docs.as_ref().map(|d| *d == canon).unwrap_or(false);
+        || docs.as_ref().map(|d| *d == canon).unwrap_or(false)
+        || prev.as_ref().map(|d| *d == canon).unwrap_or(false)
+        || pend.as_ref().map(|d| *d == canon).unwrap_or(false);
     if ok {
         Ok(canon)
     } else {
@@ -229,9 +263,22 @@ pub fn tb_move_docs(
 /// 只统计、不读文件内容：验证阶段读内容既慢又没必要。
 #[tauri::command]
 pub fn tb_scan_dir(state: State<'_, TbState>, dir: String) -> Result<Value, String> {
-    let base = authorized_any(&state, &dir)?;
-    if !base.is_dir() {
-        return Err(format!("不是目录: {}", base.display()));
+    let want = PathBuf::from(&dir);
+    if want.as_os_str().is_empty() {
+        return Err("目录不能为空".to_string());
+    }
+    if !want.is_dir() {
+        return Err(format!("不是目录: {}", want.display()));
+    }
+    let base = want.canonicalize().unwrap_or(want);
+    /*
+      授权进 pending 而不是 docs_dir：
+      扫描只是"看看里面有什么"，还没确认要用它 ——
+      走 docs_dir 会把当前项目真正的文档授权顶掉。
+    */
+    {
+        let mut pend = state.pending_dir.lock().unwrap_or_else(|e| e.into_inner());
+        *pend = Some(base.clone());
     }
     let mut tasks_json = false;
     let mut md = 0usize;
@@ -736,6 +783,8 @@ pub fn mcp_tools() -> Vec<Value> {
                 "detail":   { "type": "string", "description": "复现步骤/期望行为，可选" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "默认 P2" },
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "自由标签" },
+                "type":     { "type": "string", "description": "任务类型 id（dev/bug/opt/research/review/plan，或自定义类型的 id）；缺省=未分类" },
+                "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；缺省 0=没估" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
             }),
             vec!["title"],
@@ -757,6 +806,8 @@ pub fn mcp_tools() -> Vec<Value> {
                 "title":    { "type": "string", "description": "改标题" },
                 "detail":   { "type": "string", "description": "改详情" },
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签" },
+                "type":     { "type": "string", "description": "任务类型 id；传空串=清成未分类" },
+                "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
             }),
@@ -1190,6 +1241,16 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     task.insert("priority".to_string(), json!(priority));
     // 预估工作量（人日，可小数）。缺省 0 = 没估。
     task.insert("estimate".to_string(), json!(estimate_of(body)));
+    /*
+      任务类型：存定义表里的 id（'dev'/'bug'…），不是显示名。
+      每个字段都显式写进文件 —— 这份 JSON 是给 AI 直接读改的，
+      字段在文件里**看得见**它才会去填；靠前端默认值补出来的字段，
+      AI 根本不知道有这一项。（与前端 createTask 同一判据。）
+    */
+    task.insert(
+        "type".to_string(),
+        json!(str_field(body, "type").unwrap_or_default().trim()),
+    );
     task.insert(
         "tags".to_string(),
         body.get("tags")
@@ -1255,6 +1316,21 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
             if obj.get("assignee").and_then(|x| x.as_str()).unwrap_or("") != v.as_str() {
                 obj.insert("assignee".to_string(), if v.is_empty() { json!(null) } else { json!(v) });
                 changed = true;
+            }
+        }
+        if let Some(v) = str_field(body, "type") {
+            let cur = obj.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            let next = v.trim();
+            if cur != next {
+                obj.insert("type".to_string(), json!(next));
+                changed = true;
+                push_history(
+                    obj,
+                    &by,
+                    "type",
+                    &format!("{} -> {}", if cur.is_empty() { "未分类" } else { cur },
+                             if next.is_empty() { "未分类" } else { next }),
+                );
             }
         }
         if let Some(v) = body.get("estimate") {

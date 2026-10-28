@@ -108,9 +108,16 @@ export async function addProject(
 export async function scanDir(
   ctx: PluginContext,
   dir: string,
+  currentDataDir: string,
 ): Promise<{ dir: string; tasksJson: boolean; mdCount: number; dirCount: number; otherCount: number; sample: string[]; degraded?: boolean }> {
   try {
-    await ctx.invoke('tb_set_docs_dir', { dir });   // 先授权，否则扫描被挡
+    /*
+      ⛔ 这里**不调** tb_set_docs_dir 授权：
+      扫描只是"看看里面有什么"，用户还没确认要用它。
+      走那条命令会把当前项目真正的文档授权顶掉 ——
+      扫一次别的目录，当前项目的文档路径就失效了。
+      后端 tb_scan_dir 自己会把目标授权到 pending 槽（只读，且是用户亲手选的）。
+    */
     const r: any = await ctx.invoke('tb_scan_dir', { dir });
     return {
       dir: String(r?.dir || dir),
@@ -121,14 +128,23 @@ export async function scanDir(
       sample: Array.isArray(r?.sample) ? r.sample.map((x: unknown) => String(x)) : [],
     };
   } catch {
-    // 降级：改用现有的读库命令探一下有没有 tasks.json
-    await ctx.invoke('tb_set_data_dir', { dir }).catch(() => {});
+    /*
+      降级（后端没有 tb_scan_dir）：借读库命令探一下有没有 tasks.json。
+      那条命令要求目标已授权，所以临时授权、探完**必须授权回去** ——
+      不还原的话当前项目的任务库读写会全部被拒，
+      表现为扫一次目录、整个看板空了。
+    */
     let tasksJson = false;
     try {
+      await ctx.invoke('tb_set_data_dir', { dir });
       const text = await ctx.invoke<string | null>('tb_read_store', { dir });
       tasksJson = text != null;
     } catch {
       tasksJson = false;
+    } finally {
+      if (currentDataDir) {
+        await ctx.invoke('tb_set_data_dir', { dir: currentDataDir }).catch(() => {});
+      }
     }
     return { dir, tasksJson, mdCount: 0, dirCount: 0, otherCount: 0, sample: [], degraded: true };
   }
@@ -282,6 +298,8 @@ export async function createTask(
     assignee?: string;
     /** 预估工作量（人日，可小数）。传空/非法 = 0（没估） */
     estimate?: string | number;
+    /** 任务类型（typeDefs 里的 id）。不传 = 未分类 */
+    type?: string;
   },
 ): Promise<Task> {
   // 记录闭包实际使用的 id：乐观锁冲突重试时 id 会随最新快照重算，用它找回新建的任务
@@ -312,6 +330,11 @@ export async function createTask(
       status: initialStatus(store.flow),
       priority: draft.priority || 'P2',
       estimate: Number.isFinite(est) && est > 0 ? est : 0,
+      /*
+        类型存定义表里的 id，不是显示名 —— 存名字的话改个名
+        就要回头改所有任务，旧名还会变成没人认的孤值。
+      */
+      type: typeof draft.type === 'string' ? draft.type.trim() : '',
       tags: (draft.tags || []).filter(Boolean),
       reporter: me || 'manual',
       assignee: draft.assignee || null,
