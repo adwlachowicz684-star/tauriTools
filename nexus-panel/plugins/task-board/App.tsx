@@ -405,6 +405,23 @@ export default function App() {
           typeDefs: (st.typeDefs || []).filter((d) => d.id !== id),
         };
       });
+      /*
+        顺手把筛选里对它的引用摘掉。
+        不摘的话筛选条件里留着一个已不存在的 id ——
+        chip 上还写着那个类型名，而结果永远为空，
+        界面看上去是"有筛选、但一条都没有"，没人会对上原因。
+      */
+      setColFilters((prev) => {
+        const f = prev.type;
+        if (!f || !(f.values || []).includes(id)) return prev;
+        const values = f.values.filter((x) => x !== id);
+        if (values.length === 0) {
+          const next = { ...prev };
+          delete next.type;
+          return next;
+        }
+        return { ...prev, type: { ...f, values } };
+      });
       if (n > 0) ctx.toast(`已删类型，${n} 条任务变成「未分类」`, 'ok');
     })();
 
@@ -525,13 +542,26 @@ export default function App() {
     AI 的 curl 通道继续读写**旧项目**的 tasks.json，
     而界面已经是新项目 —— 两边静默分叉，且状态灯还显示在线。
   */
+  /*
+    换项目后**清空列上的筛选与搜索**。
+    不清的话：上一个项目筛的是它自己的状态 id / 类型 id / 认领人，
+    切过来很可能一条都匹配不上 —— 打开就是个空看板，
+    而界面上只显示"0 / 12"，看不出是没任务还是筛掉了。
+    那种"这个项目是空的"错觉比多一次重新筛选麻烦得多。
+  */
+  const clearViewState = () => {
+    setColFilters({});
+    setQ('');
+    setChecked(new Set());
+    setDetailId(null);
+  };
+
   const doSwitchProject = (id: string) =>
     withErr(async () => {
       if (!cfg || id === cfg.currentId) return;
       const next = await S.switchProject(ctx, cfg, id);
       setCfg(next);
-      setChecked(new Set());      // 勾选属于旧项目，跟过去会合出莫名其妙的组
-      setDetailId(null);
+      clearViewState();
       const st = await S.readStore(ctx, next.dataDir).catch(() => null);
       setStore(st || normalizeStore(null));
       await restartServiceIfOn(cfg, next);
@@ -950,6 +980,7 @@ ${dir}
           typeIds={typeIds}
           onToggleType={toggleType}
           onRenameType={(id, name) => setTypeDef(id, { name })}
+          onCreateType={(name) => createType(name, '#78716c')}
           tagDefs={store.tagDefs}
           onCreateTag={doAddTag}
           onTagColor={doSetTagColor}
@@ -985,7 +1016,12 @@ ${dir}
 
       {/* 统计：看全量，不受顶部筛选影响 */}
       {view === 'stats' && stats && (
-        <StatsView stats={stats} flow={flow} onOpen={(id) => setDetailId(id)} />
+        <StatsView
+          stats={stats}
+          flow={flow}
+          typeDefs={typeDefs}
+          onOpen={(id) => setDetailId(id)}
+        />
       )}
 
       {/* 新建任务 */}
@@ -1013,8 +1049,7 @@ ${dir}
             await withErr(async () => {
               const next = await S.importProject(ctx, cfg, name, dataDir, docsDir);
               setCfg(next);
-              setChecked(new Set());
-              setDetailId(null);
+              clearViewState();
               const st = await S.readStore(ctx, next.dataDir).catch(() => null);
               setStore(st || normalizeStore(null));
               await restartServiceIfOn(cfg, next);
@@ -1032,8 +1067,7 @@ ${dir}
             await withErr(async () => {
               const next = await S.addProject(ctx, cfg, name, dataDir, docsDir);
               setCfg(next);
-              setChecked(new Set());
-              setDetailId(null);
+              clearViewState();
               const st = await S.readStore(ctx, next.dataDir).catch(() => null);
               setStore(st || normalizeStore(null));
               await restartServiceIfOn(cfg, next);
@@ -1249,15 +1283,22 @@ function lockTitle(lock: { pending: string[]; missing: string[]; cyclic: boolean
  * 弹个窗再确认一次，二十条任务就变成二十次开关。
  */
 function TypePicker({
-  value, defs, onPick, onRename,
+  value, defs, onPick, onRename, onCreate,
 }: {
   value: string;
   defs: { id: string; name: string; color: string }[];
   onPick: (id: string) => void;
   onRename: (id: string, name: string) => void;
+  /**
+   * 就地新建类型。
+   * 只在列头筛选面板里建是不够的 —— 那时要"先去列头建、再回来点这一行"，
+   * 而"需要一个新分类"这个念头恰恰是在看某一行时才冒出来的。
+   */
+  onCreate?: (name: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState('');
+  const [draft, setDraft] = useState('');
   const ref = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
@@ -1339,6 +1380,25 @@ function TypePicker({
             >
               清成「未分类」
             </button>
+          ) : null}
+          {onCreate ? (
+            <span className="tb-typerow">
+              <input
+                className="tb-typerename"
+                value={draft}
+                placeholder="＋ 新类型…"
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (isComposing(e.nativeEvent)) return;
+                  if (e.key !== 'Enter') return;
+                  const nm = draft.trim();
+                  if (nm) {
+                    onCreate(nm);
+                    setDraft('');
+                  }
+                }}
+              />
+            </span>
           ) : null}
         </span>
       ) : null}
@@ -2266,6 +2326,7 @@ function ListView({
   typeIds,
   onToggleType,
   onRenameType,
+  onCreateType,
   tagDefs,
   onCreateTag,
   onTagColor,
@@ -2296,6 +2357,8 @@ function ListView({
   onToggleType: (taskId: string, typeId: string) => void;
   /** 改某个类型的显示名 */
   onRenameType: (id: string, name: string) => void;
+  /** 就地新建类型（只要名字，颜色用默认灰） */
+  onCreateType: (name: string) => void;
   /** 标签定义（名字 + 颜色） */
   tagDefs: TagDef[];
   onCreateTag: (name: string, color: string) => void;
@@ -2451,6 +2514,23 @@ function ListView({
               {statusName(flow, t.status)}
             </span>
             <span className="tb-lc c-assignee">{t.assignee ? '@' + t.assignee : '未认领'}</span>
+            {/*
+              类型单元格：点开就地改这一条的类型。
+              摆在这儿而不是只在详情里 —— 归类是一次看一批、顺手改一批的动作，
+              逐条点开详情改，二十条就得开关二十次。
+
+              ⚠️ 这个单元格不能漏：网格是「1 勾选 + 12 列」，
+              少渲染一个格子，后面所有列都会整体错位一格（最后一列还会溢出）。
+            */}
+            <span className="tb-lc c-type">
+              <TypePicker
+                value={t.type}
+                defs={typeDefs}
+                onPick={(id) => onToggleType(t.id, id)}
+                onRename={(id, name) => onRenameType(id, name)}
+                onCreate={onCreateType}
+              />
+            </span>
             <span className="tb-lc c-tags">
               {t.tags.length > 0 ? (
                 <span className="tb-ltags">
@@ -2624,12 +2704,16 @@ function BarRow({
 }
 
 function StatsView({
-  stats, flow, onOpen,
+  stats, flow, typeDefs, onOpen,
 }: {
   stats: TbStats;
   flow: { statuses: { id: string; name: string; color: string }[] };
+  /** 类型定义表（显示类型名与颜色） */
+  typeDefs: TagDef[];
   onOpen: (id: string) => void;
 }) {
+  const typeRows = Object.entries(stats.byType || {}).sort((a, b) => b[1] - a[1]);
+  const maxType = Math.max(1, ...typeRows.map(([, n2]) => n2));
   const maxStatus = Math.max(1, ...Object.values(stats.byStatus));
   const maxPrio = Math.max(1, ...Object.values(stats.byPriority));
   const maxWho = Math.max(1, ...stats.byAssignee.map((x) => x.count));
@@ -2672,6 +2756,24 @@ function StatsView({
             <BarRow key={p} label={`${p} ${PRIORITY_LABEL[p]}`} count={stats.byPriority[p] || 0} max={maxPrio} />
           ))}
         </section>
+        {/*
+          类型分布。加了「任务类型」这个维度却不统计它，等于只做了一半 ——
+          而"这一类压了多少活"正是分类这件事的用处。
+        */}
+        {typeRows.length > 0 ? (
+          <section className="tb-stat-panel">
+            <header className="tb-stat-panel-head">任务类型</header>
+            {typeRows.map(([id, cnt]) => (
+              <BarRow
+                key={id}
+                label={id === NOTYPE ? '未分类' : typeName(typeDefs, id)}
+                count={cnt}
+                max={maxType}
+                color={id === NOTYPE ? undefined : typeColor(typeDefs, id)}
+              />
+            ))}
+          </section>
+        ) : null}
         <section className="tb-stat-panel">
           <header className="tb-stat-panel-head">认领人负载</header>
           {stats.byAssignee.length === 0 && <div className="tb-col-empty">暂无数据</div>}

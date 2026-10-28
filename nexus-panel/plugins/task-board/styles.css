@@ -1648,6 +1648,12 @@
   width: 8em;
 }
 
+/* 详情里选类型的下拉 */
+.tb-dsel {
+  flex: 0 0 auto;
+  width: 10em;
+}
+
 /* 时间列：等宽数字（相对时间长度不一，不等宽会左右抖） */
 .tb-lc.c-createdAt,
 .tb-lc.c-updatedAt {

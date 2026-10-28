@@ -2,6 +2,9 @@
 // 覆盖 core.mjs：状态机、归一化、排序、过滤、历史上限、时间格式化。
 // 登记在 package.json：test:tb-core
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   STATUSES,
   canTransition,
@@ -981,6 +984,60 @@ t('自查：改名不影响已有任务（类型存 id 不存名字）', (() => 
   const defs = normalizeTypeDefs([{ id: 'dev', name: '改过的名字' }]);
   const t2 = normalizeTask({ type: 'dev' });
   return t2.type === 'dev' && typeName(defs, 'dev') === '改过的名字';
+})());
+
+
+/* ============================================================ 自查补测（2026-10-28 第 2 轮） */
+
+/*
+ * ⚠️ 这条盯的是**列数与单元格数是否对得上**。
+ *
+ * 真实故障：给 LIST_COLUMNS 加了「任务类型」、也把网格改成 13 列，
+ * 却漏了在行里渲染那个单元格 —— 结果整行向右错位一格，最后一列溢出。
+ * 这类错 TypeScript 查不出来（JSX 结构合法）、单测也照过，
+ * 只有肉眼打开界面才看得见。所以在这里用源码扫描钉住。
+ */
+t('自查：列定义 / 网格 / 行内单元格 三处数量必须一致（错位一格很难自查）', (() => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+
+  const gridRaw = /\.tb-lgrid \{[\s\S]*?grid-template-columns:\s*([^;]+);/.exec(css);
+  if (!gridRaw) return false;
+  // 按顶层空格切（minmax(0, 1fr) 里的空格不算分隔）
+  const parts = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of gridRaw[1].trim()) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
+    else if (ch === ' ' && depth === 0) {
+      if (cur) parts.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) parts.push(cur);
+
+  const i = app.indexOf('className="tb-lrow');
+  const seg = app.slice(i, app.indexOf('</div>', app.indexOf('c-updated', i)));
+  const cells = [...seg.matchAll(/className="tb-lc (c-[\w-]+)"/g)].map((m) => m[1]);
+
+  // 网格 = 1 列勾选 + N 列；列定义 N；行内单元格 N
+  return parts.length === LIST_COLUMNS.length + 1 && cells.length === LIST_COLUMNS.length;
+})());
+
+t('自查：行内单元格的顺序与列定义一致（数量对了但顺序错了同样会错位）', (() => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('className="tb-lrow');
+  const seg = app.slice(i, app.indexOf('</div>', app.indexOf('c-updated', i)));
+  const cells = [...seg.matchAll(/className="tb-lc c-([\w]+)"/g)].map((m) => m[1]);
+  const fields = LIST_COLUMNS.map((c) => c.field);
+  // 行末尾那个叫 c-updatedAt（渲染时用的类名带 At 后缀变体）
+  const norm = cells.map((x) => (x === 'updated' ? 'updatedAt' : x));
+  return norm.length === fields.length && norm.every((x, k) => x === fields[k]);
 })());
 
 /* ---------------- 汇总 ---------------- */
