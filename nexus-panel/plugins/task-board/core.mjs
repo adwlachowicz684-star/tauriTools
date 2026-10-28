@@ -1366,6 +1366,7 @@ export function statsOf(store, now = Date.now()) {
   const tasks = store.tasks || [];
   const byStatus = {};
   const estimateByStatus = {};
+  const byType = {};
   const byPriority = {};
   for (const s of flowOf(store.flow).statuses) byStatus[s.id] = 0;
   for (const p of PRIORITIES) byPriority[p] = 0;
@@ -1378,6 +1379,9 @@ export function statsOf(store, now = Date.now()) {
       estimateByStatus[t.status] = Math.round(
         ((estimateByStatus[t.status] || 0) + (Number(t.estimate) || 0)) * 100,
       ) / 100;
+      /* 类型分布：未分类也单独计 —— 那是"还没归类的工作量"，排期时要看得见 */
+      const tk = t.type || NOTYPE;
+      byType[tk] = (byType[tk] || 0) + 1;
     }
     byPriority[t.priority] = (byPriority[t.priority] || 0) + 1;
     const who = t.assignee || UNASSIGNED;
@@ -1413,6 +1417,7 @@ export function statsOf(store, now = Date.now()) {
     done: byStatus.done,
     byStatus,
     estimateByStatus,
+    byType,
     estimateTotal: totalEstimate(tasks),
     byPriority,
     byAssignee: assignees,

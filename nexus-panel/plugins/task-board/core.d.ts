@@ -283,6 +283,7 @@ export interface TbStats {
   recent: RecentEntry[];
   stale: Task[];
   agents: Agent[];
+  byType: Record<string, number>;
 }
 
 /** 统计视图数据源；now 可注入保证可测 */
