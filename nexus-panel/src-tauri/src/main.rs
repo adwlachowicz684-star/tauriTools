@@ -417,7 +417,7 @@ fn main() {
              */
             task_board::tb_default_dir, task_board::tb_set_data_dir,
             task_board::tb_read_store, task_board::tb_write_store,
-            task_board::tb_set_docs_dir, task_board::tb_move_docs,
+            task_board::tb_set_docs_dir, task_board::tb_move_docs, task_board::tb_scan_dir,
             task_board::tb_http_start, task_board::tb_http_stop,
             /*
              * MCP 网关七条 —— 统一接入点（{server}__{tool} 前缀聚合）的

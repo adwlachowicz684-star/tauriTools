@@ -167,7 +167,7 @@ export declare function groupEstimate(groupId: string, tasks: Task[]): number;
 export declare function totalEstimate(tasks: Task[]): number;
 
 export declare function colFilterValues(
-  field: SortField, rows: FlatRow[] | Task[], statusIds?: string[],
+  field: SortField, rows: FlatRow[] | Task[], statusIds?: string[], typeIds?: string[],
 ): string[];
 export declare function nextTaskId(store: { nextId: number }): string;
 export declare function pushHistory(task: any, by: string, action: string, note: string, at?: number): any;
@@ -178,7 +178,39 @@ export declare function relTime(ms: number): string;
 export declare const UNASSIGNED: '__none__';
 export declare const NOTAG: '__notag__';
 
-export type GroupKey = 'status' | 'priority' | 'assignee' | 'tag';
+/* ---------------------------------------------------- 任务类型 */
+
+/** 给新建的定义项起个不撞号的 id（t1/t2…、s1/s2…） */
+export declare function newDefId(prefix: string, seen: Iterable<string> | Set<string>): string;
+
+export declare const DEFAULT_TYPES: { id: string; name: string; color: string }[];
+
+/** 解析类型定义表；坏/缺 → 默认六个（不会让整份文件打不开） */
+export declare function normalizeTypeDefs(raw: unknown): { id: string; name: string; color: string }[];
+
+export declare function typeName(defs: unknown, id: string): string;
+
+export declare function typeColor(defs: unknown, id: string): string;
+
+/* ---------------------------------------------------- 分组（多列 + 优先级） */
+
+/** 未填类型的哨兵 key（仅 type 分组时使用） */
+export declare const NOTYPE: string;
+
+export declare function groupValuesOf(t: Task, key: string): string[];
+
+export interface GroupNode {
+  key: string;
+  depth: number;
+  count: number;
+  /** 叶子节点才有；中间层为空（任务都挂在叶子上） */
+  tasks: Task[];
+  children: GroupNode[];
+}
+
+/** 按多列分组，列顺序 = 层级（第一个最外层） */
+export declare function groupTasksBy(tasks: Task[], keys: string | string[]): GroupNode[];
+export type GroupKey = 'status' | 'priority' | 'assignee' | 'type' | 'tag';
 
 export interface TaskGroup<K extends string = string> {
   key: K;
@@ -186,10 +218,10 @@ export interface TaskGroup<K extends string = string> {
 }
 
 /** 分组（只返回 key，label 由 UI 映射 types.ts 的 STATUS_LABEL / PRIORITY_LABEL） */
-export declare function groupTasks(tasks: Task[], key: GroupKey): TaskGroup[];
+export declare function groupTasks(tasks: Task[], key: GroupKey): GroupNode[];
 
 export type SortField =
-  | 'priority' | 'status' | 'assignee' | 'tags' | 'groupPath' | 'summary' | 'estimate'
+  | 'priority' | 'status' | 'assignee' | 'type' | 'tags' | 'groupPath' | 'summary' | 'estimate'
   | 'updatedAt' | 'createdAt' | 'title' | 'id';
 
 /** 多字段排序；assignee 未认领恒排最后；同级按 updatedAt 倒序兜底 */

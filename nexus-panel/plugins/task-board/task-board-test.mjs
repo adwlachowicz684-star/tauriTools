@@ -54,6 +54,13 @@ import {
   newProjectId,
   currentProject,
   needsDocsDir,
+  normalizeTypeDefs,
+  typeName,
+  NOTYPE,
+  groupTasksBy,
+  groupValuesOf,
+  newDefId,
+  DEFAULT_TYPES,
 } from './core.mjs';
 
 let pass = 0;
@@ -250,14 +257,14 @@ function onlyFilter(field, patch) {
 
 const COL = (k) => ({ field: 'priority', label: '', kind: k });
 
-t('列定义：十一列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
-  LIST_COLUMNS.length === 11
+t('列定义：十二列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
+  LIST_COLUMNS.length === 12
   && LIST_COLUMNS.every((c) => ['enum', 'text', 'time', 'num'].indexOf(c.kind) >= 0));
 
-t('列定义：覆盖优先级/ID/标题/所属组/状态/认领人/标签/说明/预估/创建/更新', (() => {
+t('列定义：覆盖优先级/ID/标题/所属组/状态/认领人/类型/标签/说明/预估/创建/更新', (() => {
   const fields = LIST_COLUMNS.map((c) => c.field);
-  return ['priority', 'id', 'title', 'groupPath', 'status', 'assignee', 'tags',
-          'summary', 'estimate', 'createdAt', 'updatedAt']
+  return ['priority', 'id', 'title', 'groupPath', 'status', 'assignee', 'type',
+          'tags', 'summary', 'estimate', 'createdAt', 'updatedAt']
     .every((f) => fields.indexOf(f) >= 0);
 })());
 
@@ -837,6 +844,107 @@ t('needsDocsDir：设过就不提醒', (() => {
 t('needsDocsDir：没设就提醒（新建项目时与建任务时是同一判据）', (() => {
   const c = normalizeConfig({ projects: [{ id: 'p1', name: '甲', dataDir: '/a' }] });
   return needsDocsDir(c) === true;
+})());
+
+
+/* ============================================================ 任务类型 */
+
+t('默认六类：开发/BUG/优化/调研/审查/规划', (() => {
+  const names = DEFAULT_TYPES.map((t) => t.name).join(',');
+  return names === '开发,BUG,优化,调研,审查,规划';
+})());
+
+t('normalizeTypeDefs：缺省给默认六个', normalizeTypeDefs(null).length === 6);
+
+t('normalizeTypeDefs：认纯字符串数组（手写文件图省事）', (() => {
+  const d = normalizeTypeDefs(['x', 'y']);
+  return d.length === 2 && d[0].id === 'x' && d[0].name === 'x';
+})());
+
+t('normalizeTypeDefs：坏了不牵连任务（整份文件不能打不开）', (() => {
+  const d = normalizeTypeDefs('不是数组');
+  return d.length === 6;
+})());
+
+t('normalizeTypeDefs：id 重号会被丢掉', normalizeTypeDefs([
+  { id: 'a', name: '甲' }, { id: 'a', name: '乙' },
+]).length === 1);
+
+t('typeName：没配过的类型原样显示 id（认不出比认错好）',
+  typeName([], 'zzz') === 'zzz');
+
+t('typeName：取定义表里的名字', typeName([{ id: 'x', name: '新名' }], 'x') === '新名');
+
+t('任务类型存 id 不是名字（改名后旧任务不受影响）',
+  normalizeTask({ type: 'dev' }).type === 'dev');
+
+t('自定义类型能活过 normalizeTask（不被清空）',
+  normalizeTask({ type: 't9' }).type === 't9');
+
+t('newDefId：跳过已用的号', newDefId('t', ['t1', 't2']) === 't3');
+
+t('类型列筛选候选取定义表（刚建的、还没挂任务的类型也要能选）', (() => {
+  const defs = normalizeTypeDefs([{ id: 'dev', name: '开发' }, { id: 't9', name: '新类' }]);
+  const ids = defs.map((d) => d.id);
+  return colFilterValues('type', [], [], ids).indexOf('t9') >= 0;
+})());
+
+/* ============================================================ 分组（多列 + 优先级） */
+
+const G_TASKS = [
+  normalizeTask({ id: 'g1', status: 'doing', type: 'dev', priority: 'P1', assignee: 'a', tags: ['x'] }),
+  normalizeTask({ id: 'g2', status: 'todo', type: 'dev', priority: 'P2', assignee: 'b', tags: [] }),
+  normalizeTask({ id: 'g3', status: 'doing', type: 'bug', priority: 'P1', assignee: '', tags: ['x'] }),
+];
+
+t('groupValuesOf：type 未填 → 未分类哨兵',
+  groupValuesOf(normalizeTask({ id: 'z' }), 'type')[0] === NOTYPE);
+
+t('groupValuesOf：标签多值 → 同时属于多个组', (() => {
+  const v = groupValuesOf(normalizeTask({ tags: ['a', 'b'] }), 'tag');
+  return v.length === 2;
+})());
+
+t('单列分组仍可用（老接口没坏）', (() => {
+  const g = groupTasksBy(G_TASKS, 'status');
+  return g.length === 2 && g.every((x) => x.tasks.length > 0);
+})());
+
+t('两列分组：第二层在第一层里面', (() => {
+  const g = groupTasksBy(G_TASKS, ['type', 'status']);
+  const dev = g.find((x) => x.key === 'dev');
+  return !!dev && dev.children.length === 2 && dev.children.every((c) => c.tasks.length > 0);
+})());
+
+t('中间层的 tasks 是空的（任务只挂在叶子上，不会重复渲染一遍）', (() => {
+  const g = groupTasksBy(G_TASKS, ['type', 'status']);
+  return g.every((x) => x.tasks.length === 0);
+})());
+
+t('中间层的 count 是子层之和（标题上的数字不虚）', (() => {
+  const g = groupTasksBy(G_TASKS, ['type', 'status']);
+  const dev = g.filter((x) => x.key === 'dev')[0];
+  return dev.count === dev.children.reduce((n, c) => n + c.count, 0);
+})());
+
+t('列顺序决定层级（换顺序就换嵌套关系）', (() => {
+  const a = groupTasksBy(G_TASKS, ['type', 'status']);
+  const b = groupTasksBy(G_TASKS, ['status', 'type']);
+  return a[0].key !== b[0].key;
+})());
+
+t('空 keys → 全堆在一组', (() => {
+  const g = groupTasksBy(G_TASKS, []);
+  return g.length === 1 && g[0].tasks.length === 3;
+})());
+
+t('type 分组：未分类置尾', (() => {
+  const rows = [
+    normalizeTask({ id: 'n1', type: '' }),
+    normalizeTask({ id: 'n2', type: 'dev' }),
+  ];
+  const g = groupTasksBy(rows, 'type');
+  return g[g.length - 1].key === NOTYPE;
 })());
 
 /* ---------------- 汇总 ---------------- */

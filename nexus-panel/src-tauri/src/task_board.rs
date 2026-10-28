@@ -219,6 +219,58 @@ pub fn tb_move_docs(
     }))
 }
 
+/// 扫描一个目录，用于**导入项目前的验证**。
+///
+/// 为什么要在导入前扫一遍：用户选的文件夹未必是他以为的那个 ——
+/// 可能是上级目录（里面是一堆无关项目）、也可能是空目录。
+/// 不验证就直接建项目，结果是建出一个指向错地方的项目，
+/// 而界面上看不出来（项目名是对的，只是里面什么都没有）。
+///
+/// 只统计、不读文件内容：验证阶段读内容既慢又没必要。
+#[tauri::command]
+pub fn tb_scan_dir(state: State<'_, TbState>, dir: String) -> Result<Value, String> {
+    let base = authorized_any(&state, &dir)?;
+    if !base.is_dir() {
+        return Err(format!("不是目录: {}", base.display()));
+    }
+    let mut tasks_json = false;
+    let mut md = 0usize;
+    let mut subdirs = 0usize;
+    let mut others = 0usize;
+    let mut sample: Vec<String> = Vec::new();
+
+    let entries = fs::read_dir(&base).map_err(|e| format!("读取目录失败: {}", e))?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(x) => x,
+            Err(_) => continue,
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        let path = entry.path();
+        if path.is_dir() {
+            subdirs += 1;
+        } else if name == "tasks.json" {
+            tasks_json = true;
+        } else if name.to_lowercase().ends_with(".md") {
+            md += 1;
+        } else {
+            others += 1;
+        }
+        if sample.len() < 12 {
+            sample.push(name);
+        }
+    }
+
+    Ok(json!({
+        "dir": base.to_string_lossy(),
+        "tasksJson": tasks_json,
+        "mdCount": md,
+        "dirCount": subdirs,
+        "otherCount": others,
+        "sample": sample,
+    }))
+}
+
 /// 递归复制目录（跨盘搬文件时用）。只处理普通目录与文件。
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), std::io::Error> {
     fs::create_dir_all(dst)?;

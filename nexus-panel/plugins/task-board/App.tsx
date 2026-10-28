@@ -11,6 +11,7 @@ import { TAG_COLORS } from './types';
 import type {
   TbConfig, Task, TaskStore, Priority, TaskStatus, TagDef, TaskFlow, StatusDef,
 } from './types';
+import type { GroupNode } from './core';
 import {
   NOTAG,
   UNASSIGNED,
@@ -29,6 +30,7 @@ import {
   currentProject,
   needsDocsDir,
   normalizeStore,
+  normalizeTypeDefs,
   DEFAULT_FLOW,
   dissolveGroup,
   flattenTasks,
@@ -36,17 +38,21 @@ import {
   fmtTime,
   groupEstimate,
   groupStatus,
-  groupTasks,
+  groupTasksBy,
   indexTasks,
   fmtEstimate,
   initialStatus,
   lockOf,
+  newDefId,
+  NOTYPE,
   normalizeFlow,
   relTime,
   sortRowsBy,
   sortTasks,
   splitTask,
   statsOf,
+  typeColor,
+  typeName,
   UNESTIMATED,
   statusColor,
   statusName,
@@ -78,20 +84,36 @@ const VIEWS: { key: TbView; label: string; title: string }[] = [
   { key: 'stats', label: '统计', title: '统计：分布 / 负载 / 最近动态' },
 ];
 
-const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'tag'];
+const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'type', 'tag'];
 
-/** 流程配置的最小形状（组件只用到 statuses / transitions / edges） */
-type FlowLike = ReturnType<typeof normalizeFlow>;
+/** 分组依据的显示名（分组设置面板与面包屑共用） */
+const GROUP_LABEL: Record<GroupKey, string> = {
+  status: '状态',
+  priority: '优先级',
+  assignee: '认领人',
+  type: '任务类型',
+  tag: '标签',
+};
+
+/*
+  流程配置的最小形状（组件只用到 statuses / transitions / edges）。
+  typeDefs 挂在上面是为了少传一个参数：分组与状态显示都要它，
+  而它和 flow 一样是"当前项目的配置"。
+*/
+type FlowLike = ReturnType<typeof normalizeFlow> & {
+  typeDefs?: { id: string; name: string; color: string }[];
+};
 
 const SORT_FIELDS: SortField[] = [
-  'priority', 'status', 'assignee', 'tags', 'groupPath', 'summary',
+  'priority', 'status', 'assignee', 'type', 'tags', 'groupPath', 'summary',
   'estimate', 'updatedAt', 'createdAt', 'title', 'id',
 ];
 
 /** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
-function groupLabel(key: string, by: GroupKey): string {
-  if (by === 'status') return STATUS_LABEL[key as TaskStatus] || key;
+function groupLabel(key: string, by: GroupKey, flow?: FlowLike): string {
+  if (by === 'status') return statusName(flow, key);
   if (by === 'priority') return `${key} ${PRIORITY_LABEL[key as Priority] || ''}`.trim();
+  if (by === 'type') return key === NOTYPE ? '未分类' : typeName(flow && flow.typeDefs, key);
   if (key === UNASSIGNED) return '未认领';
   if (key === NOTAG) return '无标签';
   return key;
@@ -105,6 +127,7 @@ const SORT_LABEL: Record<SortField, string> = {
   status: '状态',
   assignee: '认领人',
   tags: '标签',
+  type: '类型',
   summary: '说明',
   estimate: '预估',
   createdAt: '创建',
@@ -142,6 +165,8 @@ export default function App() {
   const [docsHintClosed, setDocsHintClosed] = useState(false);
   /** 新建项目弹窗 */
   const [newProjOpen, setNewProjOpen] = useState(false);
+  /** 导入项目弹窗 */
+  const [importOpen, setImportOpen] = useState(false);
   /** 新建/合并组的弹窗。null = 关着 */
   const [groupDraft, setGroupDraft] = useState<{ mode: 'merge' | 'new' } | null>(null);
 
@@ -155,7 +180,12 @@ export default function App() {
   /* 视图偏好：当前视图 / 分组依据 / 排序。走 ctx.store（宿主侧持久化，
      重开插件、切窗口都不丢；比 iframe 自己的 localStorage 多一层跨源可用性）。 */
   const [view, setView] = useState<TbView>('board');
-  const [groupBy, setGroupBy] = useState<GroupKey>('status');
+  /*
+    分组依据：**有序多列**。数组顺序就是层级（第一个最外层）。
+    原来是单选一列 —— 那样"按类型分、每个类型里再按状态看"要分两次做，
+    而且第二次会把第一次的选择冲掉。
+  */
+  const [groupKeys, setGroupKeys] = useState<GroupKey[]>(['status']);
   const [sort, setSort] = useState<{ field: SortField; dir: 'asc' | 'desc' }>({ field: 'priority', dir: 'asc' });
   const cfgRef = useRef<TbConfig | null>(null);
   cfgRef.current = cfg;
@@ -176,12 +206,18 @@ export default function App() {
         try {
           const [v, g, s] = await Promise.all([
             ctx.store.get('view', 'board'),
-            ctx.store.get('groupBy', 'status'),
+            ctx.store.get('groupKeys', ['status']),
             ctx.store.get('sort', { field: 'priority', dir: 'asc' }),
           ]);
           if (!alive) return;
           if (VIEWS.some((x) => x.key === v)) setView(v as TbView);
-          if (GROUP_KEYS.includes(g as GroupKey)) setGroupBy(g as GroupKey);
+          /*
+            存的是数组。老存档是单个字符串（'status'）→ 包成数组，
+            否则升级后分组依据整个丢失、界面上说的是另一回事。
+          */
+          const arr = Array.isArray(g) ? g : [g];
+          const ok = arr.filter((x) => GROUP_KEYS.includes(x as GroupKey)) as GroupKey[];
+          if (ok.length > 0) setGroupKeys(ok);
           if (s && typeof s === 'object' && SORT_FIELDS.includes((s as { field: SortField }).field)) {
             setSort({ field: (s as { field: SortField }).field, dir: (s as { dir?: string }).dir === 'desc' ? 'desc' : 'asc' });
           }
@@ -250,8 +286,10 @@ export default function App() {
     流程配置（自定义状态与流转）。store.flow 由 normalizeStore 保证存在 ——
     缺字段的老文件给的是默认那套，行为与以前完全一致。
   */
-  const flow = store ? store.flow : DEFAULT_FLOW;
+  const flow = store ? { ...store.flow, typeDefs: store.typeDefs } : { ...DEFAULT_FLOW, typeDefs: normalizeTypeDefs(null) };
   const statusIds = flow.statuses.map((s) => s.id);
+  const typeDefs = store ? store.typeDefs : [];
+  const typeIds = typeDefs.map((d) => d.id);
 
   const flatRows = useMemo(() => flattenTasks(store ? store.tasks : []), [store]);
   const filteredRows = useMemo(
@@ -301,8 +339,8 @@ export default function App() {
   const filteredOn = activeCols.length > 0 || q.trim() !== '';
   /* 分组视图要的是 Task[]（它自己按字段聚合，不看层级） */
   const groups = useMemo(
-    () => groupTasks(listRows.map((r) => r.task), groupBy),
-    [listRows, groupBy],
+    () => groupTasksBy(listRows.map((r) => r.task), groupKeys),
+    [listRows, groupKeys],
   );
   const stats = useMemo<TbStats | null>(() => (store ? statsOf(store) : null), [store]);
 
@@ -319,10 +357,68 @@ export default function App() {
     setView(v);
     persist('view', v);
   };
-  const changeGroupBy = (g: GroupKey) => {
-    setGroupBy(g);
-    persist('groupBy', g);
+  const changeGroupBy = (g: GroupKey[]) => {
+    /*
+      去重：同一列分两层没有意义（第二层每个组里只有一种值），
+      而界面上会多出一堆只有一个子组的层级，看着像坏了。
+    */
+    const uniq: GroupKey[] = [];
+    for (const k of g) if (!uniq.includes(k)) uniq.push(k);
+    setGroupKeys(uniq);
+    persist('groupKeys', uniq);
   };
+
+  /** 类型定义表改名/调色/增删（与标签同构：改一处，所有行一起变） */
+  const setTypeDef = (id: string, patch: { name?: string; color?: string }) =>
+    withErr(async () => {
+      if (!cfg) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => ({
+        ...st,
+        typeDefs: (st.typeDefs || []).map((d) => (d.id === id ? { ...d, ...patch } : d)),
+      }));
+    })();
+
+  const createType = (name: string, color: string) =>
+    withErr(async () => {
+      if (!cfg) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = st.typeDefs || [];
+        const id = newDefId('t', defs.map((d) => d.id));
+        return { ...st, typeDefs: [...defs, { id, name, color }] };
+      });
+    })();
+
+  /*
+    删类型：先把挂在这个类型上的任务清空，再删定义。
+    顺序不能反 —— 先删定义的话那些任务上留着不存在的 id，
+    界面显示成原始 id（'t3'），而定义已经没了、改都没法改。
+  */
+  const removeType = (id: string) =>
+    withErr(async () => {
+      if (!cfg) return;
+      let n = 0;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        n = (st.tasks || []).filter((t) => t.type === id).length;
+        return {
+          ...st,
+          tasks: (st.tasks || []).map((t) => (t.type === id ? { ...t, type: '' } : t)),
+          typeDefs: (st.typeDefs || []).filter((d) => d.id !== id),
+        };
+      });
+      if (n > 0) ctx.toast(`已删类型，${n} 条任务变成「未分类」`, 'ok');
+    })();
+
+  /** 给某条任务挂/摘类型（列头下拉里点） */
+  const toggleType = (taskId: string, typeId: string) =>
+    withErr(async () => {
+      if (!cfg) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => ({
+        ...st,
+        tasks: (st.tasks || []).map((t) => (
+          t.id === taskId ? { ...t, type: t.type === typeId ? '' : typeId } : t
+        )),
+      }));
+    })();
   const changeSort = (field: SortField, dir?: 'asc' | 'desc') => {
     // 点同一列 = 翻转方向；换列 = 用该列默认方向（时间类「新的在前」，其余升序）
     const next =
@@ -677,6 +773,13 @@ ${dir}
           </select>
           <button
             className="tb-act"
+            onClick={() => setImportOpen(true)}
+            title="选一个文件夹，验证后接成一个项目"
+          >
+            导入…
+          </button>
+          <button
+            className="tb-act"
             onClick={() => setNewProjOpen(true)}
             title="新建一个项目（独立的任务库 + 文档路径）"
           >
@@ -714,15 +817,11 @@ ${dir}
         </div>
         <div className="tb-views-right">
           {view === 'group' && (
-            <label className="tb-field">
-              <span>分组依据</span>
-              <select value={groupBy} onChange={(e) => changeGroupBy(e.target.value as GroupKey)}>
-                <option value="status">状态</option>
-                <option value="priority">优先级</option>
-                <option value="assignee">认领人</option>
-                <option value="tag">标签</option>
-              </select>
-            </label>
+            <GroupByPop
+              keys={groupKeys}
+              onChange={changeGroupBy}
+              label={groupKeys.map((k) => GROUP_LABEL[k]).join(' › ') || '（未分组）'}
+            />
           )}
           {/*
             排序**不在顶栏摆下拉** —— 列表每一列的表头都能点排序，
@@ -847,6 +946,10 @@ ${dir}
           store={store.tasks}
           flow={flow}
           statusIds={statusIds}
+          typeDefs={typeDefs}
+          typeIds={typeIds}
+          onToggleType={toggleType}
+          onRenameType={(id, name) => setTypeDef(id, { name })}
           tagDefs={store.tagDefs}
           onCreateTag={doAddTag}
           onTagColor={doSetTagColor}
@@ -871,7 +974,7 @@ ${dir}
       {view === 'group' && (
         <GroupView
           groups={groups}
-          groupBy={groupBy}
+          groupKeys={groupKeys}
           flow={flow}
           me={me}
           onOpen={(id) => setDetailId(id)}
@@ -901,6 +1004,25 @@ ${dir}
       )}
 
       {/* 任务详情 */}
+      {importOpen && cfg ? (
+        <ImportProjectModal
+          onClose={() => setImportOpen(false)}
+          onImport={async (name, dataDir, docsDir) => {
+            setImportOpen(false);
+            await withErr(async () => {
+              const next = await S.importProject(ctx, cfg, name, dataDir, docsDir);
+              setCfg(next);
+              setChecked(new Set());
+              setDetailId(null);
+              const st = await S.readStore(ctx, next.dataDir).catch(() => null);
+              setStore(st || normalizeStore(null));
+              await restartServiceIfOn(cfg, next);
+              ctx.toast(`已导入项目「${currentProject(next).name}」`, 'ok');
+            })();
+          }}
+        />
+      ) : null}
+
       {newProjOpen && cfg ? (
         <NewProjectModal
           onClose={() => setNewProjOpen(false)}
@@ -1098,6 +1220,341 @@ function lockTitle(lock: { pending: string[]; missing: string[]; cyclic: boolean
   if (lock.missing.length > 0) parts.push(`前置不存在（可能已被删除）：${lock.missing.join('、')}`);
   if (lock.pending.length > 0) parts.push(`等 ${lock.pending.length} 个前置完成：${lock.pending.join('、')}`);
   return parts.join('；') || '被前置任务卡住';
+}
+
+/**
+ * 类型单元格：显示当前类型，点开可换一个、改名、或清成未分类。
+ *
+ * 改名**就地编辑**而不是弹窗 —— 归类是顺手的事，
+ * 弹个窗再确认一次，二十条任务就变成二十次开关。
+ */
+function TypePicker({
+  value, defs, onPick, onRename,
+}: {
+  value: string;
+  defs: { id: string; name: string; color: string }[];
+  onPick: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState('');
+  const ref = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setEditing('');
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const cur = defs.find((d) => d.id === value);
+
+  return (
+    <span className="tb-typepick" ref={ref}>
+      <button
+        type="button"
+        className={'tb-typechip' + (cur ? '' : ' empty')}
+        style={cur ? { background: cur.color + '22', color: cur.color, borderColor: cur.color + '55' } : undefined}
+        onClick={() => setOpen(!open)}
+        title={cur ? cur.name : '未分类（点击设置）'}
+      >
+        {cur ? cur.name : '—'}
+      </button>
+      {open ? (
+        <span className="tb-typepop">
+          {defs.map((d) => (
+            <span key={d.id} className="tb-typerow">
+              <button
+                type="button"
+                className={'tb-typeopt' + (value === d.id ? ' on' : '')}
+                style={{ color: d.color }}
+                onClick={() => {
+                  onPick(d.id);
+                  setOpen(false);
+                }}
+              >
+                {value === d.id ? '● ' : '○ '}{d.name}
+              </button>
+              {editing === d.id ? (
+                <input
+                  className="tb-typerename"
+                  autoFocus
+                  defaultValue={d.name}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v && v !== d.name) onRename(d.id, v);
+                    setEditing('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (isComposing(e.nativeEvent)) return;
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                    if (e.key === 'Escape') setEditing('');
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="tb-act sm ghost"
+                  title="改名"
+                  onClick={() => setEditing(d.id)}
+                >
+                  ✎
+                </button>
+              )}
+            </span>
+          ))}
+          {value ? (
+            <button
+              type="button"
+              className="tb-typeopt"
+              onClick={() => {
+                onPick(value);   // 再点一次当前值 = 摘掉
+                setOpen(false);
+              }}
+            >
+              清成「未分类」
+            </button>
+          ) : null}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/* ================================================================ 导入项目 */
+
+/**
+ * 导入：选一个文件夹，验证它里面有什么，再接成一个项目。
+ *
+ * ⛔ 验证这一步不能省。用户选的文件夹常常不是他以为的那个 ——
+ * 上级目录、空目录、或者完全无关的文件夹。不验证就直接建项目，
+ * 得到的是一个"名字对、但里面什么都没有"的项目，
+ * 而界面上看不出错在哪：项目名是他自己起的，看着挺正常。
+ */
+function ImportProjectModal({
+  onClose,
+  onImport,
+}: {
+  onClose: () => void;
+  onImport: (name: string, dataDir: string, docsDir: string) => void;
+}) {
+  const ctx = useNexus();
+  const [dir, setDir] = useState('');
+  const [scan, setScan] = useState<null | {
+    dir: string; tasksJson: boolean; mdCount: number;
+    dirCount: number; otherCount: number; sample: string[]; degraded?: boolean;
+  }>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [name, setName] = useState('');
+  const [useAsData, setUseAsData] = useState(true);
+  const [useAsDocs, setUseAsDocs] = useState(true);
+
+  const pick = async () => {
+    const r = await ctx.services.call('folder-picker', 'pick', {});
+    const p = r?.path ? String(r.path) : '';
+    if (!p) return;
+    setDir(p);
+    setName((prev) => prev || p.split(/[/\\]/).filter(Boolean).pop() || '');
+    await verify(p);
+  };
+
+  const verify = async (target: string) => {
+    setBusy(true);
+    setMsg('');
+    try {
+      setScan(await S.scanDir(ctx, target));
+    } catch (e: any) {
+      setScan(null);
+      setMsg('验证失败：' + String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* 验证结论：把扫描结果翻成人能判断的话 */
+  const verdict = (() => {
+    if (!scan) return null;
+    const bits: string[] = [];
+    if (scan.tasksJson) bits.push('发现 tasks.json → 可以接成任务库');
+    if (scan.mdCount > 0) bits.push(`有 ${scan.mdCount} 个 md 文档`);
+    if (scan.dirCount > 0) bits.push(`${scan.dirCount} 个子目录`);
+    if (bits.length === 0) bits.push('这个目录是空的 —— 可以当新项目的位置，但里面暂时没东西');
+    const warn = scan.dirCount > 0 && !scan.tasksJson && scan.mdCount === 0
+      ? '里面只有子目录、没有任务库也没有文档 —— 是不是选到了上级目录？'
+      : '';
+    return { bits, warn };
+  })();
+
+  return (
+    <Modal title="导入项目" onClose={onClose} wide>
+      <label className="tb-mfield">
+        <span>选一个文件夹 *</span>
+        <div className="tb-mrow">
+          <input value={dir} onChange={(e) => setDir(e.target.value)} placeholder="这个项目的文档 / 任务库所在目录" />
+          <button type="button" className="tb-act sm" onClick={pick}>
+            浏览…
+          </button>
+          <button type="button" className="tb-act sm" onClick={() => dir && verify(dir)} disabled={!dir || busy}>
+            重新验证
+          </button>
+        </div>
+      </label>
+
+      {busy ? <div className="tb-hint">正在验证…</div> : null}
+      {msg ? <div className="tb-hint">{msg}</div> : null}
+
+      {scan && verdict ? (
+        <section className="tb-scan">
+          <header className="tb-scan-head">验证结果</header>
+          {verdict.bits.map((b) => (
+            <div key={b} className="tb-scan-row">· {b}</div>
+          ))}
+          {verdict.warn ? <div className="tb-scan-warn">⚠ {verdict.warn}</div> : null}
+          {scan.degraded ? (
+            <div className="tb-scan-warn">
+              ⚠ 后端扫描不可用，只验证了有没有 tasks.json（文档数量没能统计）
+            </div>
+          ) : null}
+          {scan.sample.length > 0 ? (
+            <div className="tb-scan-sample">
+              里面有：{scan.sample.join('、')}
+              {scan.sample.length >= 12 ? ' …' : ''}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {scan ? (
+        <>
+          <label className="tb-mfield">
+            <span>项目名 *</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="给这个项目起个名" />
+          </label>
+          <label className="tb-sfield check">
+            <input type="checkbox" checked={useAsData} onChange={(e) => setUseAsData(e.target.checked)} />
+            <span>用它作为任务库目录（tasks.json 放这里）</span>
+          </label>
+          <label className="tb-sfield check">
+            <input type="checkbox" checked={useAsDocs} onChange={(e) => setUseAsDocs(e.target.checked)} />
+            <span>用它作为这个项目的文档路径</span>
+          </label>
+          <div className="tb-macts">
+            <button className="tb-act" onClick={onClose}>
+              取消
+            </button>
+            <button
+              className="tb-act primary"
+              disabled={!name.trim()}
+              onClick={() => onImport(name, useAsData ? scan.dir : '', useAsDocs ? scan.dir : '')}
+            >
+              导入
+            </button>
+          </div>
+        </>
+      ) : null}
+    </Modal>
+  );
+}
+
+/* ================================================================ 分组设置 */
+
+/**
+ * 分组依据：**多列 + 可调优先级**（顺序就是层级，越靠前越外层）。
+ *
+ * 腾讯文档的智能表是这个交互，因为它同时满足两种用法：
+ * 只想按状态分 → 就留一列；想"按类型分、里面再按状态" → 加一列。
+ * 单选一列的话后者做不到，得先分一次记结果、再分一次。
+ */
+function GroupByPop({
+  keys, onChange, label,
+}: {
+  keys: GroupKey[];
+  onChange: (next: GroupKey[]) => void;
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= keys.length) return;
+    const next = [...keys];
+    const [one] = next.splice(i, 1);
+    next.splice(j, 0, one);
+    onChange(next);
+  };
+
+  const addable = GROUP_KEYS.filter((k) => !keys.includes(k));
+
+  return (
+    <div className="tb-gby" ref={ref}>
+      <button
+        className={'tb-act sm' + (open ? ' on' : '')}
+        onClick={() => setOpen(!open)}
+        title="分组依据（可多列，顺序即层级）"
+      >
+        分组：{label} ▾
+      </button>
+      {open ? (
+        <div className="tb-gby-pop">
+          <div className="tb-gby-title">分组层级（越靠上越外层）</div>
+          {keys.length === 0 ? (
+            <div className="tb-gby-hint">还没选任何列 —— 所有任务会堆在一组里</div>
+          ) : null}
+          {keys.map((k, i) => (
+            <div key={k} className="tb-gby-row">
+              <span className="tb-gby-name">{GROUP_LABEL[k]}</span>
+              <span className="tb-gby-ops">
+                <button type="button" className="tb-act sm" disabled={i === 0} onClick={() => move(i, -1)} title="上移一层">↑</button>
+                <button type="button" className="tb-act sm" disabled={i === keys.length - 1} onClick={() => move(i, 1)} title="下移一层">↓</button>
+                <button
+                  type="button"
+                  className="tb-act sm warn"
+                  onClick={() => onChange(keys.filter((x) => x !== k))}
+                  title="去掉这一层"
+                >
+                  ✕
+                </button>
+              </span>
+            </div>
+          ))}
+          {addable.length > 0 ? (
+            <div className="tb-gby-add">
+              <span className="tb-gby-title">加一层</span>
+              {addable.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className="tb-act sm"
+                  onClick={() => onChange([...keys, k])}
+                >
+                  ＋ {GROUP_LABEL[k]}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="tb-gby-foot">
+            <span className="tb-gby-hint">同一列不会重复加 —— 分两层没有意义</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /* ================================================================ 新建项目 */
@@ -1506,9 +1963,14 @@ function GroupNameModal({
  * 映射在这一处完成 —— 列头的下拉、已生效筛选的摘要都用同一份，
  * 否则同一个值在两个地方说法不一样。
  */
-function optionLabel(field: SortField, v: string): string {
+function optionLabel(
+  field: SortField,
+  v: string,
+  defs?: { id: string; name: string }[],
+): string {
   if (field === 'priority') return `${v} ${PRIORITY_LABEL[v as Priority] || ''}`.trim();
   if (field === 'status') return STATUS_LABEL[v as TaskStatus] || v;
+  if (field === 'type') return typeName(defs, v) || v;
   if (field === 'assignee') return v || '未认领';
   return v;
 }
@@ -1536,7 +1998,9 @@ function filterSummary(col: ListColumn, f: ColFilter): string {
  * 从左边展开的话大半会落到可视区外面。
  */
 function ColFilterPop({
-  col, filter, options, onChange, onClear, anchorRight, tagDefs, onCreateTag, onTagColor,
+  col, filter, options, onChange, onClear, anchorRight,
+  tagDefs, onCreateTag, onTagColor,
+  typeDefs, onCreateType, onTypeColor, onRemoveType,
 }: {
   col: ListColumn;
   filter: ColFilter;
@@ -1550,15 +2014,24 @@ function ColFilterPop({
   onCreateTag?: (name: string, color: string) => void;
   /** 改某个标签的颜色 */
   onTagColor?: (id: string, color: string) => void;
+  /** 类型定义。只任务类型列用得到 —— 与标签同构，同样可增删改色 */
+  typeDefs?: TagDef[];
+  onCreateType?: (name: string, color: string) => void;
+  onTypeColor?: (id: string, color: string) => void;
+  /** 删类型。调用方负责先把挂着的任务清空，这里只管问一句 */
+  onRemoveType?: (id: string) => void;
 }) {
   const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
   const cls = 'tb-lpop' + (anchorRight ? ' is-right' : '');
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState(TAG_COLORS[6]);
-  const colorOf = (id: string) => (tagDefs || []).find((d) => d.id === id)?.color || '';
+  const isTag = col.field === 'tags';
+  const isType = col.field === 'type';
+  /* 两种列共用同一套"定义表 + 改色 + 新建"的交互 */
+  const defs = isType ? (typeDefs || []) : (tagDefs || []);
+  const colorOf = (id: string) => defs.find((d) => d.id === id)?.color || '';
 
   if (col.kind === 'enum') {
-    const isTag = col.field === 'tags';
     return (
       <div className={cls} onClick={(e) => e.stopPropagation()}>
         <div className="tb-lpop-title">按{col.label}筛选</div>
@@ -1586,7 +2059,14 @@ function ColFilterPop({
                   做成逐行改色的结果就是同一个标签在不同行颜色不同，
                   那就丢掉了"一眼分类"这个作用。
                 */}
-                {isTag && onTagColor ? (
+                {/*
+                  标签列与类型列都能直接调色。
+                  颜色是**定义**的一部分（不是这一行的事），
+                  所以改一处、所有挂它的行一起变 ——
+                  做成逐行改色的话同一个标签在不同行颜色不同，
+                  那就丢掉了"一眼分类"这个作用。
+                */}
+                {(isTag || isType) && (isType ? onTypeColor : onTagColor) ? (
                   <span className="tb-lpop-swatches">
                     {TAG_COLORS.map((c) => (
                       <button
@@ -1594,17 +2074,32 @@ function ColFilterPop({
                         type="button"
                         className={'tb-swatch' + (colorOf(v) === c ? ' on' : '')}
                         style={{ background: c }}
-                        title={`把「${optionLabel(col.field, v)}」改成这个颜色`}
-                        onClick={() => onTagColor(v, c)}
+                        title={`把「${optionLabel(col.field, v, defs)}」改成这个颜色`}
+                        onClick={() => (isType ? onTypeColor!(v, c) : onTagColor!(v, c))}
                       />
                     ))}
                   </span>
+                ) : null}
+                {isType && onRemoveType ? (
+                  <button
+                    type="button"
+                    className="tb-act sm warn tb-lpop-del"
+                    title="删除这个类型（挂在这个类型上的任务会变成「未分类」）"
+                    onClick={() => {
+                      const nm = optionLabel(col.field, v, defs);
+                      if (window.confirm(`删除类型「${nm}」？\n\n挂在这个类型上的任务会变成「未分类」。`)) {
+                        onRemoveType(v);
+                      }
+                    }}
+                  >
+                    删
+                  </button>
                 ) : null}
               </div>
             );
           })
         )}
-        {isTag && onCreateTag ? (
+        {(isTag || isType) && (isType ? onCreateType : onCreateTag) ? (
           <div className="tb-lpop-new">
             <input
               className="tb-lpop-input"
@@ -1613,7 +2108,8 @@ function ColFilterPop({
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
                 if (!isComposing(e.nativeEvent) && e.key === 'Enter' && newName.trim()) {
-                  onCreateTag(newName.trim(), newColor);
+                  if (isType) onCreateType!(newName.trim(), newColor);
+                  else onCreateTag!(newName.trim(), newColor);
                   setNewName('');
                 }
               }}
@@ -1743,6 +2239,10 @@ function ListView({
   store,
   flow,
   statusIds,
+  typeDefs,
+  typeIds,
+  onToggleType,
+  onRenameType,
   tagDefs,
   onCreateTag,
   onTagColor,
@@ -1765,6 +2265,14 @@ function ListView({
   flow: FlowLike;
   /** 状态筛选的候选值（用户配了哪些状态） */
   statusIds: string[];
+  /** 任务类型定义表（列头下拉里可增删改色） */
+  typeDefs: TagDef[];
+  /** 类型筛选的候选值（用户定义了哪些类型） */
+  typeIds: string[];
+  /** 给某条任务挂/摘类型 */
+  onToggleType: (taskId: string, typeId: string) => void;
+  /** 改某个类型的显示名 */
+  onRenameType: (id: string, name: string) => void;
   /** 标签定义（名字 + 颜色） */
   tagDefs: TagDef[];
   onCreateTag: (name: string, color: string) => void;
@@ -1953,18 +2461,24 @@ function ListView({
 
 /* ================================================================ 分组视图 */
 
+/*
+ * 分组视图：**递归**渲染（多列分组时一层套一层）。
+ *
+ * 中间层只显示子组，不重复渲染任务 —— 任务都挂在叶子上
+ * （核心层把中间层的 tasks 清空了，理由见 groupTasksBy）。
+ */
 function GroupView({
   flow,
   groups,
-  groupBy,
+  groupKeys,
   me,
   onOpen,
   onAction,
   onClaim,
 }: {
   flow: FlowLike;
-  groups: { key: string; tasks: Task[] }[];
-  groupBy: GroupKey;
+  groups: GroupNode[];
+  groupKeys: GroupKey[];
   me: string;
   onOpen: (id: string) => void;
   onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
@@ -1974,31 +2488,82 @@ function GroupView({
     <div className="tb-groups">
       {groups.length === 0 && <div className="tb-col-empty">没有符合条件的任务</div>}
       {groups.map((g) => (
-        <section key={g.key} className="tb-group">
-          <header className="tb-group-head">
-            {groupBy === 'status' && <span className={'tb-col-dot s-' + g.key} />}
-            <span className="tb-group-name">{groupLabel(g.key, groupBy)}</span>
-            <span className="tb-col-num">{g.tasks.length}</span>
-          </header>
-          <div className="tb-group-body">
-            {g.tasks.map((t) => (
-              <TaskCard
-                key={t.id}
-                task={t}
-                me={me}
-                flow={flow}
-                onOpen={() => onOpen(t.id)}
-                onAction={(to, needNote) => onAction(t.id, to, needNote)}
-                onClaim={() => onClaim(t.id)}
-              />
-            ))}
-          </div>
-        </section>
+        <GroupNodeView
+          key={g.key}
+          node={g}
+          groupKeys={groupKeys}
+          flow={flow}
+          me={me}
+          onOpen={onOpen}
+          onAction={onAction}
+          onClaim={onClaim}
+        />
       ))}
     </div>
   );
 }
 
+function GroupNodeView({
+  node, flow, groupKeys, me, onOpen, onAction, onClaim,
+}: {
+  node: GroupNode;
+  flow: FlowLike;
+  groupKeys: GroupKey[];
+  me: string;
+  onOpen: (id: string) => void;
+  onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
+  onClaim: (id: string) => void;
+}) {
+  const by = groupKeys[node.depth] || 'status';
+  const isLeaf = node.children.length === 0;
+  return (
+    <section
+      className={'tb-group' + (isLeaf ? '' : ' tb-group-branch')}
+      /* 层级缩进：不缩进的话三层分组看起来是三个平级的列表，
+         看不出谁属于谁 */
+      style={{ marginInlineStart: node.depth * 12 }}
+    >
+      <header className="tb-group-head">
+        {by === 'status' ? (
+          <span className="tb-col-dot" style={{ background: statusColor(flow, node.key) }} />
+        ) : null}
+        {by === 'type' && node.key !== NOTYPE ? (
+          <span className="tb-col-dot" style={{ background: typeColor(flow.typeDefs, node.key) }} />
+        ) : null}
+        <span className="tb-group-name">{groupLabel(node.key, by, flow)}</span>
+        <span className="tb-col-num">{isLeaf ? node.tasks.length : node.count}</span>
+      </header>
+      <div className="tb-group-body">
+        {isLeaf ? (
+          node.tasks.map((t) => (
+            <TaskCard
+              key={t.id}
+              task={t}
+              me={me}
+              flow={flow}
+              onOpen={() => onOpen(t.id)}
+              onAction={(to, needNote) => onAction(t.id, to, needNote)}
+              onClaim={() => onClaim(t.id)}
+            />
+          ))
+        ) : (
+          node.children.map((c) => (
+            <GroupNodeView
+              key={c.key}
+              node={c}
+              groupKeys={groupKeys}
+              flow={flow}
+              me={me}
+              onOpen={onOpen}
+              onAction={onAction}
+              onClaim={onClaim}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
 /* ================================================================ 统计视图 */
 
 function BarRow({
