@@ -99,6 +99,58 @@ export async function addProject(
   return saveConfig(ctx, next);
 }
 
+/**
+ * 扫描一个目录（导入前验证用）。
+ *
+ * 后端没有这条命令时（老版本）**降级**成只验 tasks.json 是否存在 ——
+ * 那样至少能看出"这里有没有任务库"，不至于整个导入功能开不了。
+ */
+export async function scanDir(
+  ctx: PluginContext,
+  dir: string,
+): Promise<{ dir: string; tasksJson: boolean; mdCount: number; dirCount: number; otherCount: number; sample: string[]; degraded?: boolean }> {
+  try {
+    await ctx.invoke('tb_set_docs_dir', { dir });   // 先授权，否则扫描被挡
+    const r: any = await ctx.invoke('tb_scan_dir', { dir });
+    return {
+      dir: String(r?.dir || dir),
+      tasksJson: r?.tasksJson === true,
+      mdCount: Number(r?.mdCount) || 0,
+      dirCount: Number(r?.dirCount) || 0,
+      otherCount: Number(r?.otherCount) || 0,
+      sample: Array.isArray(r?.sample) ? r.sample.map((x: unknown) => String(x)) : [],
+    };
+  } catch {
+    // 降级：改用现有的读库命令探一下有没有 tasks.json
+    await ctx.invoke('tb_set_data_dir', { dir }).catch(() => {});
+    let tasksJson = false;
+    try {
+      const text = await ctx.invoke<string | null>('tb_read_store', { dir });
+      tasksJson = text != null;
+    } catch {
+      tasksJson = false;
+    }
+    return { dir, tasksJson, mdCount: 0, dirCount: 0, otherCount: 0, sample: [], degraded: true };
+  }
+}
+
+/**
+ * 导入一个项目：把某个文件夹接成新项目。
+ *
+ * `dataDir` 与 `docsDir` 分开传 —— 同一个文件夹可以同时是"任务库"和"文档"，
+ * 但也可以是两个不同的地方（文档在另一个盘、或文档是任务库的子目录）。
+ * 合成一个参数的话后者就表达不了。
+ */
+export async function importProject(
+  ctx: PluginContext,
+  cfg: TbConfig,
+  name: string,
+  dataDir: string,
+  docsDir: string,
+): Promise<TbConfig> {
+  return addProject(ctx, cfg, name, dataDir, docsDir);
+}
+
 /** 切换当前项目 */
 export async function switchProject(ctx: PluginContext, cfg: TbConfig, id: string): Promise<TbConfig> {
   return saveConfig(ctx, normalizeConfig({ ...cfg, currentId: id }));

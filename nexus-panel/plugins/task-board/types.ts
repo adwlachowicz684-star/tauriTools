@@ -81,6 +81,8 @@ export interface Task {
   priority: Priority;
   /** 预估工作量，单位人日，允许小数（0.5 = 半天）。0 = 没估 */
   estimate: number;
+  /** 任务类型，存的是 typeDefs 里的 id（'dev'/'bug'…）。'' = 未分类 */
+  type: string;
   tags: string[];
   reporter: string;
   assignee: string | null;
@@ -122,6 +124,11 @@ export interface TaskStore {
   agents: Agent[];
   /** 标签定义表。任务上只存 id，颜色统一在这里改 */
   tagDefs: TagDef[];
+  /**
+   * 任务类型定义表。默认六个（开发/BUG/优化/调研/审查/规划），
+   * 用户可在列头下拉里增删改名调色 —— 与标签同构，改一处所有行一起变。
+   */
+  typeDefs: TagDef[];
   /** 流程配置：自定义状态 / 流转 / 边的文案。缺省为默认那套 */
   flow: TaskFlow;
 }

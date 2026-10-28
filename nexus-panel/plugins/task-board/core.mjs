@@ -285,6 +285,13 @@ export function normalizeTask(raw) {
       负数按 0 处理：负的工作量没有意义，且会把合计往回拉。
     */
     estimate: Number.isFinite(t.estimate) && t.estimate > 0 ? t.estimate : 0,
+    /*
+      任务类型存的是**定义表里的 id**（'dev'/'bug'…），不是显示名。
+      存名字的话改个名就要回头改所有任务，而且改名后旧名变成没人认的孤值。
+      ⛔ 同样不校验白名单：用户新增的类型要能活下来，
+      这里按默认清单过滤会把新增类型悄悄清空。
+    */
+    type: typeof t.type === 'string' ? t.type : '',
     tags: Array.isArray(t.tags) ? t.tags.filter((x) => typeof x === 'string') : [],
     reporter: typeof t.reporter === 'string' ? t.reporter : 'manual',
     assignee: typeof t.assignee === 'string' && t.assignee ? t.assignee : null,
@@ -330,6 +337,7 @@ export function normalizeStore(raw) {
           }))
       : [],
     tagDefs: normalizeTagDefs(s.tagDefs),
+    typeDefs: normalizeTypeDefs(s.typeDefs),
     /*
       流程配置（自定义状态与流转）。
       没配过 → normalizeFlow 给默认那套，行为与以前完全一致 ——
@@ -394,6 +402,7 @@ export const LIST_COLUMNS = [
   { field: 'groupPath', label: '所属组', kind: 'text' },
   { field: 'status', label: '状态', kind: 'enum' },
   { field: 'assignee', label: '认领人', kind: 'enum' },
+  { field: 'type', label: '任务类型', kind: 'enum' },
   { field: 'tags', label: '标签', kind: 'enum' },
   { field: 'summary', label: '说明', kind: 'text' },
   { field: 'estimate', label: '预估(人日)', kind: 'num' },
@@ -587,7 +596,7 @@ export function activeColFilters(filters) {
  * 表里没有、但任务上写着的名字（外部 API 写的）照样要能筛；
  * 反过来表里有、但没人领过任务的名字，列出来选中就是零行。
  */
-export function colFilterValues(field, rows, statusIds) {
+export function colFilterValues(field, rows, statusIds, typeIds) {
   const tasks = (rows || []).map((r) => (r && r.task ? r.task : r));
   switch (field) {
     case 'priority': return [...PRIORITIES];
@@ -603,12 +612,21 @@ export function colFilterValues(field, rows, statusIds) {
       // 未认领（空串）排最后：它是"没人"，不该顶在名单前面
       return [...names, ''];
     }
+    /*
+      类型取**定义表**（用户增删改过）。从数据里去重的话，
+      用户刚新建、还没挂到任何任务上的类型在下拉里就选不到，
+      那个类型等于建不出来。
+    */
+    case 'type': return (typeIds || []).length ? [...typeIds] : TYPE_WORDS.slice();
     case 'tags': return allTags(tasks || []);
     /*
       数值列没有"候选值"可枚举，但**"没估"是个要能筛的选项** ——
       "找那些还没估工作量的"是排期前最常见的一次查询。
       它不是 0，是缺失，所以必须单列，不能混进区间里。
     */
+    case 'type':
+      r = (TYPE_RANK[a.type] ?? 99) - (TYPE_RANK[b.type] ?? 99);
+      break;
     case 'estimate': return [UNESTIMATED];
     default: return [];
   }
@@ -1052,6 +1070,59 @@ export function totalEstimate(tasks) {
   return Math.round(sum * 100) / 100;
 }
 
+/* ============================================================ 任务类型
+ *
+ * 类型**由用户在界面上增删改名调色**，默认这六个只是初始值。
+ * 与标签同构（定义表 + 任务上只存 id），两处共用一套颜色 -- 改一处所有行一起变。
+ */
+
+export const DEFAULT_TYPES = [
+  { id: 'dev', name: '开发', color: '#3b82f6' },
+  { id: 'bug', name: 'BUG', color: '#ef4444' },
+  { id: 'opt', name: '优化', color: '#22c55e' },
+  { id: 'research', name: '调研', color: '#a855f7' },
+  { id: 'review', name: '审查', color: '#f59e0b' },
+  { id: 'plan', name: '规划', color: '#0ea5e9' },
+];
+
+const TYPE_COLORS = Object.fromEntries(DEFAULT_TYPES.map((t) => [t.id, t.color]));
+/** 类型 id → 显示名。没配过的原样显示 id（AI 手写的） */
+export const TYPE_WORDS = ['dev', 'bug', 'opt', 'research', 'review', 'plan'];
+
+/**
+ * 解析类型定义表。认两种写法：对象数组（界面写的）和纯字符串数组（手写省事）。
+ * 解析不出来用默认六个 —— 不会因为配置坏了就整份任务打不开。
+ */
+export function normalizeTypeDefs(raw) {
+  if (!Array.isArray(raw)) return DEFAULT_TYPES.map((t) => ({ ...t }));
+  const seen = new Set();
+  const out = [];
+  for (const d of raw) {
+    const o = d && typeof d === 'object' ? d : null;
+    const id = o
+      ? (typeof o.id === 'string' ? o.id : '')
+      : (typeof d === 'string' ? d : '');
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: o && typeof o.name === 'string' && o.name ? o.name : id,
+      color: o && typeof o.color === 'string' && o.color ? o.color : (TYPE_COLORS[id] || '#78716c'),
+    });
+  }
+  return out.length > 0 ? out : DEFAULT_TYPES.map((t) => ({ ...t }));
+}
+
+export function typeName(defs, id) {
+  const d = (defs || []).find((x) => x.id === id);
+  return d ? d.name : (id || '');
+}
+
+export function typeColor(defs, id) {
+  const d = (defs || []).find((x) => x.id === id);
+  return (d && d.color) || TYPE_COLORS[id] || '#78716c';
+}
+
 /** 全部标签（去重，按出现次数倒序，最多 20 个） */
 export function allTags(tasks) {
   const cnt = new Map();
@@ -1112,8 +1183,16 @@ export function relTime(ms) {
 export const UNASSIGNED = '__none__';
 /** 无标签任务的哨兵 key（仅 tag 分组时使用） */
 export const NOTAG = '__notag__';
+/** 未填类型的哨兵 key（仅 type 分组时使用） */
+export const NOTYPE = '__notype__';
 
 const STATUS_RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
+/*
+  类型排序按**默认清单**的顺序（开发→BUG→优化→…），不是字典序 ——
+  按拼音排出来是"BUG/优化/开发/调研"，看着像随机。
+  用户自定义的类型不在表里，落 99 排最后（它们的先后没意义）。
+*/
+const TYPE_RANK = Object.fromEntries(TYPE_WORDS.map((t, i) => [t, i]));
 
 /**
  * 分组：status / priority / assignee / tag
@@ -1124,46 +1203,98 @@ const STATUS_RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
  * 只返回 key 不返回 label —— 标签文案由 UI 层映射 types.ts 的
  * STATUS_LABEL / PRIORITY_LABEL，避免同一份映射抄两处后漂移。
  */
-export function groupTasks(tasks, key) {
-  const groups = [];
-  const index = new Map();
-  const push = (k, t) => {
-    let g = index.get(k);
-    if (!g) {
-      g = { key: k, tasks: [] };
-      index.set(k, g);
-      groups.push(g);
-    }
-    g.tasks.push(t);
-  };
-  for (const t of tasks) {
-    if (key === 'status') push(t.status, t);
-    else if (key === 'priority') push(t.priority, t);
-    else if (key === 'assignee') push(t.assignee || UNASSIGNED, t);
-    else if (key === 'tag') {
-      if (t.tags.length === 0) push(NOTAG, t);
-      else for (const tag of t.tags) push(tag, t);
-    }
-  }
-  if (key === 'status') groups.sort((a, b) => STATUS_RANK[a.key] - STATUS_RANK[b.key]);
-  else if (key === 'priority') groups.sort((a, b) => PRIORITIES.indexOf(a.key) - PRIORITIES.indexOf(b.key));
-  else if (key === 'assignee') {
+/** 一条任务在某个分组依据下属于哪些组（标签是多值的，会同时进多个组） */
+export function groupValuesOf(t, key) {
+  if (key === 'status') return [t.status];
+  if (key === 'priority') return [t.priority];
+  if (key === 'assignee') return [t.assignee || UNASSIGNED];
+  if (key === 'type') return [t.type || NOTYPE];
+  if (key === 'tag') return t.tags.length > 0 ? t.tags : [NOTAG];
+  return [''];
+}
+
+function sortGroups(groups, key) {
+  if (key === 'status') {
+    groups.sort((a, b) => (STATUS_RANK[a.key] ?? 9) - (STATUS_RANK[b.key] ?? 9));
+  } else if (key === 'priority') {
+    groups.sort((a, b) => PRIORITIES.indexOf(a.key) - PRIORITIES.indexOf(b.key));
+  } else if (key === 'assignee') {
     groups.sort((a, b) => {
       if (a.key === UNASSIGNED) return -1;
       if (b.key === UNASSIGNED) return 1;
-      return b.tasks.length - a.tasks.length || a.key.localeCompare(b.key);
+      return b.count - a.count || a.key.localeCompare(b.key);
+    });
+  } else if (key === 'type') {
+    /* 未分类置尾：它是"没填"，不该顶在前面 */
+    groups.sort((a, b) => {
+      if (a.key === NOTYPE) return 1;
+      if (b.key === NOTYPE) return -1;
+      return (TYPE_RANK[a.key] ?? 99) - (TYPE_RANK[b.key] ?? 99) || b.count - a.count;
     });
   } else if (key === 'tag') {
     // __notag__ 是伪分组，显式置尾 —— 不能靠 '__' 碰 collation 运气
     groups.sort((a, b) => {
       if (a.key === NOTAG) return 1;
       if (b.key === NOTAG) return -1;
-      return b.tasks.length - a.tasks.length || a.key.localeCompare(b.key);
+      return b.count - a.count || a.key.localeCompare(b.key);
     });
   } else {
-    groups.sort((a, b) => b.tasks.length - a.tasks.length || a.key.localeCompare(b.key));
+    groups.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
   }
-  return groups;
+}
+
+/**
+ * 按**多列**分组，列的顺序就是层级（第一个是最外层）。
+ *
+ * 为什么允许好几层：单层只能回答"按状态分"，而常见的问法是
+ * "按类型分，每个类型里再按状态看" —— 只支持一层的话要点两次，
+ * 而且第二次会丢掉第一次的选择。
+ *
+ * 返回树：中间层是 `children`，叶子是 `tasks`。
+ * ⛔ 中间层的 `tasks` 会被清空并折算进 `count`：
+ *    不清的话同一条任务会在父层与子层各渲染一次，
+ *    而父层标题上的数字又是子层之和，看着像凭空多了一倍。
+ *
+ * 传单个字符串也认（等价于只分一层）—— 兼容老调用点。
+ */
+export function groupTasksBy(tasks, keys) {
+  const ks = (Array.isArray(keys) ? keys : [keys]).filter(Boolean);
+  const list = tasks || [];
+  if (ks.length === 0) {
+    return [{ key: '', depth: 0, count: list.length, tasks: list.slice(), children: [] }];
+  }
+
+  const build = (rows, depth) => {
+    const key = ks[depth];
+    const groups = [];
+    const index = new Map();
+    for (const t of rows) {
+      for (const v of groupValuesOf(t, key)) {
+        let g = index.get(v);
+        if (!g) {
+          g = { key: v, depth, count: 0, tasks: [], children: [] };
+          index.set(v, g);
+          groups.push(g);
+        }
+        g.tasks.push(t);
+        g.count += 1;
+      }
+    }
+    sortGroups(groups, key);
+    if (depth < ks.length - 1) {
+      for (const g of groups) {
+        g.children = build(g.tasks, depth + 1);
+        g.tasks = [];   // 中间层不装任务（理由见上）
+      }
+    }
+    return groups;
+  };
+  return build(list, 0);
+}
+
+/** 单列分组（老接口，等价于只给一列） */
+export function groupTasks(tasks, key) {
+  return groupTasksBy(tasks, [key]);
 }
 
 /**
@@ -1400,4 +1531,12 @@ export function currentProject(cfg) {
 export function needsDocsDir(cfg) {
   const p = currentProject(cfg);
   return !!(p && !p.docsDir);
+}
+
+/** 给新建的定义项起个不撞号的 id（t1/t2…、s1/s2…） */
+export function newDefId(prefix, seenIds) {
+  const seen = seenIds instanceof Set ? seenIds : new Set(seenIds || []);
+  let n = 1;
+  while (seen.has(`${prefix}${n}`)) n += 1;
+  return `${prefix}${n}`;
 }
