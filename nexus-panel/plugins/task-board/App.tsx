@@ -26,6 +26,9 @@ import {
   ancestorChain,
   canTransitionIn,
   createGroup,
+  currentProject,
+  needsDocsDir,
+  normalizeStore,
   DEFAULT_FLOW,
   dissolveGroup,
   flattenTasks,
@@ -135,6 +138,10 @@ export default function App() {
   const [checked, setChecked] = useState<Set<string>>(() => new Set());
   /** 流程设置面板 */
   const [flowOpen, setFlowOpen] = useState(false);
+  /** 「还没设文档路径」的提醒条被手动关掉（仅本次会话） */
+  const [docsHintClosed, setDocsHintClosed] = useState(false);
+  /** 新建项目弹窗 */
+  const [newProjOpen, setNewProjOpen] = useState(false);
   /** 新建/合并组的弹窗。null = 关着 */
   const [groupDraft, setGroupDraft] = useState<{ mode: 'merge' | 'new' } | null>(null);
 
@@ -222,6 +229,7 @@ export default function App() {
     const c = next as TbConfig | null | undefined;
     if (!c || typeof c.dataDir !== 'string') return;
     setCfg(c);
+    setDocsHintClosed(false);   // 换了项目/配置 → 提醒重新开始（那是另一件事）
     S.readStore(ctx, c.dataDir)
       .then((st) => setStore(st))
       /* 读不到新目录的任务不弹错：2s 轮询下一拍还会再试，
@@ -414,6 +422,75 @@ export default function App() {
       ctx.toast('流程已保存', 'ok');
     })();
 
+  /*
+    切项目：保存配置 → 换掉内存里的 cfg → 重载任务 → **重启 HTTP 服务**。
+
+    最后一步不能省：服务启动时把数据目录绑进去了，切了项目不重启的话，
+    AI 的 curl 通道继续读写**旧项目**的 tasks.json，
+    而界面已经是新项目 —— 两边静默分叉，且状态灯还显示在线。
+  */
+  const doSwitchProject = (id: string) =>
+    withErr(async () => {
+      if (!cfg || id === cfg.currentId) return;
+      const next = await S.switchProject(ctx, cfg, id);
+      setCfg(next);
+      setChecked(new Set());      // 勾选属于旧项目，跟过去会合出莫名其妙的组
+      setDetailId(null);
+      const st = await S.readStore(ctx, next.dataDir).catch(() => null);
+      setStore(st || normalizeStore(null));
+      await restartServiceIfOn(cfg, next);
+      ctx.toast(`已切到「${currentProject(next).name}」`, 'ok');
+    })();
+
+  /** 服务在跑的话重启它，让新数据目录生效。重启失败要说出来，不能假装还在服务。 */
+  const restartServiceIfOn = async (prev: TbConfig, next: TbConfig) => {
+    let on = false;
+    try {
+      on = await S.apiHealth(prev);
+    } catch {
+      return;   // 探不通就是没在服务，不用管
+    }
+    if (!on) return;
+    try {
+      await S.apiStop(ctx, prev);
+      await S.apiStart(ctx, next);
+    } catch (e: any) {
+      ctx.toast(`HTTP 服务重启失败，AI 通道可能还连着旧项目：${String(e?.message || e)}`, 'err');
+    }
+  };
+
+  /*
+    给当前项目选文档目录。
+    已经设过时询问要不要把旧位置的文档整体搬过去 ——
+    默认"搬"是因为用户改路径的意图就是"以后放这儿"，
+    留在旧位置等于下次打开找不到，得靠人记着两边都有。
+  */
+  const setDocsFor = (c: TbConfig) =>
+    withErr(async () => {
+      const cur = currentProject(c);
+      const r = await ctx.services.call('folder-picker', 'pick', {});
+      const dir = r?.path ? String(r.path) : '';
+      if (!dir) return;
+      const move = cur.docsDir && cur.docsDir !== dir
+        ? window.confirm(
+          `把「${cur.name}」的文档从
+${cur.docsDir}
+整体搬到
+${dir}
+吗？
+
+`
+          + '旧位置不再保留（不是复制）。选"取消"则只改路径、不动文件。',
+        )
+        : false;
+      const res = await S.setDocsDir(ctx, c, dir, move);
+      setCfg(res.cfg);
+      setDocsHintClosed(false);
+      if (res.warning) ctx.toast(res.warning, 'err');
+      else if (move) ctx.toast(`文档已搬到新位置（${res.moved} 项）`, 'ok');
+      else ctx.toast('文档路径已设置', 'ok');
+    })();
+
   const doSplit = (id: string, titles: string[]) =>
     withErr(async () => {
       if (!cfg || titles.length === 0) return;
@@ -580,6 +657,31 @@ export default function App() {
           >
             ●
           </button>
+          {/*
+            项目切换器。项目 = 一份独立任务库，切了就换一整套任务。
+            放在顶栏而不是设置页：切项目是高频动作，
+            埋在设置里的话每次都要"打开设置→找→切→回来"，
+            而且切完还得确认当前看的是哪个项目。
+          */}
+          <select
+            className="tb-act tb-projsel"
+            value={cfg.currentId}
+            title="切换项目（每个项目是独立的任务库与文档路径）"
+            onChange={(e) => doSwitchProject(e.target.value)}
+          >
+            {cfg.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button
+            className="tb-act"
+            onClick={() => setNewProjOpen(true)}
+            title="新建一个项目（独立的任务库 + 文档路径）"
+          >
+            ＋ 项目
+          </button>
           <button
             className="tb-act"
             onClick={() => setFlowOpen(true)}
@@ -712,6 +814,32 @@ export default function App() {
       )}
 
       {/* 列表：平铺 + 表头排序 */}
+      {/*
+        项目还没设文档路径 → 提醒。
+        判据统一用 needsDocsDir（新建项目时和建任务时是同一条），
+        不会出现"建项目提醒一次、建任务又提醒一次"的重复打扰。
+        关掉后本次会话不再出现 —— 但换个项目会重新提醒，那是另一个项目的事。
+      */}
+      {!docsHintClosed && needsDocsDir(cfg) ? (
+        <div className="tb-dochint">
+          <span className="tb-dochint-ico">!</span>
+          <span className="tb-dochint-text">
+            项目「{currentProject(cfg).name}」还没设文档路径 ——
+            设好之后 AI 和你都知道这个项目的文档在哪，换机器也能接着读。
+          </span>
+          <button className="tb-act sm" onClick={() => setDocsFor(cfg)}>
+            选文档目录…
+          </button>
+          <button
+            className="tb-act sm ghost"
+            title="本次不再提醒（换项目后会重新提醒）"
+            onClick={() => setDocsHintClosed(true)}
+          >
+            知道了
+          </button>
+        </div>
+      ) : null}
+
       {view === 'list' && (
         <ListView
           rows={listRows}
@@ -773,6 +901,25 @@ export default function App() {
       )}
 
       {/* 任务详情 */}
+      {newProjOpen && cfg ? (
+        <NewProjectModal
+          onClose={() => setNewProjOpen(false)}
+          onCreate={async (name, dataDir, docsDir) => {
+            setNewProjOpen(false);
+            await withErr(async () => {
+              const next = await S.addProject(ctx, cfg, name, dataDir, docsDir);
+              setCfg(next);
+              setChecked(new Set());
+              setDetailId(null);
+              const st = await S.readStore(ctx, next.dataDir).catch(() => null);
+              setStore(st || normalizeStore(null));
+              await restartServiceIfOn(cfg, next);
+              ctx.toast(`已建项目「${currentProject(next).name}」，记得设文档路径`, 'ok');
+            })();
+          }}
+        />
+      ) : null}
+
       {flowOpen && store ? (
         <FlowSettingsModal
           flow={flow}
@@ -951,6 +1098,100 @@ function lockTitle(lock: { pending: string[]; missing: string[]; cyclic: boolean
   if (lock.missing.length > 0) parts.push(`前置不存在（可能已被删除）：${lock.missing.join('、')}`);
   if (lock.pending.length > 0) parts.push(`等 ${lock.pending.length} 个前置完成：${lock.pending.join('、')}`);
   return parts.join('；') || '被前置任务卡住';
+}
+
+/* ================================================================ 新建项目 */
+
+/**
+ * 新建项目：名字 + 数据目录 + 文档路径。
+ *
+ * 文档路径**不强制**，但空着会留一条提醒 ——
+ * 强制的话点"新建"前还得先去建个目录，人会选择随便填一个敷衍过去，
+ * 那个路径比空着更糟（下次打开指向一个空目录，看着像有、其实是空的）。
+ */
+function NewProjectModal({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (name: string, dataDir: string, docsDir: string) => void;
+}) {
+  const ctx = useNexus();
+  const [name, setName] = useState('');
+  const [dataDir, setDataDir] = useState('');
+  const [docsDir, setDocsDir] = useState('');
+  const [msg, setMsg] = useState('');
+
+  const pick = async (which: 'data' | 'docs') => {
+    try {
+      const r = await ctx.services.call('folder-picker', 'pick', {});
+      // pick resolve 的是 { path, action } 对象，不是裸字符串
+      const p = r?.path ? String(r.path) : '';
+      if (!p) return;
+      if (which === 'data') setDataDir(p);
+      else setDocsDir(p);
+    } catch (e: any) {
+      setMsg('选择目录失败：' + String(e?.message || e));
+    }
+  };
+
+  return (
+    <Modal title="新建项目" onClose={onClose}>
+      <label className="tb-mfield">
+        <span>项目名 *</span>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="例如：登录改版"
+        />
+      </label>
+      <label className="tb-mfield">
+        <span>数据目录 *（这个项目的 tasks.json 放哪）</span>
+        <div className="tb-mrow">
+          <input
+            value={dataDir}
+            onChange={(e) => setDataDir(e.target.value)}
+            placeholder="留空则用默认目录下的同名子目录"
+          />
+          <button type="button" className="tb-act sm" onClick={() => pick('data')}>
+            浏览…
+          </button>
+        </div>
+        <em>每个项目一份独立任务库：任务、流程、标签、身份表全都是各自的。</em>
+      </label>
+      <label className="tb-mfield">
+        <span>文档路径（这个项目的文档放哪）</span>
+        <div className="tb-mrow">
+          <input
+            value={docsDir}
+            onChange={(e) => setDocsDir(e.target.value)}
+            placeholder="选一个目录（可稍后设）"
+          />
+          <button type="button" className="tb-act sm" onClick={() => pick('docs')}>
+            浏览…
+          </button>
+        </div>
+        <em>
+          设好之后 AI 和你都知道这个项目的文档在哪。以后改这个路径时，
+          会把文档<strong>整体搬过去</strong>（旧位置不留），不是复制。
+        </em>
+      </label>
+      <div className="tb-macts">
+        <button className="tb-act" onClick={onClose}>
+          取消
+        </button>
+        <button
+          className="tb-act primary"
+          disabled={!name.trim()}
+          onClick={() => onCreate(name, dataDir.trim(), docsDir.trim())}
+        >
+          创建
+        </button>
+      </div>
+      {msg && <div className="tb-hint">{msg}</div>}
+    </Modal>
+  );
 }
 
 /* ================================================================ 流程设置 */

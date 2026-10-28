@@ -359,6 +359,8 @@ fn main() {
         .manage(task_board::TbState {
             servers: std::sync::Mutex::new(std::collections::HashMap::new()),
             data_dir: std::sync::Mutex::new(None),
+            // 文档目录（项目设置里授权，改路径搬文档时用）
+            docs_dir: std::sync::Mutex::new(None),
         })
         /*
          * MCP 网关的共享状态：工具注册表 + 运行标志 + 持久化配置。
@@ -415,6 +417,7 @@ fn main() {
              */
             task_board::tb_default_dir, task_board::tb_set_data_dir,
             task_board::tb_read_store, task_board::tb_write_store,
+            task_board::tb_set_docs_dir, task_board::tb_move_docs,
             task_board::tb_http_start, task_board::tb_http_stop,
             /*
              * MCP 网关七条 —— 统一接入点（{server}__{tool} 前缀聚合）的

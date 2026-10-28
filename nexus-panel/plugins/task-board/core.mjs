@@ -1291,3 +1291,113 @@ export function statsOf(store, now = Date.now()) {
     agents: store.agents || [],
   };
 }
+
+/* ============================================================ 项目（多任务库）
+ *
+ * 一个项目 = 一份**独立**的 tasks.json（自己的数据目录）+ 自己的文档路径。
+ * 切项目就是换数据目录 —— 项目之间任务互不可见，各自的流程配置、标签、
+ * 身份表也是独立的。
+ *
+ * 为什么不做成"一个库 + 一个 project 字段"：
+ * 那样文档路径只能有一份，删项目时文档的归属没法处理；
+ * 而且筛选稍一漏条件就会串出别的项目任务，且看不出是漏了条件。
+ */
+
+/** 新项目 id：p1 / p2… 取现有最大序号 +1（比随机串好认，AI 写配置时看得懂） */
+export function newProjectId(seenIds) {
+  const seen = seenIds instanceof Set ? seenIds : new Set(seenIds || []);
+  let n = seen.size + 1;
+  while (seen.has(`p${n}`)) n += 1;
+  return `p${n}`;
+}
+
+/**
+ * 归一化插件配置（含项目列表）。
+ *
+ * 两个必须在这里处理干净的事：
+ *
+ * ① **老配置迁移**：以前只有单个 dataDir，没有项目列表。
+ *    读到没有 projects 的配置就把它当成"唯一那个项目"，
+ *    老用户的任务不会凭空消失（否则升级后打开是空看板，
+ *    而任务其实还在盘上，那种错最难自查）。
+ *
+ * ② **dataDir / docsDir 是派生字段，但要能反向写回**。
+ *    设置页是直接 `setCfg({ ...cfg, dataDir: 新值 })` 改这两个字段的，
+ *    若归一化只做单向派生，用户在设置里改目录就会"保存了没反应"。
+ *    所以这里比对：传进来的值与当前项目的不一致，就认它是显式修改，写回去。
+ */
+export function normalizeConfig(raw) {
+  const c = raw && typeof raw === 'object' ? raw : {};
+  const seen = new Set();
+  const projects = [];
+  const list = Array.isArray(c.projects) ? c.projects : [];
+  for (const one of list) {
+    const p = one && typeof one === 'object' ? one : {};
+    let id = typeof p.id === 'string' ? p.id.trim() : '';
+    if (!id || seen.has(id)) id = newProjectId(seen);   // 缺 id 或重号都补一个
+    seen.add(id);
+    const name = typeof p.name === 'string' && p.name.trim()
+      ? p.name.trim()
+      : `项目 ${projects.length + 1}`;
+    projects.push({
+      id,
+      name,
+      dataDir: typeof p.dataDir === 'string' ? p.dataDir : '',
+      docsDir: typeof p.docsDir === 'string' ? p.docsDir : '',
+    });
+  }
+  if (projects.length === 0) {
+    /* 迁移：老配置（或空的）→ 唯一一个项目。名字不叫"默认"以外的花活，
+       因为这是老用户看到的第一眼，得能对上他原来的那堆任务。 */
+    projects.push({
+      id: 'p1',
+      name: '默认项目',
+      dataDir: typeof c.dataDir === 'string' ? c.dataDir : '',
+      docsDir: typeof c.docsDir === 'string' ? c.docsDir : '',
+    });
+  }
+
+  let currentId = typeof c.currentId === 'string' ? c.currentId : '';
+  /* 选中的项目不存在（被删了 / 配置被手改过）→ 回落第一个。
+     不回落的话切过去什么都读不到，而界面上看不出是"项目没了"还是"任务空了" */
+  if (!projects.some((p) => p.id === currentId)) currentId = projects[0].id;
+  const cur = projects.find((p) => p.id === currentId) || projects[0];
+
+  if (typeof c.dataDir === 'string' && c.dataDir && c.dataDir !== cur.dataDir) {
+    cur.dataDir = c.dataDir;
+  }
+  if (typeof c.docsDir === 'string' && c.docsDir !== cur.docsDir) {
+    cur.docsDir = c.docsDir;   // 允许清空 —— 清空是"这个项目不挂文档"
+  }
+
+  const port = Number.isFinite(Number(c.port)) ? Number(c.port) : 9911;
+  return {
+    projects,
+    currentId: cur.id,
+    /* 派生：给既有调用点用（全仓都是 cfg.dataDir）。
+       两份真相的代价由上面的反向写回兜住。 */
+    dataDir: cur.dataDir,
+    docsDir: cur.docsDir,
+    port: port >= 1024 && port <= 65535 ? port : 9911,
+    token: typeof c.token === 'string' ? c.token : '',
+    autoStart: c.autoStart === true,
+    notifyUrl: typeof c.notifyUrl === 'string' ? c.notifyUrl : '',
+  };
+}
+
+/** 当前项目对象 */
+export function currentProject(cfg) {
+  const c = cfg && cfg.projects ? cfg : normalizeConfig(cfg);
+  return c.projects.find((p) => p.id === c.currentId) || c.projects[0];
+}
+
+/**
+ * 这个项目还没设文档路径吗。
+ *
+ * 提醒的判据就这一条 —— 新建项目时顺带给提示也好、建第一个任务时提醒也好，
+ * 都用同一个判据，不会出现"新建时提醒了、建任务时又提醒一遍"的重复打扰。
+ */
+export function needsDocsDir(cfg) {
+  const p = currentProject(cfg);
+  return !!(p && !p.docsDir);
+}
