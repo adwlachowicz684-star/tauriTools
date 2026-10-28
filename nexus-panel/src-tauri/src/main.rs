@@ -361,6 +361,10 @@ fn main() {
             data_dir: std::sync::Mutex::new(None),
             // 文档目录（项目设置里授权，改路径搬文档时用）
             docs_dir: std::sync::Mutex::new(None),
+            // 搬文档的源目录（docs_dir 被覆盖后，旧值留这儿才授权得过）
+            docs_dir_prev: std::sync::Mutex::new(None),
+            // 扫描目标（选了但还没确认成项目文档目录）
+            pending_dir: std::sync::Mutex::new(None),
         })
         /*
          * MCP 网关的共享状态：工具注册表 + 运行标志 + 持久化配置。

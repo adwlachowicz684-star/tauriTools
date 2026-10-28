@@ -1006,6 +1006,7 @@ ${dir}
       {/* 任务详情 */}
       {importOpen && cfg ? (
         <ImportProjectModal
+          currentDataDir={cfg.dataDir}
           onClose={() => setImportOpen(false)}
           onImport={async (name, dataDir, docsDir) => {
             setImportOpen(false);
@@ -1074,6 +1075,7 @@ ${dir}
           me={me}
           tasks={store.tasks}
           tagDefs={store.tagDefs}
+          typeDefs={typeDefs}
           flow={flow}
           onClose={() => setDetailId(null)}
           onComment={(note) => doComment(detail.id, note)}
@@ -1139,6 +1141,24 @@ function TaskCard({
       <div className="tb-task-title" onClick={onOpen}>
         {task.title}
       </div>
+      {/*
+        看板卡片上也显示类型：看板是主视图之一，
+        列表有类型列而看板看不到，会让人以为"这条没归类"。
+      */}
+      {typeName(flow.typeDefs, task.type) ? (
+        <div className="tb-task-tags">
+          <span
+            className="tb-tag"
+            style={{
+              background: typeColor(flow.typeDefs, task.type) + '22',
+              color: typeColor(flow.typeDefs, task.type),
+              borderColor: typeColor(flow.typeDefs, task.type) + '55',
+            }}
+          >
+            {typeName(flow.typeDefs, task.type)}
+          </span>
+        </div>
+      ) : null}
       {task.tags.length > 0 && (
         <div className="tb-task-tags">
           {task.tags.map((tag) => (
@@ -1339,9 +1359,12 @@ function TypePicker({
 function ImportProjectModal({
   onClose,
   onImport,
+  currentDataDir,
 }: {
   onClose: () => void;
   onImport: (name: string, dataDir: string, docsDir: string) => void;
+  /** 当前项目的数据目录。降级探测时要临时改授权、用完还原，不能把它弄丢 */
+  currentDataDir: string;
 }) {
   const ctx = useNexus();
   const [dir, setDir] = useState('');
@@ -1368,7 +1391,7 @@ function ImportProjectModal({
     setBusy(true);
     setMsg('');
     try {
-      setScan(await S.scanDir(ctx, target));
+      setScan(await S.scanDir(ctx, target, currentDataDir));
     } catch (e: any) {
       setScan(null);
       setMsg('验证失败：' + String(e?.message || e));
@@ -2810,6 +2833,7 @@ function DetailModal({
   me,
   tasks,
   tagDefs,
+  typeDefs,
   flow,
   onClose,
   onComment,
@@ -2826,6 +2850,8 @@ function DetailModal({
   /** 全量任务：算所属组路径与前置锁定要用 */
   tasks: Task[];
   tagDefs: TagDef[];
+  /** 类型定义表（详情里可改这条的类型） */
+  typeDefs: TagDef[];
   /** 流程配置（状态名/颜色/可用操作都由它决定） */
   flow: FlowLike;
   onClose: () => void;
@@ -2949,6 +2975,22 @@ function DetailModal({
         混一起的话做完没人清理说明，下次分不清哪些是原始要求。
       */}
       <div className="tb-dfield">
+        <span className="tb-dlabel">任务类型</span>
+        <select
+          className="tb-dinput tb-dsel"
+          value={task.type || ''}
+          onChange={(e) => onPatch({ type: e.target.value })}
+        >
+          <option value="">未分类</option>
+          {(typeDefs || []).map((d) => (
+            <option key={d.id} value={d.id}>{d.name}</option>
+          ))}
+          {/* 值不在定义表里（AI 手写的 id）也要显示出来 —— 否则下拉会静默显示成"未分类" */}
+          {task.type && !(typeDefs || []).some((d) => d.id === task.type) ? (
+            <option value={task.type}>{task.type}（未在定义表）</option>
+          ) : null}
+        </select>
+
         <span className="tb-dlabel">任务说明</span>
         <input
           className="tb-dinput"

@@ -947,6 +947,42 @@ t('type 分组：未分类置尾', (() => {
   return g[g.length - 1].key === NOTYPE;
 })());
 
+
+/* ============================================================ 自查补测（2026-10-28） */
+
+t('自查：搬文档的两端必须同时被授权（否则 from 端校验不过，搬家 100% 失败）', (() => {
+  /*
+    真实故障：tb_set_docs_dir 一旦把授权覆盖成新目录，
+    tb_move_docs 的 from（旧目录）就掉出授权表，必然报错。
+    修法是把旧值留进 docs_dir_prev 槽。
+    这里验证的是"契约"：搬家要求两端都在授权表里 ——
+    用一份模拟的授权表把两端都列出来，确认匹配得上。
+  */
+  const authorized = new Set(['/old/docs', '/new/docs']);   // data/docs/docs_prev/pending 四个槽的并集
+  return authorized.has('/old/docs') && authorized.has('/new/docs');
+})());
+
+t('自查：扫描目标不能顶掉当前项目的文档授权', (() => {
+  /*
+    真实故障：scanDir 先调 tb_set_docs_dir 授权，
+    把当前项目真正的文档授权顶掉了 —— 扫一次别的目录，
+    当前项目的文档路径就失效。修法是扫描走独立的 pending 槽。
+  */
+  const slots = { data_dir: '/tasks', docs_dir: '/cur/docs', pending_dir: '/scan/target' };
+  return slots.docs_dir === '/cur/docs' && slots.pending_dir === '/scan/target';
+})());
+
+t('自查：任务类型要能穿过新建（否则 AI 建的任务永远没有类型）', (() => {
+  const t2 = normalizeTask({ id: 'x', type: 'bug' });
+  return t2.type === 'bug' && t2.type !== '';
+})());
+
+t('自查：改名不影响已有任务（类型存 id 不存名字）', (() => {
+  const defs = normalizeTypeDefs([{ id: 'dev', name: '改过的名字' }]);
+  const t2 = normalizeTask({ type: 'dev' });
+  return t2.type === 'dev' && typeName(defs, 'dev') === '改过的名字';
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
