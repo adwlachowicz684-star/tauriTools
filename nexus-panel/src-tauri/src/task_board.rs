@@ -60,6 +60,9 @@ pub(crate) fn file_lock() -> &'static Mutex<()> {
 pub struct TbState {
     pub servers: Mutex<HashMap<u16, TbServerEntry>>,
     pub data_dir: Mutex<Option<PathBuf>>,
+    /// 文档目录（每个项目各自一个，改路径时用来搬文档）。
+    /// 同样要显式授权 —— 不给自己开任意目录搬文件的后门。
+    pub docs_dir: Mutex<Option<PathBuf>>,
 }
 
 pub struct TbServerEntry {
@@ -85,6 +88,150 @@ fn tb_set_data_dir_inner(state: &TbState, dir: &str) -> Result<PathBuf, String> 
     let mut guard = state.data_dir.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(canon.clone());
     Ok(canon)
+}
+
+/// 登记文档目录（项目设置里选/改文档路径时调用）。创建目录并写入授权表。
+#[tauri::command]
+pub fn tb_set_docs_dir(state: State<'_, TbState>, dir: String) -> Result<String, String> {
+    let path = PathBuf::from(&dir);
+    if path.as_os_str().is_empty() {
+        return Err("文档目录不能为空".to_string());
+    }
+    fs::create_dir_all(&path).map_err(|e| format!("创建文档目录失败 {}: {}", path.display(), e))?;
+    let canon = path.canonicalize().unwrap_or(path);
+    let mut guard = state.docs_dir.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = Some(canon.clone());
+    Ok(canon.to_string_lossy().to_string())
+}
+
+/// 这个路径在已授权的目录里吗（数据目录或文档目录任一）。
+fn authorized_any(state: &TbState, dir: &str) -> Result<PathBuf, String> {
+    let want = PathBuf::from(dir);
+    let canon = if want.exists() {
+        want.canonicalize().unwrap_or(want.clone())
+    } else {
+        want.clone()
+    };
+    let data = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let docs = state.docs_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let ok = data.as_ref().map(|d| *d == canon).unwrap_or(false)
+        || docs.as_ref().map(|d| *d == canon).unwrap_or(false);
+    if ok {
+        Ok(canon)
+    } else {
+        Err("该目录尚未授权（请先在设置里确认目录）".to_string())
+    }
+}
+
+/// 把 `from` 目录里的**内容**（不是目录本身）整体搬到 `to`。
+///
+/// 为什么是"搬"而不是"复制"：两边都留一份的话，下次到底读哪边说不清，
+/// 而且两份会各自演化 —— 那比没有更糟。
+///
+/// 安全上的三条硬约束：
+///   · 两端都要已授权（走 authorized_any），不开任意路径的后门；
+///   · `to` 不能位于 `from` 内部 —— 否则递归复制自己，目录会自我膨胀；
+///   · 目标已存在同名项**跳过并报告**，不覆盖（覆盖是丢用户的文件，
+///     而跳过至少东西还在旧位置，报出来让人自己决定）。
+#[tauri::command]
+pub fn tb_move_docs(
+    state: State<'_, TbState>,
+    from: String,
+    to: String,
+) -> Result<Value, String> {
+    let src = authorized_any(&state, &from)?;
+    let dst = authorized_any(&state, &to)?;
+    if src == dst {
+        return Err("源目录与目标目录相同".to_string());
+    }
+    /*
+      ⛔ 这一条必须显式挡：目标在源内部时，复制过程会不断读到自己刚写进去的东西，
+      目录自我膨胀直到磁盘写满；而调用方（改个路径）看上去只是个小操作。
+    */
+    if dst.starts_with(&src) {
+        return Err(format!(
+            "目标目录不能位于源目录内部（{} 在 {} 里）—— 会把文档复制进自己",
+            dst.display(),
+            src.display()
+        ));
+    }
+    if !src.is_dir() {
+        return Err(format!("源目录不存在或不是目录: {}", src.display()));
+    }
+    fs::create_dir_all(&dst).map_err(|e| format!("创建目标目录失败 {}: {}", dst.display(), e))?;
+
+    let mut moved: usize = 0;
+    let mut skipped: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+
+    let entries = fs::read_dir(&src).map_err(|e| format!("读取源目录失败: {}", e))?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(x) => x,
+            Err(e) => {
+                failed.push(format!("<读取失败: {}>", e));
+                continue;
+            }
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        let from_path = entry.path();
+        let to_path = dst.join(&name);
+        if to_path.exists() {
+            skipped.push(name);   // 不覆盖：覆盖是丢文件，跳过至少东西还在
+            continue;
+        }
+        // 同一盘内 rename 是原子的；跨盘 rename 会失败，退回「复制 + 删源」。
+        if fs::rename(&from_path, &to_path).is_ok() {
+            moved += 1;
+            continue;
+        }
+        let copied = if from_path.is_dir() {
+            copy_dir_recursive(&from_path, &to_path)
+        } else {
+            fs::copy(&from_path, &to_path).map(|_| ())
+        };
+        match copied {
+            Ok(()) => {
+                // 复制成功了才删源 —— 中途失败的话文件还在旧位置，不会两头都没有
+                let _ = if from_path.is_dir() {
+                    fs::remove_dir_all(&from_path)
+                } else {
+                    fs::remove_file(&from_path)
+                };
+                moved += 1;
+            }
+            Err(e) => {
+                // 复制失败要把半成品清掉，否则目标目录里留个半截文件夹
+                let _ = if to_path.is_dir() {
+                    fs::remove_dir_all(&to_path)
+                } else {
+                    fs::remove_file(&to_path)
+                };
+                failed.push(format!("{}（{}）", name, e));
+            }
+        }
+    }
+
+    Ok(json!({
+        "moved": moved,
+        "skipped": skipped,
+        "failed": failed,
+    }))
+}
+
+/// 递归复制目录（跨盘搬文件时用）。只处理普通目录与文件。
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dst.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_dir_recursive(&entry.path(), &to)?;
+        } else {
+            fs::copy(entry.path(), &to)?;
+        }
+    }
+    Ok(())
 }
 
 fn authorized_dir(state: &TbState, dir: &str) -> Result<PathBuf, String> {

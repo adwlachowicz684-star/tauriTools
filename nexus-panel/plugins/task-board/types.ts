@@ -144,9 +144,32 @@ export interface TaskFlow {
   edges: Record<string, { label: string; note: boolean }>;
 }
 
-export interface TbConfig {
-  /** tasks.json 所在目录（绝对路径） */
+/** 一个项目 = 一份独立任务库 + 自己的文档路径 */
+export interface TbProject {
+  id: string;
+  name: string;
+  /** 该项目的 tasks.json 所在目录（绝对路径），项目之间互相独立 */
   dataDir: string;
+  /**
+   * 该项目的文档路径（绝对路径）。'' = 还没设。
+   * 改这里时文档会被**整体搬过去**（旧位置不留），不是复制。
+   */
+  docsDir: string;
+}
+
+export interface TbConfig {
+  /** 项目列表。至少一项（老配置迁移后是"默认项目"） */
+  projects: TbProject[];
+  /** 当前项目 id */
+  currentId: string;
+  /**
+   * 当前项目的 tasks.json 目录 —— **派生**自 projects[currentId]。
+   * 存它是因为全仓调用点都写 cfg.dataDir；由 normalizeConfig 双向同步，
+   * 改它等于改当前项目的 dataDir。
+   */
+  dataDir: string;
+  /** 当前项目的文档路径 —— 同样是派生字段 */
+  docsDir: string;
   /** 本地 HTTP API 端口 */
   port: number;
   /** 访问令牌（留空不校验） */
@@ -158,7 +181,10 @@ export interface TbConfig {
 }
 
 export const DEFAULT_CONFIG: TbConfig = {
+  projects: [{ id: 'p1', name: '默认项目', dataDir: '', docsDir: '' }],
+  currentId: 'p1',
   dataDir: '',
+  docsDir: '',
   port: 9911,
   token: '',
   autoStart: false,

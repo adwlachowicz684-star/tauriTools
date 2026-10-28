@@ -3,7 +3,10 @@
 
 import type { PluginContext } from '../../../js/plugin-sdk.js';
 import {
+  currentProject,
   initialStatus,
+  normalizeConfig,
+  newProjectId,
   normalizeStore,
   nextTaskId,
   pushHistory,
@@ -16,23 +19,136 @@ import type { TbConfig, TaskStore, Task, Agent } from '../types';
 
 export async function loadConfig(ctx: PluginContext): Promise<TbConfig> {
   const raw = (await ctx.store.get('config', {})) || {};
-  const cfg = { ...DEFAULT_CONFIG, ...raw };
+  /*
+    走 normalizeConfig 而不是 {...DEFAULT_CONFIG, ...raw}：
+    老配置的 dataDir 要迁进项目列表，否则升级后打开是个空壳项目，
+    而任务其实还在盘上 —— 那种"东西没了"的错最难自查。
+  */
+  let cfg = normalizeConfig(raw);
   if (!cfg.dataDir) {
     // 首次使用：拿 Rust 侧默认目录（app_data_dir/task-board）并落盘
     const dir = await ctx.invoke('tb_default_dir');
-    cfg.dataDir = dir;
+    cfg = normalizeConfig({ ...cfg, dataDir: dir });
     await ctx.store.set('config', cfg);
   }
-  // 目录必须先进 Rust 授权表，否则读写命令全被拒
-  await ctx.invoke('tb_set_data_dir', { dir: cfg.dataDir });
+  await authorize(ctx, cfg);
   return cfg;
 }
 
 export async function saveConfig(ctx: PluginContext, cfg: TbConfig): Promise<TbConfig> {
-  const next = { ...DEFAULT_CONFIG, ...cfg };
+  const next = normalizeConfig(cfg);
   await ctx.store.set('config', next);
-  await ctx.invoke('tb_set_data_dir', { dir: next.dataDir });
+  await authorize(ctx, next);
   return next;
+}
+
+/**
+ * 把配置里的目录登记进 Rust 授权表。
+ *
+ * 任务目录和文档目录**都要登记** —— 文档路径没登记的话，
+ * 搬文档的命令会被授权检查挡掉，表现为"点了没反应"。
+ * 文档路径没设（''）就不登记，命令收到空串会直接拒。
+ */
+async function authorize(ctx: PluginContext, cfg: TbConfig): Promise<void> {
+  await ctx.invoke('tb_set_data_dir', { dir: cfg.dataDir });
+  if (cfg.docsDir) {
+    try {
+      await ctx.invoke('tb_set_docs_dir', { dir: cfg.docsDir });
+    } catch {
+      /*
+        文档目录授权失败**不影响主流程**：任务读写不看它。
+        只在这里吞掉，因为老版本后端还没这条命令，
+        那时报出来会让人以为整个插件坏了 —— 而实际只是搬文档用不了。
+      */
+    }
+  }
+}
+
+// ---------------------------------------------------------------- 项目
+
+/** 新建项目。数据目录默认放在默认目录下的同名子目录里（可改）。 */
+export async function addProject(
+  ctx: PluginContext,
+  cfg: TbConfig,
+  name: string,
+  dataDir: string,
+  docsDir: string = '',
+): Promise<TbConfig> {
+  const id = newProjectId(cfg.projects.map((p) => p.id));
+  /*
+    数据目录留空 → 落到默认目录下的同名子目录。
+    不能让空目录进配置：授权命令会直接拒，读写全挂，
+    而界面上只显示"加载中"，看不出是目录没填。
+  */
+  let dir = (dataDir || '').trim();
+  if (!dir) {
+    const base = await ctx.invoke('tb_default_dir').catch(() => '');
+    const slug = (name.trim() || id).replace(/[/\\:*?"<>|]/g, '_').trim() || id;
+    dir = base ? `${base}/${slug}` : '';
+  }
+  const next = normalizeConfig({
+    ...cfg,
+    projects: [...cfg.projects, {
+      id,
+      name: name.trim() || `项目 ${cfg.projects.length + 1}`,
+      dataDir: dir,
+      docsDir,
+    }],
+    currentId: id,   // 新建即切过去 —— 建完还在看旧项目，会以为没建成
+  });
+  return saveConfig(ctx, next);
+}
+
+/** 切换当前项目 */
+export async function switchProject(ctx: PluginContext, cfg: TbConfig, id: string): Promise<TbConfig> {
+  return saveConfig(ctx, normalizeConfig({ ...cfg, currentId: id }));
+}
+
+/** 删除项目。不许删最后一个 —— 删了就没有当前项目，界面上没东西可显示。 */
+export async function removeProject(ctx: PluginContext, cfg: TbConfig, id: string): Promise<TbConfig> {
+  if (cfg.projects.length <= 1) return cfg;
+  const projects = cfg.projects.filter((p) => p.id !== id);
+  return saveConfig(ctx, normalizeConfig({ ...cfg, projects, currentId: projects[0].id }));
+}
+
+/**
+ * 设置当前项目的文档路径。
+ *
+ * `move` 为真时把**旧目录里的文档整体搬过去**（旧位置不留）。
+ * 搬之前先把新目录登记授权 —— 没登记的话搬的命令会被授权检查挡掉。
+ *
+ * ⚠️ 搬失败**不落盘**：配置改了而文档还在旧位置，下次读就对不上了。
+ * 宁可这一次没改成，也不能留个指向空目录的路径。
+ */
+export async function setDocsDir(
+  ctx: PluginContext,
+  cfg: TbConfig,
+  dir: string,
+  move: boolean,
+): Promise<{ cfg: TbConfig; moved: number; skipped: string[]; warning: string }> {
+  const cur = currentProject(cfg);
+  const oldDir = cur.docsDir || '';
+  let moved = 0;
+  const skipped: string[] = [];
+  let warning = '';
+
+  if (move && oldDir && dir && oldDir !== dir) {
+    await ctx.invoke('tb_set_docs_dir', { dir });   // 先授权新目录
+    let r: any = null;
+    try {
+      r = await ctx.invoke('tb_move_docs', { from: oldDir, to: dir });
+    } catch (e: any) {
+      throw new Error(`搬文档失败（配置未改）：${String(e?.message || e)}`);
+    }
+    moved = Number(r?.moved) || 0;
+    const sk = Array.isArray(r?.skipped) ? r.skipped.map((x: unknown) => String(x)) : [];
+    skipped.push(...sk);
+    const failed = Array.isArray(r?.failed) ? r.failed.map((x: unknown) => String(x)) : [];
+    if (failed.length > 0) warning = `有 ${failed.length} 项没搬成：${failed.slice(0, 5).join('、')}`;
+  }
+
+  const next = await saveConfig(ctx, normalizeConfig({ ...cfg, docsDir: dir }));
+  return { cfg: next, moved, skipped, warning };
 }
 
 // ---------------------------------------------------------------- tasks.json 读写

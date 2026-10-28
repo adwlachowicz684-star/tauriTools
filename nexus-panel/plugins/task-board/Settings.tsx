@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { isComposing } from '../../js/ime.js';
 import { useNexus } from '../../src/nexus-react';
 import * as S from './lib/store';
+import { currentProject } from './core';
 import { DEFAULT_CONFIG } from './types';
 import type { TbConfig } from './types';
 
@@ -16,6 +18,12 @@ export default function Settings() {
   const [loaded, setLoaded] = useState(false);
   const [serviceOn, setServiceOn] = useState(false);
   const [msg, setMsg] = useState('');
+  /** 正在编辑文档路径的项目（'' = 关着） */
+  const [docsEdit, setDocsEdit] = useState('');
+  const [docsDraft, setDocsDraft] = useState('');
+  const [newName, setNewName] = useState('');
+  /** 改文档路径时旧位置的文件怎么办 */
+  const [moveMode, setMoveMode] = useState<'move' | 'keep'>('move');
 
   useEffect(() => {
     let alive = true;
@@ -95,6 +103,70 @@ export default function Settings() {
     }
   };
 
+  const renameProject = (c: TbConfig, id: string, name: string): TbConfig => ({
+    ...c,
+    projects: c.projects.map((p) => (p.id === id ? { ...p, name } : p)),
+  });
+
+  const doAddProject = async () => {
+    const nm = newName.trim();
+    if (!nm) return;
+    try {
+      /* 数据目录留空 → store 层落到默认目录下的同名子目录。
+         建完就提醒设文档路径：那是这个项目最容易漏、漏了又最难补的一项。 */
+      const next = await S.addProject(ctx, cfg, nm, '', '');
+      setCfg(next);
+      setNewName('');
+      ctx.emit('task-board:config', next);
+      ctx.toast(`已建项目「${currentProject(next).name}」，记得设文档路径`, 'ok');
+    } catch (e: any) {
+      setMsg(String(e?.message || e));
+    }
+  };
+
+  /** 改某个项目的数据目录（不动文档） */
+  const pickDirFor = async (id: string) => {
+    const p = cfg.projects.find((x) => x.id === id);
+    if (!p) return;
+    try {
+      const r = await ctx.services.call('folder-picker', 'pick', {});
+      if (!r?.path) return;
+      const next = await S.saveConfig(ctx, {
+        ...cfg,
+        projects: cfg.projects.map((x) => (
+          x.id === id ? { ...x, dataDir: String(r.path) } : x
+        )),
+      });
+      setCfg(next);
+      ctx.emit('task-board:config', next);
+      ctx.toast(`「${p.name}」的数据目录已改`, 'ok');
+    } catch (e: any) {
+      setMsg(String(e?.message || e));
+    }
+  };
+
+  /** 保存文档路径（可能带搬家） */
+  const doSaveDocs = async () => {
+    const id = docsEdit;
+    const p = cfg.projects.find((x) => x.id === id);
+    if (!p) return;
+    try {
+      /* 先把目标项目设为当前，再改它的文档路径 ——
+         setDocsDir 只作用于当前项目（配置里只有一份当前路径）。 */
+      const base = await S.switchProject(ctx, cfg, id);
+      const move = moveMode === 'move' && !!p.docsDir && p.docsDir !== docsDraft;
+      const res = await S.setDocsDir(ctx, base, docsDraft.trim(), move);
+      setCfg(res.cfg);
+      setDocsEdit('');
+      ctx.emit('task-board:config', res.cfg);
+      if (res.warning) setMsg(res.warning);
+      else if (move) ctx.toast(`文档已整体搬到新位置（${res.moved} 项）`, 'ok');
+      else ctx.toast('文档路径已保存', 'ok');
+    } catch (e: any) {
+      setMsg(String(e?.message || e));
+    }
+  };
+
   const toggleService = async () => {
     try {
       if (serviceOn) {
@@ -127,8 +199,161 @@ export default function Settings() {
     <div className="tb-set-wrap">
       <h2>任务管理器设置</h2>
 
+      {/* ---------- 项目 ---------- */}
+      <section className="tb-sproj">
+        <header className="tb-sproj-head">
+          项目
+          <em>每个项目一份独立任务库（任务 / 流程 / 标签 / 身份表各自独立）</em>
+        </header>
+
+        {cfg.projects.map((p) => {
+          const on = p.id === cfg.currentId;
+          return (
+            <div key={p.id} className={'tb-sproj-row' + (on ? ' on' : '')}>
+              <button
+                className={'tb-sproj-pick' + (on ? ' on' : '')}
+                title={on ? '当前项目' : '切到这个项目'}
+                onClick={async () => {
+                  try {
+                    const next = await S.switchProject(ctx, cfg, p.id);
+                    setCfg(next);
+                    ctx.emit('task-board:config', next);
+                  } catch (e: any) {
+                    setMsg(String(e?.message || e));
+                  }
+                }}
+              >
+                {on ? '●' : '○'}
+              </button>
+              <input
+                className="tb-sproj-name"
+                value={p.name}
+                onChange={(ev) => setCfg(renameProject(cfg, p.id, ev.target.value))}
+              />
+              <span className="tb-sproj-dir" title={p.dataDir || '（未设）'}>
+                {p.dataDir || '（未设数据目录）'}
+              </span>
+              <button className="tb-act sm" onClick={() => pickDirFor(p.id)}>
+                改数据目录
+              </button>
+              <button
+                className="tb-act sm"
+                onClick={() => {
+                  setDocsEdit(p.id);
+                  setDocsDraft(p.docsDir || '');
+                  setMoveMode('move');
+                }}
+              >
+                {p.docsDir ? '改文档路径' : '设文档路径'}
+              </button>
+              <button
+                className="tb-act sm warn"
+                disabled={cfg.projects.length <= 1}
+                title={cfg.projects.length <= 1 ? '至少要留一个项目' : '删除这个项目'}
+                onClick={async () => {
+                  /*
+                    删项目不删文档：文档是用户自己的文件，
+                    这里只是不再记录它在哪。连带删文件是越界，
+                    而且删错了没法撤（不在回收站里）。
+                  */
+                  if (!window.confirm(
+                    `删除项目「${p.name}」？\n\n`
+                    + '只删这里的记录，磁盘上的 tasks.json 和文档都不会动。',
+                  )) return;
+                  try {
+                    const next = await S.removeProject(ctx, cfg, p.id);
+                    setCfg(next);
+                    ctx.emit('task-board:config', next);
+                  } catch (e: any) {
+                    setMsg(String(e?.message || e));
+                  }
+                }}
+              >
+                删除
+              </button>
+            </div>
+          );
+        })}
+
+        <div className="tb-sproj-row">
+          <input
+            className="tb-sproj-name"
+            value={newName}
+            placeholder="新项目名…"
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (!isComposing(e.nativeEvent) && e.key === 'Enter') doAddProject();
+            }}
+          />
+          <button className="tb-act sm" onClick={doAddProject}>
+            ＋ 新建项目
+          </button>
+        </div>
+
+        {/* 文档路径编辑区：改路径时要问清搬不搬 */}
+        {docsEdit && cfg.projects.some((x) => x.id === docsEdit) ? (
+          <div className="tb-sdocs">
+            <div className="tb-sdocs-title">
+              「{cfg.projects.find((x) => x.id === docsEdit)!.name}」的文档路径
+            </div>
+            <div className="tb-srow">
+              <input
+                value={docsDraft}
+                placeholder="选一个目录"
+                onChange={(e) => setDocsDraft(e.target.value)}
+              />
+              <button className="tb-act sm" onClick={async () => {
+                const r = await ctx.services.call('folder-picker', 'pick', {});
+                if (r?.path) setDocsDraft(String(r.path));
+              }}>
+                浏览…
+              </button>
+            </div>
+            {(() => {
+              const ep = cfg.projects.find((x) => x.id === docsEdit)!;
+              if (!ep.docsDir || !docsDraft || ep.docsDir === docsDraft) return null;
+              return (
+                <div className="tb-sdocs-move">
+                  <span>旧位置「{ep.docsDir}」里的文档怎么办？</span>
+                  <label className="tb-sfield check">
+                    <input
+                      type="radio"
+                      name="tbmove"
+                      checked={moveMode === 'move'}
+                      onChange={() => setMoveMode('move')}
+                    />
+                    <span>整体搬过去（旧位置不留）</span>
+                  </label>
+                  <label className="tb-sfield check">
+                    <input
+                      type="radio"
+                      name="tbmove"
+                      checked={moveMode === 'keep'}
+                      onChange={() => setMoveMode('keep')}
+                    />
+                    <span>只改路径，文件留在原处</span>
+                  </label>
+                  <em>
+                    选"搬"：文档会被移走，旧目录不再有副本 ——
+                    两边都留一份的话，下次到底读哪边就说不清了。
+                  </em>
+                </div>
+              );
+            })()}
+            <div className="tb-srow">
+              <button className="tb-act sm" onClick={() => setDocsEdit('')}>
+                取消
+              </button>
+              <button className="tb-act sm primary" onClick={doSaveDocs}>
+                保存文档路径
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </section>
+
       <label className="tb-sfield">
-        <span>数据目录（tasks.json 所在位置）</span>
+        <span>当前项目的数据目录（tasks.json 所在位置）</span>
         <div className="tb-srow">
           <input value={cfg.dataDir} onChange={(e) => setCfg({ ...cfg, dataDir: e.target.value })} />
           <button className="tb-act sm" onClick={pickDir}>
@@ -151,6 +376,27 @@ export default function Settings() {
           </button>
         </div>
         <em>AI 窗口直接读写这个目录下的 tasks.json；改目录等于换一套任务数据。</em>
+      </label>
+
+      <label className="tb-sfield">
+        <span>当前项目的文档路径</span>
+        <div className="tb-srow">
+          <input
+            value={cfg.docsDir}
+            onChange={(e) => setCfg({ ...cfg, docsDir: String(e.target.value) })}
+            placeholder="（还没设）"
+          />
+          <button className="tb-act sm" onClick={() => {
+            setDocsEdit(cfg.currentId);
+            setDocsDraft(cfg.docsDir || '');
+            setMoveMode('move');
+          }}>
+            设置并搬家…
+          </button>
+        </div>
+        <em>
+          直接改这里只换记录、不动文件 —— 要连文档一起搬过去，用「设置并搬家…」。
+        </em>
       </label>
 
       <div className="tb-srow2">

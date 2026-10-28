@@ -879,6 +879,122 @@
   min-width: 940px;
 }
 
+/* ---------- 项目切换 / 文档路径提醒 ---------- */
+.tb-projsel {
+  max-width: 9em;
+  padding-inline: var(--sp-2);
+}
+.tb-dochint {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: var(--sp-2) var(--sp-3);
+  border-block-end: 1px solid var(--divider);
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.tb-dochint-ico {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.25em;
+  block-size: 1.25em;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+}
+.tb-dochint-text {
+  flex: 1 1 12em;
+  min-inline-size: 0;
+}
+
+/* ---------- 设置页的项目区块 ---------- */
+.tb-sproj {
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  margin-block-end: var(--sp-3);
+}
+.tb-sproj-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  font-weight: 600;
+  padding-block-end: var(--sp-2);
+}
+.tb-sproj-head em {
+  font-weight: 400;
+  font-style: normal;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.tb-sproj-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding-block: var(--sp-1);
+}
+.tb-sproj-row.on {
+  background: var(--bg-soft);
+  border-radius: var(--r-xs);
+}
+.tb-sproj-pick {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--text-mute);
+  cursor: pointer;
+  padding-inline: var(--sp-1);
+}
+.tb-sproj-pick.on {
+  color: var(--accent);
+}
+.tb-sproj-name {
+  inline-size: 9em;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-micro);
+}
+.tb-sproj-dir {
+  flex: 1 1 10em;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
+/* 文档路径编辑（含"搬不搬"的询问） */
+.tb-sdocs {
+  border-block-start: 1px solid var(--divider);
+  margin-block-start: var(--sp-2);
+  padding-block-start: var(--sp-2);
+}
+.tb-sdocs-title {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  padding-block-end: var(--sp-1);
+}
+.tb-sdocs-move {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-block: var(--sp-1);
+}
+.tb-sdocs-move > span {
+  font-size: var(--fs-micro);
+}
+
 /* ---------- 流程设置面板 ---------- */
 .tb-flow-sec {
   padding-block-end: var(--sp-3);

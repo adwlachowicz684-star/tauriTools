@@ -203,6 +203,38 @@ export interface RecentEntry extends HistoryEntry {
   title: string;
 }
 
+/* ---------------------------------------------------- 项目（多任务库） */
+
+export interface TbProject {
+  id: string;
+  name: string;
+  dataDir: string;
+  docsDir: string;
+}
+
+export interface TbConfig {
+  projects: TbProject[];
+  currentId: string;
+  dataDir: string;
+  docsDir: string;
+  port: number;
+  token: string;
+  autoStart: boolean;
+  notifyUrl: string;
+}
+
+/** 新项目 id：p1 / p2… */
+export declare function newProjectId(seen: Iterable<string> | Set<string>): string;
+
+/** 归一化配置（含老配置迁移 + dataDir/docsDir 反向写回当前项目） */
+export declare function normalizeConfig(raw: unknown): TbConfig;
+
+/** 当前项目对象 */
+export declare function currentProject(cfg: unknown): TbProject;
+
+/** 这个项目还没设文档路径吗（提醒的判据） */
+export declare function needsDocsDir(cfg: unknown): boolean;
+
 export interface TbStats {
   total: number;
   open: number;

@@ -50,6 +50,10 @@ import {
   fmtEstimate,
   numOrNull,
   sortRowsBy,
+  normalizeConfig,
+  newProjectId,
+  currentProject,
+  needsDocsDir,
 } from './core.mjs';
 
 let pass = 0;
@@ -735,6 +739,104 @@ t('预估列可排序（按数值而不是字典序）', (() => {
   const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
   const asc = sortRowsBy(rows, 'estimate', 'asc');
   return asc[asc.length - 1].task.id === 'e1';
+})());
+
+
+/* ============================================================ 项目（多任务库） */
+
+t('normalizeConfig：老配置（只有 dataDir）迁成单项目，任务不丢', (() => {
+  const c = normalizeConfig({ dataDir: '/old/dir', port: 9911 });
+  return c.projects.length === 1 && c.projects[0].dataDir === '/old/dir' && c.dataDir === '/old/dir';
+})());
+
+t('normalizeConfig：空配置也给一个项目（不会没有当前项目）', (() => {
+  const c = normalizeConfig(null);
+  return c.projects.length === 1 && !!c.currentId && c.projects[0].id === c.currentId;
+})());
+
+t('normalizeConfig：多项目时 dataDir 派生自当前项目', (() => {
+  const c = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/b' },
+    ],
+    currentId: 'p2',
+  });
+  return c.dataDir === '/b' && currentProject(c).name === '乙';
+})());
+
+t('normalizeConfig：currentId 指向不存在的项目 → 回落第一个', (() => {
+  const c = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/b' },
+    ],
+    currentId: 'p9',
+  });
+  /*
+    不回落的话切过去什么都读不到，
+    而界面上看不出是"这个项目没了"还是"任务真的全空了"。
+  */
+  return c.currentId === 'p1' && c.dataDir === '/a';
+})());
+
+t('normalizeConfig：设置页直接改 dataDir 会写回当前项目', (() => {
+  const c = normalizeConfig({
+    projects: [{ id: 'p1', name: '甲', dataDir: '/a' }],
+    currentId: 'p1',
+    dataDir: '/new',
+  });
+  /*
+    这是派生字段的代价：不做这一步，设置里改目录就"保存了没反应"。
+  */
+  return c.projects[0].dataDir === '/new' && c.dataDir === '/new';
+})());
+
+t('normalizeConfig：改 docsDir 同样写回当前项目', (() => {
+  const c = normalizeConfig({
+    projects: [{ id: 'p1', name: '甲', dataDir: '/a', docsDir: '' }],
+    currentId: 'p1',
+    docsDir: '/docs',
+  });
+  return c.projects[0].docsDir === '/docs' && c.docsDir === '/docs';
+})());
+
+t('normalizeConfig：docsDir 可以清空（=这个项目不挂文档）', (() => {
+  const c = normalizeConfig({
+    projects: [{ id: 'p1', name: '甲', dataDir: '/a', docsDir: '/docs' }],
+    currentId: 'p1',
+    docsDir: '',
+  });
+  return c.projects[0].docsDir === '' && needsDocsDir(c) === true;
+})());
+
+t('normalizeConfig：项目 id 重号会被补开（重号会让切换器选中错行）', (() => {
+  const c = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p1', name: '乙', dataDir: '/b' },
+    ],
+  });
+  return c.projects[0].id !== c.projects[1].id;
+})());
+
+t('normalizeConfig：缺 id 的项目会被补一个', (() => {
+  const c = normalizeConfig({ projects: [{ name: '甲', dataDir: '/a' }] });
+  return !!c.projects[0].id;
+})());
+
+t('newProjectId：跳过已用的号', newProjectId(['p1', 'p2']) === 'p3');
+
+t('needsDocsDir：设过就不提醒', (() => {
+  const c = normalizeConfig({
+    projects: [{ id: 'p1', name: '甲', dataDir: '/a', docsDir: '/docs' }],
+  });
+  return needsDocsDir(c) === false;
+})());
+
+t('needsDocsDir：没设就提醒（新建项目时与建任务时是同一判据）', (() => {
+  const c = normalizeConfig({ projects: [{ id: 'p1', name: '甲', dataDir: '/a' }] });
+  return needsDocsDir(c) === true;
 })());
 
 /* ---------------- 汇总 ---------------- */
