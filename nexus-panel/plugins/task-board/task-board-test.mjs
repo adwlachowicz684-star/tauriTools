@@ -1833,6 +1833,26 @@ t('分组：Rust 新建/改字段/MCP 都要贯通（AI 通道不能漏）', (()
     && rus.indexOf('"group":    { "type": "string"') >= 0;  // MCP schema
 })());
 
+
+/*
+ * **标题列里不该显示标签**（用户报的）。
+ *
+ * 标签已经有独立的一列（可筛、可排、可就地增减），
+ * 再在标题后面跟一串就是同一信息出现两次：
+ *   · 标题被挤短，长标题看不全（标题才是这一行最该看清的东西）
+ *   · 标签列被隐藏时，标题上的那串还在 ——
+ *     于是"隐藏标签列"这个操作看起来没生效
+ *
+ * 所以标题单元格里不能再渲染 TagChip。
+ */
+t('标题列：不再夹带标签（标签有独立一列，重复显示会挤短标题）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf("case 'title': {");
+  const j = app.indexOf("case 'status': {", i);
+  const seg = app.slice(i, j);
+  return seg.indexOf('TagChip') < 0 && seg.indexOf('tb-ltags') < 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

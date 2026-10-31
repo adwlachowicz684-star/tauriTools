@@ -3115,11 +3115,6 @@ function ListView({
               title="点击改标题"
               onCommit={(v) => { if (v) onPatchField(t.id, { title: v }); }}
             />
-            {t.tags.length > 0 ? (
-              <span className="tb-ltags">
-                {t.tags.map((tag) => <TagChip key={tag} id={tag} defs={tagDefs} />)}
-              </span>
-            ) : null}
           </span>
         );
       }
