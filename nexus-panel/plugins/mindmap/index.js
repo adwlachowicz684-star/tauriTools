@@ -1304,7 +1304,40 @@ bootIframePlugin(async (ctx) => {
  *
  * @returns {Promise<{removed:number, bytes:number, aborted:boolean}>}
  */
+/**
+ * gcOrphanAssets 中止原因的文案（两处调用方共用，不许各写一份）。
+ *
+ * ⓘ 「内容没读出来」与「快照读不全」的**后果不同**，不能混成一句：
+ *   前者意味着这份脑图的附件字节可能已被误删（刷新内容读得回来、字节没了），
+ *   说成后者会让人以为只是清理没做成、数据没事，于是不会去刷新重试。
+ */
+function gcAbortText(r) {
+  return r?.reason === 'unread'
+    ? '本次启动脑图内容没读出来，怕误删仍在使用的附件'
+    : '快照读取不完整，怕误删仍在使用的附件';
+}
+
 async function gcOrphanAssets(quiet = false) {
+  /*
+   * ⓘ 本次启动**内容没读出来**时必须中止，一个字节都不许删（BUG 177）。
+   *
+   * `bootContentUnread` 为真意味着 doc:<id> 这一刻读失败、workbook 退成了
+   * `wb.newWorkbook()`（一张空画布）。而下面 ① 收的正是**内存里这份**引用 ——
+   * 空画布一个引用都收不到，于是这份脑图真内容引用的每一个 assetId 都不在
+   * live 里，被当成「没人引用」**全删掉**。
+   *
+   * 后果是永久的：内容还在原键里（刷新可能读回来），可字节已经没了 ——
+   * 下次打开节点上附件图标还在、点开只说「附件数据已丢失」。
+   * 而这次删除**本身是成功的**，removed / bytes 照报，一句提示都没有。
+   *
+   * 触发路径还很常见：侧栏「移除附件」就会调 gcAssets（panels.js），
+   * 用户点一下移除一个附件，顺带把这份脑图里**其余所有**附件字节也删了。
+   *
+   * 宁可让孤儿继续占着配额 —— 回收是为了腾空间，误删是永久丢数据，
+   * 这两者不是同一个量级。
+   */
+  if (bootContentUnread) return { removed: 0, bytes: 0, failed: 0, aborted: true, reason: 'unread' };
+
   const live = new Set();
   const addRefs = (sheets) => {
     try { for (const a of wb.collectAssetRefs(sheets || [])) live.add(a); } catch { /* 坏数据跳过 */ }
@@ -1471,7 +1504,7 @@ async function gcOrphanAssets(quiet = false) {
     status('已删除：' + f.name
       + (docCleared ? '' : '（内容未能清除：仍占用本地存储空间）')
       + (gc?.failed ? `（${gc.failed} 个附件本体未能删除：仍占用本地存储空间）` : '')
-      + (gc?.aborted ? '（本次未回收附件：快照读取不完整，怕误删仍在使用的附件）' : '')
+      + (gc?.aborted ? `（本次未回收附件：${gcAbortText(gc)}）` : '')
       + (remembered ? '' : '（未能记住：下次启动会回到上一个文件）'));
   }
 
@@ -3846,7 +3879,7 @@ async function gcOrphanAssets(quiet = false) {
       if (r?.failed) ctx.toast(`${r.failed} 个附件本体未能删除（仍占用本地存储空间）`, 'warn');
       // 中止也要说：那不是"没删掉"，是"压根没敢删"—— 不说的话用户点了一次
       // 「移除附件」、配额一点没松，只会以为这功能坏了
-      if (r?.aborted) ctx.toast('本次未回收附件：快照读取不完整，为避免误删仍在使用的附件已跳过清理', 'warn');
+      if (r?.aborted) ctx.toast(`本次未回收附件：${gcAbortText(r)}，已跳过清理`, 'warn');
       return r;
     }),
     onDropFiles: (files, nodeId) => { guard('拖放附加', () => handleDropFiles(files, nodeId))(); },
