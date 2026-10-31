@@ -361,15 +361,27 @@ fn migrate_map(app: &AppHandle) -> Result<(), String> {
     }
 
     /* roots / done 两个小文件先搬：refresh_plan 要靠 roots.json 才知道该在
-       哪些树上跑规则，顺序反了它会以为"还没有根目录"而直接返回。 */
+       哪些树上跑规则，顺序反了它会以为"还没有根目录"而直接返回。
+       ⛔ 搬失败必须整轮失败，不能静默跳过：本函数只看 _work/map.json 在不在
+       来决定"要不要迁移"，跳过的话 map.json 照写，下次进来就认为迁移过了
+       直接返回 —— 老数据还在 <data>/roots.json 原位，而运行期一律读
+       _work/roots.json，于是界面上根目录全没了，且**不会自愈**（老文件
+       再也不会被搬）。返回 Err 时 map.json 还没写，下次打开会重跑迁移。 */
     for f in ["roots.json", "done.json"] {
         let src = dir.join(f);
         let dst = dir.join("_work").join(f);
         if src.exists() && !dst.exists() {
-            let _ = std::fs::copy(&src, &dst);
+            std::fs::copy(&src, &dst)
+                .map_err(|e| format!("把 {f} 搬进 _work 失败：{e}"))?;
         }
     }
-    let _ = refresh_plan(app, &mut items);
+    /* ⛔ 计划落盘失败同样不能吞。这里可以整轮失败、而 scan.rs 那条路不行：
+       迁移只是读一个 json，重跑代价可以忽略，且失败时 map.json 还没写，
+       下次打开会整体重来；扫描则要重走一遍全树渲染与内容比对，所以它那边
+       把失败挂到状态上让用户看见、不中断整轮。吞掉的话留下的是"索引有了、
+       计划没有"的半截状态 —— 计划文件是 pin（手工改过的名字）的唯一存档，
+       下次重算读不到 prev，用户手工定的名字会被规则覆盖。 */
+    refresh_plan(app, &mut items)?;
     write_json(&new_map, &items)?;
     Ok(())
 }
@@ -1542,8 +1554,16 @@ pub fn dupview_rename_all(app: AppHandle, path: String, recursive: bool) -> serd
                 );
             }
             Err(e) => {
-                /* 落位失败：把临时名还原回原名，别把文件留在 .dvtmp 下。 */
-                let _ = std::fs::rename(docx::lp(tmp), docx::lp(&a.old_path));
+                /* 落位失败：把临时名还原回原名，别把文件留在 .dvtmp 下。
+                   ⛔ 还原本身失败也要说出来：否则界面上只有一条"改名失败"，
+                   用户以为文件还在原位，实际它停在 .dvtmp_<i> 这个临时名上 ——
+                   索引里查不到、后续扫描也认不出它。 */
+                if let Err(e2) = std::fs::rename(docx::lp(tmp), docx::lp(&a.old_path)) {
+                    errs.push(format!(
+                        "{}：落位失败后还原也失败，文件停在临时名 {}：{e2}",
+                        a.old_name, tmp.display()
+                    ));
+                }
                 errs.push(format!("{}：{}", a.old_name, e));
             }
         }
