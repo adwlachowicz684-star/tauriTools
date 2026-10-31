@@ -99,6 +99,32 @@ type FlowLike = ReturnType<typeof normalizeFlow> & {
   typeDefs?: { id: string; name: string; color: string }[];
 };
 
+/*
+ * 列宽。默认那套是从原写死的网格里抄来的，行为与改动前一致。
+ *
+ * ⚠️ 标题列默认 **minmax(0, 1fr)**（吃满剩余空间）：
+ * 表格总宽比各列之和宽，没有一列吸收剩余的话右侧会空一大条；
+ * 而一旦用户手动拖过它，就变成固定 px —— 显式拖了就该听用户的。
+ */
+const DEFAULT_COL_W: Record<string, string> = {
+  priority: '56px',
+  id: '70px',
+  title: 'minmax(0, 1fr)',
+  status: '88px',
+  assignee: '96px',
+  type: '84px',
+  tags: '116px',
+  summary: '132px',
+  estimate: '62px',
+  createdAt: '84px',
+  updatedAt: '84px',
+};
+const PICK_COL_W = 26;
+/** 拖动的下限：再窄列头文字都放不下，等于把这一列拖没了 */
+const MIN_COL_W = 48;
+/** 上限：防止误拖出一个占满屏幕的列（拖回来看似"表格坏了"） */
+const MAX_COL_W = 1200;
+
 const SORT_FIELDS: SortField[] = [
   'priority', 'status', 'assignee', 'type', 'tags', 'summary',
   'estimate', 'updatedAt', 'createdAt', 'title', 'id',
@@ -181,6 +207,14 @@ export default function App() {
   */
   const [groupKeys, setGroupKeys] = useState<GroupKey[]>(['status']);
   const [sort, setSort] = useState<{ field: SortField; dir: 'asc' | 'desc' }>({ field: 'priority', dir: 'asc' });
+  /*
+    列显示与列宽。同样走 ctx.store 持久化。
+
+    ⚠️ 这两个决定的是"表格长什么样"，和 sort 一样属于视图偏好 ——
+    不跟任务数据走，也不该换个项目就被冲掉。
+  */
+  const [colHidden, setColHidden] = useState<string[]>([]);
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const cfgRef = useRef<TbConfig | null>(null);
   cfgRef.current = cfg;
 
@@ -217,10 +251,12 @@ export default function App() {
         /* 视图偏好：读不到/格式坏了都静默回默认 —— 丢的只是「上次看到哪」，
            不该让看板起不来。存储桥接最坏 15s 超时，故整体 try 兜住。 */
         try {
-          const [v, g, s] = await Promise.all([
+          const [v, g, s, hidden, widths] = await Promise.all([
             ctx.store.get('view', 'board'),
             ctx.store.get('groupKeys', ['status']),
             ctx.store.get('sort', { field: 'priority', dir: 'asc' }),
+            ctx.store.get('colHidden', []),
+            ctx.store.get('colWidths', {}),
           ]);
           if (!alive) return;
           if (VIEWS.some((x) => x.key === v)) setView(v as TbView);
@@ -233,6 +269,26 @@ export default function App() {
           if (ok.length > 0) setGroupKeys(ok);
           if (s && typeof s === 'object' && SORT_FIELDS.includes((s as { field: SortField }).field)) {
             setSort({ field: (s as { field: SortField }).field, dir: (s as { dir?: string }).dir === 'desc' ? 'desc' : 'asc' });
+          }
+          /*
+            隐藏列与列宽：**只认已知的 field**。
+            存的是配置、可能是旧版本写的（那时还有别的列），
+            不过滤的话会带进来当前根本不存在的列，网格就多出一格。
+          */
+          if (Array.isArray(hidden)) {
+            const known = new Set<string>(LIST_COLUMNS.map((c) => c.field));
+            const hs = (hidden as unknown[]).filter(
+              (x): x is SortField => typeof x === 'string' && known.has(x),
+            );
+            setColHidden(hs);
+          }
+          if (widths && typeof widths === 'object') {
+            const w = widths as Record<string, unknown>;
+            const ok: Record<string, number> = {};
+            for (const [k, val] of Object.entries(w)) {
+              if (typeof val === 'number' && val >= MIN_COL_W && val <= MAX_COL_W) ok[k] = val;
+            }
+            setColWidths(ok);
           }
         } catch {
           /* 偏好读取失败：保持默认视图 */
@@ -372,6 +428,50 @@ export default function App() {
       /* 同上：静默 */
     }
   };
+  /*
+    显示/隐藏一列。
+    ⛔ 不允许把最后一列也藏掉 —— 全隐藏得到的是一张空表格，
+    而界面上看不出是"没数据"还是"列被藏了"，那是个没救的死局。
+  */
+  const toggleCol = (field: string, show: boolean) => {
+    setColHidden((prev) => {
+      const next = prev.filter((x) => x !== field);
+      if (!show) {
+        /*
+          藏掉之后一列都不剩 → 拒绝这次操作。
+          摆着能点、点了没反应，比直接不让点更让人困惑，
+          所以调用方会把这种情况下的勾选框置灰（不是点了才提示）。
+        */
+        if (LIST_COLUMNS.length - next.length <= 1) return prev;
+        next.push(field);
+      }
+      persist('colHidden', next);
+      return next;
+    });
+  };
+
+  const colWidthRef = useRef(colWidths);
+  colWidthRef.current = colWidths;
+  const setColWidth_ = (field: string, px: number) => {
+    const w = Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(px)));
+    setColWidths((prev) => {
+      const next = { ...prev, [field]: w };
+      colWidthRef.current = next;
+      return next;
+    });
+  };
+
+  /* 列宽落盘（拖动结束时调一次，不是每帧） */
+  const persistColWidths = () => {
+    persist('colWidths', colWidthRef.current);
+  };
+
+  /* 重置列宽：把用户拖过的都清掉，回到默认的那一套 */
+  const resetColWidths = () => {
+    setColWidths({});
+    persist('colWidths', {});
+  };
+
   const changeView = (v: TbView) => {
     setView(v);
     persist('view', v);
@@ -1062,6 +1162,12 @@ ${dir}
           onBatchType={doBatchType}
           onBatchPriority={doBatchPriority}
           onBatchDelete={doBatchDelete}
+          colHidden={colHidden}
+          colWidths={colWidths}
+          onToggleCol={toggleCol}
+          onColWidth={setColWidth_}
+          onColResizeEnd={persistColWidths}
+          onResetWidths={resetColWidths}
           sort={sort}
           filters={colFilters}
           onSort={changeSort}
@@ -2059,6 +2165,58 @@ function FlowSettingsModal({
 /* ================================================================ 列表视图 */
 
 /**
+ * 列显示设置。勾选决定哪些列显示。
+ *
+ * ⛔ 最后一个已显示的列**不允许取消**：
+ * 全隐藏得到的是一张空表格，而界面上看不出是"没数据"还是"列被藏了"。
+ * 所以那一个勾选框直接置灰 —— 摆着能点、点了没反应，比不让点更让人困惑。
+ */
+function ColSettingsPop({
+  hidden,
+  onToggle,
+  onResetWidths,
+}: {
+  hidden: string[];
+  onToggle: (field: string, show: boolean) => void;
+  onResetWidths: () => void;
+}) {
+  const shown = LIST_COLUMNS.filter((c) => hidden.indexOf(c.field) < 0);
+  return (
+    <div className="tb-colset">
+      <div className="tb-colset-title">显示的列</div>
+      {LIST_COLUMNS.map((c) => {
+        const show = hidden.indexOf(c.field) < 0;
+        const isLast = show && shown.length === 1;
+        return (
+          <label
+            key={c.field}
+            className={'tb-colset-row' + (isLast ? ' locked' : '')}
+            title={isLast ? '至少要留一列' : `显示「${c.label}」`}
+          >
+            <input
+              type="checkbox"
+              checked={show}
+              disabled={isLast}
+              onChange={(e) => onToggle(c.field, e.target.checked)}
+            />
+            <span>{c.label}</span>
+            {isLast ? <span className="tb-colset-why">（至少留一列）</span> : null}
+          </label>
+        );
+      })}
+      <div className="tb-colset-foot">
+        <button type="button" className="tb-act sm" onClick={onResetWidths}>
+          重置列宽
+        </button>
+        <span className="tb-colset-hint">拖表头右缘可改列宽</span>
+      </div>
+    </div>
+  );
+}
+
+
+
+/**
  * 筛选项的显示文案。
  *
  * core.mjs 只给**值**（它刻意不抄 STATUS_LABEL / PRIORITY_LABEL），
@@ -2366,6 +2524,12 @@ function ListView({
   onBatchType,
   onBatchPriority,
   onBatchDelete,
+  colHidden,
+  colWidths,
+  onToggleCol,
+  onColWidth,
+  onColResizeEnd,
+  onResetWidths,
   sort,
   filters,
   onSort,
@@ -2407,6 +2571,15 @@ function ListView({
   onBatchPriority: (ids: string[], prio: string) => void;
   /** 批量删除（调用方负责先 confirm） */
   onBatchDelete: (ids: string[]) => void;
+  /** 被隐藏的列（field 列表） */
+  colHidden: string[];
+  /** 用户手动拖过的列宽（field → px）。没拖过的列用默认值 */
+  colWidths: Record<string, number>;
+  onToggleCol: (field: string, show: boolean) => void;
+  onColWidth: (field: string, px: number) => void;
+  /** 拖动结束：把内存里的列宽落盘（拖动中不写，太密） */
+  onColResizeEnd: () => void;
+  onResetWidths: () => void;
 
   sort: { field: SortField; dir: 'asc' | 'desc' };
   filters: Partial<Record<SortField, ColFilter>>;
@@ -2416,6 +2589,7 @@ function ListView({
   onOpen: (id: string) => void;
 }) {
   const [openCol, setOpenCol] = useState<SortField | ''>('');
+  const [colsOpen, setColsOpen] = useState(false);
 
   /*
     点面板外关闭。
@@ -2433,7 +2607,172 @@ function ListView({
     return () => document.removeEventListener('mousedown', onDown);
   }, [openCol]);
 
+  useEffect(() => {
+    if (!colsOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = document.getElementById('tb-cols-host');
+      if (el && e.target instanceof Node && el.contains(e.target)) return;
+      setColsOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [colsOpen]);
+
   const picked = [...checked].filter((id) => rows.some((r) => r.task.id === id));
+
+  /*
+    ⚠️ 可见列是**唯一的真相来源**：列头、网格、行内单元格三处都由它驱动。
+
+    之前三处各写各的（列头 11 个、网格 12 列、行 12 格），
+    于是列头比内容少了一格勾选列的位置 —— 整行表头向左错开一列，
+    "状态"的表头压在"优先级"的内容上。那种错 TypeScript 查不出、
+    单测也照过，只有肉眼看得见。
+
+    现在三处都遍历同一个 shown，**结构上不可能再错位**。
+  */
+  const shown = LIST_COLUMNS.filter((c) => colHidden.indexOf(c.field) < 0);
+
+  /** 网格：1 列勾选 + N 列可见列。拖过的用固定 px，没拖过的用默认值 */
+  const gridStyle = {
+    gridTemplateColumns: [
+      `${PICK_COL_W}px`,
+      ...shown.map((c) => (colWidths[c.field] ? `${colWidths[c.field]}px` : (DEFAULT_COL_W[c.field] || '96px'))),
+    ].join(' '),
+  };
+
+  /*
+    拖动改列宽。把手在列头单元格右侧。
+
+    ⛔ 用 document 上的监听而不是React 的 onMouseMove：
+    拖动时鼠标会移出把手范围（甚至移出表格），
+    挂在把手上会一离开就断，表现为"拖两下就停"。
+  */
+  const startResize = (field: SortField, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const host = (e.currentTarget as HTMLElement).parentElement;
+    if (!host) return;
+    const startX = e.clientX;
+    const startW = host.getBoundingClientRect().width;
+    const move = (ev: MouseEvent) => {
+      onColWidth(field, startW + (ev.clientX - startX));
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      document.body.classList.remove('tb-col-resizing');
+      /*
+        松手时才落盘。拖动中每帧都写一次存储太密，
+        而只在内存里改、从不落盘的话，拖完一刷新就回去了 ——
+        那等于白拖，而且没人会想到是没存。
+      */
+      onColResizeEnd();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+    /* 拖动期间禁掉文本选中：否则拖一下会顺带把表头文字刷成蓝色 */
+    document.body.classList.add('tb-col-resizing');
+  };
+
+  /** 行内单元格：按 field 分发，新增列只改这一处 */
+  const cellFor = (field: SortField, t: Task) => {
+    switch (field) {
+      case 'priority':
+        return (
+          <span className="tb-lc c-priority" key={field}>
+            <PriorityBadge p={t.priority} />
+          </span>
+        );
+      case 'id':
+        return <span className="tb-lc c-id" key={field}>{t.id}</span>;
+      case 'title': {
+        /* 锁定只在标题列显示时才算 —— 标题列被隐藏就别白跑 */
+        const lk = lockOf(t, store);
+        return (
+          <span className="tb-lc c-title" key={field}>
+            {lk.locked ? (
+              <span className="tb-lock" title={lockTitle(lk)}>🔒</span>
+            ) : null}
+            <span className="tb-ltitle">{t.title}</span>
+            {t.tags.length > 0 ? (
+              <span className="tb-ltags">
+                {t.tags.map((tag) => <TagChip key={tag} id={tag} defs={tagDefs} />)}
+              </span>
+            ) : null}
+          </span>
+        );
+      }
+      case 'status':
+        return (
+          <span className="tb-lc c-status" key={field}>
+            <span className="tb-col-dot" style={{ background: statusColor(flow, t.status) }} />
+            {statusName(flow, t.status)}
+          </span>
+        );
+      case 'assignee':
+        return (
+          <span className="tb-lc c-assignee" key={field}>
+            {t.assignee ? '@' + t.assignee : '未认领'}
+          </span>
+        );
+      case 'type':
+        /*
+          类型单元格：点开就地改这一条的类型。
+          摆在这儿而不是只在详情里 —— 归类是一次看一批、顺手改一批的动作，
+          逐条点开详情改，二十条就得开关二十次。
+        */
+        return (
+          <span className="tb-lc c-type" key={field}>
+            <TypePicker
+              value={t.type}
+              defs={typeDefs}
+              onPick={(id) => onToggleType(t.id, id)}
+              onRename={(id, name) => onRenameType(id, name)}
+              onCreate={onCreateType}
+            />
+          </span>
+        );
+      case 'tags':
+        return (
+          <span className="tb-lc c-tags" key={field}>
+            {t.tags.length > 0 ? (
+              <span className="tb-ltags">
+                {t.tags.map((tag) => <TagChip key={tag} id={tag} defs={tagDefs} />)}
+              </span>
+            ) : (
+              <span className="tb-ldim">—</span>
+            )}
+          </span>
+        );
+      case 'summary':
+        return (
+          <span className="tb-lc c-summary" key={field} title={t.summary}>
+            {t.summary || <span className="tb-ldim">—</span>}
+          </span>
+        );
+      case 'estimate':
+        return (
+          <span className="tb-lc c-estimate" key={field}>
+            {fmtEstimate(t.estimate) || <span className="tb-ldim">—</span>}
+          </span>
+        );
+      case 'createdAt':
+        return (
+          <span className="tb-lc c-createdAt" key={field} title={fmtTime(t.createdAt)}>
+            {t.createdAt ? relTime(t.createdAt) : <span className="tb-ldim">—</span>}
+          </span>
+        );
+      case 'updatedAt':
+        return (
+          <span className="tb-lc c-updatedAt" key={field} title={fmtTime(t.updatedAt)}>
+            {relTime(t.updatedAt)}
+          </span>
+        );
+      default:
+        /* 认不出的 field 也要占一格 —— 少一格会让后面整行错位 */
+        return <span className="tb-lc" key={field}>—</span>;
+    }
+  };
 
   return (
     <div className="tb-list">
@@ -2496,9 +2835,45 @@ function ListView({
         ) : (
           <span className="tb-ltools-hint">勾选几条后可批量改状态 / 类型 / 优先级，或删除</span>
         )}
+        {/* 列设置常驻：改哪些列显示跟有没有勾选无关，藏进"勾了才出现"里就找不到了 */}
+        <span className="tb-ltools-gap" />
+        <div className="tb-cols-host" id="tb-cols-host">
+          <button
+            type="button"
+            className={'tb-act sm' + (colsOpen ? ' primary' : '')}
+            onClick={() => setColsOpen(!colsOpen)}
+            title="选择显示哪些列"
+          >
+            ⚙ 列
+          </button>
+          {colsOpen ? (
+            <ColSettingsPop
+              hidden={colHidden}
+              onToggle={onToggleCol}
+              onResetWidths={onResetWidths}
+            />
+          ) : null}
+        </div>
       </div>
-      <div className="tb-list-head tb-lgrid">
-        {LIST_COLUMNS.map((c, ci) => {
+      <div className="tb-list-head tb-lgrid" style={gridStyle}>
+        {/*
+          勾选列的表头占位。
+          ⛔ 这一格**不能省**：网格第一列是勾选列，行里也有勾选格，
+          表头少这一个就会整体向左挪一格 ——
+          "状态"的表头压在"优先级"的内容上。这次的错位就出在这儿。
+          顺手放全选，这一格就不只是占位了。
+        */}
+        <div className="tb-lhcell c-pick">
+          <input
+            type="checkbox"
+            checked={rows.length > 0 && picked.length === rows.length}
+            title="全选 / 取消全选（只作用于当前筛选出的行）"
+            onChange={(e) => {
+              for (const r of rows) onCheck(r.task.id, e.target.checked);
+            }}
+          />
+        </div>
+        {shown.map((c, ci) => {
           const f = filters[c.field];
           const on = colFilterActive(c, f);
           const isOpen = openCol === c.field;
@@ -2535,7 +2910,7 @@ function ListView({
                   options={colFilterValues(c.field, allRows, statusIds, typeIds)}
                   onChange={(nf) => onFilter(c.field, nf)}
                   onClear={() => onClearFilter(c.field)}
-                  anchorRight={ci >= LIST_COLUMNS.length - 3}
+                  anchorRight={ci >= shown.length - 3}
                   tagDefs={tagDefs}
                   onCreateTag={onCreateTag}
                   onTagColor={onTagColor}
@@ -2545,6 +2920,16 @@ function ListView({
                   onRemoveType={onRemoveType}
                 />
               ) : null}
+              {/*
+                拖宽把手。放在单元格右边缘，拖它改变这一列的宽度。
+                宽度落到 colWidths 里持久化 —— 不然拖完一刷新就回去了。
+              */}
+              <span
+                className="tb-lresize"
+                title={`拖动调整「${c.label}」列宽`}
+                onMouseDown={(e) => startResize(c.field, e)}
+                onClick={(e) => e.stopPropagation()}
+              />
             </div>
           );
         })}
@@ -2553,9 +2938,18 @@ function ListView({
         {rows.length === 0 && <div className="tb-col-empty">没有符合条件的任务</div>}
         {rows.map((row) => {
           const t = row.task;
-          const lock = lockOf(t, store);
           return (
-          <div key={t.id} className="tb-lrow tb-lgrid" onClick={() => onOpen(t.id)} title="点击查看详情">
+          /*
+            行内单元格由 shown 驱动，和表头、网格是同一份 ——
+            不再各写各的，也就不存在"少渲染一格导致整行错位"。
+          */
+          <div
+            key={t.id}
+            className="tb-lrow tb-lgrid"
+            style={gridStyle}
+            onClick={() => onOpen(t.id)}
+            title="点击查看详情"
+          >
             <label className="tb-lpick" onClick={(e) => e.stopPropagation()}>
               <input
                 type="checkbox"
@@ -2563,73 +2957,7 @@ function ListView({
                 onChange={(e) => onCheck(t.id, e.target.checked)}
               />
             </label>
-            <span className="tb-lc c-priority">
-              <PriorityBadge p={t.priority} />
-            </span>
-            <span className="tb-lc c-id">{t.id}</span>
-            <span className="tb-lc c-title">
-              {lock.locked ? (
-                <span
-                  className="tb-lock"
-                  title={lockTitle(lock)}
-                >
-                  🔒
-                </span>
-              ) : null}
-              <span className="tb-ltitle">{t.title}</span>
-              {t.tags.length > 0 && (
-                <span className="tb-ltags">
-                  {t.tags.map((tag) => (
-                    <TagChip key={tag} id={tag} defs={tagDefs} />
-                  ))}
-                </span>
-              )}
-            </span>
-            <span className="tb-lc c-status">
-              <span className="tb-col-dot" style={{ background: statusColor(flow, t.status) }} />
-              {statusName(flow, t.status)}
-            </span>
-            <span className="tb-lc c-assignee">{t.assignee ? '@' + t.assignee : '未认领'}</span>
-            {/*
-              类型单元格：点开就地改这一条的类型。
-              摆在这儿而不是只在详情里 —— 归类是一次看一批、顺手改一批的动作，
-              逐条点开详情改，二十条就得开关二十次。
-
-              ⚠️ 这个单元格不能漏：网格是「1 勾选 + 12 列」，
-              少渲染一个格子，后面所有列都会整体错位一格（最后一列还会溢出）。
-            */}
-            <span className="tb-lc c-type">
-              <TypePicker
-                value={t.type}
-                defs={typeDefs}
-                onPick={(id) => onToggleType(t.id, id)}
-                onRename={(id, name) => onRenameType(id, name)}
-                onCreate={onCreateType}
-              />
-            </span>
-            <span className="tb-lc c-tags">
-              {t.tags.length > 0 ? (
-                <span className="tb-ltags">
-                  {t.tags.map((tag) => (
-                    <TagChip key={tag} id={tag} defs={tagDefs} />
-                  ))}
-                </span>
-              ) : (
-                <span className="tb-ldim">—</span>
-              )}
-            </span>
-            <span className="tb-lc c-summary" title={t.summary}>
-              {t.summary || <span className="tb-ldim">—</span>}
-            </span>
-            <span className="tb-lc c-estimate">
-              {fmtEstimate(t.estimate) || <span className="tb-ldim">—</span>}
-            </span>
-            <span className="tb-lc c-createdAt" title={fmtTime(t.createdAt)}>
-              {t.createdAt ? relTime(t.createdAt) : <span className="tb-ldim">—</span>}
-            </span>
-            <span className="tb-lc c-updatedAt" title={fmtTime(t.updatedAt)}>
-              {relTime(t.updatedAt)}
-            </span>
+            {shown.map((c) => cellFor(c.field, t))}
           </div>
           );
         })}
