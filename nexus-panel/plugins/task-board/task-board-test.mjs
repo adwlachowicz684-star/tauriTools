@@ -1241,6 +1241,49 @@ t('自查：类型定义为空时，候选值里不该出现那六个已经不�
   return vs.length === 1 && vs[0] === NOTYPE;   // 只剩「未分类」
 })());
 
+
+/* ============================================================ 自查补测（第 8 轮） */
+
+/*
+ * **导入时两个用途都不勾，会建出一个无关的空白项目**（自查发现）：
+ * 两个路径都是空 → addProject 兜底落到默认目录 →
+ * 得到一个"名字取自刚才那个文件夹、但跟它毫无关系"的空项目。
+ * 用户以为导入成功了，然后在里面找不到自己刚看到的那些文档，
+ * 而界面上看不出项目实际指向哪里。
+ *
+ * 修法是禁用导入按钮。TS 查不出（按钮 disabled 逻辑合法），用源码扫描钉住。
+ */
+t('自查：导入项目必须至少选一个用途（都不勾要禁用导入）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('disabled={!name.trim() || (!useAsData && !useAsDocs)}') >= 0
+    && app.indexOf('至少勾一个用途') >= 0;
+})());
+
+/*
+ * **分组缩进被算了两遍**（自查发现）：
+ * 子组渲染在父组 body 里（body 有内边距），同时子组又按 depth 加了
+ * marginInlineStart —— 于是每深一层缩进翻倍累加，3 层就把内容推出屏幕。
+ * 树形结构天然由容器表达层级，不该再算一次。
+ */
+t('自查：分组不再按 depth 叠加 margin（嵌套本身已提供缩进）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function GroupNodeView');
+  const seg = app.slice(i, i + 1200);
+  // 只看真正的 JSX 属性写法（style={{ marginInlineStart: ... }}），注释里提到不算
+  return !/marginInlineStart\s*:/.test(seg);
+})());
+
+t('自查：标签分组是多值并集（一条带两个标签会同时进两组，计数和大于总数）', (() => {
+  const tasks = [
+    normalizeTask({ id: '1', status: 'todo', tags: ['a', 'b'] }),
+    normalizeTask({ id: '2', status: 'todo', tags: ['a'] }),
+  ];
+  const g = groupTasksBy(tasks, 'tag');
+  const sum = g.reduce((n, x) => n + x.count, 0);
+  // 并集语义下计数和 > 任务数是**预期**的，不是重复计数 —— 钉住它防止有人"修掉"
+  return g.length === 2 && sum === 3 && sum > tasks.length;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

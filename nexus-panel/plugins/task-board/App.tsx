@@ -1551,13 +1551,25 @@ function ImportProjectModal({
             <input type="checkbox" checked={useAsDocs} onChange={(e) => setUseAsDocs(e.target.checked)} />
             <span>用它作为这个项目的文档路径</span>
           </label>
+          {/*
+            ⛔ 两个都不勾必须**禁用导入**，不能静默兜底。
+            都不勾时两个路径都是空 → 建项目会落到默认目录去，
+            得到一个"名字取自刚才那个文件夹、但跟它毫无关系"的空项目。
+            用户会以为导入成功了，然后在里面找不到自己刚看到的那些文档 ——
+            而且界面上看不出项目实际指向哪里。
+          */}
+          {!useAsData && !useAsDocs ? (
+            <div className="tb-scan-warn">
+              ⚠ 至少勾一个用途，否则这个项目不会指向刚才那个文件夹
+            </div>
+          ) : null}
           <div className="tb-macts">
             <button className="tb-act" onClick={onClose}>
               取消
             </button>
             <button
               className="tb-act primary"
-              disabled={!name.trim()}
+              disabled={!name.trim() || (!useAsData && !useAsDocs)}
               onClick={() => onImport(name, useAsData ? scan.dir : '', useAsDocs ? scan.dir : '')}
             >
               导入
@@ -2667,13 +2679,14 @@ function GroupNodeView({
 }) {
   const by = groupKeys[node.depth] || 'status';
   const isLeaf = node.children.length === 0;
+  /*
+    缩进**靠嵌套本身**：子组渲染在父组的 body 里，而 body 有竖线 + 内边距。
+    这里不再按 depth 叠 marginInlineStart —— 嵌套已经提供了一层缩进，
+    再算一次会**翻倍累加**（3 层时 margin 36 + 累计 padding，整块被推出屏幕）。
+    树形结构天然由容器表达层级，不需要额外再算。
+  */
   return (
-    <section
-      className={'tb-group' + (isLeaf ? '' : ' tb-group-branch')}
-      /* 层级缩进：不缩进的话三层分组看起来是三个平级的列表，
-         看不出谁属于谁 */
-      style={{ marginInlineStart: node.depth * 12 }}
-    >
+    <section className={'tb-group' + (isLeaf ? '' : ' tb-group-branch')}>
       <header className="tb-group-head">
         {by === 'status' ? (
           <span className="tb-col-dot" style={{ background: statusColor(flow, node.key) }} />

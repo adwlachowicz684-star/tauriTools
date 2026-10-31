@@ -1009,8 +1009,14 @@
   font-weight: 600;
 }
 .tb-group-branch > .tb-group-body {
-  border-inline-start: 1px solid var(--divider);
-  padding-inline-start: var(--sp-2);
+  /*
+    竖线 + 内边距共同表达"这一层在上一层里面"。
+    缩进量给足一点：嵌套本身就是唯一的层级线索（不再叠加 margin），
+    太细的话两层分组看起来还是齐平的。
+  */
+  border-inline-start: 2px solid var(--divider);
+  padding-inline-start: var(--sp-3);
+  margin-block-start: var(--sp-1);
 }
 
 /* ---------- 导入项目的验证结果 ---------- */
