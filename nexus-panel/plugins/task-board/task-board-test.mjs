@@ -2093,6 +2093,75 @@ t('审查：排序的依赖里带 tagNames（改名后顺序要重算）', (() =
   return app.indexOf('[filteredRows, sort, tagNames]') >= 0;
 })());
 
+
+/* ============================================================ 审查：批量/挂摘/候选上限（本轮） */
+
+/*
+ * **toggleType 与 toggleTaskTag 是同款操作，但少了两样**（上次只修了挂标签那边）：
+ * · 没有 refresh → 点了类型要过两秒才变，看着像点了没反应
+ * · 不推进 updatedAt → "更新"列不动
+ */
+t('审查：挂/摘类型也要刷新并推进时间戳（与挂/摘标签同款）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const seg = app.slice(app.indexOf('const toggleType ='), app.indexOf('const changeSort ='));
+  return seg.indexOf('await refresh();') >= 0 && seg.indexOf('updatedAt: Date.now()') >= 0;
+})());
+
+/*
+ * **doBatchStatus 的计数也是累加**（与上一轮 doRemoveTag 同一个坑）：
+ * mutate 冲突重试会让 done 翻倍、skipped 列表重复 ——
+ * toast 说"已改 8 条"而实际只有 4 条。
+ */
+t('审查：批量改状态的计数是整体赋值（重试不会翻倍）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const seg = app.slice(app.indexOf('const doBatchStatus ='), app.indexOf('setChecked(new Set());', app.indexOf('const doBatchStatus =')));
+  return seg.indexOf('done = ok') >= 0 && seg.indexOf('skipped = skip') >= 0
+    && seg.indexOf('done += 1;') < 0;
+})());
+
+/*
+ * **标签候选被 allTags 的 20 条上限截断**：
+ * 那个上限原本是给"热门前 20"用的，挪到筛选候选上就成了 bug ——
+ * 第 21 个之后的标签在下拉里凭空消失，
+ * 而界面上不会说"只显示前 20 个"，只会以为那个标签不存在。
+ */
+t('审查：标签筛选候选不被 20 条上限截断', (() => {
+  const tasks = [];
+  for (let i = 0; i < 25; i += 1) tasks.push(normalizeTask({ id: `t${i}`, tags: [`tag${i}`] }));
+  const rows = tasks.map((t) => ({ task: t, depth: 0, path: [] }));
+  return colFilterValues('tags', rows, [], [], []).length === 25;
+})());
+
+t('审查：allTags 传 limit 时仍按热门截断（统计语义未变）', (() => {
+  const tasks = [];
+  for (let i = 0; i < 25; i += 1) tasks.push(normalizeTask({ id: `t${i}`, tags: [`tag${i}`] }));
+  return allTags(tasks, 10).length === 10 && allTags(tasks).length === 25;
+})());
+
+/*
+ * **createTask 漏了 group 字段** —— 与它自己头顶的注释自相矛盾：
+ * "每个字段都显式写出来…字段在文件里看得见 AI 才会去填"，
+ * 而 group 恰好没写。AI 看到的文件里没有这一列，
+ * 于是它建出来的任务永远不带分组。
+ */
+t('审查：新建任务会写出 group 字段（AI 在文件里要看得见）', (() => {
+  const src = fs.readFileSync(path.join(dir, 'lib/store.ts'), 'utf8');
+  const i = src.indexOf('const base = {');
+  const seg = src.slice(i, src.indexOf('const task = pushHistory', i));
+  return seg.indexOf('group: typeof draft.group') >= 0;
+})());
+
+/*
+ * **详情面板里没有分组**：列表行内那处是"顺手改一下"，
+ * 而详情是"把这条所有字段看一遍"的地方 ——
+ * 只有列表能改的话，从详情进来会以为这条压根没有分组这个属性。
+ */
+t('审查：详情面板里有分组字段', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('onPatch({ group: e.target.value })') >= 0
+    && app.indexOf('placeholder="分组名（留空 = 不分组）"') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

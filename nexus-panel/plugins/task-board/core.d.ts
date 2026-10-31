@@ -12,7 +12,7 @@ export declare function filterTasks<T extends { id: string; title: string; detai
   tasks: T[],
   f: { priority?: string; tag?: string; assignee?: string; q?: string },
 ): T[];
-export declare function allTags(tasks: { tags: string[] }[]): string[];
+export declare function allTags(tasks: { tags: string[] }[], limit?: number): string[];
 
 /* ---------------------------------------------------- 任务组嵌套 */
 

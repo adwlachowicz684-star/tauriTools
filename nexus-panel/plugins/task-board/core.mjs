@@ -654,7 +654,7 @@ export function colFilterValues(field, rows, statusIds, typeIds, tagIds) {
       只取定义表的话那些任务就永远筛不到，且无从看出漏了谁。
     */
     case 'tags': {
-      const fromData = allTags(tasks || []);
+      const fromData = allTags(tasks || []);   // 不限量：筛选候选要完整
       const fromDefs = Array.isArray(tagIds) ? [...tagIds] : [];
       const out = [];
       const seen = new Set();
@@ -1131,10 +1131,19 @@ export function typeColor(defs, id) {
 }
 
 /** 全部标签（去重，按出现次数倒序，最多 20 个） */
-export function allTags(tasks) {
+/*
+  标签去重，按**使用次数倒序**。
+
+  `limit` 是要"热门前 N 个"时才用（如统计面板）。
+  ⛔ **筛选候选不能带上限**：那会让第 N+1 个之后的标签在下拉里凭空消失 ——
+  用户知道有这个标签、列表里也看得到，就是筛不到，
+  而界面上不会说"只显示前 20 个"，只会以为它不存在。
+*/
+export function allTags(tasks, limit = 0) {
   const cnt = new Map();
   for (const t of tasks) for (const tag of t.tags) cnt.set(tag, (cnt.get(tag) || 0) + 1);
-  return [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([tag]) => tag);
+  const out = [...cnt.entries()].sort((a, b) => b[1] - a[1]).map(([tag]) => tag);
+  return limit > 0 ? out.slice(0, limit) : out;
 }
 
 /** 下一个任务 id（与 Rust create_task 同规则：tb-%04d） */

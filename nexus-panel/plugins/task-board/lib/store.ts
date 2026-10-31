@@ -324,6 +324,8 @@ export async function createTask(
     estimate?: string | number;
     /** 任务类型（typeDefs 里的 id）。不传 = 未分类 */
     type?: string;
+    /** 分组名。不传/空 = 不分组 */
+    group?: string;
   },
 ): Promise<Task> {
   // 记录闭包实际使用的 id：乐观锁冲突重试时 id 会随最新快照重算，用它找回新建的任务
@@ -359,6 +361,13 @@ export async function createTask(
         就要回头改所有任务，旧名还会变成没人认的孤值。
       */
       type: typeof draft.type === 'string' ? draft.type.trim() : '',
+      /*
+        分组。⛔ 同样必须显式写出来 —— 上面的注释说的就是这个判据：
+        这份 JSON 是给 AI 直接读改的，字段在文件里看得见它才会去填。
+        group 恰好漏了：靠 normalizeTask 兜底的话，AI 看到的文件里没有这一列，
+        于是它建出来的任务永远不带分组。
+      */
+      group: typeof draft.group === 'string' ? draft.group.trim() : '',
       tags: (draft.tags || []).filter(Boolean),
       reporter: me || 'manual',
       assignee: draft.assignee || null,
