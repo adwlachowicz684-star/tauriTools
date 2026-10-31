@@ -608,7 +608,7 @@ export function activeColFilters(filters) {
  * 表里没有、但任务上写着的名字（外部 API 写的）照样要能筛；
  * 反过来表里有、但没人领过任务的名字，列出来选中就是零行。
  */
-export function colFilterValues(field, rows, statusIds, typeIds) {
+export function colFilterValues(field, rows, statusIds, typeIds, tagIds) {
   const tasks = (rows || []).map((r) => (r && r.task ? r.task : r));
   switch (field) {
     case 'priority': return [...PRIORITIES];
@@ -642,7 +642,29 @@ export function colFilterValues(field, rows, statusIds, typeIds) {
       勾了永远筛不到东西，而界面上看不出它们从哪来。
     */
     case 'type': return (Array.isArray(typeIds) ? [...typeIds] : TYPE_WORDS.slice()).concat([NOTYPE]);
-    case 'tags': return allTags(tasks || []);
+    /*
+      标签候选 = **定义表 + 数据里出现的**。
+
+      ⛔ 只从数据里去重是不够的（原来是 allTasks）：
+      用户刚新建、还没挂到任何任务上的标签在下拉里就选不到 ——
+      那个标签等于建不出来（而它明明已经在定义表里了）。
+
+      ⛔ 反过来也不能只取定义表：任务上的标签可能是个裸名字
+      （老数据、或 AI 直接写进 JSON 的），没建过定义 ——
+      只取定义表的话那些任务就永远筛不到，且无从看出漏了谁。
+    */
+    case 'tags': {
+      const fromData = allTags(tasks || []);
+      const fromDefs = Array.isArray(tagIds) ? [...tagIds] : [];
+      const out = [];
+      const seen = new Set();
+      for (const id of [...fromDefs, ...fromData]) {
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+      }
+      return out;
+    }
     /*
       数值列没有"候选值"可枚举，但**"没估"是个要能筛的选项** ——
       "找那些还没估工作量的"是排期前最常见的一次查询。

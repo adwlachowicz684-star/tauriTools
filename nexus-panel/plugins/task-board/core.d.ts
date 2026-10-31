@@ -155,7 +155,7 @@ export declare function groupEstimate(groupId: string, tasks: Task[]): number;
 export declare function totalEstimate(tasks: Task[]): number;
 
 export declare function colFilterValues(
-  field: SortField, rows: FlatRow[] | Task[], statusIds?: string[], typeIds?: string[],
+  field: SortField, rows: FlatRow[] | Task[], statusIds?: string[], typeIds?: string[], tagIds?: string[],
 ): string[];
 export declare function nextTaskId(store: { nextId: number }): string;
 export declare function pushHistory(task: any, by: string, action: string, note: string, at?: number): any;

@@ -1126,6 +1126,36 @@ body.tb-col-resizing {
   font-size: var(--fs-micro);
 }
 
+/* 改名：铅笔点开就地变输入框，不弹窗 */
+.tb-lpop-edit {
+  flex: none;
+  padding-inline: var(--sp-1);
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.tb-lpop-edit:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+.tb-lpop-rename {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  inline-size: 100%;
+  padding: 1px var(--sp-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-xs);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-micro);
+}
+
 /* ---------- 分组设置（多列 + 优先级） ---------- */
 .tb-gby {
   position: relative;
