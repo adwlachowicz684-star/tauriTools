@@ -637,12 +637,21 @@ export default function App() {
   const toggleType = (taskId: string, typeId: string) =>
     withErr(async () => {
       if (!cfg) return;
+      /*
+        ⛔ 两点与 toggleTaskTag（挂/摘标签）对齐，它是同款操作：
+        · 必须立刻重读 —— 原来这里没有 refresh，只靠 2s 轮询兜，
+          点了类型要过两秒才变，看着像点了没反应
+        · 必须推进 updatedAt —— 改的是任务，不推进的话"更新"列不动
+      */
       await S.mutate(ctx, cfg.dataDir, (st) => ({
         ...st,
         tasks: (st.tasks || []).map((t) => (
-          t.id === taskId ? { ...t, type: t.type === typeId ? '' : typeId } : t
+          t.id === taskId
+            ? { ...t, type: t.type === typeId ? '' : typeId, updatedAt: Date.now() }
+            : t
         )),
       }));
+      await refresh();
     })();
   const changeSort = (field: SortField, dir?: 'asc' | 'desc') => {
     // 点同一列 = 翻转方向；换列 = 用该列默认方向（时间类「新的在前」，其余升序）
@@ -833,19 +842,28 @@ ${dir}
   const doBatchStatus = (ids: string[], to: string) =>
     withErr(async () => {
       if (!cfg || ids.length === 0 || !to) return;
+      /*
+        ⛔ 计数与 skipped 都**不能累加**：mutate 带乐观锁，写冲突时会重读再跑回调，
+        累加一遍就是两倍（toast 说"已改 8 条"而实际只有 4 条）。
+        改成在回调内**整体算出来再整体赋值**，重试时以最后一次为准。
+      */
       let done = 0;
-      const skipped: string[] = [];
+      let skipped: string[] = [];
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
+        let ok = 0;
+        const skip: string[] = [];
         const tasks = st.tasks.map((t) => {
           if (!want.has(t.id)) return t;
-          if (!canTransitionIn(st.flow, t.status, to)) { skipped.push(t.id); return t; }
+          if (!canTransitionIn(st.flow, t.status, to)) { skip.push(t.id); return t; }
           const next = applyTransition(t, to, me);
-          if (!next) { skipped.push(t.id); return t; }
-          done += 1;
+          if (!next) { skip.push(t.id); return t; }
+          ok += 1;
           return next;
         });
-        return done === 0 ? null : { ...st, tasks };
+        done = ok;
+        skipped = skip;
+        return ok === 0 ? null : { ...st, tasks };
       });
       setChecked(new Set());
       await refresh();
@@ -860,7 +878,13 @@ ${dir}
       if (!cfg || ids.length === 0) return;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
-        return { ...st, tasks: st.tasks.map((t) => (want.has(t.id) ? { ...t, type: typeId } : t)) };
+        /* 改的是任务，要推进 updatedAt（否则"更新"列不动，看着像没改） */
+        return {
+          ...st,
+          tasks: st.tasks.map((t) => (
+            want.has(t.id) ? { ...t, type: typeId, updatedAt: Date.now() } : t
+          )),
+        };
       });
       setChecked(new Set());
       await refresh();
@@ -872,7 +896,12 @@ ${dir}
       if (!cfg || ids.length === 0 || !prio) return;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
-        return { ...st, tasks: st.tasks.map((t) => (want.has(t.id) ? { ...t, priority: prio as Priority } : t)) };
+        return {
+          ...st,
+          tasks: st.tasks.map((t) => (
+            want.has(t.id) ? { ...t, priority: prio as Priority, updatedAt: Date.now() } : t
+          )),
+        };
       });
       setChecked(new Set());
       await refresh();
@@ -4117,6 +4146,23 @@ function DetailModal({
           value={task.summary || ''}
           placeholder="一句话说清这条要做什么"
           onChange={(e) => onPatch({ summary: e.target.value })}
+        />
+
+        {/*
+          分组。**详情面板里也要有**：列表行内那处是"顺手改一下"，
+          而详情是"把这条的所有字段看一遍"的地方 ——
+          只有列表能改的话，从详情进来会以为这条压根没有分组这个属性。
+
+          ⛔ 不要做成下拉枚举现有分组：分组名是自由文本，
+          枚举会随着任务增删不断变化，而且"建一个新分组"正是最常见的操作 ——
+          下拉里选不到就只能先去某条任务上填，绕一圈。
+        */}
+        <span className="tb-dlabel">分组</span>
+        <input
+          className="tb-dinput"
+          value={task.group || ''}
+          placeholder="分组名（留空 = 不分组）"
+          onChange={(e) => onPatch({ group: e.target.value })}
         />
       </div>
 
