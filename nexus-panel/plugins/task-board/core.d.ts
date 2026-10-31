@@ -58,6 +58,7 @@ export interface LockInfo {
 }
 
 /** 锁定状态是算出来的，不存字段 */
+export declare function dependsOn(tasks: Task[], aId: string, bId: string): boolean;
 export declare function lockOf(task: Task, tasks: Task[]): LockInfo;
 
 /* ---------------------------------------------------- 流程配置 */

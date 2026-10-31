@@ -33,6 +33,7 @@ import {
   colFilterActive,
   colRawValues,
   colFilterValues,
+  dependsOn,
   activeColFilters,
   filterTasksByColumns,
   indexTasks,
@@ -2392,6 +2393,49 @@ t('审查：新建状态会顺手接一条边（否则是孤岛，走不进去�
   const seg = app.slice(i, app.indexOf('const removeStatus', i));
   return seg.indexOf('const prevId =') >= 0
     && seg.indexOf('[prevId]: [...(d.transitions[prevId] || []), id]') >= 0;
+})());
+
+
+/* ============================================================ 审查：前置依赖能选成环（本轮） */
+
+const dep = (id, deps) => normalizeTask({ id, deps });
+
+/*
+ * **可选前置里没有排除会成环的**：
+ * 注释写的是"排除已成环的"，代码却只排除了自己和 parent —— 注释与实现不符。
+ *
+ * 于是可以把 A 的前置设成 B，而 B 已经（经过若干层）依赖 A：
+ * 两条互相等，**永远解锁不了**。
+ * lockOf 事后能检出 cyclic 并说明，但那时已经成环了，
+ * 而且用户看到的是两把锁，看不出是自己刚才这一个勾选造成的。
+ */
+t('审查：dependsOn 是传递判定（不是只看直接前置）', (() => {
+  const tasks = [dep('a', ['b']), dep('b', ['c']), dep('c', [])];
+  return dependsOn(tasks, 'a', 'c') === true      // 隔一层也算
+    && dependsOn(tasks, 'c', 'a') === false
+    && dependsOn(tasks, 'a', 'a') === false;      // 自己不算
+})());
+
+t('审查：已成环的两个互为依赖（两边都要能检出）', (() => {
+  const tasks = [dep('x', ['y']), dep('y', ['x'])];
+  return dependsOn(tasks, 'x', 'y') === true && dependsOn(tasks, 'y', 'x') === true;
+})());
+
+t('审查：指向不存在的 id 也算依赖（不能被误当成可选）', (() => {
+  const tasks = [dep('m', ['nope'])];
+  return dependsOn(tasks, 'm', 'nope') === true;
+})());
+
+t('审查：成环时不会无限递归（有深度兜底）', (() => {
+  const tasks = [dep('p', ['q']), dep('q', ['p'])];
+  // 能正常返回、不抛栈溢出即可
+  return typeof dependsOn(tasks, 'p', 'q') === 'boolean';
+})());
+
+/* 详情面板的候选要真的用上这个判定 */
+t('审查：详情的可选前置用 dependsOn 过滤', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('!dependsOn(tasks, t.id, task.id)') >= 0;
 })());
 
 /* ---------------- 汇总 ---------------- */
