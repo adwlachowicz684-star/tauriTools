@@ -290,9 +290,22 @@ export default function App() {
           */
           if (Array.isArray(hidden)) {
             const known = new Set<string>(LIST_COLUMNS.map((c) => c.field));
-            const hs = (hidden as unknown[]).filter(
+            let hs = (hidden as unknown[]).filter(
               (x): x is SortField => typeof x === 'string' && known.has(x),
             );
+            /*
+              ⛔ 隐藏列不能**多于总数的 1 个**：
+              界面上不让把最后一列也藏掉（那会得到一张空表格，
+              而界面上看不出是"没数据"还是"列被藏了"），
+              但从**存档里读回来**没有这道闸 ——
+              存档可能是旧版本写的，那时列更少（藏掉 8 个只剩 1 个是合法的），
+              升级到 13 列后还是只剩 1 个，而 13 列里藏 12 个在现在是禁止的。
+
+              于是打开就是一张几乎空的表格，而列设置面板里
+              所有列都显示"已显示"（因为数量刚好合法）—— 无从下手。
+              多了就只保留前面若干个，至少留两列。
+            */
+            if (hs.length > LIST_COLUMNS.length - 2) hs = hs.slice(0, LIST_COLUMNS.length - 2);
             setColHidden(hs);
           }
           if (widths && typeof widths === 'object') {
@@ -3995,7 +4008,8 @@ function StatsView({
   const cards: { label: string; value: number; hint?: string; warn?: boolean }[] = [
     { label: '总任务', value: stats.total },
     { label: '未完成', value: stats.open },
-    { label: '进行中', value: stats.active, hint: 'doing + review' },
+    /* 提示不能写死状态 id：自定义流程下那句话是假话（见 statsOf 里的判据） */
+    { label: '进行中', value: stats.active, hint: '已开工、未完成' },
     { label: '已完成', value: stats.done },
     { label: '超 7 天未动', value: stats.stale.length, warn: stats.stale.length > 0 },
   ];
@@ -4091,6 +4105,18 @@ function StatsView({
         <section className="tb-stat-panel wide">
           <header className="tb-stat-panel-head">超 7 天未动（{stats.stale.length}）</header>
           {stats.stale.length === 0 && <div className="tb-col-empty">没有陈旧任务</div>}
+          {/*
+            点一条就打开它的详情。
+
+            ⛔ 不要"顺手把筛选设成只显示这一类"：
+            统计看的是**全量**（刻意不受顶栏筛选影响），
+            而列筛选没有"更新时间早于 7 天前"这个条件（区间是起止日期），
+            硬凑的话会把筛选设成一个和面板口径不一致的东西 ——
+            于是命中数和这里写的条数对不上，那才是真的说不清。
+
+            打开详情就够了：看完要处理就在详情里改，
+            不必在两种"筛选"之间来回对账。
+          */}
           {stats.stale.map((t) => (
             <div key={t.id} className="tb-load-row" onClick={() => onOpen(t.id)} title="点击查看任务">
               <PriorityBadge p={t.priority} />
