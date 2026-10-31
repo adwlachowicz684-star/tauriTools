@@ -119,6 +119,15 @@ export async function decryptStore(
   const failed: string[] = [];
   for (const sc of file.credentials) {
     if (!isCipherBundle(sc.secret)) {
+      /*
+        ⛔ 明文条目**必须**计入 failed —— 它代表"这条密钥没能以密文形式存下来"
+        （老版本遗留、或 encryptString 失败后原样落盘）。
+
+        以前这里只清空 secret 就 continue，于是 failed 是空的：
+        界面显示这条连接没有密钥，而调用方拿不到任何"没解出来"的信号 ——
+        用户以为自己从没填过，可磁盘上那份明文其实还在，只是读不出来了。
+      */
+      failed.push(sc.id);
       out.push({ ...sc, secret: '' } as Credential);
       continue;
     }

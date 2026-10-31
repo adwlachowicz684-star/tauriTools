@@ -403,3 +403,27 @@ test('缓存: 条目数有上限，不会无限增长', async () => {
   assert.ok(keyCacheSize() <= 32, `实际 ${keyCacheSize()}`);
   assert.ok(keyCacheSize() > 0);
 });
+
+/* ---------- 明文条目必须计入 failed ---------- */
+
+test('解密: 明文条目算"没解出来"，不能静默清空', async () => {
+  const file = { version: STORE_VERSION, credentials: [{ id: 'a', secret: 'ghp_plain_on_disk' }] } as never;
+  const r = await decryptStore(be, file, PASS);
+  assert.deepEqual(r.failed, ['a'], '明文条目必须计入 failed');
+  assert.equal(r.credentials[0].secret, '', '明文不当密钥用');
+});
+
+test('解密: 密文解不出来也计入 failed（原有行为不变）', async () => {
+  const bundle = await encryptString(be, 'x', PASS);
+  const file = { version: STORE_VERSION, credentials: [{ id: 'b', secret: bundle }] } as never;
+  const r = await decryptStore(be, file, 'WRONG-PASS');
+  assert.deepEqual(r.failed, ['b']);
+});
+
+test('解密: 正常解密时 failed 为空（反例，防过度修复）', async () => {
+  const bundle = await encryptString(be, 'k', PASS);
+  const file = { version: STORE_VERSION, credentials: [{ id: 'c', secret: bundle }] } as never;
+  const r = await decryptStore(be, file, PASS);
+  assert.deepEqual(r.failed, [], '正常条目不该被算成失败');
+  assert.equal(r.credentials[0].secret, 'k');
+});
