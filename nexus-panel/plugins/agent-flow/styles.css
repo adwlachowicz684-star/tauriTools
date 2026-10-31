@@ -4619,7 +4619,7 @@ input.mono, textarea.mono {
   background: var(--af-panel);
   border: 1px solid var(--af-line, #444);
   border-radius: var(--af-r-ctl, 8px);
-  box-shadow: var(--af-shadow, 0 12px 40px rgba(0, 0, 0, .5));
+  box-shadow: var(--af-cast-lg);
 }
 .ttb-swatch {
   width: 14px;
@@ -4704,7 +4704,7 @@ input.mono, textarea.mono {
 .ttb-tag-add {
   flex: none;
   background: none;
-  border: 1px dashed var(--af-line, #444);
+  border: 1px dashed var(--af-add-line);
   border-radius: var(--af-r-xs, 4px);
   color: var(--af-mute);
   font-size: var(--fs-micro, 10px);
@@ -4724,7 +4724,7 @@ input.mono, textarea.mono {
 .ttb-attach { color: var(--af-accent); }
 .ttb-sid {
   font-family: var(--af-mono, ui-monospace, monospace);
-  font-size: var(--fs-micro, 10px);
+  font-size: var(--fs-code, 11px);
   color: var(--af-mute);
   white-space: nowrap;
 }
