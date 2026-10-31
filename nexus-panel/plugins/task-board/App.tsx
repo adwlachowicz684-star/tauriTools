@@ -987,6 +987,8 @@ ${dir}
           onToggleType={toggleType}
           onRenameType={(id, name) => setTypeDef(id, { name })}
           onCreateType={(name) => createType(name, '#78716c')}
+          onTypeColor={(id, color) => setTypeDef(id, { color })}
+          onRemoveType={removeType}
           tagDefs={store.tagDefs}
           onCreateTag={doAddTag}
           onTagColor={doSetTagColor}
@@ -2129,6 +2131,12 @@ function ColFilterPop({
   /* 两种列共用同一套"定义表 + 改色 + 新建"的交互 */
   const defs = isType ? (typeDefs || []) : (tagDefs || []);
   const colorOf = (id: string) => defs.find((d) => d.id === id)?.color || '';
+  /*
+    「未分类」是哨兵值，不是定义表里的一条。
+    给它摆上调色和删除按钮是骗人：改色改不到任何东西（没有定义可改），
+    点了"删"会弹确认框然后什么都没发生 —— 而用户已经以为自己删掉了什么。
+  */
+  const isSentinel = (id: string) => isType && id === NOTYPE;
 
   if (col.kind === 'enum') {
     return (
@@ -2152,20 +2160,13 @@ function ColFilterPop({
                   <span>{optionLabel(col.field, v, defs)}</span>
                 </label>
                 {/*
-                  标签列才给调色。
-                  颜色是标签**定义**的一部分（不是这一行的事），
-                  所以改一处、所有挂这个标签的行一起变 ——
-                  做成逐行改色的结果就是同一个标签在不同行颜色不同，
-                  那就丢掉了"一眼分类"这个作用。
-                */}
-                {/*
                   标签列与类型列都能直接调色。
                   颜色是**定义**的一部分（不是这一行的事），
                   所以改一处、所有挂它的行一起变 ——
                   做成逐行改色的话同一个标签在不同行颜色不同，
                   那就丢掉了"一眼分类"这个作用。
                 */}
-                {(isTag || isType) && (isType ? onTypeColor : onTagColor) ? (
+                {(isTag || isType) && !isSentinel(v) && (isType ? onTypeColor : onTagColor) ? (
                   <span className="tb-lpop-swatches">
                     {TAG_COLORS.map((c) => (
                       <button
@@ -2179,7 +2180,7 @@ function ColFilterPop({
                     ))}
                   </span>
                 ) : null}
-                {isType && onRemoveType ? (
+                {isType && onRemoveType && !isSentinel(v) ? (
                   <button
                     type="button"
                     className="tb-act sm warn tb-lpop-del"
@@ -2203,7 +2204,7 @@ function ColFilterPop({
             <input
               className="tb-lpop-input"
               value={newName}
-              placeholder="新建标签…"
+              placeholder={isType ? '新建类型…' : '新建标签…'}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
                 if (!isComposing(e.nativeEvent) && e.key === 'Enter' && newName.trim()) {
@@ -2220,7 +2221,7 @@ function ColFilterPop({
                   type="button"
                   className={'tb-swatch' + (newColor === c ? ' on' : '')}
                   style={{ background: c }}
-                  title={`新标签用这个颜色`}
+                  title={isType ? '新类型用这个颜色' : '新标签用这个颜色'}
                   onClick={() => setNewColor(c)}
                 />
               ))}
@@ -2343,6 +2344,8 @@ function ListView({
   onToggleType,
   onRenameType,
   onCreateType,
+  onTypeColor,
+  onRemoveType,
   tagDefs,
   onCreateTag,
   onTagColor,
@@ -2375,6 +2378,10 @@ function ListView({
   onRenameType: (id: string, name: string) => void;
   /** 就地新建类型（只要名字，颜色用默认灰） */
   onCreateType: (name: string) => void;
+  /** 改某个类型的颜色 */
+  onTypeColor: (id: string, color: string) => void;
+  /** 删某个类型（调用方负责先把任务清成未分类） */
+  onRemoveType: (id: string) => void;
   /** 标签定义（名字 + 颜色） */
   tagDefs: TagDef[];
   onCreateTag: (name: string, color: string) => void;
@@ -2469,13 +2476,22 @@ function ListView({
                 <ColFilterPop
                   col={c}
                   filter={f || emptyColFilter()}
-                  options={colFilterValues(c.field, allRows, statusIds)}
+                  /*
+                    typeIds 必须传：类型候选取的是**定义表**，不是数据去重。
+                    不传的话会退回默认六个，用户自定义的类型在下拉里根本选不到 ——
+                    那个类型等于建不出来（而它明明已经出现在列表里了）。
+                  */
+                  options={colFilterValues(c.field, allRows, statusIds, typeIds)}
                   onChange={(nf) => onFilter(c.field, nf)}
                   onClear={() => onClearFilter(c.field)}
                   anchorRight={ci >= LIST_COLUMNS.length - 3}
                   tagDefs={tagDefs}
                   onCreateTag={onCreateTag}
                   onTagColor={onTagColor}
+                  typeDefs={typeDefs}
+                  onCreateType={onCreateType}
+                  onTypeColor={onTypeColor}
+                  onRemoveType={onRemoveType}
                 />
               ) : null}
             </div>
