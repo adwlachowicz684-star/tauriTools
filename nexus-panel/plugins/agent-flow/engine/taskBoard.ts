@@ -1,3 +1,5 @@
+import { isFinalStatus, isCancelStatus, idleStatusId, type BoardMeta } from './boardMeta';
+
 /**
  * 任务板 —— 计划态的任务树：任务组、多层拆分、前置依赖。
  *
@@ -474,7 +476,7 @@ export type LockInfo = {
  * 组**没有**锁定概念 —— 它只是个容器，能不能动看它下面的任务。
  * 界面上对组显示的是聚合出来的状态（见 statusOf）。
  */
-export function lockOf(board: TaskBoard, taskId: string): LockInfo {
+export function lockOf(board: TaskBoard, taskId: string, meta?: BoardMeta | null): LockInfo {
   const n = board.nodes[taskId];
   if (!isTask(n)) return { locked: false, pending: [], missing: [], cyclic: false };
   const pending: string[] = [];
@@ -485,7 +487,14 @@ export function lockOf(board: TaskBoard, taskId: string): LockInfo {
     for (const leaf of leafTaskIds(board, d)) {
       if (leaf === taskId) continue;
       const ln = board.nodes[leaf];
-      if (isTask(ln) && ln.status !== 'done' && ln.status !== 'cancelled') pending.push(leaf);
+      /*
+        ⛔ 不能写死 `status !== 'done' && status !== 'cancelled'`：
+        状态集是用户在 boardMeta 里配的，自定义流程的终态可能叫 's3'、'完工'。
+        写死的话前置**永远解锁不了** —— 界面只说"被前置卡住"，
+        不说清是哪个前置、为什么，而那个前置明明已经做完了。
+        判据收成 isFinalStatus 一处（与 statusOf / tallyOf 同一份）。
+      */
+      if (isTask(ln) && !isFinalStatus(meta || null, ln.status)) pending.push(leaf);
     }
   }
   /*
@@ -530,35 +539,44 @@ function hasDepCycle(board: TaskBoard, start: string): boolean {
  * 全 done → done；有 doing 或 done（部分）→ doing；
  * 全 cancelled → cancelled；其余 todo。
  */
-export function statusOf(board: TaskBoard, id: string): BoardStatus {
+export function statusOf(board: TaskBoard, id: string, meta?: BoardMeta | null): BoardStatus {
   const n = board.nodes[id];
   if (!n) return 'todo';
   if (isTask(n)) return n.status;
   const leaves = leafTaskIds(board, id);
   if (leaves.length === 0) return 'todo';
+  /*
+    ⛔ 不能写死 'done' / 'doing' / 'cancelled'：同上（见 lockOf 那段）。
+    自定义流程下写死会让组头永远停在"待办"，而下面的任务其实早已完成。
+  */
+  const idle = idleStatusId(meta || null);
   let done = 0, doing = 0, cancelled = 0;
   for (const l of leaves) {
     const ln = board.nodes[l];
     if (!isTask(ln)) continue;
-    if (ln.status === 'done') done += 1;
-    else if (ln.status === 'doing') doing += 1;
-    else if (ln.status === 'cancelled') cancelled += 1;
+    if (isFinalStatus(meta || null, ln.status)) {
+      done += 1;
+      if (isCancelStatus(meta || null, ln.status)) cancelled += 1;
+    } else if (meta ? ln.status !== idle : ln.status === 'doing') {
+      doing += 1;
+    }
   }
-  if (done + cancelled === leaves.length) return cancelled === leaves.length ? 'cancelled' : 'done';
+  if (done === leaves.length) return cancelled === leaves.length ? 'cancelled' : 'done';
   if (done > 0 || doing > 0) return 'doing';
   return 'todo';
 }
 
 /** 计数，给组头显示用 */
-export function tallyOf(board: TaskBoard, id: string): { total: number; done: number; doing: number; locked: number } {
+export function tallyOf(board: TaskBoard, id: string, meta?: BoardMeta | null): { total: number; done: number; doing: number; locked: number } {
   const leaves = leafTaskIds(board, id);
+  const idle = idleStatusId(meta || null);
   let done = 0, doing = 0, locked = 0;
   for (const l of leaves) {
     const ln = board.nodes[l];
     if (!isTask(ln)) continue;
-    if (ln.status === 'done') done += 1;
-    else if (ln.status === 'doing') doing += 1;
-    else if (lockOf(board, l).locked) locked += 1;
+    if (isFinalStatus(meta || null, ln.status)) done += 1;
+    else if (ln.status !== idle) doing += 1;
+    else if (lockOf(board, l, meta).locked) locked += 1;
   }
   return { total: leaves.length, done, doing, locked };
 }

@@ -5,6 +5,7 @@ import {
   boardRows, visibleIds, lockOf, statusOf, tallyOf, isGroup,
   BOARD_STATUS_LABEL,
 } from '../engine/taskBoard';
+import { type BoardMeta } from '../engine/boardMeta';
 
 /**
  * 任务板（左栏）—— 计划态任务的树。
@@ -45,6 +46,7 @@ export function BoardTree({
   canWrite,
 }: {
   board: TaskBoard;
+  meta: BoardMeta;
   expanded: Set<string>;
   onToggle: (id: string) => void;
   selectedId: string | null;
@@ -112,7 +114,7 @@ export function BoardTree({
     if (!selectedId) return;
     const node = board.nodes[selectedId];
     if (!node) return;
-    const sub = isGroup(node) ? `（含组内 ${tallyOf(board, selectedId).total} 个任务）` : '';
+    const sub = isGroup(node) ? `（含组内 ${tallyOf(board, selectedId, meta).total} 个任务）` : '';
     const ok = await confirm({
       title: '删除',
       message: `删除「${node.title}」${sub}？别处对它的前置依赖也会一并摘掉。`,
@@ -179,6 +181,7 @@ export function BoardTree({
               key={row.id}
               row={row}
               board={board}
+              meta={meta}
               selected={selectedId === row.id}
               checked={checked.has(row.id)}
               onToggle={onToggle}
@@ -193,10 +196,11 @@ export function BoardTree({
 }
 
 function BoardRowView({
-  row, board, selected, checked, onToggle, onSelect, onCheck,
+  row, board, meta, selected, checked, onToggle, onSelect, onCheck,
 }: {
   row: BoardRow;
   board: TaskBoard;
+  meta: BoardMeta;
   selected: boolean;
   checked: boolean;
   onToggle: (id: string) => void;
@@ -205,9 +209,9 @@ function BoardRowView({
 }) {
   const { node, id, depth } = row;
   const group = isGroup(node);
-  const st = statusOf(board, id);
-  const lock = group ? null : lockOf(board, id);
-  const tally = group ? tallyOf(board, id) : null;
+  const st = statusOf(board, id, meta);
+  const lock = group ? null : lockOf(board, id, meta);
+  const tally = group ? tallyOf(board, id, meta) : null;
 
   return (
     <div

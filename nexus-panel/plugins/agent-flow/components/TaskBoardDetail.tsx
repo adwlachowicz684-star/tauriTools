@@ -7,6 +7,7 @@ import {
   setTaskStatus, claimTask, renameNode,
   BOARD_STATUS_LABEL,
 } from '../engine/taskBoard';
+import { type BoardMeta } from '../engine/boardMeta';
 
 /**
  * 任务板详情（中间栏）。
@@ -32,6 +33,7 @@ export function TaskBoardDetail({
   board, selectedId, onApply, canWrite, sessionId = '',
 }: {
   board: TaskBoard;
+  meta: BoardMeta;
   selectedId: string | null;
   /** 传一个纯函数进来，由外层负责写盘 */
   onApply: (next: (b: TaskBoard) => TaskBoard) => void;
@@ -66,8 +68,8 @@ export function TaskBoardDetail({
   }
 
   const group = isGroup(node);
-  const lock = group ? null : lockOf(board, selectedId);
-  const tally = group ? tallyOf(board, selectedId) : null;
+  const lock = group ? null : lockOf(board, selectedId, meta);
+  const tally = group ? tallyOf(board, selectedId, meta) : null;
 
   const guard = async (warnings: string[], run: () => void) => {
     if (warnings.length === 0) { run(); return; }
@@ -127,8 +129,8 @@ export function TaskBoardDetail({
         {group ? (
           <span className="bdd-kind">任务组</span>
         ) : (
-          <span className={`bdt-pill st-${statusOf(board, selectedId)}`}>
-            {BOARD_STATUS_LABEL[statusOf(board, selectedId)]}
+          <span className={`bdt-pill st-${statusOf(board, selectedId, meta)}`}>
+            {BOARD_STATUS_LABEL[statusOf(board, selectedId, meta)]}
           </span>
         )}
       </div>
@@ -165,7 +167,7 @@ export function TaskBoardDetail({
                 <button
                   key={st}
                   type="button"
-                  className={`mini ${statusOf(board, selectedId) === st ? 'is-on' : ''}`}
+                  className={`mini ${statusOf(board, selectedId, meta) === st ? 'is-on' : ''}`}
                   disabled={!canWrite}
                   onClick={() => doStatus(st)}
                 >

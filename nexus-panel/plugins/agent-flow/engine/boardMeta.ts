@@ -265,6 +265,45 @@ export function statusName(m: BoardMeta, id: string): string {
 }
 
 /**
+ * 这个状态算不算「做完了」。
+ *
+ * ⛔ 不能写死 `id === 'done'`：
+ * 状态集是**用户配的**（见 DEFAULT_STATUSES 上面的说明），自定义流程里
+ * 完成态可能叫 's3'、'完工'… —— 写死的话
+ *   · 前置依赖**永远解锁不了**（锁打不开，界面只说"被前置卡住"）
+ *   · 组头永远显示"待办"、已完成数永远 0
+ * 判据只有一条：状态的 `final`。
+ *
+ * 缺省时（老存档 / 没配流程 / id 查不到）退回默认那两个 id，行为不变。
+ */
+export function isFinalStatus(m: BoardMeta | null | undefined, id: string): boolean {
+  const s = m ? statusOf(m, id) : null;
+  if (s) return !!s.final;
+  return id === 'done' || id === 'cancelled';
+}
+
+/**
+ * 终态里「不做了」的那一种。
+ *
+ * 只有默认流里的 'cancelled' 认：自定义流程**没有**独立的取消语义
+ * （`final` 只表示不再流出，不区分完成还是放弃）。
+ * 猜"哪个终态是取消"会猜错，所以不猜 —— 自定义流程下终态一律按完成算。
+ */
+export function isCancelStatus(_m: BoardMeta | null | undefined, id: string): boolean {
+  return id === 'cancelled';
+}
+
+/**
+ * 状态列表里第一个 = 未开始。
+ *
+ * 默认流里就是 'todo'。自定义流程沿用这个约定：配流程时通常把待办放第一个。
+ * 只用于"进行中"的计数 —— 判错只会让组头的数字偏一点，不会锁死任务。
+ */
+export function idleStatusId(m: BoardMeta | null | undefined): string {
+  return m && m.statuses.length > 0 ? m.statuses[0].id : 'todo';
+}
+
+/**
  * 这个状态能不能流转到目标状态。
  *
  * 判据只有一条：目标在 next 里。
