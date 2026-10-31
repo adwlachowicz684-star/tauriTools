@@ -2163,6 +2163,8 @@ function ImportProjectModal({
   const [scan, setScan] = useState<null | {
     dir: string; tasksJson: boolean; mdCount: number;
     dirCount: number; otherCount: number; sample: string[]; degraded?: boolean;
+    /** 探完没切回原数据目录。⛔ 静默的话表现为「扫了一下别的目录，整个看板就空了」 */
+    restoreFailed?: boolean;
   }>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -2234,6 +2236,17 @@ function ImportProjectModal({
           {scan.degraded ? (
             <div className="tb-scan-warn">
               ⚠ 后端扫描不可用，只验证了有没有 tasks.json（文档数量没能统计）
+            </div>
+          ) : null}
+          {/*
+            ⛔ 探完切不回当前目录必须说出来，不能静默：
+            数据目录从此停在刚扫的那个目录上，当前项目随后的每一次读写都指向它 ——
+            表现为「只是扫了一下别的目录，整个看板就空了」，而用户只会以为看板坏了。
+          */}
+          {scan.restoreFailed ? (
+            <div className="tb-scan-warn">
+              ⚠ 探完没切回原来的数据目录：数据目录现在停在刚扫的这个目录上，
+              当前项目的读写都会指向它。请重新选一次数据目录。
             </div>
           ) : null}
           {scan.sample.length > 0 ? (
