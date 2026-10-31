@@ -101,10 +101,23 @@ test('isCancelStatus 必须读 meta 上的 cancel 标记（不能退回字面量
   assert.ok(/\.cancel/.test(body), '判据是那个显式的 cancel 标记，不是名字');
 });
 
-test('组件显示状态名必须走 statusName（写死 LABEL 表在自定义流程下是空白）', () => {
-  const src = readSrc('components/TaskBoard.tsx', 'components/TaskBoardDetail.tsx');
+/*
+  ⛔ 这两条原本 readSrc 的是 components/TaskBoard.tsx 与 TaskBoardDetail.tsx ——
+  那两个组件在 #399 随 engine/taskBoard.ts 一起移除了，但**漏删**了这两个文件本身，
+  于是它们 import 一个不存在的模块，整个插件编译不过（TS2307）。
+
+  守卫对象消失有两种改法：删掉用例，或改守**仍在的定义处**。
+  删掉用例就是那种最危险的失明 —— 将来谁重建任务板、又写死查表，没人拦。
+  所以改成守 boardMeta.ts：它还在，且是 statusName / statusColor 的定义处，
+  守的还是同一件事 —— 自定义 id 必须认得，不能查写死的表。
+*/
+test('状态名不得查写死的表（自定义流程下会显示空白）', () => {
+  const src = readSrc('engine/boardMeta.ts');
   assert.ok(!/BOARD_STATUS_LABEL\s*\[/.test(src), 'BOARD_STATUS_LABEL 查表认不了自定义 id');
-  assert.ok(/statusName\(/.test(src), '改用 statusName：它认 meta 里的名字');
+  const at = src.indexOf('export function statusName');
+  assert.ok(at >= 0, '要能找到 statusName');
+  const body = src.slice(at, src.indexOf('export function', at + 10));
+  assert.ok(/statusOf\(/.test(body), 'statusName 要走 statusOf 拿 meta 里的名字');
 });
 
 /* ---------- 颜色 ---------- */
@@ -129,7 +142,11 @@ test('查不到返回空串 —— 交给 CSS 兜底，不臆造颜色', () => {
   assert.equal(statusColor(null, 'done'), '#22c55e', '不给 meta 时默认 id 仍认得');
 });
 
-test('源码守卫：状态胶囊的颜色必须来自 statusColor（类名只认默认四个 id）', () => {
-  const src = readSrc('components/TaskBoard.tsx', 'components/TaskBoardDetail.tsx');
-  assert.ok(/statusColor\(/.test(src), '胶囊颜色要取状态自己的 hex');
+test('源码守卫：状态色不能走在恒假分支后面（自定义 id 会全返回空串）', () => {
+  const src = readSrc('engine/boardMeta.ts');
+  assert.ok(!/if\s*\(\s*false/.test(src), '恒假条件 = 那一行永远不会执行');
+  const at = src.indexOf('export function statusColor');
+  assert.ok(at >= 0, '要能找到 statusColor');
+  const body = src.slice(at, src.indexOf('export function', at + 10));
+  assert.ok(/if\s*\(\s*s\s*\)/.test(body), '自定义状态要先取它自己的 hex');
 });
