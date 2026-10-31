@@ -98,7 +98,20 @@ function McpServerSection({
   onHoverOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const shown = open || forceOpen === true;
+  /*
+   * ⛔ 「强制展开」不能压过用户的点击。
+   *
+   *    写成 `shown = open || forceOpen` 而点击只切 `open` 的话：
+   *    搜索期间点这个标题**毫无反应** —— 按钮 title 写着「展开/收起」，
+   *    收不起就是静默无操作，用户只会以为按钮坏了。
+   *    而搜索恰好是最想收起无关分组的时候（命中已经看过了）。
+   *
+   *    所以点击后以用户意图为准（override 记下显式值），
+   *    搜索开关一变就清掉这个意图，重新「跟随搜索」。
+   */
+  const [override, setOverride] = useState<boolean | null>(null);
+  const shown = override ?? (open || forceOpen === true);
+  useEffect(() => { setOverride(null); }, [forceOpen]);
   return (
     <div className="mcp-sec">
       <button
@@ -108,7 +121,7 @@ function McpServerSection({
          * （都由 mcpColorOf(server) 得出），侧栏与画布因此能对上。
          */
         style={{ borderLeftColor: group.color }}
-        onClick={() => setOpen(!open)}
+        onClick={() => { setOverride(!shown); setOpen(!shown); }}
         title="展开/收起这个服务的工具"
       >
         <span className="mcp-sec-name">{group.server}</span>

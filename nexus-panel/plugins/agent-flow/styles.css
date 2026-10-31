@@ -4498,3 +4498,185 @@ input.mono, textarea.mono {
 
 /* ================================================================== */
 
+
+
+/* ---------- 补回：重构删掉但组件仍在用的类名 ----------
+ * BoardMetaPanel(.bmp-*) / TaskBoardDetail(.bdd-*) 仍在引用这些类名，
+ * 而重构删掉了这段定义 —— 界面会渲染成无样式的裸元素。按旧版原样补回。
+ * ---------- */
+.bdd-actions .mini.is-on { color: var(--af-accent); border-color: var(--af-accent); }
+.bdd-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.bdd-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 14px;
+  display: flex; flex-direction: column; gap: var(--sp-4, 8px); }
+.bdd-dep { display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+  padding: 1px 6px; border-radius: var(--r-pill, 999px); background: var(--af-item);
+  font-size: var(--fs-micro, 10px); color: var(--af-soft); }
+.bdd-dep-add { flex: 1; min-width: 0; font-size: var(--fs-note, 11px); padding: 2px 4px; }
+.bdd-dep-g { color: var(--af-mute); }
+.bdd-dep-x { background: none; border: none; padding: 0 1px; color: var(--af-mute);
+  font-size: var(--fs-micro, 10px); cursor: pointer; }
+.bdd-dep-x:hover { color: var(--af-bad); }
+.bdd-deps { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.bdd-head { flex: none; display: flex; align-items: center; gap: var(--sp-4, 8px);
+  padding: 10px 14px; border-bottom: 1px solid var(--af-divider); }
+.bdd-k { flex: none; width: 42px; font-size: var(--fs-note, 11px); color: var(--af-mute);
+  line-height: 24px; }
+.bdd-kind { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-mute);
+  padding: 1px 6px; border: 1px solid var(--af-divider); border-radius: var(--r-pill, 999px); }
+.bdd-note, .bdd-mute { font-size: var(--fs-note, 11px); color: var(--af-mute);
+  line-height: var(--lh-relaxed, 1.6); }
+.bdd-note-input { flex: 1; min-width: 0; min-height: 54px; resize: vertical;
+  font-size: var(--fs-body, 12px); padding: 4px 7px; }
+.bdd-ok { font-size: var(--fs-note, 11px); color: var(--af-ok); }
+.bdd-row { display: flex; align-items: flex-start; gap: var(--sp-4, 8px); }
+.bdd-stats { display: flex; gap: 10px; font-size: var(--fs-note, 11px); color: var(--af-mute); }
+.bdd-title { flex: 1; min-width: 0; font-size: var(--fs-title, 13px); padding: 4px 7px; }
+.bdd-warn { padding: 5px 8px; border-radius: var(--af-r-sm, 5px);
+  font-size: var(--fs-note, 11px); line-height: var(--lh-relaxed, 1.6);
+  color: var(--af-warn, var(--af-bad)); background: var(--af-sunk); }
+.bdd-who { flex: 1; min-width: 0; font-size: var(--fs-note, 11px); padding: 3px 7px; }
+.bmp-add { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding-top: 4px; }
+.bmp-add-input { flex: 1 1 110px; min-width: 90px; font-size: var(--fs-body, 12px); padding: 2px 5px; }
+.bmp-body { flex: 1; min-height: 0; overflow: auto; padding: 6px 10px 10px; }
+.bmp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-mute);
+  cursor: pointer;
+}
+.bmp-empty { padding: 14px 12px; font-size: var(--fs-note, 11px); }
+.bmp-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--af-divider);
+}
+.bmp-hint { font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+.bmp-move { display: inline-flex; gap: 2px; }
+.bmp-name { flex: 1 1 90px; min-width: 70px; font-size: var(--fs-note, 11px); padding: 2px 5px; }
+.bmp-next-k { flex: none; font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+.bmp-next-v { display: flex; flex-wrap: wrap; gap: 3px; }
+.bmp-notice {
+  flex: none;
+  padding: 5px 10px;
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-warn, var(--af-bad));
+  background: var(--af-sunk);
+}
+.bmp-preview { flex: none; }
+.bmp-sec + .bmp-sec { border-top: 1px solid var(--af-divider); }
+.bmp-sec { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.bmp-sec-hint { font-weight: var(--fw-normal, 400); font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+.bmp-sec-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-note, 11px);
+  font-weight: var(--fw-strong, 600);
+}
+.bmp-swatchs { display: flex; flex-wrap: wrap; gap: 3px; max-width: 150px; }
+.bmp-title { font-size: var(--fs-body, 12px); font-weight: var(--fw-strong, 600); }
+/* ---------- 状态流程与标签设置 ---------- */
+.bmp-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--af-z-mask);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, .5);
+}
+/* 「能走到」—— 流转规则 */
+.bmp-next {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 0 4px 0;
+}
+/* 一行 = 一条状态 / 一个标签 */
+.bmp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--af-divider);
+}
+
+
+/* ---------- 补回（第二批）：色板与标签相关 ---------- */
+.af-tag-btn:hover { filter: brightness(var(--hover-bright-strong, 1.15)); }
+.bmp {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 92vw);
+  max-height: 84vh;
+  background: var(--af-panel);
+  border: 1px solid var(--af-line, #444);
+  border-radius: var(--af-r-ctl, 8px);
+  box-shadow: var(--af-shadow, 0 12px 40px rgba(0, 0, 0, .5));
+}
+.ttb-swatch {
+  width: 14px;
+  height: 14px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+}
+.ttb-swatch.is-on {
+  border-color: var(--af-soft, #fff);
+  box-shadow: 0 0 0 1px var(--af-pop, #1c1f27);
+}
+/*
+  配置里已经删掉的标签 / 状态。
+  显示成虚线框 + 原始 id —— 不能显示成"未知"：
+  看不出是哪个没了，就没法去修配置或改任务。
+*/
+.af-tag-missing {
+  border-style: dashed;
+  border-color: var(--af-mute);
+  color: var(--af-mute);
+  background: none;
+  opacity: .8;
+}
+/* ---------- 标签化展示（参考腾讯文档智能表的标签列）---------- */
+/*
+  样式要点（与腾讯文档一致的那部分）：
+    · 小圆角，不是全圆胶囊 —— 全圆在窄列里会挤掉两个字的空间
+    · **浅底深字 + 同色描边**：一眼能分类，又不像实心块那样糊成一片
+    · 高度紧凑，一行放得下三个
+
+  底色/字色/描边都由同一个 hex 现算（见 tintStyle），不另存一套浅色版 ——
+  存两套的话改颜色时只改一套，标签会变成深底深字，反而看不清。
+*/
+.af-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--af-r-xs, 4px);
+  font-size: var(--fs-micro, 10px);
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+/* 可点的（标签列里那几个）：点一下摘掉，所以要给 hover 反馈 */
+.af-tag-btn { cursor: pointer; }
+/* 已存在的标签在这里横排，勾一个挂一个 */
+.ttb-tagpop .af-tag-btn { flex: none; }
+/* 浮层里已挂上的那个：加个勾，与"能挂但没挂"区分开 */
+.af-tag-btn.is-on::after {
+  content: ' ✓';
+  font-weight: var(--fw-strong, 600);
+}
+/* 色板：12 个预设色，点一下选中 */
+.ttb-swatches { display: flex; flex-wrap: wrap; gap: 3px; }

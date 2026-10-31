@@ -143,9 +143,14 @@ for (const f of files) {
 t('存在折叠展开的界面（说明这条规则有实际管辖对象）', caretFiles.length > 0,
   `${caretFiles.length} 个文件带展开箭头`);
 
-const caretBad = [];
-for (const f of caretFiles) {
-  const s = readFileSync(f, 'utf8');
+/*
+ * 判定抽成函数 —— 为了能拿**合成样本**自检。
+ *
+ * 判据每加一条"可接受形状"，就多一分把真 bug 放过去的风险；
+ * 只跑真实文件的话，"现在全绿"说明不了判据还抓得住旧的错误写法。
+ */
+function caretIssues(s) {
+  const bad = [];
   /* 找形如 open ? '▾' : '▸' 的箭头，抓出那个状态名 */
   for (const m of s.matchAll(/(\w+)\s*\?\s*'▾'\s*:\s*'▸'/g)) {
     const v = m[1];
@@ -176,8 +181,65 @@ for (const f of caretFiles) {
     const hasToggleCb = /onToggle/.test(s) || /toggle/i.test(s);
     if (usedAsSet && hasToggleCb) continue;
 
-    caretBad.push(`${f.split('/').pop()}  ${v}`);
+    /* c2) 箭头是**行上的派生布尔**（row.expanded），真正的展开态是父组件
+       传进来的 Set（props 里声明成 `expanded: Set<string>`），
+       切换走 onToggle(id) 回调。
+       ------------------------------------------------------------------
+       与 c) 的差别：c) 里那个变量自己就是集合（expanded.has(id)）；
+       这里它是 `boardRows(board, expanded)` 算出来的每行的布尔字段，
+       文件里**不会出现** `expanded.has(`，于是被 c) 漏掉。
+       三个条件必须同时成立才算有退路 —— 缺任一都继续往下判（见自检）。 */
+    const rowField = new RegExp('\\b\\w+\\.' + v + '\\b').test(s);
+    const setProp = new RegExp('\\b' + v + '\\s*:\\s*Set\\s*<').test(s);
+    if (rowField && setProp && hasToggleCb) continue;
+
+    /* d) 点击是拿**当前显示值**取反：setX(!shown)
+       ------------------------------------------------------------------
+       显示值可能是 `override ?? (open || forceOpen)` 这类派生式，
+       此时切 `open` 是无效的（强制展开时点了没反应），
+       只有"切的是 !显示值"才证明真能收回去。
+       注意：这里**不接受** `setOpen(!open)` —— 那正是被 d) 挡住的错误写法。 */
+    if (new RegExp('set\\w+\\(\\s*!' + v + '\\b').test(s)) continue;
+
+    bad.push(v);
   }
+  return bad;
+}
+
+const caretBad = [];
+for (const f of caretFiles) {
+  const s = readFileSync(f, 'utf8');
+  for (const v of caretIssues(s)) caretBad.push(`${f.split('/').pop()}  ${v}`);
+}
+
+/* 自检：判据放宽之后，旧的错误写法**必须仍然被抓住** ——
+   否则"全绿"只是把判据改松了，而不是问题消失了。 */
+{
+  const broken = "const shown = open || forceOpen === true;\n"
+    + "<span>{shown ? '▾' : '▸'}</span>\n"
+    + "onClick={() => setOpen(!open)}";
+  t('自检：强制展开时只切 open 仍要报（点了收不回去）',
+    caretIssues(broken).length === 1, caretIssues(broken).join(',') || '被误放行');
+
+  const fixed = "const shown = override ?? (open || forceOpen === true);\n"
+    + "<span>{shown ? '▾' : '▸'}</span>\n"
+    + "onClick={() => { setOverride(!shown); setOpen(!shown); }}";
+  t('自检：切的是 !显示值 才算有退路', caretIssues(fixed).length === 0,
+    caretIssues(fixed).join(',') || '有退路');
+
+  const rowSet = "expanded: Set<string>;\nonToggle: (id: string) => void;\n"
+    + "const rows = boardRows(board, expanded);\n"
+    + "<span>{row.expanded ? '▾' : '▸'}</span>\n"
+    + "onClick={() => onToggle(id)}";
+  t('自检：行上派生布尔 + Set prop + onToggle → 有退路',
+    caretIssues(rowSet).length === 0, caretIssues(rowSet).join(',') || '有退路');
+
+  const rowSetNoToggle = "expanded: Set<string>;\n"
+    + "const rows = boardRows(board, expanded);\n"
+    + "<span>{row.expanded ? '▾' : '▸'}</span>";
+  t('自检：少了 onToggle 仍要报（三个条件缺一不可）',
+    caretIssues(rowSetNoToggle).length === 1,
+    caretIssues(rowSetNoToggle).join(',') || '被误放行');
 }
 t('带展开箭头的区域都支持再点收回', caretBad.length === 0,
   caretBad.length ? caretBad.join(' | ') : '全部为 toggle');
