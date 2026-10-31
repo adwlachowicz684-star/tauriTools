@@ -137,7 +137,12 @@ const SORT_FIELDS: SortField[] = [
 ];
 
 /** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
-function groupLabel(key: string, by: GroupKey, flow?: FlowLike): string {
+function groupLabel(
+  key: string,
+  by: GroupKey,
+  flow?: FlowLike,
+  tagDefs?: TagDef[],
+): string {
   /*
     空 key（**没选任何分组依据**时，所有任务落在同一个 key='' 的组里）。
 
@@ -152,6 +157,16 @@ function groupLabel(key: string, by: GroupKey, flow?: FlowLike): string {
   if (key === UNASSIGNED) return '未认领';
   if (key === NOTAG) return '无标签';
   if (key === NOGROUP) return '未分组';
+  /*
+    按标签分组时，key 是**标签 id**（tg_xxxx）。
+    ⛔ 不查定义表的话组头显示一串没人看得懂的字符，
+    而用户选"按标签分组"就是要按**名字**归拢 ——
+    看着像分组功能坏了（"这些都是什么？"）。
+  */
+  if (by === 'tag') {
+    const d = (tagDefs || []).find((x) => x.id === key);
+    return d ? d.name : key;
+  }
   return key;
 }
 /** 排序字段 → 展示名。与列头用的是同一套名字，两处说法必须一致 */
@@ -4013,7 +4028,7 @@ function GroupNodeView({
         {by === 'type' && node.key !== NOTYPE ? (
           <span className="tb-col-dot" style={{ background: typeColor(flow.typeDefs, node.key) }} />
         ) : null}
-        <span className="tb-group-name">{groupLabel(node.key, by, flow)}</span>
+        <span className="tb-group-name">{groupLabel(node.key, by, flow, tagDefs)}</span>
         <span className="tb-col-num">{isLeaf ? node.tasks.length : node.count}</span>
       </header>
       <div className="tb-group-body">

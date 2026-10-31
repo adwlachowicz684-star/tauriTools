@@ -2972,6 +2972,28 @@ t('审查：调用点传了 flow 且在依赖里', (() => {
     && app.indexOf('[listRows, groupKeys, flow]') >= 0;
 })());
 
+
+/* ============================================================ 审查：按标签分组组头显示原始 id（本轮） */
+
+/*
+ * **按标签分组时 key 是标签 id（tg_xxxx）**，groupLabel 不查定义表 →
+ * 组头显示一串没人看得懂的字符。
+
+ * 用户选"按标签分组"就是要按**名字**归拢，
+ * 看着像分组功能坏了（"这些都是什么？"）。
+ */
+t('审查：按标签分组时组头查标签定义表', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function groupLabel(');
+  const seg = app.slice(i, i + 900);
+  return seg.indexOf("if (by === 'tag') {") >= 0;
+})());
+
+t('审查：groupLabel 的调用点传了 tagDefs', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('groupLabel(node.key, by, flow, tagDefs)') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
