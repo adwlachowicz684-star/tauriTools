@@ -3078,8 +3078,12 @@ function DetailModal({
           </span>
           <span className="tb-dhint">
             状态由下面的任务推导：
-            {groupStatus(task.id, tasks)
-              ? statusName(flow, groupStatus(task.id, tasks) as string)
+            {/*
+              flow 必须传进去：用户自定义流程时终态可以叫任何 id，
+              不传的话组永远显示"待办"，而下面每条其实都已完成。
+            */}
+            {groupStatus(task.id, tasks, flow)
+              ? statusName(flow, groupStatus(task.id, tasks, flow) as string)
               : '（空组，没有状态）'}
           </span>
           <button

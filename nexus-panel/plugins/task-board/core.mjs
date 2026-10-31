@@ -737,7 +737,13 @@ export function flattenTasks(tasks) {
 }
 
 /** 组的状态：由它下面所有任务**推导**，不存字段 */
-export function groupStatus(groupId, tasks) {
+/*
+ * 组的状态由下面**所有层**的叶子任务推导。
+ *
+ * ⚠️ 必须传 flow：用户自定义流程时终态可以叫任何 id。
+ * 不传的话只能按默认清单判断，自定义流程下会全部落空。
+ */
+export function groupStatus(groupId, tasks, flow) {
   const { parentOf } = indexTasks(tasks || []);
   const kids = (tasks || []).filter((t) => {
     if (t.kind === 'group') return false;
@@ -751,11 +757,34 @@ export function groupStatus(groupId, tasks) {
     return false;
   });
   if (kids.length === 0) return null;
-  if (kids.every((t) => t.status === 'done')) return 'done';
-  if (kids.some((t) => t.status === 'review')) return 'review';
-  if (kids.some((t) => t.status === 'doing')) return 'doing';
-  if (kids.some((t) => t.status === 'claimed')) return 'claimed';
-  return 'todo';
+  /*
+    ⛔ 判据必须是"是否算完成"，不能是"状态 id 叫不叫 done"。
+    用户自定义流程时可以把终态改成任意 id（'s2'、'完工'、'已交付'…），
+    那时这里全部落空，组永远显示"待办" ——
+    而下面明明每条都已经是终态了。
+
+    取值也优先取子任务**实际在用的**状态 id，而不是写死的 'done' ——
+    组不单列一行（不参与筛选），但它的名字要能反映子任务的真实状态。
+  */
+  if (kids.every((t) => statusDone(flow, t.status))) {
+    // 全部完成：取其中一条的状态（同批任务的终态通常一致；取第一条保证稳定）
+    return kids[0].status;
+  }
+  /*
+    未完成时的"进度态"沿默认清单的固定语义判断：
+    review > doing > claimed > 其余。
+    自定义流程里这些 id 可能被改名，所以这里只认**默认**语义 ——
+    认不出来就落到初始态，不会谎报进度。
+  */
+  const rank = { review: 3, doing: 2, claimed: 1 };
+  let best = '';
+  let bestR = 0;
+  for (const t of kids) {
+    const r = rank[t.status] || 0;
+    if (r > bestR) { bestR = r; best = t.status; }
+  }
+  if (best) return best;
+  return initialStatus(flow);
 }
 
 /* ============================================================ 前置任务
