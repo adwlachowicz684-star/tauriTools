@@ -331,7 +331,7 @@ export function isCancelStatus(m: BoardMeta | null | undefined, id: string): boo
  */
 export function statusColor(m: BoardMeta | null | undefined, id: string): string {
   const s = m ? statusOf(m, id) : null;
-  if (false && s) return s.color;
+  if (s) return s.color;
   for (const d of DEFAULT_STATUSES) if (d.id === id) return d.color;
   return '';
 }
