@@ -66,6 +66,32 @@ async function authorize(ctx: PluginContext, cfg: TbConfig): Promise<void> {
 
 // ---------------------------------------------------------------- 项目
 
+/**
+ * 把当前项目指向 id，并且**让上层的 dataDir / docsDir 跟着一起走**。
+ *
+ * ⛔ 这一步不能省，原因有个反直觉的地方：
+ * normalizeConfig 有一条"派生字段反向写回"的规则 ——
+ *   传入的 c.dataDir 与 **新的当前项目** 的 dataDir 不一致时，
+ *   就把新项目的 dataDir 改成 c.dataDir。
+ * 这条规则是为了支持"设置页直接改 dataDir"（那个字段是派生的）。
+ *
+ * 但切项目时传进去的 cfg 里，dataDir 还是**旧项目**的：
+ *   switchProject(cfg, 'p2') → c.dataDir 是 p1 的，而 cur 已经是 p2
+ *   → p2.dataDir 被改成 p1 的目录！
+ *
+ * 后果是切到项目乙却仍看到甲的任务（用户报的现象），
+ * 而且**这个改动会写进磁盘配置** —— 两个项目从此指向同一份 tasks.json，
+ * 在其中一个里的任何改动都会"同时"出现在另一个里。
+ *
+ * 所以切换类操作必须显式把上层两个派生字段设成目标项目的值，
+ * 让 c.dataDir === cur.dataDir，那条写回规则就不会误触发。
+ */
+function aimAt(cfg: TbConfig, currentId: string): TbConfig {
+  const p = (cfg.projects || []).find((x) => x.id === currentId);
+  if (!p) return { ...cfg, currentId };   // 找不到就交给 normalizeConfig 去回落
+  return { ...cfg, currentId, dataDir: p.dataDir, docsDir: p.docsDir };
+}
+
 /** 新建项目。数据目录默认放在默认目录下的同名子目录里（可改）。 */
 export async function addProject(
   ctx: PluginContext,
@@ -86,16 +112,14 @@ export async function addProject(
     const slug = (name.trim() || id).replace(/[/\\:*?"<>|]/g, '_').trim() || id;
     dir = base ? `${base}/${slug}` : '';
   }
-  const next = normalizeConfig({
-    ...cfg,
-    projects: [...cfg.projects, {
-      id,
-      name: name.trim() || `项目 ${cfg.projects.length + 1}`,
-      dataDir: dir,
-      docsDir,
-    }],
-    currentId: id,   // 新建即切过去 —— 建完还在看旧项目，会以为没建成
-  });
+  const list = [...cfg.projects, {
+    id,
+    name: name.trim() || `项目 ${cfg.projects.length + 1}`,
+    dataDir: dir,
+    docsDir,
+  }];
+  // 新建即切过去 —— 建完还在看旧项目，会以为没建成
+  const next = normalizeConfig(aimAt({ ...cfg, projects: list }, id));
   return saveConfig(ctx, next);
 }
 
@@ -169,14 +193,14 @@ export async function importProject(
 
 /** 切换当前项目 */
 export async function switchProject(ctx: PluginContext, cfg: TbConfig, id: string): Promise<TbConfig> {
-  return saveConfig(ctx, normalizeConfig({ ...cfg, currentId: id }));
+  return saveConfig(ctx, normalizeConfig(aimAt(cfg, id)));
 }
 
 /** 删除项目。不许删最后一个 —— 删了就没有当前项目，界面上没东西可显示。 */
 export async function removeProject(ctx: PluginContext, cfg: TbConfig, id: string): Promise<TbConfig> {
   if (cfg.projects.length <= 1) return cfg;
   const projects = cfg.projects.filter((p) => p.id !== id);
-  return saveConfig(ctx, normalizeConfig({ ...cfg, projects, currentId: projects[0].id }));
+  return saveConfig(ctx, normalizeConfig(aimAt({ ...cfg, projects }, projects[0].id)));
 }
 
 /**

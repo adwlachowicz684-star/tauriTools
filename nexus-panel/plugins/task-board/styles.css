@@ -885,6 +885,32 @@
   min-width: 940px;
 }
 
+/* 两个项目指向同一份数据：标出来（只报不改，改成哪儿只有用户知道） */
+.tb-sproj-dup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-block-end: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--warn);
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
+  color: var(--warn);
+  font-size: var(--fs-note);
+}
+
+.tb-sproj-dup-row {
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
+.tb-sproj-row.dup {
+  outline: 1px solid var(--warn);
+  outline-offset: -1px;
+  border-radius: var(--r-sm);
+}
+
 /* ---------- 行内编辑（点一下就地改，不弹窗） ---------- */
 
 .tb-ic {
@@ -1197,6 +1223,17 @@ body.tb-col-resizing {
   max-width: 9em;
   padding-inline: var(--sp-2);
 }
+
+/*
+  多于一个项目时强调：这时"还能切到别处"是真实信息。
+  只有一个项目时保持低调 —— 切无可切，强调它只会误导
+  （点开只有一个选项的下拉，看着像坏了）。
+*/
+.tb-projsel.has-more {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
 .tb-dochint {
   display: flex;
   align-items: center;
@@ -1208,6 +1245,16 @@ body.tb-col-resizing {
   color: var(--text-dim);
   font-size: var(--fs-micro);
 }
+/* 共用数据目录：比"没设文档路径"更急，用警示色 */
+.tb-dochint.warn {
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-soft));
+  color: var(--text-1);
+}
+
+.tb-dochint.warn .tb-dochint-ico {
+  background: var(--warn);
+}
+
 .tb-dochint-ico {
   flex: none;
   display: inline-flex;

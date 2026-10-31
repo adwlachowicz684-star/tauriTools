@@ -27,6 +27,7 @@ import {
   ancestorChain,
   canTransitionIn,
   currentProject,
+  duplicateDataDirs,
   needsDocsDir,
   normalizeStore,
   normalizeTypeDefs,
@@ -361,6 +362,8 @@ export default function App() {
     流程配置（自定义状态与流转）。store.flow 由 normalizeStore 保证存在 ——
     缺字段的老文件给的是默认那套，行为与以前完全一致。
   */
+  /* 当前项目是否与别的项目共用数据目录（只报不改，见下面的提示条） */
+  const sameDir = cfg ? duplicateDataDirs(cfg).filter((d) => d.ids.indexOf(cfg.currentId) >= 0) : [];
   const flow = store ? { ...store.flow, typeDefs: store.typeDefs } : { ...DEFAULT_FLOW, typeDefs: normalizeTypeDefs(null) };
   const statusIds = flow.statuses.map((s) => s.id);
   const typeDefs = store ? store.typeDefs : [];
@@ -939,6 +942,38 @@ ${dir}
           <span className="tb-count" title="未完成任务数">{openCount}</span>
         </div>
         <div className="tb-bar-right">
+          {/*
+            项目切换器。项目 = 一份独立任务库，切了换一整套任务。
+
+            ⛔ 必须带「项目」文字标签、且摆在右侧第一位：
+            原来它是一个裸 <select>，挤在「导入…」「＋项目」几个按钮中间，
+            没有任何标识说明它是切项目的 ——
+            用户新建完第二个项目，顶栏多了个下拉却认不出那是切换器，
+            于是"根本没有切换方式"。（身份表也是每个项目独立的，
+            所以"项目"排在"身份"前面，符合上下文层级。）
+
+            项目多于一个时加强调：这时"还能切到别处"是真实信息，
+            只有一个项目时低调即可（切无可切，强调它只会误导）。
+          */}
+          <label className="tb-field">
+            <span>项目</span>
+            <select
+              className={'tb-projsel' + (cfg.projects.length > 1 ? ' has-more' : '')}
+              value={cfg.currentId}
+              title={
+                cfg.projects.length > 1
+                  ? `切换项目（共 ${cfg.projects.length} 个，每个是独立的任务库与文档路径）`
+                  : '当前项目（再建一个就能在这里切换）'
+              }
+              onChange={(e) => doSwitchProject(e.target.value)}
+            >
+              {cfg.projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="tb-field">
             <span>身份</span>
             <select value={me} onChange={(e) => switchMe(e.target.value)}>
@@ -972,24 +1007,6 @@ ${dir}
           >
             ●
           </button>
-          {/*
-            项目切换器。项目 = 一份独立任务库，切了就换一整套任务。
-            放在顶栏而不是设置页：切项目是高频动作，
-            埋在设置里的话每次都要"打开设置→找→切→回来"，
-            而且切完还得确认当前看的是哪个项目。
-          */}
-          <select
-            className="tb-act tb-projsel"
-            value={cfg.currentId}
-            title="切换项目（每个项目是独立的任务库与文档路径）"
-            onChange={(e) => doSwitchProject(e.target.value)}
-          >
-            {cfg.projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
           <button
             className="tb-act"
             onClick={() => setImportOpen(true)}
@@ -1130,6 +1147,32 @@ ${dir}
           ))}
         </div>
       )}
+
+      {/*
+        **当前项目与别的项目共用同一个数据目录** —— 必须摆在主界面上。
+
+        这条比文档路径提醒更急：共用目录意味着在甲里改任何东西，
+        乙"同时"变，而界面只显示项目名，完全看不出它们其实是一份数据。
+        更关键的是——**切项目看起来"没生效"就是这个造成的**：
+        切到乙，乙指向的却是甲的目录，于是看到的还是甲的任务。
+
+        历史上有个 bug 会在切换时把旧项目的 dataDir 盖到新项目头上（已修），
+        但**已经被写坏的配置留在磁盘上不会自己好**，所以这里要能查出来。
+
+        只报不改：改成什么目录只有用户知道，猜一个就是把数据挪到错地方。
+      */}
+      {sameDir.length > 0 ? (
+        <div className="tb-dochint warn">
+          <span className="tb-dochint-ico">⚠</span>
+          <span className="tb-dochint-text">
+            项目「{currentProject(cfg).name}」和{' '}
+            {sameDir[0].ids.filter((id) => id !== cfg.currentId).length} 个其他项目
+            共用同一个数据目录（{sameDir[0].dir}）——
+            在这里改任何东西，那些项目也会跟着变；切过去看起来"没生效"就是这个原因。
+            请到设置 → 项目，给其中一个「改数据目录」。
+          </span>
+        </div>
+      ) : null}
 
       {/* 列表：平铺 + 表头排序 */}
       {/*
