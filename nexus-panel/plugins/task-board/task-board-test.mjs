@@ -3302,6 +3302,63 @@ t('守卫：统计状态分布不只遍历 flow.statuses', (() => {
   return src.indexOf('{statsByStatus.map((sd) => (') >= 0;
 })());
 
+
+/* ============================================================ 审查：JSON 里的数字写成字符串被静默丢弃（本轮） */
+
+/*
+ * **`Number.isFinite` 不认字符串**：
+ * `Number.isFinite("2.5")` 是 false（它不做类型转换）。
+ * 而 JSON 里把数字写成字符串是完全正常的写法
+ * （表单提交、AI 手写 JSON 都常这样）。
+
+ * 于是**用户/AI 明明填了，却被静默当成"没填"**：
+ * · `"estimate": "2.5"` → 0 → 界面显示"没估"、统计里不计
+ * · `"createdAt": "1700000000000"` → 0 → 不参与日期区间筛选、
+ *   在"按创建排序"里永远垫底
+
+ * 两者都不报错，只是那一格空着 / 那条永远排在最后。
+ */
+t('审查：预估写成字符串也能认（"2.5" → 2.5）', (() => {
+  return normalizeTask({ id: 'x', estimate: '2.5' }).estimate === 2.5
+    && normalizeTask({ id: 'x', estimate: '3' }).estimate === 3;
+})());
+
+t('审查：时间戳写成字符串也能认', (() => {
+  const t = normalizeTask({ id: 'x', createdAt: '1700000000000' });
+  return t.createdAt === 1700000000000;
+})());
+
+/* 非法值仍然归零 / 走默认（不能因为放宽就把垃圾写成数字） */
+t('审查：非数字仍然归零（未放宽过头）', (() => {
+  return normalizeTask({ id: 'x', estimate: 'abc' }).estimate === 0
+    && normalizeTask({ id: 'x', estimate: -5 }).estimate === 0
+    && normalizeTask({ id: 'x', estimate: NaN }).estimate === 0;
+})());
+
+/*
+ * **守卫 7：数值字段不许直接用 `Number.isFinite(原值)` 判**
+ *
+ * 判据形如 `Number.isFinite(t.xxx)` —— 传入 JSON 原值时字符串会漏掉。
+ * 正确写法是先 `Number(v)` 再判。
+ */
+/*
+  ⛔ 判据只盯**字段访问**（`x.y` 形式），不能匹配纯变量名：
+  `Number.isFinite(n)` 里的 n 往往就是刚 `Number(v)` 转换出来的，
+  那正是**正确**写法。全匹配的话守卫恒红（当前就有 7 处命中、4 处是对的），
+  真正的回归反而看不出来。
+
+  字段访问（`s.v` / `a.lastSeen` / `t.estimate`）才是
+  "直接拿 JSON 原值去判"的高危写法。
+*/
+t('守卫：数值字段先 Number() 再判有限性', (() => {
+  const src = stripComments(coreSrc);
+  const bad = [];
+  src.split('\n').forEach((l, i) => {
+    if (/Number\.isFinite\(\s*[a-zA-Z_$][\w$]*\s*\.\s*[\w$]+/.test(l)) bad.push(`${i + 1}: ${l.trim().slice(0, 60)}`);
+  });
+  return bad.length === 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
