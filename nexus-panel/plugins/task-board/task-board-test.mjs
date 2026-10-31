@@ -2685,6 +2685,83 @@ t('审查：flow 贯通到筛选面板与摘要', (() => {
     && app.indexOf('flow={flow}') >= 0;
 })());
 
+
+/* ============================================================ 审查：详情面板的按钮用默认流程（本轮） */
+
+const FLOW2 = {
+  statuses: [
+    { id: 's1', name: '待办', color: '#888888', enter: '开工', done: false },
+    { id: 's2', name: '开发中', color: '#888888', enter: '开工', done: false },
+    { id: 's3', name: '完工', color: '#888888', enter: '完成', done: true },
+  ],
+  transitions: { s1: ['s2'], s2: ['s3'], s3: [] },
+  edges: {},
+};
+
+/*
+ * **详情面板的操作按钮用 actionsFor(…)** —— 那是**默认流程**写死的那一套。
+ * 自定义流程下它算出来的按钮指向的状态在本项目里可能根本不存在
+ * → doTransition 走流转校验失败 → **按钮点了没反应**（只弹个错）。
+
+ * 而且漏掉用户新加的状态：详情里看不到"标为完工"这类按钮，
+ * 于是自定义的状态只能从列表那一列里点，详情这儿像是坏了。
+ */
+t('审查：自定义流程下 actionsFor 是空的（所以详情必须用 actionsForIn）', actionsFor('s1').length === 0);
+
+t('审查：actionsForIn 认自定义流程', (() => {
+  const a = actionsForIn(FLOW2, 's1');
+  return a.length === 1 && a[0].to === 's2' && a[0].label === '开工';
+})());
+
+t('审查：详情面板用 actionsForIn(flow, …)', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function DetailModal({');
+  const seg = app.slice(i, i + 1500);
+  return seg.indexOf('const acts = actionsForIn(flow, task.status);') >= 0
+    && seg.indexOf('const acts = actionsFor(task.status);') < 0;
+})());
+
+/*
+ * **主按钮（高亮）的判据写死成 `a.to === 'done'`**：
+ * 自定义流程下完成态可能叫 's3'、'完工'… ——
+ * 写死的话**没有一个按钮会高亮**，
+ * 而高亮正是用来暗示"这一步是往前推进"的。
+ */
+t('审查：主按钮判据是"通向完成态"而不是写死 done', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function DetailModal({');
+  const seg = app.slice(i, app.indexOf('function Modal({', i));
+  return app.indexOf("(statusDone(flow, a.to) ? ' primary' : '')") >= 0
+    && app.indexOf("(a.to === 'done' ? ' primary' : '')") < 0;
+})());
+
+/* 自定义流程下完成态不是 'done'，statusDone 要认配置 */
+t('审查：statusDone 认自定义流程的完成态', (() => {
+  return statusDone(FLOW2, 's3') === true && statusDone(FLOW2, 's2') === false;
+})());
+
+
+/*
+ * **认领按钮的判据写死成 `status === 'todo'`**：
+ * 自定义流程的初始态可能叫别的（'待办'/'新建'/'s1'…），
+ * 写死的话这个按钮**永远不出现**，而"认领"是详情里最常用的动作 ——
+ * 详情这儿像是少了功能。
+ *
+ * 两处（详情面板 + 看板卡片）都写死了，一并修。
+ */
+t('审查：认领按钮的判据是初始态（不写死 todo）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("task.status === initialStatus(flow)") >= 0
+    && app.indexOf("task.status === 'todo'") < 0;
+})());
+
+t('审查：没有残留写死的 todo/claimed 过滤', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("task.status === 'todo' && a.to === 'claimed'") < 0;
+})());
+
+t('审查：自定义流程的初始态不是 todo（所以写死必然失效）', initialStatus(FLOW2) === 's1');
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
