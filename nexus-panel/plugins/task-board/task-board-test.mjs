@@ -2885,6 +2885,44 @@ t('审查：Rust 侧 patch_task 的判据不再写死 review', (() => {
 t('审查：Rust 侧判据用的是 notify_status 变量', rs2Has('let watch = if notify_status.trim().is_empty()')
   && rs2Has('status == watch && old != watch'));
 
+
+/* ============================================================ 审查：搜索搜不到认领人和类型（本轮） */
+
+const SEARCH_DEFS = [{ id: 'dev', name: '开发' }, { id: 'bug', name: 'BUG' }];
+const srow = (id, o) => ({ task: normalizeTask({ id, ...o }), depth: 0, path: [], groupPath: '' });
+const SROWS = [srow('1', { title: '登录', assignee: '张三', type: 'dev' }),
+  srow('2', { title: '支付', assignee: '李四', type: 'bug' })];
+
+/*
+ * **认领人不进搜索**：用户在搜索框打同事名字 → 0 条。
+ * 他会以为"没有这个人"，而不是"搜索不搜这个字段"。
+ * 而认领人列上的筛选是**多选下拉**，得先知道有那一列才会用。
+ */
+t('审查：搜索能匹配认领人', filterTasksByColumns(SROWS, {}, '张三', SEARCH_DEFS).length === 1);
+
+/*
+ * **类型两头不靠**：任务上存 id（'dev'），显示的是"开发"。
+ * 搜 id 没意义（用户看不见），搜名字又搜不到 ——
+ * 于是类型这列在搜索面前等于不存在。
+ */
+t('审查：搜索能匹配类型的显示名（不只是 id）', (() => {
+  return filterTasksByColumns(SROWS, {}, '开发', SEARCH_DEFS).length === 1
+    && filterTasksByColumns(SROWS, {}, 'BUG', SEARCH_DEFS).length === 1;
+})());
+
+/* 不传定义表时退回按 id 搜（老行为不变） */
+t('审查：不传类型定义时按 id 搜（行为不变）', filterTasksByColumns(SROWS, {}, 'dev').length === 1);
+
+/* 标题照旧能搜 */
+t('审查：搜索仍能匹配标题（未破坏）', filterTasksByColumns(SROWS, {}, '登录', SEARCH_DEFS).length === 1);
+
+/* 调用点要把 typeDefs 传下去，且依赖里要带上 */
+t('审查：调用点传了 typeDefs 且在依赖里', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs)') >= 0
+    && app.indexOf('[flatRows, colFilters, q, typeDefs]') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

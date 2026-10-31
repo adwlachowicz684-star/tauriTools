@@ -575,7 +575,7 @@ function matchesCol(row, col, f) {
  * 全局搜索也刻意**不搜组标题**：那会让"找一条任务"变成
  * "找出一整个组下面所有东西"，与搜索的语义相反。
  */
-export function filterTasksByColumns(rows, filters, q) {
+export function filterTasksByColumns(rows, filters, q, typeDefs) {
   const active = LIST_COLUMNS.filter((c) => colFilterActive(c, filters[c.field]));
   const kw = (q || '').trim().toLowerCase();
   if (active.length === 0 && !kw) return rows;
@@ -596,7 +596,21 @@ export function filterTasksByColumns(rows, filters, q) {
         ⛔ 标签**不进**搜索：任务上存的是 id（tg_xxxx），
         搜 id 没有意义；要按标签找请用标签列上的筛选（那儿显示的是名字）。
       */
-      const hay = `${t.id} ${t.title} ${t.detail} ${t.summary || ''} ${t.group || ''}`
+      /*
+        ⛔ 认领人与**类型的显示名**必须进搜索：
+        · 认领人：用户随手在搜索框打同事名字，返回 0 条 ——
+          他会以为"没有这个人”，而不是"搜索不搜这个字段"。
+          而认领人列上的筛选是**多选下拉**，得先知道有那一列才会用。
+        · 类型：任务上存的是 id（'dev'），显示的是"开发"。
+          搜 id 没意义（用户看不见 id），搜名字又搜不到 —— **两头不靠**，
+          于是类型这列在搜索面前等于不存在。
+
+        类型名要靠 typeDefs 查；没传就退回 id（至少老行为不变）。
+      */
+      const typeLabel = typeDefs
+        ? typeName(typeDefs, t.type || '')
+        : (t.type || '');
+      const hay = `${t.id} ${t.title} ${t.detail} ${t.summary || ''} ${t.group || ''} ${t.assignee || ''} ${typeLabel}`
         .toLowerCase();
       if (hay.indexOf(kw) < 0) return false;
     }
