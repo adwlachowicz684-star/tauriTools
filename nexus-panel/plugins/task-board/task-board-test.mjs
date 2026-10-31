@@ -2860,6 +2860,31 @@ t('审查：改触发状态会重启 HTTP 服务', (() => {
   return st.indexOf('next.notifyStatus !== prev.notifyStatus') >= 0;
 })());
 
+
+/* ============================================================ 审查：Rust 侧通知触发仍写死（本轮） */
+
+/*
+ * 上一轮只在**下发侧**加了 notifyStatus，
+ * Rust 消费侧仍写死 `status == "review"` ——
+ * 于是界面能触发、AI 经 HTTP 通道触发不了（两边不一致）。
+ */
+const rs2Has = (needle) => !rsSrc || rsSrc.indexOf(needle) >= 0;
+
+t('审查：Rust 侧 tb_http_start 接收 notify_status', (() => {
+  if (!rsSrc) return true;
+  const i = rsSrc.indexOf('pub fn tb_http_start(');
+  return rsSrc.slice(i, i + 900).indexOf('notify_status: String,') >= 0;
+})());
+
+t('审查：Rust 侧 patch_task 的判据不再写死 review', (() => {
+  if (!rsSrc) return true;
+  const i = rsSrc.indexOf('fn patch_task(');
+  return rsSrc.slice(i, i + 900).indexOf('notify_status: &str,') >= 0;
+})());
+
+t('审查：Rust 侧判据用的是 notify_status 变量', rs2Has('let watch = if notify_status.trim().is_empty()')
+  && rs2Has('status == watch && old != watch'));
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

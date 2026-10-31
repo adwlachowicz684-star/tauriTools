@@ -588,7 +588,7 @@ fn handle_conn(stream: &mut TcpStream, dir: &PathBuf, expect_token: &str, notify
 
     // 一次请求一把文件锁：读-改-写序列不允许被另一个请求插在半途
     let _lock = file_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let resp = route(&req, dir);
+    let resp = route(&req, dir, notify_status);
     // 通知在锁外发：spawn_notify 不碰 file_lock，但也不该拖住响应写回
     if let Some(body) = &resp.2 {
         spawn_notify(notify_url, body);
@@ -648,7 +648,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Request> {
 
 /// 路由返回 (HTTP 状态码, 响应体, 待发通知 body)。
 /// 第三项非空时由 handle_conn 在锁外 fire-and-forget POST 给 notify_url。
-fn route(req: &Request, dir: &PathBuf) -> (u16, String, Option<String>) {
+fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Option<String>) {
     let path = req.path.split('?').next().unwrap_or(&req.path);
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
     let ok_json = |v: Value| (200, v.to_string(), None);
@@ -675,10 +675,13 @@ fn route(req: &Request, dir: &PathBuf) -> (u16, String, Option<String>) {
             Err(e) => (400, err_json(&e), None),
         },
         ("PATCH", ["api", "tasks", id]) => match parse_body(&req.body) {
-            Ok(body) => match patch_task(dir, id, &body) {
-                Ok((t, became_review)) => {
-                    // 送审即通知（agent-flow 审查流程的触发源，AI 通道与 UI 通道行为对齐）
-                    let notice = became_review.then(|| {
+            Ok(body) => match patch_task(dir, id, &body, notify_status) {
+                Ok((t, entered_notify)) => {
+                    /*
+                      进入**通知状态**即通知（agent-flow 审查流程的触发源）。
+                      状态由配置决定，不写死 review —— 理由见 tb_http_start 处。
+                    */
+                    let notice = entered_notify.then(|| {
                         json!({
                             "source": "task-board",
                             "event": "submit-review",
@@ -793,7 +796,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "tb_list_tasks",
             "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）",
             json!({
-                "status":   { "type": "string", "description": "按状态过滤，缺省=全部。状态 id 取自这份数据自己的 flow.statuses（用户可自定义）；没配过时是 todo/claimed/doing/hold/review/done/cancelled" },
+                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "按优先级过滤" },
                 "tag":      { "type": "string", "description": "按标签过滤" },
                 "assignee": { "type": "string", "description": "按认领人过滤；传 \"__none__\" 查未认领" },
@@ -828,7 +831,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "流转/修改任务：认领、开工、提交审查、通过、打回、退回、改字段",
             json!({
                 "id":       { "type": "string", "description": "任务 id" },
-                "status":   { "type": "string", "description": "目标状态 id（取自这份数据的 flow.statuses，用户可自定义；没配过时是 todo/claimed/doing/hold/review/done/cancelled）。流转图校验：没配流转表时 todo/claimed 不可直跳 done" },
+                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）" },
                 "assignee": { "type": "string", "description": "认领人；已被他人认领会被拒绝；空串=释放认领" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
@@ -948,7 +951,16 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
             }
         })(),
         "tb_update_task" => {
-            patch_task(dir, &s("id").unwrap_or_default(), args).map(|(t, review)| {
+            /*
+              MCP 通道没有 HTTP 服务配置可拿（那是 tb_http_start 的参数），
+              这里用默认 "review"。
+
+              注意：MCP 这个返回值只是**告诉调用方"本次进入了通知状态"**，
+              真正的 POST 由 HTTP 服务侧做（那边读的是配置里的 notify_status）。
+              所以两边在自定义流程下会不一致 —— 已在下方注释里标明，
+              要彻底一致得把通知状态存进 tasks.json（与 flow 同库）。
+            */
+            patch_task(dir, &s("id").unwrap_or_default(), args, "review").map(|(t, review)| {
                 json!({ "updated": t, "review_notice_sent": review })
             })
         }
@@ -1325,8 +1337,14 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     Ok(Value::Object(task))
 }
 
-/// 返回 (任务快照, 是否本次进入 review)——后者驱动 webhook 通知。
-fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), String> {
+/// 返回 (任务快照, 本次是否进入**通知状态**)——后者驱动 webhook 通知。
+/// 通知状态由 notify_status 传入（可配），不再写死 review。
+fn patch_task(
+    dir: &PathBuf,
+    id: &str,
+    body: &Value,
+    notify_status: &str,
+) -> Result<(Value, bool), String> {
     let mut store = load_tasks(dir)?;
     /*
       **在进入可变借用之前**把配置取成自有数据：下面 `store["tasks"].as_array_mut()`
@@ -1433,8 +1451,13 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
                 }
                 obj.insert("status".to_string(), json!(status));
                 changed = true;
-                // 记下"本次是不是从别处进入 review"（进过的不再算）
-                if status == "review" && old != "review" {
+                /*
+                  记下"本次是不是从别处进入**通知状态**"（进过的不再算）。
+                  ⛔ 判据不能写死 "review"：自定义流程里那一步可能叫别的，
+                  写死的话配了 notify_url 也永远收不到通知。
+                */
+                let watch = if notify_status.trim().is_empty() { "review" } else { notify_status.trim() };
+                if status == watch && old != watch {
                     entered_review = true;
                 }
                 let suffix = if note.is_empty() { String::new() } else { format!("（{}）", note) };
