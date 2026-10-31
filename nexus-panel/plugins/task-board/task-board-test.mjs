@@ -1960,6 +1960,69 @@ t('标签/类型：哨兵值不显示改名与删除按钮', (() => {
     && pop.indexOf('(isType ? onRemoveType : onRemoveTag)') >= 0;
 })());
 
+
+/* ============================================================ 审查：删除/改名的后遗症（本轮） */
+
+/*
+ * **mutate 带乐观锁，写冲突时会重读再跑一次回调**（最多 3 次）。
+ * 所以在回调里用 `n += 1` 计数，重试一次就把条数报成两倍 ——
+ * toast 写"从 8 条任务上摘掉"而实际只有 4 条。
+ *
+ * 这种数字对不上比不报更糟：没人会怀疑统计，只会以为自己记错了。
+ * 必须是**整体赋值**（n = cnt），重试时以最后一次为准。
+ */
+t('审查：删标签的计数是整体赋值（mutate 重试不会翻倍）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const doRemoveTag =');
+  const seg = app.slice(i, app.indexOf('await refresh();', i));
+  // 注意：注释里也写着 `n += 1`（说明为什么不能用），所以判据要带分号
+  return seg.indexOf('n += 1;') < 0 && seg.indexOf('n = cnt') >= 0
+    && seg.indexOf('let cnt = 0;') >= 0;
+})());
+
+t('审查：删类型的计数同样是整体赋值', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const removeType =');
+  const seg = app.slice(i, app.indexOf('await refresh();', i));
+  return seg.indexOf('n = (st.tasks || []).filter') >= 0 && seg.indexOf('n += ') < 0;
+})());
+
+/*
+ * **删类型后没有 refresh**（原来只有 2s 轮询兜）：
+ * 点了"删"，界面要过两秒才变 —— 而这两秒里列表、筛选下拉、chip 全是老样子，
+ * 看着像点了没反应。（删标签那边是有 refresh 的，两边不一致。）
+ */
+t('审查：删类型后立刻重读（不能只靠 2s 轮询）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const removeType =');
+  const seg = app.slice(i, app.indexOf('已删类型', i));
+  return seg.indexOf('await refresh();') >= 0;
+})());
+
+/*
+ * 摘标签 / 清空类型都是**改任务**，必须推进 updatedAt。
+ * 不推进的话"更新"列纹丝不动，看着像这一行没被改过。
+ */
+t('审查：摘标签与清类型都要推进 updatedAt', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const a = app.slice(app.indexOf('const doRemoveTag ='), app.indexOf('const doPatch ='));
+  const b = app.slice(app.indexOf('const removeType ='), app.indexOf('const toggleType ='));
+  return a.indexOf('updatedAt: Date.now()') >= 0 && b.indexOf("updatedAt: Date.now()") >= 0;
+})());
+
+/*
+ * 改名时若定义不存在（任务上是裸名字）要补一条 ——
+ * ⛔ 补的颜色必须**取第一个没被占用的**：固定一档很可能和已有标签撞色，
+ * 而配色的唯一作用就是一眼区分，两个同色标签等于白配。
+ */
+t('审查：补定义时取未被占用的颜色（不能固定一档撞色）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const doRenameTag =');
+  const seg = app.slice(i, app.indexOf('const doRemoveTag ='));
+  return seg.indexOf('TAG_COLORS.find((c) => !used.has(c))') >= 0
+    && seg.indexOf('color: TAG_COLORS[6]') < 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

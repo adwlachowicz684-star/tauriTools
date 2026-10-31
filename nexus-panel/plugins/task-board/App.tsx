@@ -562,12 +562,22 @@ export default function App() {
   const removeType = (id: string) =>
     withErr(async () => {
       if (!cfg) return;
+      /*
+        计数用**整体赋值**（n = …）而不是累加：mutate 带乐观锁，
+        写冲突时会重读再跑一次回调，累加会把条数报成两倍。
+      */
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         n = (st.tasks || []).filter((t) => t.type === id).length;
         return {
           ...st,
-          tasks: (st.tasks || []).map((t) => (t.type === id ? { ...t, type: '' } : t)),
+          /*
+            清空类型是**改任务**，要推进 updatedAt ——
+            不推进的话"更新"列不动，看着像这几条没被改过。
+          */
+          tasks: (st.tasks || []).map((t) => (
+            t.type === id ? { ...t, type: '', updatedAt: Date.now() } : t
+          )),
           typeDefs: (st.typeDefs || []).filter((d) => d.id !== id),
         };
       });
@@ -588,6 +598,12 @@ export default function App() {
         }
         return { ...prev, type: { ...f, values } };
       });
+      /*
+        ⛔ 必须立刻重读：原来这里没有 refresh，只靠 2s 轮询兜 ——
+        于是点了"删"，界面要过两秒才变；而这两秒里列表、筛选下拉、
+        chip 全都还是老样子，看着像点了没反应（删标签那边是有 refresh 的）。
+      */
+      await refresh();
       if (n > 0) ctx.toast(`已删类型，${n} 条任务变成「未分类」`, 'ok');
     })();
 
@@ -899,8 +915,17 @@ ${dir}
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
         const idx = defs.findIndex((d) => d.id === id);
-        /* 定义不存在（任务上写的是裸名字）→ 补一条，否则改名无处可落 */
-        if (idx < 0) defs.push({ id, name: name.trim(), color: TAG_COLORS[6] });
+        /*
+          定义不存在（任务上写的是裸名字）→ 补一条，否则改名无处可落。
+          ⛔ 颜色要**取第一个没被占用的**，不能固定一档：
+          固定色很可能和已有标签撞色，而配色的唯一作用就是一眼区分，
+          两个同色标签等于白配。
+        */
+        if (idx < 0) {
+          const used = new Set(defs.map((d) => d.color));
+          const free = TAG_COLORS.find((c) => !used.has(c));
+          defs.push({ id, name: name.trim(), color: free || TAG_COLORS[0] });
+        }
         else defs[idx] = { ...defs[idx], name: name.trim() };
         return { ...st, tagDefs: defs };
       });
@@ -919,14 +944,27 @@ ${dir}
     withErr(async () => {
       if (!cfg || !id) return;
       const nm = (store ? store.tagDefs : []).find((d) => d.id === id)?.name || id;
+      /*
+        ⛔ 计数不能写成 `n += 1`：**mutate 带乐观锁，写冲突时会重读再试**，
+        回调因此可能被跑多次 —— 累加就会把条数报成两倍、三倍。
+        toast 里写"从 8 条任务上摘掉"而实际只有 4 条，
+        这种数字对不上比不报更糟（没人会怀疑统计，只会以为自己记错了）。
+        改成**整体赋值**，重试时以最后一次为准，天然正确。
+      */
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const defs = (Array.isArray(st.tagDefs) ? st.tagDefs : []).filter((d) => d.id !== id);
+        let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
           if (!Array.isArray(t.tags) || t.tags.indexOf(id) < 0) return t;
-          n += 1;
-          return { ...t, tags: t.tags.filter((x) => x !== id) };
+          cnt += 1;
+          /*
+            摘标签是**改任务**，所以要推进 updatedAt ——
+            不推进的话"更新"列纹丝不动，看着像这一行的标签没被摘掉。
+          */
+          return { ...t, tags: t.tags.filter((x) => x !== id), updatedAt: Date.now() };
         });
+        n = cnt;
         return { ...st, tagDefs: defs, tasks };
       });
       /*
