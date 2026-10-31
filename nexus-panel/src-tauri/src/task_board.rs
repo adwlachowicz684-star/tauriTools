@@ -807,6 +807,7 @@ pub fn mcp_tools() -> Vec<Value> {
             json!({
                 "title":    { "type": "string", "description": "一句话说清问题" },
                 "detail":   { "type": "string", "description": "复现步骤/期望行为，可选" },
+                "summary":  { "type": "string", "description": "任务说明（与详情分开：说明是要做什么，详情是复现/期望行为）" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "默认 P2" },
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "自由标签" },
                 "type":     { "type": "string", "description": "任务类型 id（dev/bug/opt/research/review/plan，或自定义类型的 id）；缺省=未分类" },
@@ -832,6 +833,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
                 "detail":   { "type": "string", "description": "改详情" },
+                "summary":  { "type": "string", "description": "改任务说明" },
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签" },
                 "type":     { "type": "string", "description": "任务类型 id；传空串=清成未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数" },
@@ -1296,6 +1298,19 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
         "group".to_string(),
         json!(str_field(body, "group").unwrap_or_default().trim()),
     );
+    /*
+      任务说明（summary）。与 detail 分开：
+      说明是"要做什么"（原始要求），详情是复现/期望行为。
+
+      ⛔ 这个字段后来才加，而**建任务时一直没写** ——
+      于是 AI 建出来的任务永远没有说明，
+      只能建完再改（而改的通道以前也没有，见下方 patch）。
+      文件里明明有这一列（显式写出来的），AI 看得见却填不了。
+    */
+    task.insert(
+        "summary".to_string(),
+        json!(str_field(body, "summary").unwrap_or_default().trim()),
+    );
     task.insert("reporter".to_string(), json!(reporter));
     task.insert("assignee".to_string(), json!(str_field(body, "assignee")));
     task.insert("createdAt".to_string(), json!(now_ms()));
@@ -1334,7 +1349,9 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
         // 「本次是否从别处进入 review」：进过的不再算（见下方 became 处的注释），
         // 初值 false，由下方 status 流转段置位。此前漏了声明，编译不过（已补）。
         let mut entered_review = false;
-        for key in ["title", "detail", "priority", "reporter"] {
+        // ⛔ summary 必须在这里：任务说明是显式写进文件的字段，
+        // AI 看得见却改不了，等于这个字段对 AI 通道只读。
+        for key in ["title", "detail", "summary", "priority", "reporter"] {
             if let Some(v) = str_field(body, key) {
                 obj.insert(key.to_string(), json!(v));
                 changed = true;
