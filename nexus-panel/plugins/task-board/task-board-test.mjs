@@ -3359,6 +3359,60 @@ t('守卫：数值字段先 Number() 再判有限性', (() => {
   return bad.length === 0;
 })());
 
+
+/* ============================================================ 审查：归一化不 trim（本轮）+ 排序不稳定 */
+
+const WS = (id, o) => normalizeTask({ id, ...o });
+
+/*
+ * **文本字段不 trim**：
+ * AI 手写 JSON / 表单提交里 `"assignee": "   "` 很常见。
+ * 而"有没有认领人"的判据是 truthy → 它被当成**有人认领**：
+ * 界面显示一个空白的名字，筛"未认领"筛不到它，
+ * 分组里多一个名字是三个空格的组，统计里多一个空白认领人。
+ * 全是**看不见的实体**。
+ */
+t('审查：全空格的认领人算作未认领', WS('a', { assignee: '   ' }).assignee === null);
+
+t('审查：全空格的分组名算作未分组', WS('a', { group: '  ' }).group === '');
+
+t('审查：tags 去掉空值与重复', (() => {
+  const t = WS('a', { tags: ['a', '', '  ', 'a'] });
+  return t.tags.length === 1 && t.tags[0] === 'a';
+})());
+
+t('审查：deps 去掉空值与重复', (() => {
+  const t = WS('a', { deps: ['', 'b', 'b'] });
+  return t.deps.length === 1 && t.deps[0] === 'b';
+})());
+
+t('审查：前后空白的标题被 trim', WS('a', { title: '  标题  ' }).title === '标题');
+
+t('审查：状态 id 带空白也能匹配配置', WS('a', { status: ' done ' }).status === 'done');
+
+/*
+ * **排序不稳定**：同值任务的顺序取决于它们在文件里的先后，
+ * 而那个顺序会随写盘变化 → 用户什么都没动，刷新一下同值的几条就换了位置。
+ * 顶栏明明写着"排序：优先级 ↓"，看着像排序坏了。
+ */
+t('审查：排序稳定（同值任务的顺序与输入顺序无关）', (() => {
+  const mk3 = (id) => normalizeTask({ id, priority: 'P1', updatedAt: 1, title: 'x' });
+  const fwd = [mk3('a'), mk3('b'), mk3('c')];
+  const rev = [mk3('c'), mk3('b'), mk3('a')];
+  const one = (f) => sortTasksBy(fwd, f, 'asc').map((x) => x.id).join('') === sortTasksBy(rev, f, 'asc').map((x) => x.id).join('');
+  /* 时间字段本来就按 updatedAt 兜底，这里盯的是其余字段 */
+  return one('priority') && one('title') && one('status') && one('group') && one('estimate');
+})());
+
+/* 降序时 id 兜底也要跟着反转（否则"降序"对同值组没有体现） */
+t('审查：同值时升降序互为逆序', (() => {
+  const mk3 = (id) => normalizeTask({ id, priority: 'P1', updatedAt: 1, title: 'x' });
+  const list = [mk3('a'), mk3('b'), mk3('c')];
+  const a = sortTasksBy(list, 'priority', 'asc').map((x) => x.id).join('');
+  const d = sortTasksBy(list, 'priority', 'desc').map((x) => x.id).join('');
+  return a === [...a].reverse().join('') ? false : a === 'abc' && d === 'cba';
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

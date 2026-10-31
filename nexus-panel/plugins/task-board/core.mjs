@@ -268,6 +268,34 @@ export function normalizeTask(raw) {
     return Number.isFinite(n) ? n : d;
   };
   /*
+    文本字段**一律 trim**。
+
+    ⛔ 不 trim 的后果（AI 手写 JSON / 表单提交里很常见）：
+    · `assignee: "   "` —— 全空格。而"有没有认领人"的判据是 truthy，
+      于是它被当成**有人认领**：界面显示一个空白的名字，
+      筛"未认领"筛不到它，分组里多出一个名字是三个空格的组，
+      统计里多一个空白认领人。全都是看不见的实体。
+    · `group: "  "` / `tags: ["", "  "]` 同理 —— 空白名字的分组、
+      零宽度的标签 chip。
+
+    这类值不报错，只在界面上表现为"有个东西但看不见它是什么"。
+  */
+  const str = (v, d) => (typeof v === 'string' ? v.trim() : d);
+  /* id 列表：去空白 + 去空 + 去重（排序保持原顺序） */
+  const ids = (v) => {
+    if (!Array.isArray(v)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const x of v) {
+      if (typeof x !== 'string') continue;
+      const y = x.trim();
+      if (!y || seen.has(y)) continue;
+      seen.add(y);
+      out.push(y);
+    }
+    return out;
+  };
+  /*
     parent / deps 指向的 id 可能已经不存在（任务被删了）。
     这里**不清理**引用：清了就无从知道"这里原本挂着什么"，
     而界面上显式标出"前置已被删除"比静默消失要好 ——
@@ -275,25 +303,26 @@ export function normalizeTask(raw) {
   */
   return {
     id: typeof t.id === 'string' ? t.id : '',
-    title: typeof t.title === 'string' ? t.title : '(无标题)',
-    summary: typeof t.summary === 'string' ? t.summary : '',
-    detail: typeof t.detail === 'string' ? t.detail : '',
+    title: str(t.title, '') || '(无标题)',
+    summary: str(t.summary, ''),
+    detail: str(t.detail, ''),
     kind: t.kind === 'group' ? 'group' : 'task',
-    parent: typeof t.parent === 'string' && t.parent ? t.parent : null,
-    deps: Array.isArray(t.deps) ? t.deps.filter((x) => typeof x === 'string') : [],
+    parent: str(t.parent, '') || null,
+    /*
+      ⛔ 空 id 与重复 id 都要去掉：
+      · 空 id 的依赖永远解锁不了（它指向 nothing）
+      · 重复会让"有 N 条前置"的计数虚高
+      （"清理不存在的引用"是另一回事 —— 那要保留，见上方注释）
+    */
+    deps: ids(t.deps),
     /*
       状态**不校验白名单**：自定义状态是用户自己起的 id，
       这里按固定清单过滤的话，用户新增的状态会被悄悄退回 todo。
       展示层查不到就原样显示 id —— 认不出来比认错要好。
     */
-    status: typeof t.status === 'string' && t.status ? t.status : 'todo',
+    /* 状态 id 也要 trim：`"status": " done"` 在配置里查不到，会显示成原始值 */
+    status: str(t.status, '') || 'todo',
     priority: PRIORITIES.includes(t.priority) ? t.priority : 'P2',
-    /*
-      预估工作量，单位**人日**，允许小数（半天 = 0.5）。
-      不设上限也不校验整数 —— 任务大到几十人日、小到 0.25 都有，
-      强校验只会逼人去备注里偷偷记，那就没法汇总了。
-      负数按 0 处理：负的工作量没有意义，且会把合计往回拉。
-    */
     /*
       预估工作量，单位**人日**，允许小数（半天 = 0.5）。
       不设上限也不校验整数 —— 任务大到几十人日、小到 0.25 都有，
@@ -319,17 +348,23 @@ export function normalizeTask(raw) {
       ⛔ 同样不校验白名单：用户新增的类型要能活下来，
       这里按默认清单过滤会把新增类型悄悄清空。
     */
-    type: typeof t.type === 'string' ? t.type : '',
+    type: str(t.type, ''),
     /*
       分组列。相当于以前的"手动分组"，但**只是一列值** ——
       不再有组记录、也不再有父子层级；归拢关系由通用的"按列分组"机制表达。
       这样更通用：它能和任意其它列一起组成多层级（先按分组、再按状态…），
       而旧的手动组只能一层层嵌套，且两种层级会并存打架。
     */
-    group: typeof t.group === 'string' ? t.group : '',
-    tags: Array.isArray(t.tags) ? t.tags.filter((x) => typeof x === 'string') : [],
-    reporter: typeof t.reporter === 'string' ? t.reporter : 'manual',
-    assignee: typeof t.assignee === 'string' && t.assignee ? t.assignee : null,
+    group: str(t.group, ''),
+    /* 同 deps：空标签会渲染成零宽度的 chip，重复标签会显示两个一样的 */
+    tags: ids(t.tags),
+    reporter: str(t.reporter, '') || 'manual',
+    /*
+      ⛔ 必须**先 trim 再判空**：`"   "` 是 truthy，
+      不 trim 的话它会被当成"有人认领" —— 于是界面显示一个空白的名字，
+      筛"未认领"筛不到它，分组和统计里各多一个空白认领人。
+    */
+    assignee: str(t.assignee, '') || null,
     createdAt: num(t.createdAt, 0),
     updatedAt: num(t.updatedAt, 0),
     history: Array.isArray(t.history) ? t.history.filter((h) => h && typeof h === 'object') : [],
@@ -1430,7 +1465,19 @@ export function sortTasksBy(tasks, field, dir = 'asc', tagNames = null) {
     */
     const byTime = (b.updatedAt || 0) - (a.updatedAt || 0);
     if (byTime !== 0) return byTime;
-    return (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
+    const byPri = (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
+    if (byPri !== 0) return byPri;
+    /*
+      ⛔ 最后必须落到 **id** 上，否则排序**不稳定**。
+
+      只靠上面两层兜底的话，更新时间与优先级都相同的任务，
+      顺序取决于它们在文件里的先后 —— 而那个顺序会随写盘变化。
+      于是用户什么都没动，刷新一下同值的几条就换了位置：
+      看着像"排序乱了"，而顶栏明明写着"排序：优先级 ↓"。
+
+      按 id 兜底后顺序完全确定：同样的数据永远得到同样的顺序。
+    */
+    return sign * (a.id || '').localeCompare(b.id || '');
   });
 }
 const STALE_MS = 7 * 24 * 3600 * 1000;
