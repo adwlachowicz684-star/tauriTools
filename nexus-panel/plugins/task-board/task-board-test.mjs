@@ -60,6 +60,7 @@ import {
   NOTYPE,
   groupTasksBy,
   groupValuesOf,
+  NOGROUP,
   newDefId,
   DEFAULT_TYPES,
 } from './core.mjs';
@@ -258,13 +259,13 @@ function onlyFilter(field, patch) {
 
 const COL = (k) => ({ field: 'priority', label: '', kind: k });
 
-t('列定义：十一列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
-  LIST_COLUMNS.length === 11
+t('列定义：十二列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
+  LIST_COLUMNS.length === 12
   && LIST_COLUMNS.every((c) => ['enum', 'text', 'time', 'num'].indexOf(c.kind) >= 0));
 
-t('列定义：覆盖优先级/ID/标题/状态/认领人/类型/标签/说明/预估/创建/更新', (() => {
+t('列定义：覆盖优先级/ID/标题/分组/状态/认领人/类型/标签/说明/预估/创建/更新', (() => {
   const fields = LIST_COLUMNS.map((c) => c.field);
-  return ['priority', 'id', 'title', 'status', 'assignee', 'type',
+  return ['priority', 'id', 'title', 'group', 'status', 'assignee', 'type',
           'tags', 'summary', 'estimate', 'createdAt', 'updatedAt']
     .every((f) => fields.indexOf(f) >= 0);
 })());
@@ -1732,6 +1733,104 @@ t('切项目：读不到任务库要报出来（不能静默当空项目）', ((
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   return app.indexOf('catch (e: any) {\n        readErr = String(e?.message || e);') >= 0
     && app.indexOf('但读不到它的任务库') >= 0;
+})());
+
+
+/* ============================================================ 分组列（本轮） */
+
+/*
+ * 分组列 = 以前的"手动分组"，但**只是一列值**：
+ * 不再有组记录、也不再有父子层级；归拢由通用的"按列分组"机制表达。
+ *
+ * 框架上更通用：它能和任意其它列组成多层级（先按分组、再按状态…），
+ * 而旧的手动组只能一层层嵌套，且那套层级会和"按列分组"并存打架
+ * （数据一套、视图一套，两边迟早对不上）。
+ */
+
+t('分组：任务上就是一列值（默认空 = 不分组）', (() => {
+  return normalizeTask({ id: 'a' }).group === ''
+    && normalizeTask({ id: 'b', group: '登录' }).group === '登录';
+})());
+
+t('分组：groupValuesOf 空值落到 NOGROUP 哨兵（没分组要能单独成组）', (() => {
+  return groupValuesOf(normalizeTask({ group: 'g1' }), 'group')[0] === 'g1'
+    && groupValuesOf(normalizeTask({ id: 'x' }), 'group')[0] === NOGROUP;
+})());
+
+t('分组：按 group 列分组，未分组置尾', (() => {
+  const tasks = [
+    normalizeTask({ id: '1', group: 'B' }),
+    normalizeTask({ id: '2', group: 'A' }),
+    normalizeTask({ id: '3', group: 'A' }),
+    normalizeTask({ id: '4' }),            // 未分组
+  ];
+  const g = groupTasksBy(tasks, 'group');
+  return g.length === 3
+    && g[0].key === 'A' && g[0].count === 2
+    && g[1].key === 'B' && g[1].count === 1
+    && g[2].key === NOGROUP && g[2].count === 1;
+})());
+
+/*
+ * ⛔ 分组列**必须能排序**：cmpTask 落到 default 就是 r=0，
+ * 点列头会纹丝不动，而界面上写着"排序：分组 ↓" —— 看着能点却没反应。
+ */
+t('分组：按分组列排序真的会排（不是点了没反应）', (() => {
+  const rows = [
+    normalizeTask({ id: '1', group: 'B' }),
+    normalizeTask({ id: '2', group: 'A' }),
+    normalizeTask({ id: '3' }),
+  ].map((t) => ({ task: t, depth: 0, path: [] }));
+  const asc = sortRowsBy(rows, 'group', 'asc').map((r) => r.task.id);
+  // A、B、未分组（未分组恒最后，不随升降序翻转）
+  return asc.join(',') === '2,1,3';
+})());
+
+t('分组：能和其它列组成多层级（比旧的手动嵌套更通用）', (() => {
+  const tasks = [
+    normalizeTask({ id: '1', group: 'G1', status: 'todo' }),
+    normalizeTask({ id: '2', group: 'G1', status: 'done' }),
+    normalizeTask({ id: '3', group: 'G2', status: 'todo' }),
+  ];
+  const g = groupTasksBy(tasks, ['group', 'status']);
+  const g1 = g.find((x) => x.key === 'G1');
+  return g.length === 2 && !!g1
+    && g1.children.length === 2          // G1 里再按状态分一层
+    && g1.tasks.length === 0             // 中间层不装任务
+    && g1.count === 2;
+})());
+
+/* 接线自检：分组列要在列定义 / 分组依据 / 排序字段 / cellFor 四处都到位 */
+t('分组：列定义里有这一列', LIST_COLUMNS.some((c) => c.field === 'group' && c.kind === 'text'));
+
+t('分组：能作为分组依据被选中（GROUP_KEYS 里有 group）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return /const GROUP_KEYS[^=]*=\s*\[[^\]]*'group'/.test(app)
+    && app.indexOf("group: '分组',") >= 0;      // GROUP_LABEL / SORT_LABEL 至少一处
+})());
+
+t('分组：排序字段里也要有（存过的排序不会被判成非法）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return /'title', 'id', 'group',/.test(app);
+})());
+
+t('分组：行内能就地编辑（case group 要在 cellFor 里）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("case 'group':") >= 0
+    && app.indexOf('onPatchField(t.id, { group: v })') >= 0;
+})());
+
+/*
+ * Rust 侧同样要贯通，否则 AI 建/改的任务永远没有分组。
+ * 本环境没有 Rust 工具链编译不了，所以至少用源码扫描钉住"该出现的都出现了"。
+ */
+t('分组：Rust 新建/改字段/MCP 都要贯通（AI 通道不能漏）', (() => {
+  const rp = path.join(dir, '../../../src-tauri/src/task_board.rs');
+  if (!fs.existsSync(rp)) return true;   // 环境缺源码目录时跳过，不算失败
+  const rus = fs.readFileSync(rp, 'utf8');
+  return rus.indexOf('"group".to_string()') >= 0        // create + patch 写入
+    && rus.indexOf('str_field(body, "group")') >= 0     // patch 读取
+    && rus.indexOf('"group":    { "type": "string"') >= 0;  // MCP schema
 })());
 
 /* ---------------- 汇总 ---------------- */

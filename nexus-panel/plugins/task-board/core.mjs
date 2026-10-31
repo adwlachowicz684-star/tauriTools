@@ -292,6 +292,13 @@ export function normalizeTask(raw) {
       这里按默认清单过滤会把新增类型悄悄清空。
     */
     type: typeof t.type === 'string' ? t.type : '',
+    /*
+      分组列。相当于以前的"手动分组"，但**只是一列值** ——
+      不再有组记录、也不再有父子层级；归拢关系由通用的"按列分组"机制表达。
+      这样更通用：它能和任意其它列一起组成多层级（先按分组、再按状态…），
+      而旧的手动组只能一层层嵌套，且两种层级会并存打架。
+    */
+    group: typeof t.group === 'string' ? t.group : '',
     tags: Array.isArray(t.tags) ? t.tags.filter((x) => typeof x === 'string') : [],
     reporter: typeof t.reporter === 'string' ? t.reporter : 'manual',
     assignee: typeof t.assignee === 'string' && t.assignee ? t.assignee : null,
@@ -394,6 +401,7 @@ export const LIST_COLUMNS = [
   { field: 'priority', label: '优先级', kind: 'enum' },
   { field: 'id', label: 'ID', kind: 'text' },
   { field: 'title', label: '标题', kind: 'text' },
+  { field: 'group', label: '分组', kind: 'text' },
   { field: 'status', label: '状态', kind: 'enum' },
   { field: 'assignee', label: '认领人', kind: 'enum' },
   { field: 'type', label: '任务类型', kind: 'enum' },
@@ -973,6 +981,18 @@ function cmpTask(a, b, field, sign) {
       else r = a.assignee.localeCompare(b.assignee);
       break;
     }
+    case 'group': {
+      /*
+        没分组的**恒排最后**（不随升降序翻转）：它是"还没归类"，不该混在中间。
+        ⛔ 这一列必须有分支 —— 落到 default 就是 r=0，
+        点列头排序会纹丝不动，而界面上写着"排序：分组 ↓"。
+      */
+      if (!a.group && !b.group) r = 0;
+      else if (!a.group) return 1;
+      else if (!b.group) return -1;
+      else r = a.group.localeCompare(b.group, 'zh-Hans-CN');
+      break;
+    }
     case 'updatedAt':
     case 'createdAt':
       r = (a[field] || 0) - (b[field] || 0);
@@ -1141,6 +1161,7 @@ export const UNASSIGNED = '__none__';
 export const NOTAG = '__notag__';
 /** 未填类型的哨兵 key（仅 type 分组时使用） */
 export const NOTYPE = '__notype__';
+export const NOGROUP = '__nogroup__';
 
 const STATUS_RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
 /*
@@ -1165,6 +1186,7 @@ export function groupValuesOf(t, key) {
   if (key === 'priority') return [t.priority];
   if (key === 'assignee') return [t.assignee || UNASSIGNED];
   if (key === 'type') return [t.type || NOTYPE];
+  if (key === 'group') return [t.group || NOGROUP];
   if (key === 'tag') return t.tags.length > 0 ? t.tags : [NOTAG];
   return [''];
 }
@@ -1186,6 +1208,13 @@ function sortGroups(groups, key) {
       if (a.key === NOTYPE) return 1;
       if (b.key === NOTYPE) return -1;
       return (TYPE_RANK[a.key] ?? 99) - (TYPE_RANK[b.key] ?? 99) || b.count - a.count;
+    });
+  } else if (key === 'group') {
+    /* 未分组置尾：它是"还没归类"，不该混在中间 */
+    groups.sort((a, b) => {
+      if (a.key === NOGROUP) return 1;
+      if (b.key === NOGROUP) return -1;
+      return b.count - a.count || a.key.localeCompare(b.key, 'zh-Hans-CN');
     });
   } else if (key === 'tag') {
     // __notag__ 是伪分组，显式置尾 —— 不能靠 '__' 碰 collation 运气
