@@ -390,6 +390,55 @@ function normalizeTagDefs(raw) {
   return out;
 }
 
+/*
+  分组定义表。与标签/类型同构（id / name / color），但**id 就是名字**。
+
+  ⛔ 为什么不用 tg_xxxx 那种独立 id：任务的 group 字段从一开始存的
+  就是**名字**字符串（'登录'），历史数据里全是名字。换成独立 id 要迁移
+  所有任务的 group —— 而迁移一旦半途中断，数据就一半 id 一半名字，
+  那种混合态比现在难查得多。
+
+  代价是"改名"要连带改任务上的字符串（而标签改名只改定义）。
+  但分组名本来就短、数量也少，这个代价可以接受。
+*/
+/** 分组的显示名：定义表里的 name，没有定义就原样（裸名字照样能看） */
+export function groupName(defs, id) {
+  const d = (defs || []).find((x) => x.id === id);
+  return d ? d.name : (id || '');
+}
+
+/** 分组的颜色：没定义就是空（渲染时退回中性色，不硬塞一个假色） */
+export function groupColor(defs, id) {
+  const d = (defs || []).find((x) => x.id === id);
+  return d && d.color ? d.color : '';
+}
+
+export function normalizeGroupDefs(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const d of raw) {
+    /* 纯字符串（手写真省事）：{"groupDefs":["登录","支付"]} */
+    if (typeof d === 'string') {
+      const nm = d.trim();
+      if (!nm || seen.has(nm)) continue;
+      seen.add(nm);
+      out.push({ id: nm, name: nm, color: '#78716c' });
+      continue;
+    }
+    if (!d || typeof d !== 'object') continue;
+    const id = typeof d.id === 'string' ? d.id.trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name: typeof d.name === 'string' && d.name.trim() ? d.name.trim() : id,
+      color: typeof d.color === 'string' && d.color ? d.color : '#78716c',
+    });
+  }
+  return out;
+}
+
 export function normalizeStore(raw) {
   const s = raw && typeof raw === 'object' ? raw : {};
   /*
@@ -421,6 +470,7 @@ export function normalizeStore(raw) {
       : [],
     tagDefs: normalizeTagDefs(s.tagDefs),
     typeDefs: normalizeTypeDefs(s.typeDefs),
+    groupDefs: normalizeGroupDefs(s.groupDefs),
     /*
       流程配置（自定义状态与流转）。
       没配过 → normalizeFlow 给默认那套，行为与以前完全一致 ——
@@ -461,7 +511,15 @@ export const LIST_COLUMNS = [
   { field: 'priority', label: '优先级', kind: 'enum' },
   { field: 'id', label: 'ID', kind: 'text' },
   { field: 'title', label: '标题', kind: 'text' },
-  { field: 'group', label: '分组', kind: 'text' },
+  /*
+    分组**定义表驱动**（'enum'），不再当自由文本。
+
+    原来是 'text'：列头漏斗里只有一个关键词框，
+    于是"这一列有哪些分组"根本看不到，更谈不上增删改色 ——
+    而分组恰恰是最需要"从已有项里挑一个"的字段
+    （同一批任务要归到同一个组，靠手打必然打出 '登录' / '登陆' 两种写法）。
+  */
+  { field: 'group', label: '分组', kind: 'enum' },
   { field: 'status', label: '状态', kind: 'enum' },
   { field: 'assignee', label: '认领人', kind: 'enum' },
   { field: 'type', label: '任务类型', kind: 'enum' },
@@ -560,6 +618,13 @@ export function colRawValues(task, field) {
     /* 空类型落到 NOTYPE 哨兵，这样"未分类"才筛得到 */
     case 'type': return [task.type || NOTYPE];
     case 'tags': return task.tags || [];
+    /*
+      分组改成 enum 之后**必须**在这里返回值。
+      漏掉的话该列筛选 100% 失效（候选为空、勾了也不命中），
+      而界面只显示"没有符合条件的任务"——看着像真的没有。
+      未分组落 NOGROUP 哨兵，这样"没归类的"能筛出来集中处理。
+    */
+    case 'group': return [task.group || NOGROUP];
     default: return [];
   }
 }
@@ -704,7 +769,7 @@ export function activeColFilters(filters) {
  * 表里没有、但任务上写着的名字（外部 API 写的）照样要能筛；
  * 反过来表里有、但没人领过任务的名字，列出来选中就是零行。
  */
-export function colFilterValues(field, rows, statusIds, typeIds, tagIds) {
+export function colFilterValues(field, rows, statusIds, typeIds, tagIds, groupIds) {
   const tasks = (rows || []).map((r) => (r && r.task ? r.task : r));
   switch (field) {
     case 'priority': return [...PRIORITIES];
@@ -766,6 +831,28 @@ export function colFilterValues(field, rows, statusIds, typeIds, tagIds) {
       "找那些还没估工作量的"是排期前最常见的一次查询。
       它不是 0，是缺失，所以必须单列，不能混进区间里。
     */
+    /*
+      分组候选 = **定义表 + 数据里出现的** + 「未分组」。
+
+      与标签同规则：只取一边都会漏。
+      · 只取数据 → 刚"添加一项"、还没任何任务归进去的分组选不到，
+        那一项等于白加
+      · 只取定义表 → 老数据里没建定义的裸分组名永远筛不到
+
+      未分组必须能筛：把没归类的找出来集中处理，是建完分组紧接着要做的事。
+    */
+    case 'group': {
+      const fromData = (tasks || []).map((t) => t.group).filter(Boolean);
+      const fromDefs = Array.isArray(groupIds) ? [...groupIds] : [];
+      const out = [];
+      const seen = new Set();
+      for (const id of [...fromDefs, ...fromData]) {
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+      }
+      return out.concat([NOGROUP]);
+    }
     case 'estimate': return [UNESTIMATED];
     default: return [];
   }

@@ -43,6 +43,7 @@ import {
   newDefId,
   NOTYPE,
   NOGROUP,
+  groupColor,
   statusDone,
   dependsOn,
   normalizeFlow,
@@ -1255,6 +1256,142 @@ ${dir}
     })();
 
   /*
+    调起主面板的**取色器**（color-picker 插件）选一个任意颜色。
+
+    ⛔ 契约：`pick` resolve 的是 `{ hex, custom }`；
+    **取消也是 resolve**（`{ hex: null }`），不是 reject。
+    按"取消会抛错"来写的话，用户点取消会冒出一个没来由的报错。
+    拿不到（插件没装 / 用户取消）就返回空串，由调用方决定要不要改。
+
+    固定调色板留着当快捷项（常用色点一下就好），
+    取色器是"要一个调色板里没有的颜色"时的入口 —— 两者不冲突。
+  */
+  const pickColor = async (initial: string): Promise<string> => {
+    try {
+      const r: any = await ctx.services.call('color-picker', 'pick', { initial: initial || '' });
+      const hex = r && typeof r.hex === 'string' ? r.hex : '';
+      return hex || '';
+    } catch {
+      /* 取色器不可用（没装 / 起不来）时静默退回：改色是锦上添花，不该弹错 */
+      return '';
+    }
+  };
+
+  /* ---------------------------------------------------------- 分组定义表
+   *
+   * 分组与标签/类型同构（定义表 + 增删改色），但 **id 就是名字** ——
+   * 任务的 group 字段从一开始存的就是名字，历史数据里全是名字。
+   *
+   * 代价：改名要连带改任务上的字符串（标签改名只改定义）。
+   */
+
+  const addGroup = (name: string, color: string) =>
+    withErr(async () => {
+      if (!cfg || !name.trim()) return;
+      const nm = name.trim();
+      let made = false;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = Array.isArray(st.groupDefs) ? [...st.groupDefs] : [];
+        made = false;
+        /* 同名不重复建 —— 但要说出来（见 doAddTag 那条） */
+        if (defs.some((d) => d.id === nm || d.name === nm)) return null;
+        const used = new Set(defs.map((d) => d.color));
+        const want = (color && !used.has(color))
+          ? color
+          : (TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0]);
+        defs.push({ id: nm, name: nm, color: want });
+        made = true;
+        return { ...st, groupDefs: defs };
+      });
+      await refresh();
+      if (!made) ctx.toast(`已经有同名分组「${nm}」了`, 'err');
+      else ctx.toast(`已添加分组「${nm}」`, 'ok');
+    })();
+
+  const setGroupColor = (id: string, color: string) =>
+    withErr(async () => {
+      if (!cfg || !id) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = Array.isArray(st.groupDefs) ? [...st.groupDefs] : [];
+        const idx = defs.findIndex((d) => d.id === id);
+        /* 没建过定义（老数据里的裸名字）→ 补一条，否则改色无处可落 */
+        if (idx < 0) defs.push({ id, name: id, color });
+        else defs[idx] = { ...defs[idx], color };
+        return { ...st, groupDefs: defs };
+      });
+      await refresh();
+    })();
+
+  /*
+    分组改名：**定义与任务都要改**（因为任务上存的是名字）。
+
+    只改定义的话，任务上还是旧名 —— 于是筛选下拉里显示新名、
+    但按它筛不到任何东西（任务上根本没有这个值），
+    而且旧名还会从数据里继续冒出来，看着像"改名没生效还多了一个"。
+  */
+  const renameGroup = (id: string, name: string) =>
+    withErr(async () => {
+      if (!cfg || !id || !name.trim()) return;
+      const nm = name.trim();
+      let n = 0;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = Array.isArray(st.groupDefs) ? [...st.groupDefs] : [];
+        const idx = defs.findIndex((d) => d.id === id);
+        if (idx < 0) {
+          const used = new Set(defs.map((d) => d.color));
+          defs.push({ id, name: nm, color: TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0] });
+        }
+        else defs[idx] = { ...defs[idx], id: nm, name: nm };
+        let cnt = 0;
+        const tasks = (st.tasks || []).map((t) => {
+          if (t.group !== id) return t;
+          cnt += 1;
+          return { ...t, group: nm, updatedAt: Date.now() };
+        });
+        n = cnt;
+        return { ...st, groupDefs: defs, tasks };
+      });
+      await refresh();
+      ctx.toast(`分组已改名「${nm}」${n > 0 ? `（${n} 条任务同步更新）` : ''}`, 'ok');
+    })();
+
+  /*
+    删分组：删定义，并把挂它的任务**清成未分组**（不是删任务）。
+
+    只删定义的话，任务上还留着那个名字 → 它还会从数据里冒进候选
+    （"删了又复活"），而这时的分组既改不了名也改不了色。
+  */
+  const removeGroup = (id: string) =>
+    withErr(async () => {
+      if (!cfg || !id) return;
+      let n = 0;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = (Array.isArray(st.groupDefs) ? st.groupDefs : []).filter((d) => d.id !== id);
+        let cnt = 0;
+        const tasks = (st.tasks || []).map((t) => {
+          if (t.group !== id) return t;
+          cnt += 1;
+          return { ...t, group: '', updatedAt: Date.now() };
+        });
+        n = cnt;
+        return { ...st, groupDefs: defs, tasks };
+      });
+      setColFilters((prev) => {
+        const f = prev.group;
+        if (!f || f.values.indexOf(id) < 0) return prev;
+        const values = f.values.filter((x) => x !== id);
+        if (values.length === 0) {
+          const next: Partial<Record<SortField, ColFilter>> = { ...prev };
+          delete next.group;
+          return next;
+        }
+        return { ...prev, group: { ...f, values } };
+      });
+      await refresh();
+      ctx.toast(`已删分组「${id}」${n > 0 ? `，${n} 条任务变成未分组` : ''}`, 'ok');
+    })();
+
+  /*
     改字段（说明 / 前置）。
 
     与流转分开：流转走 applyTransition（有状态机校验、要写历史），
@@ -1515,7 +1652,7 @@ ${dir}
             const f = colFilters[c.field] as ColFilter;
             return (
               <span key={c.field} className="tb-chip">
-                {c.label}：{filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow)}
+                {c.label}：{filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow, store ? store.groupDefs : [])}
                 <button
                   type="button"
                   className="tb-chip-x"
@@ -1661,6 +1798,12 @@ ${dir}
           onTagColor={doSetTagColor}
           onRenameTag={doRenameTag}
           onRemoveTag={doRemoveTag}
+          groupDefs={store.groupDefs}
+          onCreateGroup={addGroup}
+          onGroupColor={setGroupColor}
+          onRenameGroup={renameGroup}
+          onRemoveGroup={removeGroup}
+          onPickColor={pickColor}
           checked={checked}
           onCheck={(id, on) => setChecked((prev) => {
             const next = new Set(prev);
@@ -2246,8 +2389,7 @@ function ImportProjectModal({
           {scan.restoreFailed ? (
             <div className="tb-scan-warn">
               ⚠ 探完没切回原来的数据目录：数据目录现在停在刚扫的这个目录上，
-              当前项目的读写都会指向它（表现为整个看板变空）。请重新选一次数据目录，
-              或关掉重开恢复。
+              当前项目的读写都会指向它。请重新选一次数据目录。
             </div>
           ) : null}
           {scan.sample.length > 0 ? (
@@ -3083,6 +3225,12 @@ function optionLabel(
     认不出来就退回 id —— 至少看得见这里挂了个东西（AI 直接写进 JSON 的裸标签就是这种）。
   */
   if (field === 'tags') return defs?.find((d) => d.id === v)?.name || v;
+  /*
+    分组：定义表里的 name；「未分组」是哨兵（不在定义表里），要单独认 ——
+    否则下拉里显示 "__nogroup__"，没人看得懂那一串下划线是什么
+    （和上面「未分类」是同一类漏，这次是被分组列改成 enum 带出来的）。
+  */
+  if (field === 'group') return v === NOGROUP ? '未分组' : (defs?.find((d) => d.id === v)?.name || v);
   return v;
 }
 
@@ -3095,14 +3243,18 @@ function optionLabel(
  */
 function filterSummary(
   col: ListColumn, f: ColFilter, typeDefs?: TagDef[], tagDefs?: TagDef[], flow?: FlowLike,
+  groupDefs?: TagDef[],
 ): string {
   if (col.kind === 'enum') {
     /*
       ⛔ 定义表要**按列取**：原来一律传 typeDefs，
       于是标签列的筛选摘要显示成原始 id（tg_xxxx）——
       而同一个筛选在下拉面板里显示的是名字，两处说法不一样。
+
+      分组列同理：不传 groupDefs 的话，已生效的分组筛选在 chip 上
+      显示的是裸名字（没定义时）或 id，而下拉里显示的是定义表的 name。
     */
-    const defs = col.field === 'tags' ? tagDefs : typeDefs;
+    const defs = col.field === 'tags' ? tagDefs : col.field === 'group' ? groupDefs : typeDefs;
     return f.values.map((v) => optionLabel(col.field, v, defs)).join('、');
   }
   if (col.kind === 'text') return f.text.trim();
@@ -3126,6 +3278,15 @@ function ColFilterPop({
   col, filter, options, onChange, onClear, anchorRight,
   tagDefs, onCreateTag, onTagColor, onRenameTag, onRemoveTag,
   typeDefs, onCreateType, onTypeColor, onRemoveType, onRenameType,
+  /** 分组定义。分组列用 —— 与标签/类型同构，同样可增删改色 */
+  groupDefs,
+  onCreateGroup, onGroupColor, onRenameGroup, onRemoveGroup,
+  /**
+    调起主面板的取色器选任意颜色。
+    固定调色板是快捷项，取色器是"要一个板子里没有的颜色"的入口 —— 两者并存。
+    返回空串 = 用户取消（或取色器不可用），调用方不该当成"改成无色"。
+  */
+  onPickColor,
   /** 流程配置：状态名要认自定义流程，不能查写死的默认表 */
   flow,
 }: {
@@ -3153,6 +3314,14 @@ function ColFilterPop({
   onRemoveType?: (id: string) => void;
   /** 类型改名（与标签同构：改的是定义） */
   onRenameType?: (id: string, name: string) => void;
+  /** 分组定义（id 就是名字） */
+  groupDefs?: TagDef[];
+  onCreateGroup?: (name: string, color: string) => void;
+  onGroupColor?: (id: string, color: string) => void;
+  onRenameGroup?: (id: string, name: string) => void;
+  onRemoveGroup?: (id: string) => void;
+  /** 调起主面板取色器；返回空串表示取消 */
+  onPickColor?: (initial: string) => Promise<string>;
   /** 流程配置（状态名认自定义流程，不能查写死的默认表） */
   flow?: FlowLike;
 }) {
@@ -3161,9 +3330,21 @@ function ColFilterPop({
   const [newColor, setNewColor] = useState(TAG_COLORS[6]);
   const isTag = col.field === 'tags';
   const isType = col.field === 'type';
-  /* 两种列共用同一套"定义表 + 改色 + 新建"的交互 */
-  const defs = isType ? (typeDefs || []) : (tagDefs || []);
+  const isGroup = col.field === 'group';
+  /*
+    三种"定义表驱动"的列（标签 / 类型 / 分组）共用同一套交互：
+    增、删、改名、改色。以前只有前两种，分组因为是自由文本
+    只能敲关键词 —— 于是"这一列有哪些分组"根本看不到，
+    而分组恰恰最需要"从已有项里挑一个"（手打必然打出 '登录'/'登陆'）。
+  */
+  const defCol = isType ? 'type' : isGroup ? 'group' : isTag ? 'tag' : '';
+  const defs = isType ? (typeDefs || []) : isGroup ? (groupDefs || []) : (tagDefs || []);
   const colorOf = (id: string) => defs.find((d) => d.id === id)?.color || '';
+  const onCreate = isType ? onCreateType : isGroup ? onCreateGroup : onCreateTag;
+  const onColor = isType ? onTypeColor : isGroup ? onGroupColor : onTagColor;
+  const onRename = isType ? onRenameType : isGroup ? onRenameGroup : onRenameTag;
+  const onRemove = isType ? onRemoveType : isGroup ? onRemoveGroup : onRemoveTag;
+  const kindName = isType ? '类型' : isGroup ? '分组' : '标签';
   /* 正在改名的那一条（'' = 没在改）。标签与类型共用同一套输入 */
   const [editing, setEditing] = useState('');
   /*
@@ -3171,7 +3352,12 @@ function ColFilterPop({
     给它摆上调色和删除按钮是骗人：改色改不到任何东西（没有定义可改），
     点了"删"会弹确认框然后什么都没发生 —— 而用户已经以为自己删掉了什么。
   */
-  const isSentinel = (id: string) => isType && id === NOTYPE;
+  /*
+    「未分类 / 未分组」是哨兵值，不是定义表里的一条。
+    给它摆上调色和删除按钮是骗人：改色改不到任何东西（没有定义可改），
+    点了"删"会弹确认框然后什么都没发生 —— 而用户已经以为自己删掉了什么。
+  */
+  const isSentinel = (id: string) => (isType && id === NOTYPE) || (isGroup && id === NOGROUP);
 
   /*
     下方空间不够时**向上翻**。
@@ -3226,7 +3412,7 @@ function ColFilterPop({
                   做成逐行改色的话同一个标签在不同行颜色不同，
                   那就丢掉了"一眼分类"这个作用。
                 */}
-                {(isTag || isType) && !isSentinel(v) && (isType ? onTypeColor : onTagColor) ? (
+                {defCol && !isSentinel(v) && onColor ? (
                   <span className="tb-lpop-swatches">
                     {TAG_COLORS.map((c) => (
                       <button
@@ -3235,9 +3421,27 @@ function ColFilterPop({
                         className={'tb-swatch' + (colorOf(v) === c ? ' on' : '')}
                         style={{ background: c }}
                         title={`把「${optionLabel(col.field, v, defs, flow)}」改成这个颜色`}
-                        onClick={() => (isType ? onTypeColor!(v, c) : onTagColor!(v, c))}
+                        onClick={() => onColor!(v, c)}
                       />
                     ))}
+                    {/*
+                      取色器入口：固定调色板只有那几个色，
+                      要一个板子里没有的颜色（比如跟公司色号对齐）就只能靠它。
+                      拿到空串 = 用户取消，不改。
+                    */}
+                    {onPickColor ? (
+                      <button
+                        type="button"
+                        className="tb-swatch tb-swatch-more"
+                        title="用取色器选一个其他颜色"
+                        onClick={async () => {
+                          const hex = await onPickColor!(colorOf(v));
+                          if (hex) onColor!(v, hex);
+                        }}
+                      >
+                        ＋
+                      </button>
+                    ) : null}
                   </span>
                 ) : null}
                 {/*
@@ -3247,7 +3451,7 @@ function ColFilterPop({
                   行内那个下拉是"给这一条改"，而这里是"改这个标签本身"；
                   顺手能在这里做，就不用为了改个名字先去找某一行挂着它。
                 */}
-                {(isTag || isType) && !isSentinel(v) ? (
+                {defCol && !isSentinel(v) && onRename ? (
                   editing === v ? (
                     <input
                       className="tb-lpop-rename"
@@ -3256,10 +3460,7 @@ function ColFilterPop({
                       onClick={(e) => e.stopPropagation()}
                       onBlur={(e) => {
                         const nv = e.target.value.trim();
-                        if (nv && nv !== optionLabel(col.field, v, defs, flow)) {
-                          if (isType) onRenameType?.(v, nv);
-                          else onRenameTag?.(v, nv);
-                        }
+                        if (nv && nv !== optionLabel(col.field, v, defs, flow)) onRename?.(v, nv);
                         setEditing('');
                       }}
                       onKeyDown={(e) => {
@@ -3272,32 +3473,30 @@ function ColFilterPop({
                     <button
                       type="button"
                       className="tb-lpop-edit"
-                      title={`给这个${isType ? '类型' : '标签'}改名`}
+                      title={`给这个${kindName}改名`}
                       onClick={() => setEditing(v)}
                     >
                       ✎
                     </button>
                   )
                 ) : null}
-                {(isTag || isType) && !isSentinel(v)
-                  && (isType ? onRemoveType : onRemoveTag) ? (
+                {defCol && !isSentinel(v) && onRemove ? (
                   <button
                     type="button"
                     className="tb-act sm warn tb-lpop-del"
                     title={isType
                       ? '删除这个类型（挂在这个类型上的任务会变成「未分类」）'
-                      : '删除这个标签（会从所有挂它的任务上摘掉）'}
+                      : isGroup
+                        ? '删除这个分组（在这个组里的任务会变成未分组）'
+                        : '删除这个标签（会从所有挂它的任务上摘掉）'}
                     onClick={() => {
                       const nm = optionLabel(col.field, v, defs, flow);
-                      if (isType) {
-                        if (window.confirm(`删除类型「${nm}」？\n\n挂在这个类型上的任务会变成「未分类」。`)) {
-                          onRemoveType!(v);
-                        }
-                      } else if (window.confirm(
-                        `删除标签「${nm}」？\n\n会从所有挂这个标签的任务上摘掉。`,
-                      )) {
-                        onRemoveTag!(v);
-                      }
+                      const after = isType
+                        ? '挂在这个类型上的任务会变成「未分类」'
+                        : isGroup
+                          ? '在这个组里的任务会变成「未分组」'
+                          : '会从所有挂这个标签的任务上摘掉';
+                      if (window.confirm(`删除${kindName}「${nm}」？\n\n${after}。`)) onRemove!(v);
                     }}
                   >
                     删
@@ -3307,17 +3506,16 @@ function ColFilterPop({
             );
           })
         )}
-        {(isTag || isType) && (isType ? onCreateType : onCreateTag) ? (
+        {defCol && onCreate ? (
           <div className="tb-lpop-new">
             <input
               className="tb-lpop-input"
               value={newName}
-              placeholder={isType ? '新建类型…' : '新建标签…'}
+              placeholder={`新建${kindName}…`}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
                 if (!isComposing(e.nativeEvent) && e.key === 'Enter' && newName.trim()) {
-                  if (isType) onCreateType!(newName.trim(), newColor);
-                  else onCreateTag!(newName.trim(), newColor);
+                  onCreate!(newName.trim(), newColor);
                   setNewName('');
                 }
               }}
@@ -3329,10 +3527,23 @@ function ColFilterPop({
                   type="button"
                   className={'tb-swatch' + (newColor === c ? ' on' : '')}
                   style={{ background: c }}
-                  title={isType ? '新类型用这个颜色' : '新标签用这个颜色'}
+                  title={`新${kindName}用这个颜色`}
                   onClick={() => setNewColor(c)}
                 />
               ))}
+              {onPickColor ? (
+                <button
+                  type="button"
+                  className="tb-swatch tb-swatch-more"
+                  title="用取色器选一个其他颜色"
+                  onClick={async () => {
+                    const hex = await onPickColor!(newColor);
+                    if (hex) setNewColor(hex);
+                  }}
+                >
+                  ＋
+                </button>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -3468,6 +3679,8 @@ function ListView({
   onTagColor,
   onRenameTag,
   onRemoveTag,
+  groupDefs,
+  onCreateGroup, onGroupColor, onRenameGroup, onRemoveGroup, onPickColor,
   checked,
   onCheck,
   onBatchStatus,
@@ -3522,6 +3735,16 @@ function ListView({
   onRenameTag: (id: string, name: string) => void;
   /** 删标签：连带把任务上的这个标签摘掉 */
   onRemoveTag: (id: string) => void;
+  /** 分组定义（id 就是名字） */
+  groupDefs: TagDef[];
+  onCreateGroup: (name: string, color: string) => void;
+  onGroupColor: (id: string, color: string) => void;
+  /** 分组改名：定义与任务都要改（任务上存的就是名字） */
+  onRenameGroup: (id: string, name: string) => void;
+  /** 删分组：连带把任务清成未分组 */
+  onRemoveGroup: (id: string) => void;
+  /** 调起主面板取色器；返回 '' 表示取消 */
+  onPickColor: (initial: string) => Promise<string>;
   checked: Set<string>;
   onCheck: (id: string, on: boolean) => void;
   /** 批量改状态（走流转规则，走不通的跳过并报数） */
@@ -3692,6 +3915,17 @@ function ListView({
         */
         return (
           <span className="tb-lc c-group" key={field}>
+            {/*
+              分组有颜色就带色显示（与标签 chip 同一套观感）。
+              改一处定义、所有行的分组一起变 —— 这正是"一眼看出这批属于哪一组"。
+              没定义时没有色，不硬塞一个假的（假色比没色更容易误导）。
+            */}
+            {t.group && groupColor(groupDefs, t.group) ? (
+              <span
+                className="tb-col-dot"
+                style={{ background: groupColor(groupDefs, t.group) }}
+              />
+            ) : null}
             <InlineText
               value={t.group || ''}
               display={t.group || <span className="tb-ldim">—</span>}
@@ -3980,6 +4214,7 @@ function ListView({
                   options={colFilterValues(
                     c.field, allRows, statusIds, typeIds,
                     tagDefs.map((d) => d.id),
+                    (groupDefs || []).map((d) => d.id),
                   )}
                   onChange={(nf) => onFilter(c.field, nf)}
                   onClear={() => onClearFilter(c.field)}
@@ -3994,6 +4229,12 @@ function ListView({
                   onTypeColor={onTypeColor}
                   onRemoveType={onRemoveType}
                   onRenameType={onRenameType}
+                  groupDefs={groupDefs}
+                  onCreateGroup={onCreateGroup}
+                  onGroupColor={onGroupColor}
+                  onRenameGroup={onRenameGroup}
+                  onRemoveGroup={onRemoveGroup}
+                  onPickColor={onPickColor}
                 />
               ) : null}
               {/*

@@ -6,6 +6,20 @@ export declare const PRIORITIES: string[];
 export declare function canTransition(from: string, to: string): boolean;
 export declare function actionsFor(status: string): { to: string; label: string; needNote?: boolean }[];
 export declare function normalizeTask(raw: any): Task;
+export declare function groupName(defs: {
+    id: string;
+    name: string;
+}[] | null | undefined, id: string): string;
+export declare function groupColor(defs: {
+    id: string;
+    name: string;
+    color?: string;
+}[] | null | undefined, id: string): string;
+export declare function normalizeGroupDefs(raw: unknown): {
+    id: string;
+    name: string;
+    color: string;
+}[];
 export declare function normalizeStore(raw: any): TaskStore;
 export declare function sortTasks<T extends { priority: string; updatedAt: number }>(tasks: T[]): T[];
 export declare function allTags(tasks: { tags: string[] }[], limit?: number): string[];
@@ -148,7 +162,7 @@ export declare function groupEstimate(groupId: string, tasks: Task[]): number;
 export declare function totalEstimate(tasks: Task[]): number;
 
 export declare function colFilterValues(
-  field: SortField, rows: FlatRow[] | Task[], statusIds?: string[], typeIds?: string[], tagIds?: string[],
+  field: SortField, rows: FlatRow[] | Task[], statusIds?: string[], typeIds?: string[], tagIds?: string[], groupIds?: string[],
 ): string[];
 export declare function nextTaskId(store: { nextId: number }): string;
 export declare function pushHistory(task: any, by: string, action: string, note: string, at?: number): any;

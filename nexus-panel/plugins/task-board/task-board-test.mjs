@@ -67,6 +67,9 @@ import {
   groupTasksBy,
   groupValuesOf,
   NOGROUP,
+  groupName,
+  groupColor,
+  normalizeGroupDefs,
   newDefId,
   DEFAULT_TYPES,
 } from './core.mjs';
@@ -977,9 +980,14 @@ t('自查：类型列的下拉必须拿到 typeIds 与类型相关回调（漏�
   ].every((needle) => call.indexOf(needle) >= 0);
 })());
 
-t('自查：「未分类」哨兵不给调色和删除按钮（摆着点不动 = 骗人）', (() => {
+t('自查：「未分类 / 未分组」哨兵不给调色和删除按钮（摆着点不动 = 骗人）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('const isSentinel = (id: string) => isType && id === NOTYPE;') >= 0
+  /*
+    分组成为定义表列之后，它的「未分组」同样是哨兵 ——
+    判据必须两个都认，只认 NOTYPE 的话未分组那一行会摆出删除按钮，
+    点了弹确认框然后什么都没发生。
+  */
+  return app.indexOf('const isSentinel = (id: string) => (isType && id === NOTYPE) || (isGroup && id === NOGROUP);') >= 0
     && app.indexOf('!isSentinel(v)') >= 0;
 })());
 
@@ -1827,7 +1835,12 @@ t('分组：能和其它列组成多层级（比旧的手动嵌套更通用）',
 })());
 
 /* 接线自检：分组列要在列定义 / 分组依据 / 排序字段 / cellFor 四处都到位 */
-t('分组：列定义里有这一列', LIST_COLUMNS.some((c) => c.field === 'group' && c.kind === 'text'));
+/*
+  分组列从 'text' 改成 **'enum'**（定义表驱动）。
+  原来只有一个关键词框，"这一列有哪些分组"根本看不到，
+  更谈不上增删改色 —— 而分组恰恰最需要"从已有项里挑一个"。
+*/
+t('分组：列定义里有这一列（且是 enum）', LIST_COLUMNS.some((c) => c.field === 'group' && c.kind === 'enum'));
 
 t('分组：能作为分组依据被选中（GROUP_KEYS 里有 group）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
@@ -1930,8 +1943,8 @@ t('标签：筛选面板里显示名字而不是原始 id', (() => {
  */
 t('标签：筛选摘要用的是标签定义表（不是类型定义表）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf("const defs = col.field === 'tags' ? tagDefs : typeDefs;") >= 0
-    && app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow)') >= 0;
+  return app.indexOf("col.field === 'tags' ? tagDefs : col.field === 'group' ? groupDefs : typeDefs") >= 0
+    && app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow, store ? store.groupDefs : [])') >= 0;
 })());
 
 /*
@@ -1977,11 +1990,17 @@ t('标签：面板上有新建 / 改名 / 改色 / 删除四个入口', (() => {
  * 它没有定义可改，点了"删"会弹确认框然后什么都没发生，
  * 而用户已经以为自己删掉了什么。
  */
-t('标签/类型：哨兵值不显示改名与删除按钮', (() => {
+/*
+  分组加入"定义表驱动"三件套之后，这两处的锚点从 `(isTag || isType)`
+  变成了 `defCol`（三种列统一走同一套）。
+  哨兵判据也从"只有 NOTYPE"扩成了"NOTYPE 或 NOGROUP"——
+  未分组同样是哨兵，给它摆删除按钮同样是骗人。
+*/
+t('标签/类型/分组：哨兵值不显示改名与删除按钮', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const pop = app.slice(app.indexOf('function ColFilterPop'), app.indexOf("if (col.kind === 'text') {"));
-  return pop.indexOf('(isTag || isType) && !isSentinel(v) ? (') >= 0
-    && pop.indexOf('(isType ? onRemoveType : onRemoveTag)') >= 0;
+  return pop.indexOf('defCol && !isSentinel(v) && onRename') >= 0
+    && pop.indexOf('defCol && !isSentinel(v) && onRemove') >= 0;
 })());
 
 
@@ -2715,7 +2734,7 @@ t('审查：筛选项的状态名走 statusName(flow, …)', (() => {
 
 t('审查：flow 贯通到筛选面板与摘要', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow)') >= 0
+  return app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow, store ? store.groupDefs : [])') >= 0
     && app.indexOf('flow={flow}') >= 0;
 })());
 
@@ -3422,6 +3441,137 @@ t('审查：同值时升降序互为逆序', (() => {
   const a = sortTasksBy(list, 'priority', 'asc').map((x) => x.id).join('');
   const d = sortTasksBy(list, 'priority', 'desc').map((x) => x.id).join('');
   return a === [...a].reverse().join('') ? false : a === 'abc' && d === 'cba';
+})());
+
+
+/* ============================================================ 分组定义表（本轮新增） */
+
+const GDEFS = [{ id: '登录', name: '登录', color: '#22c55e' }];
+
+t('审查：分组定义表能读出来（对象数组）', (() => {
+  const st = normalizeStore({ groupDefs: [{ id: '登录', name: '登录', color: '#f00' }] });
+  return st.groupDefs.length === 1 && st.groupDefs[0].color === '#f00';
+})());
+
+/* 手写真省事的写法：{"groupDefs":["登录","支付"]} —— 也要认 */
+t('审查：分组定义表接受纯字符串数组', (() => {
+  const st = normalizeStore({ groupDefs: ['登录', '支付'] });
+  return st.groupDefs.length === 2 && st.groupDefs[0].id === '登录';
+})());
+
+t('审查：分组名没有定义时原样显示（不硬塞假名）', groupName(GDEFS, '支付') === '支付');
+
+t('审查：分组没定义时颜色为空（不硬塞假色）', groupColor(GDEFS, '支付') === '');
+
+/*
+  分组改成 enum 之后，colRawValues 必须返回它的值 ——
+  漏了就是"该列筛选 100% 失效"，而界面只显示"没有符合条件的任务"。
+*/
+t('审查：分组列能在 colRawValues 里取到值', (() => {
+  const t1 = normalizeTask({ id: 'a', group: '登录' });
+  const t2 = normalizeTask({ id: 'b' });
+  return colRawValues(t1, 'group')[0] === '登录' && colRawValues(t2, 'group')[0] === NOGROUP;
+})());
+
+/* 候选 = 定义表 ∪ 数据 ∪ 未分组：只取一边都会漏 */
+t('审查：分组候选 = 定义表 + 数据 + 未分组', (() => {
+  const mk2 = (id, o) => ({ task: normalizeTask({ id, ...o }), depth: 0, path: [], groupPath: '' });
+  const rows = [mk2('a', { group: '登录' }), mk2('b', { group: '支付' }), mk2('c', {})];
+  const v = colFilterValues('group', rows, [], [], [], ['登录']);
+  return v.indexOf('登录') >= 0 && v.indexOf('支付') >= 0 && v.indexOf(NOGROUP) >= 0;
+})());
+
+t('审查：按分组筛选命中（含未分组）', (() => {
+  const mk2 = (id, o) => ({ task: normalizeTask({ id, ...o }), depth: 0, path: [], groupPath: '' });
+  const rows = [mk2('a', { group: '登录' }), mk2('c', {})];
+  return filterTasksByColumns(rows, { group: { values: ['登录'] } }, '').length === 1
+    && filterTasksByColumns(rows, { group: { values: [NOGROUP] } }, '').length === 1;
+})());
+
+
+/* ============================================================ 分组成为定义表列（本轮改造） */
+
+/*
+ * 分组列原来 kind='text'（只有关键词框），于是：
+ * · "这一列有哪些分组"根本看不到
+ * · 更谈不上增删改色
+ * 而分组恰恰是最需要"从已有项里挑一个"的字段 ——
+ * 手打必然打出 '登录' / '登陆' 两种写法，分成两组还看不出为什么。
+ */
+t('审查：分组列是 enum（定义表驱动，不再是自由文本）', (() => {
+  const c = LIST_COLUMNS.find((x) => x.field === 'group');
+  return !!c && c.kind === 'enum';
+})());
+
+/*
+ * 三种定义表列（标签 / 类型 / 分组）必须共用同一套增删改色交互。
+ * 写成三份的话，加功能时改了其中两份就分叉 ——
+ * 表现是"标签能改色、分组不能"，而用户看不出这是两套代码。
+ */
+t('守卫：三种定义列共用同一套交互（defCol，不是各自 isTag/isType）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const pop = app.slice(app.indexOf('function ColFilterPop'), app.indexOf("if (col.kind === 'text') {"));
+  return pop.indexOf('defCol && onCreate') >= 0
+    && pop.indexOf('defCol && !isSentinel(v) && onColor') >= 0
+    && pop.indexOf('defCol && !isSentinel(v) && onRename') >= 0
+    && pop.indexOf('defCol && !isSentinel(v) && onRemove') >= 0;
+})());
+
+/* 取色器必须真的接上主面板的 color-picker（不是摆个按钮不干活） */
+t('守卫：改色接了主面板取色器', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("ctx.services.call('color-picker', 'pick'") >= 0;
+})());
+
+/*
+ * ⛔ color-picker 的 pick **取消也是 resolve**（`{ hex: null }`），不是 reject。
+ * 按"取消会抛错"写的话，用户点取消会冒出一个没来由的报错。
+ * 判据：拿到空串要当成"不改"，不能继续写盘。
+ */
+t('守卫：取色器取消（hex 为空）时不改色', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const pickColor');
+  const seg = app.slice(i, i + 900);
+  return /typeof r\.hex === 'string'/.test(seg) && /return hex \|\| ''/.test(seg);
+})());
+
+
+/*
+ * 分组列改成 enum 之后，optionLabel 必须单独认「未分组」哨兵 ——
+ * 否则下拉里显示 "__nogroup__"。
+ *
+ * ⛔ 这个错是**真实渲染时抓到**的（不是读代码推的）：
+ * 面板上三个候选里最后一个就是一串下划线，而它明明该写"未分组"。
+ * 和「未分类 NOTYPE」是同一处漏，只是被分组列带出来的。
+ */
+t('守卫：optionLabel 认「未分组」哨兵（不许显示 __nogroup__）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("if (field === 'group') return v === NOGROUP ? '未分组'") >= 0;
+})());
+
+/*
+ * 筛选摘要（chip 上的那句）同样要按列取定义表 ——
+ * 分组列不传 groupDefs 的话，chip 上显示裸名字/下划线，
+ * 而同一个筛选在下拉面板里显示的是定义表的 name，两处说法不一样。
+ */
+t('守卫：filterSummary 按列取定义表（含分组）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("col.field === 'tags' ? tagDefs : col.field === 'group' ? groupDefs : typeDefs") >= 0;
+})());
+
+/* 端到端：四个操作都要真的落盘（用可变数据桩实跑） */
+t('审查：分组改名要连带改任务上的 group（任务上存的是名字）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const renameGroup');
+  const seg = app.slice(i, i + 1200);
+  return /group:\s*nm/.test(seg) && /updatedAt:\s*Date\.now\(\)/.test(seg);
+})());
+
+t('审查：删分组是把任务清成未分组，不是删任务', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const removeGroup');
+  const seg = app.slice(i, i + 900);
+  return /group:\s*''/.test(seg) && !/filter\(\(t\) => t\.group !== id\)/.test(seg);
 })());
 
 /* ---------------- 汇总 ---------------- */
