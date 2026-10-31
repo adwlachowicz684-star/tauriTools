@@ -9,6 +9,7 @@ import {
   migrateLlmToCredentials, type MigratableCanvas,
 } from '../engine/llmCredential';
 import { makeCredential } from '../engine/credentials';
+import { readSrc } from './srcScan';
 
 /**
  * 大模型凭据。
@@ -337,4 +338,61 @@ test('迁移：节点上没密钥的不动（收进去也是跑不通的凭据�
   const r = migrateLlmToCredentials(cvs, [], (p) => makeCredential(p));
   assert.equal(r.migrated, 0);
   assert.equal(r.credentials.length, 0);
+});
+
+/* ---------- 明文连接与迁移的配合 ---------- */
+
+/*
+ * ⛔ 这条是**连带效应**，值得钉住：
+ * decryptStore 曾把磁盘上的明文 secret 抹成空串，于是
+ * findReusableLlmCredential 比密钥时永远对不上（'' !== 'sk-legacy'），
+ * 老存档 + 老节点会**新建出一条重复连接** ——
+ * 连接列表越来越长，而用户不知道哪条是真的（正是迁移要防的那件事）。
+ */
+test('迁移: 已有一条明文连接的，要复用而不是再建一条', () => {
+  const existing = makeCredential({
+    kind: 'llm', name: 'OpenAI · 画布一', secret: 'sk-legacy',
+    meta: { [LLM_META.provider]: 'openai', [LLM_META.baseUrl]: '', [LLM_META.models]: 'gpt-4o' },
+    capabilities: ['llm:chat'],
+  });
+  const cvs = [canvas('cv1', [{ id: 'n1', data: OLD_NODE('sk-legacy', '', 'gpt-4o', 'openai') }])];
+  const r = migrateLlmToCredentials(cvs, [existing], (p) => makeCredential(p));
+  assert.equal(r.credentials.length, 1, '明文还在就该复用，不能重复建');
+  assert.equal(r.migrated, 1);
+});
+
+test('迁移: 解不开的（secret 空）不会被误复用（反例）', () => {
+  const broken = makeCredential({
+    kind: 'llm', name: 'x', secret: '',
+    meta: { [LLM_META.provider]: 'openai', [LLM_META.baseUrl]: '', [LLM_META.models]: '' },
+    capabilities: ['llm:chat'],
+  });
+  const cvs = [canvas('cv1', [{ id: 'n1', data: OLD_NODE('sk-legacy', '', 'm', 'openai') }])];
+  assert.equal(
+    findReusableLlmCredential([broken], { llm: cvs[0].nodes[0].data!.llm as never }),
+    null, '空密钥不能被当成"同一个 key"复用',
+  );
+});
+
+/* ---------- 源码守卫 ---------- */
+
+test('源码守卫: lockVault 必须重置迁移闸门（否则"每次加载时跑"是假话）', () => {
+  const src = readSrc('hooks/useCredentialVault.ts');
+  const at = src.indexOf('const lockVault');
+  assert.ok(at >= 0, '要能找到 lockVault');
+  const body = src.slice(at, src.indexOf('const unlock'));
+  assert.ok(/ranLlmMigrationRef\.current\s*=\s*false/.test(body),
+    '锁定后不重置闸门 → 整个会话只迁移一次，'
+    + '中途导入的老画布上的内联密钥永远不进连接库，导出时会跟着文件走');
+});
+
+test('源码守卫: 迁移闸门要在跑完之后才关（抛异常不该永久关死）', () => {
+  const src = readSrc('hooks/useCredentialVault.ts');
+  const at = src.indexOf('const migrateLlmNow');
+  assert.ok(at >= 0, '要能找到 migrateLlmNow');
+  const body = src.slice(at, src.indexOf('const lockVault'));
+  const callAt = body.indexOf('migrateLlmToCredentials(');
+  const setAt = body.indexOf('ranLlmMigrationRef.current = true');
+  assert.ok(callAt >= 0 && setAt >= 0, '调用与关闸门都要在');
+  assert.ok(setAt > callAt, '闸门设在调用之前：一旦抛异常就永久关死，那些密钥再也不会被收进来');
 });
