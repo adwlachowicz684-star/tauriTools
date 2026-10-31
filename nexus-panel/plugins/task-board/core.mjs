@@ -256,7 +256,17 @@ export function actionsFor(status) {
 
 export function normalizeTask(raw) {
   const t = raw && typeof raw === 'object' ? raw : {};
-  const num = (v, d) => (Number.isFinite(v) ? v : d);
+  /*
+    ⛔ 同样要先 Number() 再判（与 estimate 同一个坑）：
+    时间戳在 JSON 里写成字符串（`"createdAt": "1700000000000"`）很常见，
+    `Number.isFinite("1700000000000")` 是 false → 落到默认值 0。
+    于是那条任务**没有创建时间**：不参与日期区间筛选、
+    在"按创建排序"里永远垫底 —— 而用户明明填了。
+  */
+  const num = (v, d) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : d;
+  };
   /*
     parent / deps 指向的 id 可能已经不存在（任务被删了）。
     这里**不清理**引用：清了就无从知道"这里原本挂着什么"，
@@ -284,7 +294,25 @@ export function normalizeTask(raw) {
       强校验只会逼人去备注里偷偷记，那就没法汇总了。
       负数按 0 处理：负的工作量没有意义，且会把合计往回拉。
     */
-    estimate: Number.isFinite(t.estimate) && t.estimate > 0 ? t.estimate : 0,
+    /*
+      预估工作量，单位**人日**，允许小数（半天 = 0.5）。
+      不设上限也不校验整数 —— 任务大到几十人日、小到 0.25 都有，
+      强校验只会逼人去备注里偷偷记，那就没法汇总了。
+      负数按 0 处理：负的工作量没有意义，且会把合计往回拉。
+
+      ⛔ 必须**先 Number() 再判**：JSON 里写 `"estimate": "2.5"`
+      （字符串）是完全正常的写法 —— 表单提交、AI 手写 JSON 都常这样。
+      而 `Number.isFinite("2.5")` 是 **false**，于是它被静默当成 0（没估）。
+
+      用户/AI 明明填了 2.5 人日，界面显示"没估"、统计里也不计 ——
+      不报错，只是那一列空着，没人会想到是类型问题。
+      （前端 store.createTask 那边一直用的是 Number(draft.estimate)，
+       所以界面建的没问题；只有直接写 JSON 和读盘这两条路径中招。）
+    */
+    estimate: (() => {
+      const n = Number(t.estimate);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    })(),
     /*
       任务类型存的是**定义表里的 id**（'dev'/'bug'…），不是显示名。
       存名字的话改个名就要回头改所有任务，而且改名后旧名变成没人认的孤值。
@@ -329,9 +357,22 @@ function normalizeTagDefs(raw) {
 
 export function normalizeStore(raw) {
   const s = raw && typeof raw === 'object' ? raw : {};
+  /*
+    数值字段同样先 Number() 再判（理由见 normalizeTask 里的 estimate）：
+    JSON 里把它们写成字符串很常见，而 Number.isFinite("3") 是 false
+    → 静默落到默认值。
+
+    ⛔ nextId 尤其不能静默回落：它决定下一条任务的 id。
+    回落到 1 的话，新建任务的 id 会和已有任务**撞号** ——
+    而 id 是依赖、历史、筛选的键，撞号之后改一条会动到另一条。
+  */
+  const numOr = (v, d) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : d;
+  };
   return {
-    v: Number.isFinite(s.v) ? s.v : 1,
-    nextId: Number.isFinite(s.nextId) && s.nextId > 0 ? Math.floor(s.nextId) : 1,
+    v: numOr(s.v, 1),
+    nextId: numOr(s.nextId, 0) > 0 ? Math.floor(numOr(s.nextId, 0)) : 1,
     tasks: Array.isArray(s.tasks) ? s.tasks.map(normalizeTask) : [],
     agents: Array.isArray(s.agents)
       ? s.agents
@@ -340,7 +381,7 @@ export function normalizeStore(raw) {
             id: a.id,
             name: typeof a.name === 'string' && a.name ? a.name : a.id,
             role: typeof a.role === 'string' && a.role ? a.role : 'dev',
-            lastSeen: Number.isFinite(a.lastSeen) ? a.lastSeen : 0,
+            lastSeen: numOr(a.lastSeen, 0),
           }))
       : [],
     tagDefs: normalizeTagDefs(s.tagDefs),
@@ -1162,7 +1203,8 @@ export function allTags(tasks, limit = 0) {
 
 /** 下一个任务 id（与 Rust create_task 同规则：tb-%04d） */
 export function nextTaskId(store) {
-  const n = Number.isFinite(store.nextId) && store.nextId > 0 ? Math.floor(store.nextId) : 1;
+  const nRaw = Number(store.nextId);
+  const n = Number.isFinite(nRaw) && nRaw > 0 ? Math.floor(nRaw) : 1;
   return `tb-${String(n).padStart(4, '0')}`;
 }
 
