@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyBoard, addNode, statusOf, type TaskBoard, type BoardNode } from '../engine/taskBoard';
 import {
   emptyMeta, isCancelStatus, statusName, statusColor, updateStatus, type BoardMeta,
 } from '../engine/boardMeta';
@@ -16,14 +15,6 @@ import { readSrc } from './srcScan';
  * 全组都在「放弃」时，组头显示的是**「已完成」** —— 把放弃记成了产出。
  */
 
-const task = (title: string, patch: Record<string, unknown> = {}): BoardNode => ({
-  kind: 'task', title, status: 's1', deps: [], assignee: '', note: '',
-  desc: '', tags: [], createdAt: 0, updatedAt: 0, due: 0, priority: 0,
-  session: '', prevSession: '', tookAt: 0,
-  ...patch,
-} as BoardNode);
-
-/** 自定义流程：待办 s1 → 进行中 s2 → 完工 s3 / 放弃 s4（两个终态） */
 function customMeta(): BoardMeta {
   return {
     ...emptyMeta('p1', '项目甲'),
@@ -42,17 +33,6 @@ function noCancelMeta(): BoardMeta {
   m.statuses[3] = { ...m.statuses[3], cancel: undefined };
   return m;
 }
-
-function board(): { b: TaskBoard; g1: string; t1: string; t2: string } {
-  const r1 = addNode(emptyBoard('p1', '项目甲'), null, { kind: 'group', title: '登录', children: [] });
-  const r2 = addNode(r1.board, r1.id, task('设计表'));
-  const r3 = addNode(r2.board, r1.id, task('写接口'));
-  return { b: r3.board, g1: r1.id, t1: r2.id, t2: r3.id };
-}
-
-const withStatus = (b: TaskBoard, id: string, st: string): TaskBoard => ({
-  ...b, nodes: { ...b.nodes, [id]: { ...b.nodes[id], status: st } as BoardNode },
-});
 
 /* ---------- 判据 ---------- */
 
@@ -89,25 +69,15 @@ test('非终态勾了也不算（勾掉终态时一并清掉，避免将来复�
   assert.equal(isCancelStatus(m4, 's3'), false, '终态被勾掉又勾回来，cancel 不该复活');
 });
 
-/* ---------- 组头聚合 ---------- */
+/*
+  ⛔ 组头聚合那 3 条随任务板一起删掉了。
 
-test('全组都在自定义取消态 → 组头是 cancelled，不是 done', () => {
-  const { b, g1, t1, t2 } = board();
-  const x = withStatus(withStatus(b, t1, 's4'), t2, 's4');
-  assert.equal(statusOf(x, g1, customMeta()), 'cancelled', '放弃不能记成产出');
-});
+  它们要的是 statusOf(board, groupId, meta) —— 那个函数在 engine/taskBoard.ts，
+  而 taskBoard 在 #399 被整块移除。留着会让整个文件 Cannot find module 崩掉，
+  连累下面这些纯 boardMeta 的用例一起红。
 
-test('全组都在自定义完成态 → 组头是 done', () => {
-  const { b, g1, t1, t2 } = board();
-  const x = withStatus(withStatus(b, t1, 's3'), t2, 's3');
-  assert.equal(statusOf(x, g1, customMeta()), 'done');
-});
-
-test('没勾 cancel 时全组在 s4 → 仍算完成（猜错比不猜更糟）', () => {
-  const { b, g1, t1, t2 } = board();
-  const x = withStatus(withStatus(b, t1, 's4'), t2, 's4');
-  assert.equal(statusOf(x, g1, noCancelMeta()), 'done');
-});
+  取消语义本身（isCancelStatus / statusName / statusColor）不依赖任务板，保留。
+*/
 
 /* ---------- 显示名 ---------- */
 
