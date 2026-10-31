@@ -1774,62 +1774,82 @@ ${dir}
       ) : null}
 
       {view === 'list' && (
-        <ListView
-          rows={listRows}
-          allRows={flatRows}
-          store={store.tasks}
-          taskStore={store}
-          flow={flow}
-          statusIds={statusIds}
-          typeDefs={typeDefs}
-          typeIds={typeIds}
-          onToggleType={toggleType}
-          onRenameType={(id, name) => setTypeDef(id, { name })}
-          /*
-            默认色与列头筛选面板里的新建保持一致（都取调色板的第 7 个）。
-            两处不同的话，同一个"新建类型"动作在不同入口得到不同颜色，
-            看着像两条互不相干的规则。
-          */
-          onCreateType={(name) => createType(name, TAG_COLORS[6])}
-          onTypeColor={(id, color) => setTypeDef(id, { color })}
-          onRemoveType={removeType}
-          tagDefs={store.tagDefs}
-          onCreateTag={doAddTag}
-          onTagColor={doSetTagColor}
-          onRenameTag={doRenameTag}
-          onRemoveTag={doRemoveTag}
-          groupDefs={store.groupDefs}
-          onCreateGroup={addGroup}
-          onGroupColor={setGroupColor}
-          onRenameGroup={renameGroup}
-          onRemoveGroup={removeGroup}
-          onPickColor={pickColor}
-          checked={checked}
-          onCheck={(id, on) => setChecked((prev) => {
-            const next = new Set(prev);
-            if (on) next.add(id); else next.delete(id);
-            return next;
-          })}
-          onBatchStatus={doBatchStatus}
-          onBatchType={doBatchType}
-          onBatchPriority={doBatchPriority}
-          onBatchDelete={doBatchDelete}
-          colHidden={colHidden}
-          colWidths={colWidths}
-          onSetStatus={(id, to, needNote) => (needNote ? setRejectFor({ id: id, to }) : doTransition(id, to as TaskStatus))}
-          onPatchField={(id, patch) => doPatch(id, patch)}
-          onToggleTag={toggleTaskTag}
-          onToggleCol={toggleCol}
-          onColWidth={setColWidth_}
-          onColResizeEnd={persistColWidths}
-          onResetWidths={resetColWidths}
-          sort={sort}
-          filters={colFilters}
-          onSort={changeSort}
-          onFilter={setColFilter}
-          onClearFilter={clearColFilter}
-          onOpen={(id) => setDetailId(id)}
-        />
+        <div className="tb-viewarea">
+          <ListView
+            rows={listRows}
+            allRows={flatRows}
+            store={store.tasks}
+            taskStore={store}
+            flow={flow}
+            statusIds={statusIds}
+            typeDefs={typeDefs}
+            typeIds={typeIds}
+            onToggleType={toggleType}
+            onRenameType={(id, name) => setTypeDef(id, { name })}
+            /*
+              默认色与列头筛选面板里的新建保持一致（都取调色板的第 7 个）。
+              两处不同的话，同一个"新建类型"动作在不同入口得到不同颜色，
+              看着像两条互不相干的规则。
+            */
+            onCreateType={(name) => createType(name, TAG_COLORS[6])}
+            onTypeColor={(id, color) => setTypeDef(id, { color })}
+            onRemoveType={removeType}
+            tagDefs={store.tagDefs}
+            onCreateTag={doAddTag}
+            onTagColor={doSetTagColor}
+            onRenameTag={doRenameTag}
+            onRemoveTag={doRemoveTag}
+            groupDefs={store.groupDefs}
+            onCreateGroup={addGroup}
+            onGroupColor={setGroupColor}
+            onRenameGroup={renameGroup}
+            onRemoveGroup={removeGroup}
+            onPickColor={pickColor}
+            checked={checked}
+            onCheck={(id, on) => setChecked((prev) => {
+              const next = new Set(prev);
+              if (on) next.add(id); else next.delete(id);
+              return next;
+            })}
+            onBatchStatus={doBatchStatus}
+            onBatchType={doBatchType}
+            onBatchPriority={doBatchPriority}
+            onBatchDelete={doBatchDelete}
+            colHidden={colHidden}
+            colWidths={colWidths}
+            onSetStatus={(id, to, needNote) => (needNote ? setRejectFor({ id: id, to }) : doTransition(id, to as TaskStatus))}
+            onPatchField={(id, patch) => doPatch(id, patch)}
+            onToggleTag={toggleTaskTag}
+            onToggleCol={toggleCol}
+            onColWidth={setColWidth_}
+            onColResizeEnd={persistColWidths}
+            onResetWidths={resetColWidths}
+            sort={sort}
+            filters={colFilters}
+            onSort={changeSort}
+            onFilter={setColFilter}
+            onClearFilter={clearColFilter}
+            onOpen={(id) => setDetailId(id)}
+          />
+          {detail ? (
+            <DetailPanel
+              task={detail}
+              me={me}
+              tasks={store.tasks}
+              taskStore={store}
+              tagDefs={store.tagDefs}
+              typeDefs={typeDefs}
+              flow={flow}
+              onClose={() => setDetailId(null)}
+              onComment={(note) => doComment(detail.id, note)}
+              onDelete={() => doDelete(detail.id)}
+              onAction={(to, needNote) => (needNote ? setRejectFor({ id: detail.id, to }) : doTransition(detail.id, to))}
+              onClaim={() => doClaim(detail.id)}
+              onPatch={(patch) => doPatch(detail.id, patch)}
+              onOpen={(id) => setDetailId(id)}
+            />
+          ) : null}
+        </div>
       )}
 
       {/*
@@ -1939,24 +1959,6 @@ ${dir}
         />
       ) : null}
 
-      {detail && (
-        <DetailModal
-          task={detail}
-          me={me}
-          tasks={store.tasks}
-          taskStore={store}
-          tagDefs={store.tagDefs}
-          typeDefs={typeDefs}
-          flow={flow}
-          onClose={() => setDetailId(null)}
-          onComment={(note) => doComment(detail.id, note)}
-          onDelete={() => doDelete(detail.id)}
-          onAction={(to, needNote) => (needNote ? setRejectFor({ id: detail.id, to }) : doTransition(detail.id, to))}
-          onClaim={() => doClaim(detail.id)}
-          onPatch={(patch) => doPatch(detail.id, patch)}
-          onOpen={(id) => setDetailId(id)}
-        />
-      )}
 
       {/* 打回备注 */}
       {rejectFor && (
@@ -1996,6 +1998,12 @@ function TaskCard({
   flow: FlowLike;
   /** 标签定义：卡片上的标签要显示名字而不是 id */
   tagDefs: TagDef[];
+    /*
+    打开详情（右侧面板）。
+    ⛔ 现在**没有点击触发** —— 卡片上的 onClick 已经去掉了，
+    详情要等右键菜单里的「显示详情」主动叫它。
+    这个 prop 保留着，菜单接上就能直接用。
+  */
   onOpen: () => void;
   onAction: (to: TaskStatus, needNote?: boolean) => void;
   onClaim: () => void;
@@ -2003,14 +2011,14 @@ function TaskCard({
   const acts = actionsForIn(flow, task.status);
   return (
     <article className="tb-task">
-      <div className="tb-task-top" onClick={onOpen}>
+      <div className="tb-task-top">
         <PriorityBadge p={task.priority} />
         <span className="tb-task-id">{task.id}</span>
         <span className="tb-task-time" title={fmtTime(task.updatedAt)}>
           {relTime(task.updatedAt)}
         </span>
       </div>
-      <div className="tb-task-title" onClick={onOpen}>
+      <div className="tb-task-title">
         {task.title}
       </div>
       {/*
@@ -4260,12 +4268,23 @@ function ListView({
             行内单元格由 shown 驱动，和表头、网格是同一份 ——
             不再各写各的，也就不存在"少渲染一格导致整行错位"。
           */
+          /*
+            ⛔ 整行**不再** onClick 打开详情。
+
+            原来点这一行的任何位置都会弹出详情框 ——
+            而这一行里大半格子是**可就地编辑**的（状态/优先级/标题/认领人…），
+            于是"想改个状态"必然顺带弹一个框，改一次弹一次。
+
+            详情改成右侧面板后，面板是非模态的、不挡列表，
+            但**默认也不该自己冒出来** —— 它要等右键菜单里的「显示详情」
+            主动叫它。在那之前，点行就是点行，什么都不弹。
+
+            onOpen 这个 prop 保留着（右键菜单接上就能直接用）。
+          */
           <div
             key={t.id}
             className="tb-lrow tb-lgrid"
             style={gridStyle}
-            onClick={() => onOpen(t.id)}
-            title="点击查看详情"
           >
             <label className="tb-lpick" onClick={(e) => e.stopPropagation()}>
               <input
@@ -4567,7 +4586,7 @@ function StatsView({
           <header className="tb-stat-panel-head">最近动态</header>
           {stats.recent.length === 0 && <div className="tb-col-empty">暂无记录</div>}
           {stats.recent.map((h, i) => (
-            <div key={i} className="tb-hev tb-click" onClick={() => onOpen(h.taskId)} title="点击查看任务">
+            <div key={i} className="tb-hev">
               <span className="tb-hev-at">{fmtTime(h.at)}</span>
               <span className="tb-hev-by">{h.by}</span>
               <span className="tb-hev-act">{h.taskId}</span>
@@ -4591,7 +4610,7 @@ function StatsView({
             不必在两种"筛选"之间来回对账。
           */}
           {stats.stale.map((t) => (
-            <div key={t.id} className="tb-load-row" onClick={() => onOpen(t.id)} title="点击查看任务">
+            <div key={t.id} className="tb-load-row">
               <PriorityBadge p={t.priority} />
               <span className="tb-load-id">{t.id}</span>
               <span className="tb-load-title">{t.title}</span>
@@ -4841,7 +4860,7 @@ function DraftInput({
   );
 }
 
-function DetailModal({
+function DetailPanel({
   task,
   me,
   tasks,
@@ -4915,8 +4934,29 @@ function DetailModal({
     (t) => t.id !== task.id && !dependsOn(tasks, t.id, task.id),
   );
 
+  /*
+    右侧**面板**，不是模态弹窗。
+
+    ⛔ 为什么必须换掉弹窗：
+    弹窗是模态的 —— 它一出现就把列表盖住，不看也得先关掉。
+    而详情是"边看列表边对照"的东西：改完一个字段想接着看下一条，
+    弹窗逼人多一次开关。更糟的是它和行内编辑抢点击：
+    点在单元格上想改个状态，顺带弹出一个框，等于**改一个内容就弹一次**。
+
+    面板是非模态的：它占右侧一条，列表照常滚、照常点，
+    不关也能继续操作 —— 这正是"不影响操作"的关键。
+  */
   return (
-    <Modal title={`${task.id} · ${task.title}`} onClose={onClose} wide>
+    <aside className="tb-dpanel">
+      <header className="tb-dpanel-head">
+        <span className="tb-dpanel-title" title={`${task.id} · ${task.title}`}>
+          {task.id} · {task.title}
+        </span>
+        <button type="button" className="tb-x" onClick={onClose} title="关闭详情">
+          ✕
+        </button>
+      </header>
+      <div className="tb-dpanel-body">
       <div className="tb-dmeta">
         <PriorityBadge p={task.priority} />
         <span className="tb-dtag">状态：{statusName(flow, task.status)}</span>
@@ -5111,7 +5151,8 @@ function DetailModal({
           备注
         </button>
       </div>
-    </Modal>
+      </div>
+    </aside>
   );
 }
 

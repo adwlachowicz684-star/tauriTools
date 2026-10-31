@@ -2766,9 +2766,13 @@ t('审查：actionsForIn 认自定义流程', (() => {
   return a.length === 1 && a[0].to === 's2' && a[0].label === '开工';
 })());
 
+/*
+  组件从 DetailModal（模态弹窗）改名为 DetailPanel（右侧面板），
+  这里是锚点跟随改名，判据本身不变。
+*/
 t('审查：详情面板用 actionsForIn(flow, …)', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  const i = app.indexOf('function DetailModal({');
+  const i = app.indexOf('function DetailPanel({');
   const seg = app.slice(i, i + 1500);
   return seg.indexOf('const acts = actionsForIn(flow, task.status);') >= 0
     && seg.indexOf('const acts = actionsFor(task.status);') < 0;
@@ -3178,7 +3182,7 @@ const MATRIX = [
   /* [入口名, 片段, 必须出现的字段] */
   ['新建弹窗', () => SEG(appSrc, 'function NewTaskModal(', '\nfunction '),
     ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group']],
-  ['详情面板', () => SEG(appSrc, 'function DetailModal({', '\nfunction '),
+  ['详情面板', () => SEG(appSrc, 'function DetailPanel({', '\nfunction '),
     ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group', 'tags', 'assignee', 'deps']],
   ['全局搜索', () => SEG(coreSrc, 'const hay = ', '\n    }'),
     ['t.id', 't.title', 't.detail', 't.summary', 't.group', 't.assignee']],
@@ -3625,6 +3629,69 @@ t('守卫：defs 含三张定义表', (() => {
 t('守卫：建任务 schema 提示先看 defs', (() => {
   const seg = rsSeg('"tb_create_task"', 2600);
   return !rsSrc || seg.indexOf('defs.groupDefs') >= 0;
+})());
+
+
+/* ============================================================ 详情改成右侧面板 + 不再自动弹出（本轮） */
+
+/*
+ * 根因不是"弹窗不好看"，而是**弹窗干扰操作**：
+ * 列表行里大半格子可就地编辑（状态/优先级/标题/认领人…），
+ * 而点整行会弹出模态框 —— 于是"改一个内容"必然顺带弹一次，
+ * 不看也得先关掉。改一次弹一次，非常打断。
+ *
+ * 所以两件事一起做：
+ *   ① 详情从模态弹窗改成**右侧面板**（非模态，不挡列表，不关也能继续操作）
+ *   ② **去掉所有"点一下就打开"的触发** —— 面板默认不出现，
+ *      等右键菜单里的「显示详情」主动叫它（菜单下一轮加）
+ */
+t('守卫：没有任何「点一下就打开详情」的触发', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('onClick={() => onOpen(') < 0
+    && app.indexOf('onClick={onOpen}') < 0
+    && app.indexOf('点击查看详情') < 0
+    && app.indexOf('点击查看任务') < 0;
+})());
+
+/*
+ * 面板必须是**非模态**的：用 <aside> 自己渲染，不走 Modal。
+ * 走 Modal 就还是弹窗（带遮罩、抢焦点、必须关），问题没解决。
+ */
+t('守卫：详情是右侧面板（非模态），不再是 Modal', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function DetailPanel({');
+  if (i < 0) return false;
+  const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
+  return seg.indexOf('<Modal') < 0 && seg.indexOf('<aside className="tb-dpanel">') >= 0;
+})());
+
+/* 面板要长在列表视图里（右侧并列），不能飘在视图区外面 */
+t('守卫：面板与列表并列在同一个 flex 容器里', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('className="tb-viewarea"');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 4000);
+  return seg.indexOf('<DetailPanel') >= 0;
+})());
+
+/*
+ * 列表容器必须 min-width: 0 ——
+ * flex 子项默认 min-width:auto，宽表格会把面板顶出可视区，
+ * 看着像"面板没出来"，其实是它跑到屏幕外了。
+ */
+t('守卫：列表容器有 min-width: 0（否则面板被挤出屏幕）', (() => {
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  const i = css.indexOf('.tb-viewarea > .tb-list');
+  if (i < 0) return false;
+  return css.slice(i, i + 300).indexOf('min-width: 0') >= 0;
+})());
+
+/* 行不再整体可点，cursor 就不该再是 pointer（摆手型而点了没反应 = 骗人） */
+t('守卫：行 cursor 不是 pointer（整行不再可点）', (() => {
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  const i = css.indexOf('.tb-lrow {');
+  const seg = css.slice(i, i + 400);
+  return seg.indexOf('cursor: pointer') < 0;
 })());
 
 /* ---------------- 汇总 ---------------- */
