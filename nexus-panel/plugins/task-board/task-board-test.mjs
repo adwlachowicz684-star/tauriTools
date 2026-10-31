@@ -5,6 +5,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+/* 源码扫描类测试要用：列数、props 透传这些 TS 查不出的问题靠读源码钉住 */
+const dir = path.dirname(fileURLToPath(import.meta.url));
 import {
   STATUSES,
   canTransition,
@@ -998,7 +1001,6 @@ t('自查：改名不影响已有任务（类型存 id 不存名字）', (() => 
  * 只有肉眼打开界面才看得见。所以在这里用源码扫描钉住。
  */
 t('自查：列定义 / 网格 / 行内单元格 三处数量必须一致（错位一格很难自查）', (() => {
-  const dir = path.dirname(fileURLToPath(import.meta.url));
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
 
@@ -1029,7 +1031,6 @@ t('自查：列定义 / 网格 / 行内单元格 三处数量必须一致（错�
 })());
 
 t('自查：行内单元格的顺序与列定义一致（数量对了但顺序错了同样会错位）', (() => {
-  const dir = path.dirname(fileURLToPath(import.meta.url));
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const i = app.indexOf('className="tb-lrow');
   const seg = app.slice(i, app.indexOf('</div>', app.indexOf('c-updated', i)));
@@ -1110,6 +1111,40 @@ t('自查：类型列排序时未分类恒排最后', (() => {
 t('自查：类型候选值里带「未分类」（否则筛不到没归类的任务）', (() => {
   const vs = colFilterValues('type', [], [], ['dev', 'bug']);
   return vs.indexOf(NOTYPE) >= 0 && vs.indexOf('dev') >= 0;
+})());
+
+
+/* ============================================================ 自查补测（第 4 轮） */
+
+/*
+ * ⚠️ 这条盯的是**列头筛选面板是否拿到了该拿的参数**。
+ *
+ * 真实故障（本轮揪出）：ListView 收到了 typeDefs / typeIds / onCreateType 等 props，
+ * 却没有往下传给 ColFilterPop —— 于是类型列的下拉里
+ *   · 候选值退回默认六个（用户自定义的类型选不到，等于建不出来）
+ *   · 没有新建 / 改色 / 删除按钮（界面上这些能力根本不存在）
+ *   · 类型名显示成 id（'dev'）而不是"开发"
+ *
+ * 可选 props 漏传 TypeScript **一声不响**（类型是可选的），
+ * 只能靠源码扫描钉住。
+ */
+t('自查：类型列的下拉必须拿到 typeIds 与类型相关回调（漏传 = 自定义类型选不到）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('<ColFilterPop');
+  const call = app.slice(i, app.indexOf('/>', i));
+  return [
+    'colFilterValues(c.field, allRows, statusIds, typeIds)',
+    'typeDefs={typeDefs}',
+    'onCreateType={onCreateType}',
+    'onTypeColor={onTypeColor}',
+    'onRemoveType={onRemoveType}',
+  ].every((needle) => call.indexOf(needle) >= 0);
+})());
+
+t('自查：「未分类」哨兵不给调色和删除按钮（摆着点不动 = 骗人）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('const isSentinel = (id: string) => isType && id === NOTYPE;') >= 0
+    && app.indexOf('!isSentinel(v)') >= 0;
 })());
 
 /* ---------------- 汇总 ---------------- */
