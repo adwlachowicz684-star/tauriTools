@@ -22907,6 +22907,129 @@ group('BUG 179 · 导出 .mm / .opml 时节点文字首尾空白被写侧 trim�
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 182：FreeMind 的 `<edge COLOR WIDTH/>` —— 连线的颜色与粗细
+
+   `<edge>` 是 FreeMind 1.0.1 里 `<node>` 的**标准子元素**，与 `<font>` /
+   `<icon>` / `<cloud>` 同级，承载的是**连线**（node 到父节点那条线）的
+   COLOR 与 WIDTH。早先一样都不读也不写，于是：
+
+     · 导入别人的 .mm，节点连线的配色与粗细**静默丢失** —— 它根本没进
+       data，所以连「丢了什么」的统计都数不到它，一个字都不说；
+     · 我们自己导出的 .mm 在 FreeMind / Freeplane 里同样看不到连线配色；
+     · 而 `parseFreemind` 头那句注释还写着「`<edge>` 之类一概忽略，它们
+       承载的都是样式，本工具的主题体系不认」—— **这句是错的**：
+       `node-line-stroke` / `node-line-width` 是 kityminder 的 data 键
+       （XMind 侧对应 line-color / line-width，xmind.js 的 StyleMap 双向
+       都读写），读出来画布上**就能看见**。
+
+   与 BUG 127（漏掉 `<font>` / `<icon>` / `<cloud>`）是同一个洞的又一次
+   重演：同一条规矩，FreeMind 这一种格式的子元素漏了一类。
+
+   ⓘ `STYLE`（bezier / sharp_bezier / linear…）是**连线形状**，内核没有
+     对应概念（连线走向由布局决定），读不了也写不回 —— 属已知取舍，与
+     structureClass 同一口径，不是漏写。
+   ------------------------------------------------------------------ */
+
+group('BUG 182 · FreeMind 连线颜色 / 粗细（`<edge>`）必须成对读写');
+
+{
+  const f182 = await import('./formats.js');
+  /*
+   * 叶子节点带 `<edge>` 必须写成**开合标签**（自闭合塞不进子元素），
+   * 真实 FreeMind 文件也是这么写的 —— 探针早先用 `<node .../>` + 兄弟
+   * `<edge>`，结果 edge 成了兄弟节点、读不到，白测一轮。
+   */
+  const mm182 = (inner) => '<map version="1.0.1"><node TEXT="ROOT">'
+    + `<node TEXT="AAA">${inner}</node>` + '</node></map>';
+  const mk182 = (extra) => JSON.stringify({ root: { data: { id: 'r', text: 'ROOT' }, children: [
+    { data: { id: 'a', text: 'AAA', ...(extra || {}) } } ] } });
+  const flat182 = (km) => { const out = []; (function w(n) { out.push(n); (n.children || []).forEach(w); })(km.root); return out; };
+  const back182 = (txt) => JSON.parse(f182.fromFreemind(txt));
+  const aaa = (km) => flat182(km).find((n) => n.data?.text === 'AAA');
+  const E182 = { 'node-line-stroke': '#00ff00', 'node-line-width': 3 };
+
+  // ① 读侧：别人的 .mm 里的 <edge> 必须进 data（早先一概不读 → 静默丢）
+  {
+    const a = aaa(back182(mm182('<edge COLOR="#00ff00" WIDTH="3"/>')));
+    eq(a?.data?.['node-line-stroke'], '#00ff00', '★ 读侧：连线颜色要读进来（早先整条丢）');
+    eq(a?.data?.['node-line-width'], 3, '★ 读侧：连线粗细要读进来');
+  }
+
+  // ② 只认第一个；空 <edge> 不设值
+  {
+    const a = aaa(back182(mm182('<edge COLOR="#111111"/><edge COLOR="#222222"/>')));
+    eq(a?.data?.['node-line-stroke'], '#111111', '★ 只认第一个 <edge>（一个节点只有一条连线）');
+    const z = aaa(back182(mm182('<edge/>')));
+    ok(!z?.data?.['node-line-stroke'] && !z?.data?.['node-line-width'], '空 <edge> 不设值');
+  }
+
+  // ③ 写侧：导出的 .mm 里要有 <edge COLOR WIDTH/>（早先只写 <font>）
+  {
+    const txt = f182.toFreemind(mk182(E182));
+    ok(/<edge COLOR="#00ff00" WIDTH="3"\/>/.test(txt), '★ 写侧：导出要带 <edge COLOR WIDTH/>');
+    ok(/<node TEXT="AAA">/.test(txt), '★ 叶子带 <edge> 必须写成开合标签（自闭合塞不进子元素）');
+  }
+
+  // ④ 往返：自己的 .mm 导回来连线样式还在
+  {
+    const a = aaa(back182(f182.toFreemind(mk182(E182))));
+    eq(a?.data?.['node-line-stroke'], '#00ff00', '★ 往返：连线颜色保住');
+    eq(a?.data?.['node-line-width'], 3, '★ 往返：连线粗细保住');
+  }
+
+  // ⑤ 提示口径：.mm 带得走了就不能再虚报；另外四种仍要报
+  {
+    const c = mk182(E182);
+    eq(f182.exchangeLoss(c, 'freemind').style, 0,
+      '★ .mm 现在带得走连线样式 —— 不许再虚报「装不下」');
+    for (const k of ['opml', 'mermaid', 'plantuml', 'markdown']) {
+      eq(f182.exchangeLoss(c, k).style, 1, `★ ${k} 仍要报（它确实装不下连线样式）`);
+      ok(f182.exchangeLoss(c, k).nodes > 0, `★ ${k}：nodes > 0（否则提示整段不出现）`);
+    }
+  }
+
+  // ⑥ 边界：干净画布不许平白喊；描边 / 圆角等既有口径不许被带坏
+  {
+    eq(f182.exchangeLoss(mk182({}), 'freemind').style, 0, '★ 干净画布不许平白喊丢东西');
+    eq(f182.exchangeLoss(mk182({}), 'freemind').nodes, 0, '★ 干净画布 nodes 为 0');
+    eq(f182.exchangeLoss(mk182({ 'node-radius': 8 }), 'freemind').style, 1,
+      '★ 反向：圆角仍报丢（不许因为加了 edge 就漏掉别的样式键）');
+    eq(f182.exchangeLoss(mk182({ 'node-stroke': '#ff0000' }), 'freemind').style, 1,
+      '★ 反向：节点描边仍报丢');
+  }
+
+  // ⑦ 源码契约：读侧与写侧必须成对，且各自只有一份
+  {
+    const plain = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/function freemindEdge\(/.test(plain), '★ 有读侧 freemindEdge');
+    ok(/function freemindEdgeAttrs\(/.test(plain), '★ 有写侧 freemindEdgeAttrs（缺一侧就是单向丢）');
+    eq((plain.match(/function freemindEdge\(/g) || []).length, 1, '★ 读侧只有一份（抄两份必漏）');
+    eq((plain.match(/function freemindEdgeAttrs\(/g) || []).length, 1, '★ 写侧只有一份');
+    ok(/freemindEdge\(el\)/.test(plain), '★ freemindStyle 里调用了读侧（否则读了也不落进 data）');
+    // 带得走必须在 EXCHANGE_KEEP 里声明，否则 ⑤ 那条不成立
+    const at = plain.indexOf('styleKeys: [');
+    ok(at > -1, '能定位 EXCHANGE_KEEP.freemind.styleKeys');
+    const win = plain.slice(at, at + 400);
+    ok(/'node-line-stroke'/.test(win) && /'node-line-width'/.test(win),
+      '★ styleKeys 带上连线两项（不声明就等于瞒报）');
+    // 两个键仍必须在 NODE_STYLE_KEYS 里 —— 否则另外四种格式不再报
+    const at2 = plain.indexOf('const NODE_STYLE_KEYS = [');
+    const win2 = plain.slice(at2, at2 + 900);
+    ok(/'node-line-stroke'/.test(win2) && /'node-line-width'/.test(win2),
+      '★ 连线两项仍在 NODE_STYLE_KEYS 里（否则 opml / mmd / puml / md 不报）');
+  }
+
+  // ⑧ 已知取舍：STYLE 是连线形状，内核没有对应概念 —— 不读，也不许谎报
+  {
+    const a = aaa(back182(mm182('<edge STYLE="bezier"/>')));
+    ok(!a?.data?.['node-line-stroke'] && !a?.data?.['node-line-width'],
+      'ⓘ 已知取舍：<edge STYLE>（连线形状）不读 —— 内核没有对应概念');
+    eq(f182.exchangeLoss(JSON.stringify({ root: { data: { text: 'R' }, children: [] } }),
+      'freemind').style, 0, 'ⓘ 不为读不进来的形状喊丢（它会让每次导入都冒一句没意义的提示）');
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');
