@@ -43,6 +43,7 @@ import {
   newDefId,
   NOTYPE,
   NOGROUP,
+  dependsOn,
   normalizeFlow,
   relTime,
   sortRowsBy,
@@ -4342,8 +4343,20 @@ function DetailModal({
 
   const { byId } = indexTasks(tasks);
   const lock = lockOf(task, tasks);
-  /* 可选的前置：排除自己、排除已成环的（选了就永远解锁不了） */
-  const depChoices = tasks.filter((t) => t.id !== task.id && t.id !== task.parent);
+  /*
+    可选的前置：排除自己，并**排除会成环的**。
+
+    ⛔ 原来只排除了自己和 parent，注释却写着"排除已成环的" —— 注释和实现不符。
+    于是可以把 A 的前置设成 B，而 B 已经（经过若干层）依赖 A：
+    两条互相等，**永远解锁不了**。
+    lockOf 事后能检出 cyclic 并在界面上说明，但那时已经成环了 ——
+    而且用户看到的是两把锁，看不出是自己刚才这一个勾选造成的。
+
+    所以在这里就把那些选项挡掉（传递依赖判定，不是只看直接前置）。
+  */
+  const depChoices = tasks.filter(
+    (t) => t.id !== task.id && !dependsOn(tasks, t.id, task.id),
+  );
 
   return (
     <Modal title={`${task.id} · ${task.title}`} onClose={onClose} wide>

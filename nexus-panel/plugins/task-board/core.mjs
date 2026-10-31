@@ -927,6 +927,31 @@ function parentChainHas(id, want, parentOf) {
  *   missing —— 引用了不存在的 id（前置被删了）
  *   cyclic  —— 互相依赖成环，永远等不到解锁
  */
+/**
+ * `aId` 是否**传递地**依赖 `bId`（经过任意层前置）。
+ *
+ * 用它来挡住"选一个会成环的前置"：把 A 的前置设成 B，
+ * 而 B 已经（经过若干层）依赖 A —— 那两条会互相等，永远解锁不了。
+ */
+export function dependsOn(tasks, aId, bId) {
+  if (!aId || !bId || aId === bId) return false;
+  const ctx = indexTasks(tasks || []);
+  const seen = new Set();
+  const walk = (id, depth) => {
+    if (depth > 64) return false;      // 环里兜底退出，不无限递归
+    if (id === bId) return true;
+    if (seen.has(id)) return false;    // 已访问的分支不可能再通到 bId
+    seen.add(id);
+    const t = ctx.byId[id];
+    if (!t) return false;
+    for (const d of t.deps || []) {
+      if (walk(d, depth + 1)) return true;
+    }
+    return false;
+  };
+  return walk(aId, 0);
+}
+
 export function lockOf(task, tasks) {
   const ctx = indexTasks(tasks || []);
   const deps = task?.deps || [];
