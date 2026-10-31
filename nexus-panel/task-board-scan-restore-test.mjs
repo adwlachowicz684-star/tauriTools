@@ -52,12 +52,10 @@ function t(name, fn) {
   }
 }
 
-/* ---------- 剥注释：注释里的字会被断言当成依据（本项目踩过三次） ---------- */
-function stripComments(s) {
-  return s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
+/* ---------- 剥注释：注释里的字会被断言当成依据（本项目踩过三次） ----------
+   走 test-scan-utils 的共用实现：这里再内联一份会让 dead-class 的
+   「内联副本只增不减」判据报红（本项目已踩过一次）。 */
+import { stripCommentsJs as stripComments } from './test-scan-utils.mjs';
 
 /* ---------- 把 scanDir 切成可独立跑的模块（跑真身） ---------- */
 
