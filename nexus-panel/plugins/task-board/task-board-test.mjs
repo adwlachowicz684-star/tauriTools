@@ -780,47 +780,75 @@ t('自查：改名不影响已有任务（类型存 id 不存名字）', (() => 
  * 这类错 TypeScript 查不出来（JSX 结构合法）、单测也照过，
  * 只有肉眼打开界面才看得见。所以在这里用源码扫描钉住。
  */
-t('自查：列定义 / 网格 / 行内单元格 三处数量必须一致（错位一格很难自查）', (() => {
+/*
+ * ⚠️ 这两条盯的是**表格三处（列头 / 网格 / 行内单元格）是否同源**。
+ *
+ * 真实故障（本轮用户报的"列名和内容错位"）：
+ * 列头遍历 LIST_COLUMNS 渲染 11 格，而行渲染的是「勾选格 + 11 格」= 12 格，
+ * 网格也是 12 列 —— 于是表头整体向左挪了一格，
+ * "状态"的表头压在"优先级"的内容上。
+ *
+ * 这种错 TypeScript 查不出（两个 map 都是合法 JSX）、单测也照过。
+ * 现在改成三处都由同一个 shown 数组驱动，**结构上不可能错位**；
+ * 这两条测试改为验证"确实同源"而不是"数量正好相等"。
+ */
+t('自查：列头与行都遍历同一份 shown（不是各写各的）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  // 列头遍历 shown 渲染表头
+  const headTraverses = /\{shown\.map\(\(c, ci\)/.test(app);
+  // 行遍历同一个 shown 渲染单元格
+  const rowTraverses = /\{shown\.map\(\(c\) => cellFor\(c\.field, t\)\)\}/.test(app);
+  // 网格也由 shown 生成
+  const gridFromShown = /gridTemplateColumns:[\s\S]{0,200}shown\.map/.test(app);
+  return headTraverses && rowTraverses && gridFromShown;
+})());
+
+/*
+ * 表头必须有勾选列的占位格。
+ * 少这一格 = 表头整体左移一格（就是这次的错位）。
+ * 它同时承载"全选"，所以不是一个纯占位。
+ */
+t('自查：表头有勾选列占位（少它整行表头向左错一格）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('tb-list-head tb-lgrid');
+  const seg = app.slice(i, i + 900);
+  return seg.indexOf('tb-lhcell c-pick') >= 0;
+})());
+
+/*
+ * 网格不能写死在 CSS 里。
+ * 写死它就和"隐藏列"冲突：藏一列之后网格还是 12 列，
+ * 剩下的内容各占一格、整行错开。
+ */
+t('自查：网格列宽不写死在 CSS（否则隐藏列会错位）', (() => {
   const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
-
-  const gridRaw = /\.tb-lgrid \{[\s\S]*?grid-template-columns:\s*([^;]+);/.exec(css);
-  if (!gridRaw) return false;
-  // 按顶层空格切（minmax(0, 1fr) 里的空格不算分隔）
-  const parts = [];
-  let depth = 0;
-  let cur = '';
-  for (const ch of gridRaw[1].trim()) {
-    if (ch === '(') depth += 1;
-    else if (ch === ')') depth -= 1;
-    else if (ch === ' ' && depth === 0) {
-      if (cur) parts.push(cur);
-      cur = '';
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur) parts.push(cur);
-
-  const i = app.indexOf('className="tb-lrow');
-  const seg = app.slice(i, app.indexOf('</div>', app.indexOf('c-updated', i)));
-  const cells = [...seg.matchAll(/className="tb-lc (c-[\w-]+)"/g)].map((m) => m[1]);
-
-  // 网格 = 1 列勾选 + N 列；列定义 N；行内单元格 N
-  return parts.length === LIST_COLUMNS.length + 1 && cells.length === LIST_COLUMNS.length;
+  const i = css.indexOf('.tb-lgrid {');
+  const seg = css.slice(i, css.indexOf('}', i));
+  return seg.indexOf('grid-template-columns') < 0;
 })());
 
-t('自查：行内单元格的顺序与列定义一致（数量对了但顺序错了同样会错位）', (() => {
+/*
+ * 行内单元格按 field 分发（cellFor 的 switch），
+ * 必须覆盖 LIST_COLUMNS 里的每一列 ——
+ * 漏一个 case 就少渲染一格，后面整行错位（且有 default 兜底也救不回顺序）。
+ */
+t('自查：cellFor 的分支覆盖所有列（漏一列 = 整行错位）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  const i = app.indexOf('className="tb-lrow');
-  const seg = app.slice(i, app.indexOf('</div>', app.indexOf('c-updated', i)));
-  const cells = [...seg.matchAll(/className="tb-lc c-([\w]+)"/g)].map((m) => m[1]);
+  const i = app.indexOf('const cellFor =');
+  // 用大括号配平找函数体结束，不能被 case 内部的 return 截断
+  let d = 0;
+  let k = app.indexOf('{', i);
+  let j = k;
+  for (; j < app.length; j++) {
+    const ch = app[j];
+    if (ch === '{') d += 1;
+    else if (ch === '}') { d -= 1; if (d === 0) break; }
+  }
+  const seg = app.slice(i, j);
+  const cases = [...seg.matchAll(/case '([\w]+)':/g)].map((m) => m[1]);
   const fields = LIST_COLUMNS.map((c) => c.field);
-  // 行末尾那个叫 c-updatedAt（渲染时用的类名带 At 后缀变体）
-  const norm = cells.map((x) => (x === 'updated' ? 'updatedAt' : x));
-  return norm.length === fields.length && norm.every((x, k) => x === fields[k]);
+  return fields.every((f) => cases.indexOf(f) >= 0);
 })());
-
 
 /* ============================================================ 自查补测（第 3 轮） */
 
@@ -1255,6 +1283,82 @@ t('分组显示：多列分组仍然可用（层级顺序 = 数组顺序）', ((
   return g.length === 1 && g[0].key === 'dev'
     && g[0].children.length === 2
     && g[0].tasks.length === 0;   // 中间层不装任务
+})());
+
+
+/* ============================================================ 列显示 / 列宽（本轮） */
+
+/*
+ * **不能把最后一列也藏掉**（设计决定）：
+ * 全隐藏得到一张空表格，而界面上看不出是"没数据"还是"列被藏了" ——
+ * 那是个自己都解释不了的死局。所以那一个勾选框直接置灰，
+ * 摆着能点、点了没反应比不让点更让人困惑。
+ */
+t('列显示：至少保留一列（藏掉最后一列要被拒绝）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('LIST_COLUMNS.length - next.length <= 1') >= 0
+    && app.indexOf('disabled={isLast}') >= 0;
+})());
+
+/*
+ * 列宽必须有上下限。
+ * 没下限：拖到 0 这一列就消失了，而它还在"显示的列"里勾着 ——
+ * 界面上出现一个勾了却看不见的列，没法解释。
+ * 没上限：误拖一下能拖出占满屏的一列，看着像表格坏了。
+ */
+t('列宽：有下限（拖不到 0，否则勾了却看不见）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('const MIN_COL_W = 48;') >= 0
+    && app.indexOf('Math.max(MIN_COL_W, Math.min(MAX_COL_W') >= 0;
+})());
+
+/*
+ * 读回来的隐藏列 / 列宽只认**当前存在的列**。
+ * 存的是配置、可能是旧版本写的（那时列不一样），
+ * 不过滤就会带进来当前根本不存在的列 —— 网格凭空多出一格，整行错位。
+ */
+t('列偏好：读取时过滤掉当前不存在的列（旧存档的残留不能进网格）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('const known = new Set<string>(LIST_COLUMNS.map((c) => c.field));') >= 0
+    && app.indexOf('val >= MIN_COL_W && val <= MAX_COL_W') >= 0;
+})());
+
+/*
+ * 拖动期间必须禁掉文本选中。
+ * 不禁的话拖一下会顺带把表头文字刷成蓝色，看着像误触了什么。
+ * 这个副作用要在 mouseup 时清理掉，否则整页再也选不中文字。
+ */
+t('拖列宽：拖动期禁选中，且 mouseup 会清理', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("document.body.classList.add('tb-col-resizing')") >= 0
+    && app.indexOf("document.body.classList.remove('tb-col-resizing')") >= 0;
+})());
+
+/*
+ * 拖动的 mousemove/mouseup 挂在 document 上，不是把手元素上。
+ * 挂在把手上：鼠标一移出把手（拖动时必然发生）就断，
+ * 表现为"拖两下就停"。
+ */
+t('拖列宽：监听挂在 document（挂在把手上会一移出就断）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const startResize =');
+  const seg = app.slice(i, i + 1400);
+  return seg.indexOf("document.addEventListener('mousemove', move)") >= 0
+    && seg.indexOf("document.addEventListener('mouseup', up)") >= 0;
+})());
+
+
+/*
+ * 列宽必须落盘。只在内存里改的话，拖完一刷新就回去了 ——
+ * 那等于白拖，而且没人会想到是没存。
+ * 但也不能拖动中每帧都写（太密），所以是松手时写一次。
+ */
+t('列宽：松手时落盘（不落盘 = 白拖）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const startResize =');
+  const seg = app.slice(i, i + 1400);
+  return seg.indexOf('onColResizeEnd();') >= 0
+    && app.indexOf("persist('colWidths', colWidthRef.current)") >= 0;
 })());
 
 /* ---------------- 汇总 ---------------- */

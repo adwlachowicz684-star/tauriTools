@@ -873,15 +873,55 @@
 .tb-lgrid {
   display: grid;
   /*
-    1 列勾选 + 11 列：优先级/ID/标题/状态/认领人/类型/标签/说明/预估/创建/更新
+    列宽**由 JS 内联给出**（style.gridTemplateColumns），这里不再写死。
+    写死它就和"用户拖列宽""隐藏列"两件事冲突了：
+    隐藏一列之后网格还是 12 列，剩下的内容会各占一格、整行错开。
 
-    ⚠️ 顺序与数量必须和 LIST_COLUMNS、行内单元格**三处一致** ——
-    少一格会让后面所有列整体错位，且 TypeScript 查不出来（有测试钉住）。
+    三处（列头 / 网格 / 行内单元格）现在都由同一个 shown 数组驱动，
+    **结构上不可能再错位** —— 不是靠人记着对齐。
   */
-  grid-template-columns: 26px 56px 70px minmax(0, 1fr) 88px 96px 84px 116px 132px 62px 84px 84px;
   gap: var(--sp-2);
   align-items: center;
   min-width: 940px;
+}
+
+/* 拖宽把手：贴在列头单元格右缘 */
+.tb-lresize {
+  position: absolute;
+  inset-inline-end: -5px;
+  inset-block: 0;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.tb-lresize::after {
+  content: '';
+  position: absolute;
+  inset-inline-end: 4px;
+  inset-block: 20%;
+  width: 1px;
+  background: var(--divider);
+}
+
+.tb-lresize:hover::after,
+.tb-lresize:active::after {
+  background: var(--accent);
+  width: 2px;
+}
+
+/*
+  拖动期间禁掉全局文本选中。
+  不禁的话拖一下会顺带把表头文字刷成蓝色，看着像误触了什么。
+*/
+body.tb-col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* 勾选列的表头：这一格必须存在，否则整个表头向左错一格 */
+.tb-lhcell.c-pick {
+  justify-content: center;
 }
 
 /* ---------- 任务类型 ---------- */
@@ -1314,6 +1354,70 @@
   color: var(--text-1);
   font-size: var(--fs-micro);
   cursor: pointer;
+}
+
+/* 把列设置推到工具栏最右 */
+.tb-ltools-gap {
+  flex: 1 1 auto;
+}
+
+.tb-cols-host {
+  position: relative;
+  display: inline-flex;
+}
+
+.tb-colset {
+  position: absolute;
+  z-index: 8;
+  inset-inline-end: 0;
+  inset-block-start: calc(100% + 4px);
+  min-inline-size: 13em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  background: var(--bg-pop);
+  box-shadow: var(--shadow-pop);
+}
+
+.tb-colset-title {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
+.tb-colset-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-block: 2px;
+  cursor: pointer;
+}
+
+/* 最后一个已显示的列：置灰，不能取消（全隐藏是张空表，看不出原因） */
+.tb-colset-row.locked {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.tb-colset-why {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
+.tb-colset-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-block-start: var(--sp-1);
+  padding-block-start: var(--sp-2);
+  border-block-start: 1px solid var(--divider);
+}
+
+.tb-colset-hint {
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
 }
 
 .tb-ltools-hint {
