@@ -4,7 +4,7 @@ import {
   type TaskBoard, type BoardRow,
   boardRows, visibleIds, lockOf, statusOf, tallyOf, isGroup,
 } from '../engine/taskBoard';
-import { type BoardMeta, statusName } from '../engine/boardMeta';
+import { type BoardMeta, statusName, statusColor } from '../engine/boardMeta';
 
 /**
  * 任务板（左栏）—— 计划态任务的树。
@@ -25,6 +25,11 @@ import { type BoardMeta, statusName } from '../engine/boardMeta';
  * 子任务里某一块仍然太大就再拆。层数不设上限 ——
  * 限三层的话，第四层的拆分就只能"横向拉平"，那不是拆分。
  */
+
+/** 同色描边：与 BoardTable 的 tintStyle 同一口径 */
+function tint(color: string): CSSProperties | undefined {
+  return color ? { color, borderColor: color } : undefined;
+}
 
 export function BoardTree({
   board,
@@ -253,7 +258,9 @@ function BoardRowView({
         </>
       ) : (
         <>
-          <span className={`bdt-pill st-${st}`}>{statusName(meta, st)}</span>
+          {/* 颜色取状态自己的 hex —— 类名 st-<id> 只认默认四个 id，
+              默认流里的「已挂起」和自定义流程的所有状态都会掉成灰色 */}
+          <span className={`bdt-pill st-${st}`} style={tint(statusColor(meta, st))}>{statusName(meta, st)}</span>
           <span className="bdt-title">{node.title}</span>
           {lock?.locked ? (
             <span

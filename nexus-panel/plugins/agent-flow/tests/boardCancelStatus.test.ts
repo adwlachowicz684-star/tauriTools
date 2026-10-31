@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { emptyBoard, addNode, statusOf, type TaskBoard, type BoardNode } from '../engine/taskBoard';
 import {
-  emptyMeta, isCancelStatus, statusName, updateStatus, type BoardMeta,
+  emptyMeta, isCancelStatus, statusName, statusColor, updateStatus, type BoardMeta,
 } from '../engine/boardMeta';
 import { readSrc } from './srcScan';
 
@@ -135,4 +135,31 @@ test('组件显示状态名必须走 statusName（写死 LABEL 表在自定义�
   const src = readSrc('components/TaskBoard.tsx', 'components/TaskBoardDetail.tsx');
   assert.ok(!/BOARD_STATUS_LABEL\s*\[/.test(src), 'BOARD_STATUS_LABEL 查表认不了自定义 id');
   assert.ok(/statusName\(/.test(src), '改用 statusName：它认 meta 里的名字');
+});
+
+/* ---------- 颜色 ---------- */
+
+/** 自定义流程：待办 s1 → 进行中 s2 → 完工 s3 / 放弃 s4（两个终态） */
+
+test('状态色取状态自己的 hex（自定义 id 也要有颜色）', () => {
+  const m = customMeta();
+  assert.equal(statusColor(m, 's2'), '#3b82f6');
+  assert.equal(statusColor(m, 's4'), '#ef4444');
+});
+
+test('默认流里「已挂起」也有颜色（CSS 类名 st-held 从来就没有过规则）', () => {
+  const m = emptyMeta('p', 'P');
+  assert.equal(statusColor(m, 'held'), '#f59e0b', '用户点名要的状态不能和「待办」一样灰');
+  assert.notEqual(statusColor(m, 'held'), statusColor(m, 'todo'));
+});
+
+test('查不到返回空串 —— 交给 CSS 兜底，不臆造颜色', () => {
+  assert.equal(statusColor(customMeta(), '不存在'), '');
+  assert.equal(statusColor(null, 's2'), '', '不给 meta 时自定义 id 查不到');
+  assert.equal(statusColor(null, 'done'), '#22c55e', '不给 meta 时默认 id 仍认得');
+});
+
+test('源码守卫：状态胶囊的颜色必须来自 statusColor（类名只认默认四个 id）', () => {
+  const src = readSrc('components/TaskBoard.tsx', 'components/TaskBoardDetail.tsx');
+  assert.ok(/statusColor\(/.test(src), '胶囊颜色要取状态自己的 hex');
 });

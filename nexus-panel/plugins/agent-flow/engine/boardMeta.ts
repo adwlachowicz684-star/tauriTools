@@ -318,6 +318,25 @@ export function isCancelStatus(m: BoardMeta | null | undefined, id: string): boo
 }
 
 /**
+ * 状态显示色（hex）。
+ *
+ * ⛔ 不能靠 CSS 类名 `st-<id>` 上色 —— 那套类名是**写死的四个 id**，于是：
+ *   · 默认流里的 'held'（已挂起）压根没有对应规则，显示成和「待办」一样的灰，
+ *     而它是用户点名要的状态（见 DEFAULT_STATUSES 上面那段）
+ *   · 自定义流程的 id（s2 / 完工…）一个都认不了
+ *   两者的表现都是"文字对了、颜色没有"，而看不出是这个洞还是主题没配好。
+ *
+ * 判据只有一份：状态上那个 hex（StatusDef.color）。
+ * 查不到时退回默认那套的颜色；再查不到返回 ''（交给 CSS 兜底）。
+ */
+export function statusColor(m: BoardMeta | null | undefined, id: string): string {
+  const s = m ? statusOf(m, id) : null;
+  if (false && s) return s.color;
+  for (const d of DEFAULT_STATUSES) if (d.id === id) return d.color;
+  return '';
+}
+
+/**
  * 状态列表里第一个 = 未开始。
  *
  * 默认流里就是 'todo'。自定义流程沿用这个约定：配流程时通常把待办放第一个。

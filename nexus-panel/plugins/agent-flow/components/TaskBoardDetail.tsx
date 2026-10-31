@@ -6,7 +6,7 @@ import {
   isGroup, isTask, lockOf, statusOf, tallyOf, leafTaskIds,
   setTaskStatus, claimTask, renameNode,
 } from '../engine/taskBoard';
-import { type BoardMeta, statusName } from '../engine/boardMeta';
+import { type BoardMeta, statusName, statusColor } from '../engine/boardMeta';
 
 /**
  * 任务板详情（中间栏）。
@@ -27,6 +27,11 @@ import { type BoardMeta, statusName } from '../engine/boardMeta';
  */
 
 const STATUS_FLOW: BoardStatus[] = ['todo', 'doing', 'done', 'cancelled'];
+
+/** 同色描边：与 BoardTable 的 tintStyle 同一口径 */
+function tint(color: string): CSSProperties | undefined {
+  return color ? { color, borderColor: color } : undefined;
+}
 
 export function TaskBoardDetail({
   board, selectedId, onApply, canWrite, sessionId = '',
@@ -135,7 +140,7 @@ export function TaskBoardDetail({
         {group ? (
           <span className="bdd-kind">任务组</span>
         ) : (
-          <span className={`bdt-pill st-${statusOf(board, selectedId, meta)}`}>
+          <span className={`bdt-pill st-${statusOf(board, selectedId, meta)}`} style={tint(statusColor(meta, statusOf(board, selectedId, meta)))}>
             {statusName(meta, statusOf(board, selectedId, meta))}
           </span>
         )}
