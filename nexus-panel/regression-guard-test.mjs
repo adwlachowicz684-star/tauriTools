@@ -2464,6 +2464,62 @@ console.log('\n=== 27. 账本路径基准升级 ===');
   t('做了升级的读路径不误报', unnormalized(probeGood).length === 0, '');
 }
 
+/* ------------------------------------------------------------------
+ * 28. 一次性迁移函数里不得静默丢弃 IO 结果
+ * ------------------------------------------------------------------
+ * 为什么不把 `let _ =` 做成全仓通用守卫：它在清理场景（删临时文件、删
+ * 备份、重试前的一次尝试）是正常写法，全仓实测 179 处，通用判据只会逼出
+ * 一张长白名单，白名单越长守卫越瞎。
+ *
+ * 但**迁移**不一样：它靠"目标文件在不在"来决定要不要重跑，一次静默跳过
+ * 就等于永久跳过 —— 老数据还在原位，运行期却读新位置，界面上表现为
+ * "东西全没了"，且不会自愈。所以它单独钉这一处，不通用化。
+ * ------------------------------------------------------------------ */
+{
+  const DUP = 'src-tauri/src/dupview/mod.rs';
+  let dupRaw = null;
+  try { dupRaw = read(DUP); } catch { dupRaw = null; }
+  const dupSrc = dupRaw ? stripJs(dupRaw) : '';
+
+  /* 取指定函数的函数体：从名字后的第一个 `{` 起做花括号配对。
+     不用定长窗口 —— 注释一长就会被撑爆，实测已栽过不止一次。 */
+  const fnBody = (src, name) => {
+    const i = src.indexOf(name);
+    if (i < 0) return null;
+    const j = src.indexOf('{', i);
+    if (j < 0) return null;
+    let d = 0;
+    for (let k = j; k < src.length; k += 1) {
+      const c = src[k];
+      if (c === '{') d += 1;
+      else if (c === '}') { d -= 1; if (d === 0) return src.slice(j, k + 1); }
+    }
+    return null;
+  };
+
+  const body = fnBody(dupSrc, 'fn migrate_map');
+  t('迁移函数体找得到（判据没失明）', !!body, body ? '' : '未找到 fn migrate_map');
+
+  const silent = body ? (body.match(/let\s+_\s*=/g) || []) : [];
+  t('migrate_map 里没有静默丢弃的 IO 结果', silent.length === 0,
+    silent.length ? `实测 ${silent.length} 处 let _ =` : '');
+
+  /* 落位/还原用的 rename 也在此列：静默失败会让文件停在 .dvtmp 临时名上，
+     索引里查不到、后续扫描也认不出它 —— 用户只看到一条"改名失败"。 */
+  const silentRen = dupSrc.match(/let\s+_\s*=\s*std::fs::rename/g) || [];
+  t('没有静默丢弃的 rename（落位失败会让文件停在临时名上）',
+    silentRen.length === 0, silentRen.length ? `实测 ${silentRen.length} 处` : '');
+
+  /* 元断言：探针里带 let _ = 必须被认出来，否则判据是瞎的 */
+  const probe = 'fn migrate_map(app: &AppHandle) -> Result<(), String> {\n'
+    + '    let _ = std::fs::copy(&src, &dst);\n'
+    + '    Ok(())\n'
+    + '}\n';
+  const pb = fnBody(probe, 'fn migrate_map');
+  t('判据本身有效（探针：迁移里的 let _ = 会被认出来）',
+    !!pb && (pb.match(/let\s+_\s*=/g) || []).length === 1, '');
+}
+
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
