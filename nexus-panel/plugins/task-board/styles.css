@@ -321,14 +321,14 @@
   gap: var(--sp-1);
 }
 
-.tb-tag {
-  padding: 0 var(--sp-2);
-  border-radius: var(--r-pill);
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  color: var(--text);
-  font-size: var(--fs-micro);
-  line-height: var(--lh-tight, 1.45);
-}
+/*
+  ⛔ .tb-tag 只留一份（下面「标签：浅底深字 + 同色描边」那处）。
+  这里原先还有一份更早的写法（全圆胶囊 + accent 描边 + 固定 --text 字色），
+  与新版各写一半——想改形状改的是这份、想改尺寸改的是那份，改了没反应。
+  新版那处已写明颜色由 TagChip 内联给（取自标签定义），这里再给 color 会与
+  内联色抢：有内联色的标签不受影响（内联赢），没内联色的才会被它钉成 --text。
+  所以整份删掉，不把 color 搬过去。
+*/
 
 .tb-task-foot {
   display: flex;

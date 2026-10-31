@@ -2236,6 +2236,30 @@ console.log('\n=== 26. 读盘 JSON.parse 必须有保护 ===');
     return out;
   }
 
+  /*
+    ⛔ 光靠状态机不够：它**认不了模板字符串**（反引号），
+    而 `` `有 ${n} 项没搬成：${x.join('、')}` `` 这类写法会让它卡在字符串
+    状态直到文件结束 —— 后半文件的注释于是全都没被剥。
+
+    实测后果（task-board/lib/store.ts:271）：第 26 节把注释里那句
+    「不能图省事写 JSON.parse(text)」当成了真的裸 parse 并报红。
+    这类误报最伤：它点名的是一行**专门警告这个错误的**注释，
+    看的人会以为判据很灵，实际是判据瞎了。
+
+    补一道行级兜底：本仓库的注释一律带行首标记（// 或 *），按行置空即可。
+    比继续堆状态机稳 —— 状态机越复杂，一个未闭合的反引号就能让它漂到文件尾。
+  */
+  function stripAndBlankComments(src) {
+    const flat = stripKeepAll(src);
+    const raw = src.split('\n');
+    const out = flat.split('\n');
+    for (let k = 0; k < out.length; k++) {
+      const t = (raw[k] || '').trim();
+      if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) out[k] = '';
+    }
+    return out.join('\n');
+  }
+
   /** openIdx 处必须是 '{'，返回配平的 '}' 下标。 */
   function braceEnd(src, openIdx) {
     let depth = 0, i = openIdx, st = 'code';
@@ -2293,7 +2317,7 @@ console.log('\n=== 26. 读盘 JSON.parse 必须有保护 ===');
     if (rel === 'regression-guard-test.mjs') continue;  // 下面元断言里有样例
     let s;
     try { s = readFileSync(p, 'utf8'); } catch { continue; }
-    const flat = stripKeepAll(s);
+    const flat = stripAndBlankComments(s);
     for (const m of flat.matchAll(/JSON\.parse\s*\(/g)) {
       // 深拷贝不可能失败，不要求它套 try
       if (/JSON\.parse\(\s*JSON\.stringify/.test(flat.slice(m.index, m.index + 40))) continue;
@@ -2311,7 +2335,7 @@ console.log('\n=== 26. 读盘 JSON.parse 必须有保护 ===');
     + '  const text = await readFileSync(dir);\n'
     + '  return JSON.parse(text);\n'
     + '}';
-  const flat = stripKeepAll(probe);
+  const flat = stripAndBlankComments(probe);
   t('判据本身有效（探针：裸 parse 会被认出来）',
     !inTryBlock(flat, flat.indexOf('JSON.parse(')), '');
   /* 反向：同一个函数里**上面**那个 try 不该给下面的 parse 充数 */

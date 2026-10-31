@@ -164,6 +164,8 @@ export async function scanDir(
       const text = await ctx.invoke<string | null>('tb_read_store', { dir });
       tasksJson = text != null;
     } catch {
+      // 探不到就当这个目录里没有 tasks.json（降级扫描只回答"像不像任务库"，
+      // 不是真要读它——读失败本身就是答案的一部分，不该往上抛）。
       tasksJson = false;
     } finally {
       if (currentDataDir) {
