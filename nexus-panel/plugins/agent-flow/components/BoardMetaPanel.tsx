@@ -156,6 +156,20 @@ function StatusRow({ meta, def, index, total, onChange }: {
         终态
       </label>
 
+      {def.final ? (
+        <label
+          className="bmp-check"
+          title="终态里「不做了」的那一种（取消 / 放弃 / 作废）。勾上之后，全组都到这个状态时组头显示它，而不是笼统算成「已完成」。不勾就按完成算 —— 不按名字猜，猜错会把放弃记成产出。"
+        >
+          <input
+            type="checkbox"
+            checked={!!def.cancel}
+            onChange={(e) => onChange((m) => updateStatus(m, def.id, { cancel: e.target.checked }))}
+          />
+          算放弃
+        </label>
+      ) : null}
+
       <span className="task-grow" />
 
       <span className="bmp-move">

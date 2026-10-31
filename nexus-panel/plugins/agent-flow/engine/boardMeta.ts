@@ -54,6 +54,20 @@ export type StatusDef = {
    */
   final: boolean;
   /**
+   * 这个终态是不是「不做了」（取消 / 放弃 / 作废）。
+   *
+   * `final` 只说"不再流出"，**不区分**是做完了还是放弃了 —— 而这两者在
+   * 复盘时天差地别：一个是产出、一个是沉没成本。所以单独用一个显式标记，
+   * 由配置流程的人自己勾。
+   *
+   * ⛔ 不猜：按名字猜"取消 / 作废 / 放弃"这种词会猜错（"已废弃"是放弃，
+   *    "已归档"却可能是完成），猜错的代价是把放弃记成产出。
+   *    所以只有勾了才算，没勾一律按完成算。
+   *
+   * 只有 final 为 true 时才生效（非终态谈不上"不做了"）。
+   */
+  cancel?: boolean;
+  /**
    * 允许流转到的状态 id。
    *
    * 留空 = 不能流出（配合 final 使用；非终态留空等于把任务钉死，
@@ -78,7 +92,7 @@ export const DEFAULT_STATUSES: StatusDef[] = [
   { id: 'doing', name: '进行中', color: '#3b82f6', final: false, next: ['held', 'done', 'cancelled'] },
   { id: 'held', name: '已挂起', color: '#f59e0b', final: false, next: ['doing', 'cancelled'] },
   { id: 'done', name: '已完成', color: '#22c55e', final: true, next: [] },
-  { id: 'cancelled', name: '已取消', color: '#ef4444', final: true, next: [] },
+  { id: 'cancelled', name: '已取消', color: '#ef4444', final: true, next: [], cancel: true },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -260,8 +274,14 @@ export function statusOf(m: BoardMeta, id: string): StatusDef | null {
 }
 
 /** 状态显示名。id 查不到就显示 id 本身 —— 比显示"未知"有用（还能看出是哪个） */
+/** 默认流里这个 id 叫什么（自定义流程里查不到时用它兜底） */
+function defaultStatusName(id: string): string {
+  for (const s of DEFAULT_STATUSES) if (s.id === id) return s.name;
+  return '';
+}
+
 export function statusName(m: BoardMeta, id: string): string {
-  return statusOf(m, id)?.name || id || '—';
+  return statusOf(m, id)?.name || defaultStatusName(id) || id || '—';
 }
 
 /**
@@ -285,11 +305,15 @@ export function isFinalStatus(m: BoardMeta | null | undefined, id: string): bool
 /**
  * 终态里「不做了」的那一种。
  *
- * 只有默认流里的 'cancelled' 认：自定义流程**没有**独立的取消语义
- * （`final` 只表示不再流出，不区分完成还是放弃）。
- * 猜"哪个终态是取消"会猜错，所以不猜 —— 自定义流程下终态一律按完成算。
+ * 判据只有一条：状态上那个显式的 `cancel` 标记（见 StatusDef.cancel）。
+ * 不按名字猜 —— 猜错会把放弃记成产出。没勾的一律按完成算。
+ *
+ * 缺省时（老存档 / 没配流程 / id 查不到）退回默认那个 'cancelled'，行为不变。
+ * 只要 final 为 false 就不算（非终态谈不上"不做了"）。
  */
-export function isCancelStatus(_m: BoardMeta | null | undefined, id: string): boolean {
+export function isCancelStatus(m: BoardMeta | null | undefined, id: string): boolean {
+  const s = m ? statusOf(m, id) : null;
+  if (s) return !!s.final && !!s.cancel;
   return id === 'cancelled';
 }
 
@@ -453,6 +477,13 @@ export function updateStatus(m: BoardMeta, id: string, patch: Partial<StatusDef>
      */
     ensureReachable(b.statuses);
   }
+  if (patch.cancel !== undefined) s.cancel = patch.cancel;
+  /*
+   * 非终态谈不上"不做了" —— 勾掉终态时把这个标记一起清掉。
+   * 不清的话它会潜伏着：将来重新勾上终态，这个状态突然又变成取消态，
+   * 而用户早忘了自己当初勾过（界面上那一格当时是隐藏的）。
+   */
+  if (!s.final) s.cancel = false;
   b.updatedAt = Date.now();
   return b;
 }

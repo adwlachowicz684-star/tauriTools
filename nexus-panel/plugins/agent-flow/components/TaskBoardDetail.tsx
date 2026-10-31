@@ -5,9 +5,8 @@ import {
   type TaskBoard, type BoardStatus, type BoardTask,
   isGroup, isTask, lockOf, statusOf, tallyOf, leafTaskIds,
   setTaskStatus, claimTask, renameNode,
-  BOARD_STATUS_LABEL,
 } from '../engine/taskBoard';
-import { type BoardMeta } from '../engine/boardMeta';
+import { type BoardMeta, statusName } from '../engine/boardMeta';
 
 /**
  * 任务板详情（中间栏）。
@@ -70,6 +69,13 @@ export function TaskBoardDetail({
   const group = isGroup(node);
   const lock = group ? null : lockOf(board, selectedId, meta);
   const tally = group ? tallyOf(board, selectedId, meta) : null;
+  /*
+   * 状态按钮列**流程里配的那些**，不是写死的四个。
+   *
+   * 自定义流程里根本没有 'done' 这个 id —— 写死的话点一下就把任务
+   * 设成一个流程里不存在的状态，界面上显示成 id，而用户以为自己点了"完成"。
+   */
+  const flow = meta && meta.statuses.length > 0 ? meta.statuses.map((s) => s.id) : STATUS_FLOW;
 
   const guard = async (warnings: string[], run: () => void) => {
     if (warnings.length === 0) { run(); return; }
@@ -130,7 +136,7 @@ export function TaskBoardDetail({
           <span className="bdd-kind">任务组</span>
         ) : (
           <span className={`bdt-pill st-${statusOf(board, selectedId, meta)}`}>
-            {BOARD_STATUS_LABEL[statusOf(board, selectedId, meta)]}
+            {statusName(meta, statusOf(board, selectedId, meta))}
           </span>
         )}
       </div>
@@ -163,7 +169,7 @@ export function TaskBoardDetail({
           <div className="bdd-row">
             <span className="bdd-k">状态</span>
             <div className="bdd-actions">
-              {STATUS_FLOW.map((st) => (
+              {flow.map((st) => (
                 <button
                   key={st}
                   type="button"
@@ -171,7 +177,7 @@ export function TaskBoardDetail({
                   disabled={!canWrite}
                   onClick={() => doStatus(st)}
                 >
-                  {BOARD_STATUS_LABEL[st]}
+                  {statusName(meta, st)}
                 </button>
               ))}
             </div>

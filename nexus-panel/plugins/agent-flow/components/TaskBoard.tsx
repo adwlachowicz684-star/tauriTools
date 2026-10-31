@@ -3,9 +3,8 @@ import { confirm, prompt } from '../../../js/dialog.js';
 import {
   type TaskBoard, type BoardRow,
   boardRows, visibleIds, lockOf, statusOf, tallyOf, isGroup,
-  BOARD_STATUS_LABEL,
 } from '../engine/taskBoard';
-import { type BoardMeta } from '../engine/boardMeta';
+import { type BoardMeta, statusName } from '../engine/boardMeta';
 
 /**
  * 任务板（左栏）—— 计划态任务的树。
@@ -254,7 +253,7 @@ function BoardRowView({
         </>
       ) : (
         <>
-          <span className={`bdt-pill st-${st}`}>{BOARD_STATUS_LABEL[st]}</span>
+          <span className={`bdt-pill st-${st}`}>{statusName(meta, st)}</span>
           <span className="bdt-title">{node.title}</span>
           {lock?.locked ? (
             <span
