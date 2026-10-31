@@ -910,14 +910,25 @@ export function flattenAllGroups(tasks) {
  */
 
 /** 一条任务/组是否算"完成"。组 = 它下面全部完成 */
-export function isDone(id, tasks, ctx) {
+export function isDone(id, tasks, ctx, flow) {
   const t = ctx.byId[id];
   if (!t) return false;                       // 已删除：算没完成
   if (t.kind === 'group') {
     const kids = (tasks || []).filter((x) => x.kind !== 'group' && parentChainHas(x.id, id, ctx.parentOf));
-    return kids.length > 0 && kids.every((x) => x.status === 'done');
+    return kids.length > 0 && kids.every((x) => statusDone(flow, x.status));
   }
-  return t.status === 'done';
+  /*
+    ⛔ 不能写死 `status === 'done'`：
+    自定义流程的完成态可能叫 's3'、'完工'…，
+    写死的话**没有一条前置会解锁** ——
+    依赖它的任务永远卡在"等前置"，而前置明明已经做完了。
+
+    那是"锁永远打不开"这一档的错，比显示错名字严重得多：
+    界面只说"被前置任务卡住"，不说清是哪个前置、为什么。
+
+    flow 缺省时（老存档 / 未配置）退回默认判据，行为不变。
+  */
+  return statusDone(flow, t.status);
 }
 
 function parentChainHas(id, want, parentOf) {
@@ -964,14 +975,14 @@ export function dependsOn(tasks, aId, bId) {
   return walk(aId, 0);
 }
 
-export function lockOf(task, tasks) {
+export function lockOf(task, tasks, store) {
   const ctx = indexTasks(tasks || []);
   const deps = task?.deps || [];
   const pending = [];
   const missing = [];
   for (const d of deps) {
     if (!ctx.byId[d]) { missing.push(d); continue; }
-    if (!isDone(d, tasks, ctx)) pending.push(d);
+    if (!isDone(d, tasks, ctx, flowOf(store && store.flow))) pending.push(d);
   }
   /* 成环检测：只在有前置时才跑 —— 没有依赖的任务不可能成环，
      几百条任务时这笔开销全白花 */
@@ -1398,7 +1409,7 @@ const STALE_MS = 7 * 24 * 3600 * 1000;
 
 /**
  * 统计（「统计」视图数据源）。now 可注入，保证单测不依赖真实时钟。
- * - open = 未完成总数；active = 未完成且不是初始态（真正在流转的；按 flow 配置判，不写死状态名）
+ * - open = 未完成总数；active = doing + review（真正在流转的）
  * - stale = 未完成且超过 7 天没动过，按 updatedAt 升序（最僵硬的在前）
  * - recent = 跨任务合并 history，按时间倒序前 8 条（带 taskId/title 便于跳转）
  * - byAssignee 的 __none__ 置顶；topTags 取前 10
