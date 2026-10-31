@@ -1425,6 +1425,7 @@ ${dir}
                     task={t}
                     me={me}
                     flow={flow}
+                    tagDefs={tagDefs}
                     onOpen={() => setDetailId(t.id)}
                     onAction={(to, needNote) => (needNote ? setRejectFor({ id: t.id, to }) : doTransition(t.id, to))}
                     onClaim={() => doClaim(t.id)}
@@ -1552,6 +1553,7 @@ ${dir}
           groupKeys={groupKeys}
           flow={flow}
           me={me}
+          tagDefs={tagDefs}
           onOpen={(id) => setDetailId(id)}
           onAction={(id, to, needNote) => (needNote ? setRejectFor({ id, to }) : doTransition(id, to))}
           onClaim={(id) => doClaim(id)}
@@ -1692,6 +1694,7 @@ function TaskCard({
   task,
   me,
   flow,
+  tagDefs,
   onOpen,
   onAction,
   onClaim,
@@ -1699,6 +1702,8 @@ function TaskCard({
   task: Task;
   me: string;
   flow: FlowLike;
+  /** 标签定义：卡片上的标签要显示名字而不是 id */
+  tagDefs: TagDef[];
   onOpen: () => void;
   onAction: (to: TaskStatus, needNote?: boolean) => void;
   onClaim: () => void;
@@ -1734,12 +1739,28 @@ function TaskCard({
           </span>
         </div>
       ) : null}
+      {/*
+        分组。判据与上面的类型**一样**：看板是主视图之一，
+        列表里有分组列而看板看不到，会让人以为"这条没分组"
+        （尤其是刚在列表里给一批任务填上分组、切到看板发现什么都没变）。
+      */}
+      {task.group ? (
+        <div className="tb-task-tags">
+          <span className="tb-tag tb-tag-group" title={`分组：${task.group}`}>
+            {task.group}
+          </span>
+        </div>
+      ) : null}
       {task.tags.length > 0 && (
         <div className="tb-task-tags">
+          {/*
+            ⛔ 标签**必须走 TagChip**：任务上存的是 id（tg_xxxx），
+            原来这里直接渲染裸值，于是卡片上显示的是一串没人看得懂的字符，
+            而且没有颜色（同一张卡片上的类型是有颜色的）——
+            看板因此看不出这些标签是什么、也分不清彼此。
+          */}
           {task.tags.map((tag) => (
-            <span key={tag} className="tb-tag">
-              {tag}
-            </span>
+            <TagChip key={tag} id={tag} defs={tagDefs} />
           ))}
         </div>
       )}
@@ -3793,6 +3814,7 @@ function GroupView({
   groups,
   groupKeys,
   me,
+  tagDefs,
   onOpen,
   onAction,
   onClaim,
@@ -3801,6 +3823,7 @@ function GroupView({
   groups: GroupNode[];
   groupKeys: GroupKey[];
   me: string;
+  tagDefs: TagDef[];
   onOpen: (id: string) => void;
   onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
   onClaim: (id: string) => void;
@@ -3815,6 +3838,7 @@ function GroupView({
           groupKeys={groupKeys}
           flow={flow}
           me={me}
+          tagDefs={tagDefs}
           onOpen={onOpen}
           onAction={onAction}
           onClaim={onClaim}
@@ -3825,12 +3849,13 @@ function GroupView({
 }
 
 function GroupNodeView({
-  node, flow, groupKeys, me, onOpen, onAction, onClaim,
+  node, flow, groupKeys, me, tagDefs, onOpen, onAction, onClaim,
 }: {
   node: GroupNode;
   flow: FlowLike;
   groupKeys: GroupKey[];
   me: string;
+  tagDefs: TagDef[];
   onOpen: (id: string) => void;
   onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
   onClaim: (id: string) => void;
@@ -3863,6 +3888,7 @@ function GroupNodeView({
               task={t}
               me={me}
               flow={flow}
+              tagDefs={tagDefs}
               onOpen={() => onOpen(t.id)}
               onAction={(to, needNote) => onAction(t.id, to, needNote)}
               onClaim={() => onClaim(t.id)}
@@ -3873,6 +3899,7 @@ function GroupNodeView({
             <GroupNodeView
               key={c.key}
               node={c}
+              tagDefs={tagDefs}
               groupKeys={groupKeys}
               flow={flow}
               me={me}

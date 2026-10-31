@@ -2281,6 +2281,54 @@ t('审查：新建弹窗的分组带已有分组候选', (() => {
     && app.indexOf('list="tb-group-options"') >= 0;
 })());
 
+
+/* ============================================================ 审查：看板卡片（本轮） */
+
+/*
+ * **看板卡片上的标签渲染的是原始 id**（tg_xxxx），而且没有颜色 ——
+ * 同一张卡片上的**类型**是有颜色的，标签却是裸字符串。
+ * 于是看板看不出这些标签是什么，也分不清彼此；
+ * 而标签在列表里、筛选面板里都已经显示名字了（那两处都修过）。
+ */
+t('审查：看板卡片的标签走 TagChip（显示名字而不是 id）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function TaskCard({');
+  const seg = app.slice(i, app.indexOf('const acts = actionsForIn', i));
+  return seg.indexOf('tagDefs: TagDef[];') >= 0;   // 组件拿到了定义表
+})());
+
+t('审查：卡片里不再直接渲染裸标签值', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function TaskCard({');
+  const body = app.slice(i, app.indexOf('<div className="tb-task-foot">', i));
+  return body.indexOf('<TagChip key={tag} id={tag} defs={tagDefs} />') >= 0
+    && body.indexOf('<span key={tag} className="tb-tag">') < 0;
+})());
+
+/*
+ * **看板卡片不显示分组** —— 与之前修过的"类型"同一判据：
+ * 看板是主视图之一，列表里有分组列而看板看不到，
+ * 会让人以为"这条没分组"（尤其是刚在列表给一批任务填上分组、
+ * 切到看板发现什么都没变）。
+ */
+t('审查：看板卡片会显示分组', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function TaskCard({');
+  const body = app.slice(i, app.indexOf('<div className="tb-task-foot">', i));
+  return body.indexOf('task.group ?') >= 0 && body.indexOf('tb-tag-group') >= 0;
+})());
+
+/*
+ * tagDefs 要贯通到每一处 TaskCard（看板 + 分组视图的叶子，
+ * 且分组视图是递归的 —— 中间节点也要往下传）。
+ */
+t('审查：tagDefs 贯通到看板与分组视图（含递归节点）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const gv = app.slice(app.indexOf('function GroupView({'), app.indexOf('function StatsView'));
+  return gv.indexOf('tagDefs={tagDefs}') >= 0
+    && app.indexOf('<GroupNodeView\n              key={c.key}\n              node={c}\n              tagDefs={tagDefs}') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
