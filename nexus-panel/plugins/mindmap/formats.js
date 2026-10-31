@@ -26,6 +26,19 @@
  * 硬塞进自定义属性只会在别的软件里变成乱码，所以一律不写。
  */
 
+/*
+ * 画布默认外观 —— **从 themes.js 取，不在这里抄第二份**（BUG 181）。
+ *
+ * ⚠️ 下面那个 `DEFAULT_THEME = 'fresh-blue-compat'` 与本文件同名、值却不同，
+ *    两者不是一回事：
+ *      · `fresh-blue-compat` 是 `stringifyKm` 写进 **content JSON** 的兼容值
+ *      · `fresh-blue`（themes.js）才是 `sheet.theme` 的实际默认值
+ *    拿下面那个去比 `sheet.theme`，会把默认主题判成"非默认" —— 于是**每次**
+ *    导出都虚报一句"主题装不下"。判据必须显式区分，不能只看名字。
+ */
+import { DEFAULT_THEME as SHEET_THEME_DEFAULT,
+  DEFAULT_LAYOUT as SHEET_LAYOUT_DEFAULT } from './themes.js';
+
 const DEFAULT_LAYOUT = 'default';
 const DEFAULT_THEME = 'fresh-blue-compat';
 
@@ -1934,7 +1947,9 @@ export function exchangeLoss(content, kind, sheet) {
     labels: 0, collapsed: 0, style: 0, image: 0, attachment: 0,
     boundary: 0, markers: 0, relationships: 0, nodes: 0,
     // BUG 152：概要 / 标注（BUG 141 / 143 才收的 XMind 数据）
-    summary: 0, callout: 0 };
+    summary: 0, callout: 0,
+    // BUG 181：画布自己的主题与布局（画布级，不计进 nodes，见函数末尾）
+    theme: 0, layout: 0 };
   const km = parseKm(content);
   if (!km) return out;
   const touched = new Set();
@@ -2011,6 +2026,28 @@ export function exchangeLoss(content, kind, sheet) {
   out.relationships = keep.relationships
     ? rels.filter((r) => String(r.title ?? '').trim()).length
     : rels.length;
+  /*
+   * BUG 181：画布自己的**主题与布局**同样装不下 —— 五种交换格式里没有任何
+   *   一种有画布级外观属性（FreeMind 只有节点级 COLOR / BACKGROUND_COLOR；
+   *   OPML / Mermaid / PlantUML / Markdown 连"外观"这个概念都没有）。
+   *
+   *   而导回侧一律写死默认值：实测 `markdownToWorkbook` 与 `markdownToSheet`
+   *   两张画布都给 `theme: DEFAULT_THEME, layout: DEFAULT_LAYOUT`。于是
+   *   导出 .md 再导回，整本工作簿的外观全变回默认，状态栏却只说「已保存」。
+   *   Markdown 是最常被当成备份的格式，而导入是整体替换且不可撤销。
+   *
+   *   与 BUG 123（画布级 `xrelationships` 漏统计）是同一个洞的第 5 次重演：
+   *   新数据收进来了，丢失统计没同步。
+   *
+   *   ⓘ 只在**不是默认值**时才算丢：绝大多数画布用的就是默认主题/布局，
+   *     一律报会让每次导出都冒一句没意义的提示 —— 噪音会让人不再看提示。
+   *   ⓘ 画布级，**不计进 nodes**：一句"共涉及 N 个节点"对"整张画布换了个
+   *     主题"不成立（同 BUG 123 对关系线的处理）。
+   */
+  const th = String(sheet?.theme ?? '').trim();
+  const ly = String(sheet?.layout ?? '').trim();
+  out.theme = th && th !== SHEET_THEME_DEFAULT ? 1 : 0;
+  out.layout = ly && ly !== SHEET_LAYOUT_DEFAULT ? 1 : 0;
   out.nodes = touched.size;
   return out;
 }
@@ -2019,7 +2056,9 @@ export function exchangeLoss(content, kind, sheet) {
 const LOSS_KEYS = ['note', 'hyperlink', 'priority', 'progress', 'labels',
   'collapsed', 'style', 'image', 'attachment', 'boundary', 'markers',
   // BUG 152：概要 / 标注也要跨画布累加（不然 Markdown 那句提示数不到）
-  'relationships', 'nodes', 'summary', 'callout'];
+  'relationships', 'nodes', 'summary', 'callout',
+  // BUG 181：主题 / 布局是**画布级**，多画布导出时逐张相加 = 有几张非默认
+  'theme', 'layout'];
 
 /**
  * 多张画布合计的丢失统计（Markdown 导出用）。
