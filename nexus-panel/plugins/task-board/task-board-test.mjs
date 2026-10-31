@@ -2158,7 +2158,7 @@ t('审查：新建任务会写出 group 字段（AI 在文件里要看得见）'
  */
 t('审查：详情面板里有分组字段', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('onPatch({ group: e.target.value })') >= 0
+  return app.indexOf('onCommit={(v) => onPatch({ group: v })}') >= 0
     && app.indexOf('placeholder="分组名（留空 = 不分组）"') >= 0;
 })());
 
@@ -2223,6 +2223,62 @@ t('审查：隐藏排序依据列时排序会挪走（否则没人能改排序�
 t('审查：时间区间填反了要在面板里说出来', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   return app.indexOf('起始晚于结束，这样一条都筛不到') >= 0;
+})());
+
+
+/* ============================================================ 审查：详情每键写盘 / 新建弹窗缺字段（本轮） */
+
+/*
+ * **详情面板的自由文本是"每敲一个字写一次盘"**：
+ * onChange → onPatch → mutate（读-改-写 + 乐观锁）。
+ * 打字期间不断和 2s 轮询、AI 通道抢锁，冲突概率陡增。
+
+ * ⛔ 更要命的是中文输入法：受控组件在 composition 期间会拿到拼音中间态，
+ * 而这两个输入框**没有 isComposing 守卫**（备注框有，它们恰好漏了）——
+ * 打一半的拼音会被当成正式内容写进 tasks.json。
+ *
+ * 改为本地草稿 + 失焦/回车提交，并带上输入法守卫。
+ */
+t('审查：详情的自由文本是草稿提交，不是每键写盘', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('function DraftInput({') >= 0
+    && app.indexOf('onCommit={(v) => onPatch({ summary: v })}') >= 0
+    && app.indexOf('onCommit={(v) => onPatch({ group: v })}') >= 0;
+})());
+
+t('审查：草稿提交带输入法守卫（拼音中间态不会写进文件）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function DraftInput({');
+  const seg = app.slice(i, app.indexOf('function DetailModal({', i));
+  return seg.indexOf('isComposing(e.nativeEvent)') >= 0
+    && seg.indexOf('onBlur={commit}') >= 0;
+})());
+
+/*
+ * **新建弹窗没有任务类型与分组**（这两项是后来加的字段）：
+ * 从这儿建出来的任务永远没有类型、也没有分组，
+ * 只能建完再去列表行内或详情里补 ——
+ * 而"新建时顺手选一下"才是用户最自然的时机。
+ */
+t('审查：新建弹窗里有任务类型与分组', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function NewTaskModal({');
+  const seg = app.slice(i, app.indexOf('function DetailModal({', i));
+  return seg.indexOf('<span>任务类型</span>') >= 0
+    && seg.indexOf('<span>分组（可选）</span>') >= 0
+    && seg.indexOf('type,') >= 0 && seg.indexOf('group,') >= 0;
+})());
+
+/*
+ * 分组是自由文本，但候选要复用已有分组 ——
+ * "再敲一遍"会敲错一个字，于是变成两个分组，
+ * 而界面上看不出它们本该是同一个。
+ */
+t('审查：新建弹窗的分组带已有分组候选', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('const allGroupNames = useMemo') >= 0
+    && app.indexOf('groups={allGroupNames}') >= 0
+    && app.indexOf('list="tb-group-options"') >= 0;
 })());
 
 /* ---------------- 汇总 ---------------- */

@@ -378,6 +378,19 @@ export default function App() {
     任务上存的是 id、界面显示的是名字，按 id 排出来的顺序看着像随机。
   */
   const tagDefs = store ? store.tagDefs : [];
+  /*
+    已有分组名（去重、排序）。新建弹窗的分组下拉用它做候选 ——
+    分组是自由文本，但"复用已有分组"比"再敲一遍"常见得多，
+    敲错一个字就变成两个分组，而界面上看不出它们本该是同一个。
+  */
+  const allGroupNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of store ? store.tasks : []) {
+      const g = (t.group || '').trim();
+      if (g) set.add(g);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  }, [store]);
   const tagNames = useMemo(() => {
     const m: Record<string, string> = {};
     for (const d of tagDefs) m[d.id] = d.name;
@@ -1558,6 +1571,8 @@ ${dir}
       {/* 新建任务 */}
       {newOpen && (
         <NewTaskModal
+          typeDefs={typeDefs}
+          groups={allGroupNames}
           agents={store.agents}
           me={me}
           onClose={() => setNewOpen(false)}
@@ -4038,11 +4053,17 @@ function StatsView({
 function NewTaskModal({
   agents,
   me,
+  typeDefs,
+  groups,
   onClose,
   onCreate,
 }: {
   agents: { id: string }[];
   me: string;
+  /** 类型定义表（可在这建完就直接选上） */
+  typeDefs: TagDef[];
+  /** 已有分组名（供下拉参考；分组是自由文本，也可以直接敲个新的） */
+  groups: string[];
   onClose: () => void;
   onCreate: (draft: {
     title: string;
@@ -4051,6 +4072,10 @@ function NewTaskModal({
     tags: string[];
     assignee: string;
     estimate: string;
+    /** 任务类型（typeDefs 里的 id）。'' = 未分类 */
+    type: string;
+    /** 分组名。'' = 不分组 */
+    group: string;
   }) => void;
 }) {
   const [title, setTitle] = useState('');
@@ -4059,6 +4084,8 @@ function NewTaskModal({
   const [tagsText, setTagsText] = useState('');
   const [assignee, setAssignee] = useState('');
   const [estimate, setEstimate] = useState('');
+  const [type, setType] = useState('');
+  const [group, setGroup] = useState('');
 
   return (
     <Modal title="新建任务" onClose={onClose}>
@@ -4097,6 +4124,40 @@ function NewTaskModal({
           placeholder="例如 2.5（0.5 = 半天）"
         />
       </label>
+      {/*
+        任务类型与分组。
+        ⛔ 这两项是后来加的字段，但**新建弹窗一直没有** ——
+        于是从这儿建出来的任务永远没有类型、也没有分组，
+        只能建完再去列表行内或详情里补。
+        而"新建时顺手选一下"正是用户最自然的时机。
+
+        分组做成可输入的自由文本（不是纯下拉）：
+        "建一个新分组"是最常见的操作，只能从已有列表里选的话
+        第一次用就没有可选项，等于分组功能在这儿不可用。
+      */}
+      <div className="tb-mrow">
+        <label className="tb-mfield">
+          <span>任务类型</span>
+          <select value={type} onChange={(e) => setType(e.target.value)}>
+            <option value="">未分类</option>
+            {(typeDefs || []).map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="tb-mfield">
+          <span>分组（可选）</span>
+          <input
+            value={group}
+            onChange={(e) => setGroup(e.target.value)}
+            placeholder="留空 = 不分组"
+            list="tb-group-options"
+          />
+          <datalist id="tb-group-options">
+            {(groups || []).map((g) => <option key={g} value={g} />)}
+          </datalist>
+        </label>
+      </div>
       <label className="tb-mfield">
         <span>指派给（可选）</span>
         <select value={assignee} onChange={(e) => setAssignee(e.target.value)}>
@@ -4124,6 +4185,8 @@ function NewTaskModal({
               tags: tagsText.split(/[,，]/).map((s2) => s2.trim()).filter(Boolean),
               assignee,
               estimate,
+              type,
+              group,
             })
           }
         >
@@ -4131,6 +4194,55 @@ function NewTaskModal({
         </button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * 详情面板里的自由文本字段：**本地草稿 + 失焦/回车才提交**。
+ *
+ * ⛔ 原来是受控的 `onChange → onPatch → 写盘` ——
+ * 每敲一个字写一次 tasks.json，而每次写盘都是"读-改-写 + 乐观锁"，
+ * 打字期间不断和 2s 轮询、AI 通道抢锁，冲突概率陡增。
+ *
+ * ⛔ 更要命的是中文输入法：受控组件在 composition 期间会拿到拼音中间态，
+ * 且没有 isComposing 守卫 —— 打一半的拼音会被当成正式内容写进文件。
+ * 备注框那边是有这个守卫的（见下方），这两个输入框恰好漏了。
+ *
+ * value 变化时以外部为准重置（切换任务 / 别处改了这条）。
+ */
+function DraftInput({
+  value,
+  placeholder,
+  onCommit,
+}: {
+  value: string;
+  placeholder?: string;
+  onCommit: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
+  /* 正在编辑时不接受外部值（否则轮询一刷新就把人打的字冲掉） */
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [value, editing]);
+  const commit = () => {
+    setEditing(false);
+    if (draft !== value) onCommit(draft);
+  };
+  return (
+    <input
+      className="tb-dinput"
+      value={draft}
+      placeholder={placeholder}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (isComposing(e.nativeEvent)) return;
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+      }}
+    />
   );
 }
 
@@ -4215,11 +4327,10 @@ function DetailModal({
         </select>
 
         <span className="tb-dlabel">任务说明</span>
-        <input
-          className="tb-dinput"
+        <DraftInput
           value={task.summary || ''}
           placeholder="一句话说清这条要做什么"
-          onChange={(e) => onPatch({ summary: e.target.value })}
+          onCommit={(v) => onPatch({ summary: v })}
         />
 
         {/*
@@ -4232,11 +4343,10 @@ function DetailModal({
           下拉里选不到就只能先去某条任务上填，绕一圈。
         */}
         <span className="tb-dlabel">分组</span>
-        <input
-          className="tb-dinput"
+        <DraftInput
           value={task.group || ''}
           placeholder="分组名（留空 = 不分组）"
-          onChange={(e) => onPatch({ group: e.target.value })}
+          onCommit={(v) => onPatch({ group: v })}
         />
       </div>
 
