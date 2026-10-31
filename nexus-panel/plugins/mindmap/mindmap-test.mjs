@@ -22572,6 +22572,103 @@ group('BUG 178 · 导入别人的 .puml：节点文字首尾空白不能被 trim
   }
 }
 
+group('BUG 179 · 导出 .mm / .opml 时节点文字首尾空白被写侧 trim（BUG 173 那条规矩只改了 kmToRows）');
+
+{
+  const f179 = await import('./formats.js');
+  const wb179 = await import('./workbook.js');
+  const N179 = (t, ch) => ({ data: { text: t }, children: ch || [] });
+  const wrap179 = (r) => JSON.stringify({ root: r });
+  const J179 = (v) => JSON.stringify(v);
+  const textOf = (c) => (c ? JSON.parse(c).root.data.text : null);
+
+  const rtMm = (t) => textOf(f179.fromFreemind(f179.toFreemind(wrap179(N179(t, [])), null)));
+  const rtOpml = (t) => textOf(f179.fromOpml(f179.toOpml(wrap179(N179(t, [])), '甲')));
+  const rtMmd = (t) => textOf(f179.fromMermaid(f179.toMermaid(wrap179(N179(t, [])))));
+  const rtPuml = (t) => textOf(f179.fromPlantUml(f179.toPlantUml(wrap179(N179(t, [])))));
+
+  /*
+   * ① ★ 本工具往返：.mm / .opml 必须与 .mmd / .puml **同一个口径**。
+   *
+   * BUG 173 只把 kmToRows（Mermaid / PlantUML 那条路）换成保边版本，
+   * nodeText 这条**共用**路没动 —— 于是同一份文字换格式就换个样子：
+   * 导出 .mm / .opml 写侧 trim，导回来首尾空白没了；换 .mmd 往返却是好的。
+   * 同一条规矩、四个格式只修一半，正是本项目反复撞的模式。
+   */
+  for (const t of ['  会议  ', ' A', 'A ', ' A ', '\t制表\t', 'a  b']) {
+    eq(rtMm(t), t, '★ .mm 往返：文字 ' + J179(t) + ' 一字不改（早先首尾空白被写侧 trim）');
+    eq(rtOpml(t), t, '★ .opml 往返：文字 ' + J179(t) + ' 一字不改（早先首尾空白被写侧 trim）');
+    eq(rtMm(t), rtMmd(t), '★ 同一份文字：.mm 与 .mmd 必须是同一个口径（' + J179(t) + '）');
+    eq(rtOpml(t), rtPuml(t), '★ 同一份文字：.opml 与 .puml 必须是同一个口径（' + J179(t) + '）');
+  }
+
+  // ② ★ 写侧产物里必须**带着**那对空白（不只是"导回来碰巧对"）
+  ok(/TEXT="  会议  "/.test(f179.toFreemind(wrap179(N179('  会议  ', [])), null)),
+    '★ .mm 写侧必须原样写出 TEXT="  会议  "（早先写成 TEXT="会议"）');
+  ok(/text="  会议  "/.test(f179.toOpml(wrap179(N179('  会议  ', [])), '甲')),
+    '★ .opml 写侧必须原样写出 text="  会议  "（早先写成 text="会议"）');
+  // 制表符：escXml 把它写成 &#9;（XML 属性规范化会把裸 tab 变成空格，字符引用不走规范化）
+  ok(/TEXT="&#9;制表&#9;"/.test(f179.toFreemind(wrap179(N179('\t制表\t', [])), null)),
+    '★ 制表符走 &#9; 字符引用（裸 tab 会被 XML 属性规范化变成空格）');
+
+  // ③ ★ 别人的文件读回来本来就保得住 —— 证明这纯粹是写侧在改内容
+  eq(textOf(f179.fromFreemind('<map version="1.0.1"><node TEXT="  会议  "/></map>')), '  会议  ',
+    '★ 别人的 .mm 带着首尾空格 → 读回来就该带着（读侧从来没削过）');
+  eq(textOf(f179.fromOpml('<opml version="2.0"><head><title>t</title></head><body><outline text="  会议  "/></body></opml>')), '  会议  ',
+    '★ 别人的 .opml 带着首尾空格 → 读回来就该带着（读侧从来没削过）');
+
+  /*
+   * ④ 反向边界：全空白 / 空串**仍走占位**（BUG 100 的取舍不动）。
+   *    不能为了保住空白就一律不 trim —— 那样 `   ` 会变成一个空白文字节点。
+   */
+  eq(rtMm('   '), '未命名', '★ 全空白仍走占位「未命名」（不许变成空白文字节点）');
+  eq(rtOpml('   '), '未命名', '★ 全空白仍走占位「未命名」（OPML 同）');
+  eq(rtMm(''), '未命名', '★ 空串仍走占位「未命名」');
+  eq(rtOpml(''), '未命名', '★ 空串仍走占位「未命名」（OPML 同）');
+
+  // ⑤ 层级不受影响：首尾空白不能干扰缩进 / 父子关系
+  {
+    const tree = N179('  甲  ', [N179(' 乙 ', [N179('丙  ', [])])]);
+    const back = JSON.parse(f179.fromFreemind(f179.toFreemind(wrap179(tree), null)));
+    eq(back.root.data.text, '  甲  ', '★ 父节点文字保住');
+    eq(back.root.children[0].data.text, ' 乙 ', '★ 子节点文字保住');
+    eq(back.root.children[0].children[0].data.text, '丙  ', '★ 孙节点文字保住（层级不受影响）');
+  }
+
+  /*
+   * ⑥ ⓘ 已知取舍（**不在**本次改动范围，锁住别让它悄悄变化）：
+   *    Markdown 的 ATX 标题按 CommonMark 削首尾空白，这是**格式固有**的 ——
+   *    读侧必须这么读（否则别人的 `#   会议  ` 会读成带空格的标题），
+   *    所以 .md 这条路保不住首尾空白。不假装修好了。
+   */
+  {
+    const md179 = wb179.sheetToMarkdown(wrap179(N179('  会议  ', [])));
+    eq(JSON.parse(wb179.markdownToSheet(md179)).root.data.text, '会议',
+      'ⓘ 已知取舍：.md 的 ATX 标题按 CommonMark 削首尾 —— 这是格式固有，不是本工具的写侧在 trim');
+  }
+
+  // ⑦ 源码层（先剥注释：这些旧写法就写在注释里，不剥会命中注释而永远绿）
+  {
+    const s179 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/export function nodeTextKeepEdges/.test(s179),
+      '★ 必须有保边版 nodeTextKeepEdges（不能把保边逻辑抄进 toFreemind / toOpml 各一份）');
+    ok(!/escXml\(nodeText\(n\)\)/.test(s179),
+      '★ 写侧不得再用会 trim 的 nodeText（抄两遍必漏）');
+    /*
+     * **两处写侧都必须调那一个共用函数**，不许各抄一份。
+     * 抄一份版本**行为完全等价**（结果一样），只有源码契约抓得到 ——
+     * 而"等价"正是它危险的地方：哪天改了保边的口径，抄的那份不会跟着变。
+     */
+    eq((s179.match(/escXml\(nodeTextKeepEdges\(n\)\)/g) || []).length, 2,
+      '★ .mm 与 .opml 两处写侧都必须调共用的 nodeTextKeepEdges（各抄一份必漏）');
+    const i179 = s179.indexOf('export function nodeTextKeepEdges');
+    ok(i179 > 0, '能定位 nodeTextKeepEdges');
+    const body179 = s179.slice(i179, i179 + 400);
+    ok(/raw\.trim\(\)\s*\?\s*raw\s*:\s*nodeText\(/.test(body179),
+      '★ 全空白必须回落 nodeText 的占位口径（BUG 100 的取舍不许被带坏）');
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

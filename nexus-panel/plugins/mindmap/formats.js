@@ -269,6 +269,30 @@ export function nodeText(n, fallback = EMPTY_NODE_TEXT) {
   return inlineText(n?.data?.text) || fallback;
 }
 
+/**
+ * 节点文字规范化（**保留首尾空白**）—— 与 nodeText 唯一的区别是"要不要 trim"。
+ *
+ * 拆分方式与 inlineText / inlineTextKeepEdges 一致：两条路各写一份，
+ * 抄一遍必漏（BUG 100 / 101 都是这么来的）。
+ *
+ * ⓘ BUG 173 只把 kmToRows（Mermaid / PlantUML 走的那条）换成了保边版本，
+ *   nodeText 这条**共用**路没动 —— 于是同一份文字：
+ *       导出 .mm / .opml  →  TEXT="会议"      ← 首尾空白被写侧削掉
+ *       导出 .mmd / .puml →  "  会议  "       ← 保住了
+ *   导回来一个变了样、一个没变。同一条规矩、四个格式只修一半。
+ *
+ *   而读侧（readXmlNodes → rowsToKm）**本来就把首尾空白原样带回来**
+ *   （XML 的属性值规范化只把 tab / LF / CR 变成空格，不削首尾），
+ *   所以这里改成保边是"写侧不再自己改内容"，读完导回即刻对齐。
+ *
+ * ⓘ 全空白**仍走占位**（BUG 100 的取舍不动）：`raw.trim()` 为空就回落
+ *   nodeText 的口径，与 kmToRows 里 `raw.trim() ? raw : nodeText(n)` 一致。
+ */
+export function nodeTextKeepEdges(n, fallback = EMPTY_NODE_TEXT) {
+  const raw = inlineTextKeepEdges(n?.data?.text ?? '');
+  return raw.trim() ? raw : nodeText(n, fallback);
+}
+
 /** 节点是否折叠（kityminder 用 expandState: 'collapse' 表示收起） */
 export const isCollapsed = (n) => String(n?.data?.expandState || '') === 'collapse';
 
@@ -464,7 +488,8 @@ export function toFreemind(content, rels = null) {
   return lines.join('\n') + '\n';
 
   function emit(n, depth) {
-    const attrs = [`TEXT="${escXml(nodeText(n))}"`];
+    // BUG 179：首尾空白是内容的一部分，写侧不能 trim（与 kmToRows 同一条规矩）
+    const attrs = [`TEXT="${escXml(nodeTextKeepEdges(n))}"`];
     // BUG 128：只有端点节点需要 ID（其余写了纯属噪音）
     const myId = String(n?.data?.id ?? '').trim();
     if (myId && endpoint.has(myId)) attrs.push(`ID="${escXml(myId)}"`);
@@ -703,7 +728,8 @@ export function toOpml(content, title = '脑图') {
   function emit(n, depth) {
     const pad = '  '.repeat(depth);
     const kids = n?.children || [];
-    const attrs = [`text="${escXml(nodeText(n))}"`];
+    // BUG 179：同 toFreemind —— 首尾空白是内容的一部分，写侧不能 trim
+    const attrs = [`text="${escXml(nodeTextKeepEdges(n))}"`];
     // BUG 111：url 是 OPML 2.0 规范属性（OmniOutliner / 幕布 等都读写）
     const href = String(n?.data?.hyperlink || '').trim();
     if (href) attrs.push(`url="${escXml(href)}"`);
