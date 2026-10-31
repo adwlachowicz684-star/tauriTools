@@ -2023,6 +2023,76 @@ t('审查：补定义时取未被占用的颜色（不能固定一档撞色）',
     && seg.indexOf('color: TAG_COLORS[6]') < 0;
 })());
 
+
+/* ============================================================ 审查：类型侧未刷新 + 新建体验（本轮） */
+
+/*
+ * **类型改名 / 改色 / 新建都没有立刻重读**（只靠 2s 轮询兜）：
+ * 改完名字，下拉里、筛选摘要里、列表里全是旧值，要等两秒才变 ——
+ * 看着像点了没反应。删类型、删标签、改标签那边都有 refresh，就这三个漏了。
+ */
+t('审查：类型改名/改色后立刻重读（不能只靠 2s 轮询）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const setTypeDef =');
+  const seg = app.slice(i, app.indexOf('const createType', i));
+  return seg.indexOf('await refresh();') >= 0;
+})());
+
+t('审查：新建类型后立刻重读（否则下拉里要等两秒才出现）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const createType =');
+  const seg = app.slice(i, app.indexOf('删类型', i));
+  return seg.indexOf('await refresh();') >= 0;
+})());
+
+/*
+ * **同名新建被静默吞掉**：原来直接 return null（不写盘也不提示），
+ * 用户敲完名字按回车，输入框清空了而下拉里什么都没多 ——
+ * 看着就像"新建这个功能坏了"。同名是输入问题，必须说出来。
+ */
+t('审查：新建同名标签要有提示（静默不建 = 看着像功能坏了）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const seg = app.slice(app.indexOf('const doAddTag ='), app.indexOf('const doSetTagColor'));
+  return seg.indexOf('已经有同名标签') >= 0 && seg.indexOf('ctx.toast(') >= 0;
+})());
+
+/*
+ * 新建标签的取色要与新建类型同一判据（取第一个未被占用的），
+ * 否则连着建几个标签拿到同一个颜色 —— 而配色的唯一作用就是一眼区分。
+ */
+t('审查：新建标签取未被占用的颜色（与新建类型同判据）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const seg = app.slice(app.indexOf('const doAddTag ='), app.indexOf('const doSetTagColor'));
+  return seg.indexOf('TAG_COLORS.find((c) => !used.has(c))') >= 0;
+})());
+
+/* ============================================================ 审查：标签列排序按显示名（本轮） */
+
+/*
+ * **标签列排序按的是 id，界面显示的是名字**。
+ * 按 id 排出来的顺序和眼睛看到的完全无关 ——
+ * 点了列头排序，结果看着像随机，而界面上明明写着"排序：标签 ↓"。
+ */
+t('审查：标签排序按显示名而不是 id', (() => {
+  const mk = (id, tags) => normalizeTask({ id, tags });
+  const names = { tg_b: '阿', tg_a: '波' };   // id 序：tg_a < tg_b；名字序：阿 < 波
+  const rows = [mk('1', ['tg_b']), mk('2', ['tg_a'])].map((t) => ({ task: t, depth: 0, path: [] }));
+  // 传了映射 → 按名字排：阿(1) 在 波(2) 之前
+  const byName = sortRowsBy(rows, 'tags', 'asc', names).map((r) => r.task.id).join();
+  // 不传映射 → 退回按 id 排：tg_a(2) 在前
+  const byId = sortRowsBy(rows, 'tags', 'asc').map((r) => r.task.id).join();
+  return byName === '1,2' && byId === '2,1';
+})());
+
+/*
+ * tagNames 必须进 useMemo 依赖：改了标签名之后排序结果会变，
+ * 不重算的话列表停在旧顺序上 —— 而改名明明已经生效了。
+ */
+t('审查：排序的依赖里带 tagNames（改名后顺序要重算）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('[filteredRows, sort, tagNames]') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

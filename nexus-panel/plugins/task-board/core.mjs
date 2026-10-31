@@ -969,7 +969,7 @@ export function lockOf(task, tasks) {
  * 与 sortTasksBy 的区别：它认 groupPath，且排序后同组的挨在一起
  * （groupPath 相同则按深度、再按 id），不会把同一个组下的任务打散。
  */
-export function sortRowsBy(rows, field, dir = 'asc') {
+export function sortRowsBy(rows, field, dir = 'asc', tagNames = null) {
   const sign = dir === 'desc' ? -1 : 1;
   const cmp = (ra, rb) => {
     let r = 0;
@@ -981,13 +981,13 @@ export function sortRowsBy(rows, field, dir = 'asc') {
         r = 0;
     }
     if (r !== 0) return r * sign;
-    return cmpTask(ra.task, rb.task, field, sign);
+    return cmpTask(ra.task, rb.task, field, sign, tagNames);
   };
   return [...rows].sort(cmp);
 }
 
 /** 落到任务字段上的比较（sortTasksBy 与 sortRowsBy 共用，不写两遍） */
-function cmpTask(a, b, field, sign) {
+function cmpTask(a, b, field, sign, tagNames = null) {
   let r = 0;
   switch (field) {
     case 'priority':
@@ -1039,8 +1039,17 @@ function cmpTask(a, b, field, sign) {
       r = a.id.localeCompare(b.id);
       break;
     case 'tags': {
-      const ta = (a.tags || []).slice().sort().join(',');
-      const tb = (b.tags || []).slice().sort().join(',');
+      /*
+        ⛔ 必须按**显示名**排，不能按 id 排：
+        任务上存的是 id（tg_xxxx），界面上显示的是名字。
+        按 id 排出来的顺序和眼睛看到的完全无关 ——
+        点了列头排序，结果看着像随机，而界面上明明写着"排序：标签 ↓"。
+
+        tagNames 没传时退回按原值排（至少仍稳定，不会变成乱序）。
+      */
+      const nm = (id) => (tagNames && tagNames[id]) || id;
+      const ta = (a.tags || []).map(nm).sort().join(',');
+      const tb = (b.tags || []).map(nm).sort().join(',');
       r = ta.localeCompare(tb, 'zh-Hans-CN');
       break;
     }
@@ -1319,7 +1328,7 @@ export function groupTasks(tasks, key) {
  * 于是同一列在列表里能排、在看板里排不动，而界面上看不出差别。
  * 两份排序逻辑迟早要分叉，这是必然的，不是"小心点就行"。
  */
-export function sortTasksBy(tasks, field, dir = 'asc') {
+export function sortTasksBy(tasks, field, dir = 'asc', tagNames = null) {
   const sign = dir === 'desc' ? -1 : 1;
   return [...tasks].sort((a, b) => {
     /*
@@ -1327,7 +1336,7 @@ export function sortTasksBy(tasks, field, dir = 'asc') {
       cmpTask 里"未认领恒排最后"是提前 return（刻意不带 sign）——
       外面再乘一次就会在降序时把它翻到最前面，那条保证就没了。
     */
-    const r = cmpTask(a, b, field, sign);
+    const r = cmpTask(a, b, field, sign, tagNames);
     if (r !== 0) return r;
     /*
       兜底保持看板原有的手感：同分时更新时间新的在前，再同分按优先级。

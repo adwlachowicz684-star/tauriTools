@@ -214,10 +214,14 @@ export type SortField =
   | 'updatedAt' | 'createdAt' | 'title' | 'id' | 'group';
 
 /** 多字段排序；assignee 未认领恒排最后；同级按 updatedAt 倒序兜底 */
-export declare function sortTasksBy(tasks: Task[], field: SortField, dir?: 'asc' | 'desc'): Task[];
+export declare function sortTasksBy(
+  tasks: Task[], field: SortField, dir?: 'asc' | 'desc', tagNames?: Record<string, string> | null,
+): Task[];
 
 /** 按列排序（作用在摊平行上）：认 groupPath，且同组的挨在一起 */
-export declare function sortRowsBy(rows: FlatRow[], field: SortField, dir?: 'asc' | 'desc'): FlatRow[];
+export declare function sortRowsBy(
+  rows: FlatRow[], field: SortField, dir?: 'asc' | 'desc', tagNames?: Record<string, string> | null,
+): FlatRow[];
 
 export interface RecentEntry extends HistoryEntry {
   taskId: string;
