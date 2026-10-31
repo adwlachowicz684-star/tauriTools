@@ -194,7 +194,13 @@ export default function App() {
   const [colFilters, setColFilters] = useState<Partial<Record<SortField, ColFilter>>>({});
   const [newOpen, setNewOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [rejectFor, setRejectFor] = useState<{ id: string } | null>(null);
+  /*
+    needNote 的边要填原因。
+    ⛔ to 必须带着：原来这里写死成"打回 = 回到 doing"，
+    但用户自定义流程后，任何一条边都可以要求填原因 ——
+    写死的话那些边会集体跳回 doing，而界面上写的是另一个状态名。
+  */
+  const [rejectFor, setRejectFor] = useState<{ id: string; to: string } | null>(null);
   const [err, setErr] = useState('');
   const [serviceOn, setServiceOn] = useState(false);
   /* 视图偏好：当前视图 / 分组依据 / 排序。走 ctx.store（宿主侧持久化，
@@ -460,6 +466,28 @@ export default function App() {
       return next;
     });
   };
+
+  /*
+    行内挂/摘一个标签。
+    与 toggleType 同构：任务上只存 id，改的是"这条属于哪个标签"，
+    不是改标签本身的定义（那是 doSetTagColor / doAddTag 的事）。
+  */
+  const toggleTaskTag = (taskId: string, tagId: string) =>
+    withErr(async () => {
+      if (!cfg) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const idx = st.tasks.findIndex((t) => t.id === taskId);
+        if (idx < 0) return null;
+        const cur = st.tasks[idx].tags || [];
+        const next = cur.indexOf(tagId) >= 0
+          ? cur.filter((x) => x !== tagId)
+          : [...cur, tagId];
+        const tasks = [...st.tasks];
+        tasks[idx] = { ...tasks[idx], tags: next, updatedAt: Date.now() };
+        return { ...st, tasks };
+      });
+      await refresh();
+    })();
 
   /* 列宽落盘（拖动结束时调一次，不是每帧） */
   const persistColWidths = () => {
@@ -1093,7 +1121,7 @@ ${dir}
                     me={me}
                     flow={flow}
                     onOpen={() => setDetailId(t.id)}
-                    onAction={(to, needNote) => (needNote ? setRejectFor({ id: t.id }) : doTransition(t.id, to))}
+                    onAction={(to, needNote) => (needNote ? setRejectFor({ id: t.id, to }) : doTransition(t.id, to))}
                     onClaim={() => doClaim(t.id)}
                   />
                 ))}
@@ -1164,6 +1192,9 @@ ${dir}
           onBatchDelete={doBatchDelete}
           colHidden={colHidden}
           colWidths={colWidths}
+          onSetStatus={(id, to, needNote) => (needNote ? setRejectFor({ id: id, to }) : doTransition(id, to as TaskStatus))}
+          onPatchField={(id, patch) => doPatch(id, patch)}
+          onToggleTag={toggleTaskTag}
           onToggleCol={toggleCol}
           onColWidth={setColWidth_}
           onColResizeEnd={persistColWidths}
@@ -1189,7 +1220,7 @@ ${dir}
           flow={flow}
           me={me}
           onOpen={(id) => setDetailId(id)}
-          onAction={(id, to, needNote) => (needNote ? setRejectFor({ id }) : doTransition(id, to))}
+          onAction={(id, to, needNote) => (needNote ? setRejectFor({ id, to }) : doTransition(id, to))}
           onClaim={(id) => doClaim(id)}
         />
       )}
@@ -1280,7 +1311,7 @@ ${dir}
           onClose={() => setDetailId(null)}
           onComment={(note) => doComment(detail.id, note)}
           onDelete={() => doDelete(detail.id)}
-          onAction={(to, needNote) => (needNote ? setRejectFor({ id: detail.id }) : doTransition(detail.id, to))}
+          onAction={(to, needNote) => (needNote ? setRejectFor({ id: detail.id, to }) : doTransition(detail.id, to))}
           onClaim={() => doClaim(detail.id)}
           onPatch={(patch) => doPatch(detail.id, patch)}
           onOpen={(id) => setDetailId(id)}
@@ -1290,11 +1321,14 @@ ${dir}
       {/* 打回备注 */}
       {rejectFor && (
         <RejectModal
+          to={rejectFor.to}
+          label={statusName(flow, rejectFor.to)}
           onClose={() => setRejectFor(null)}
           onOk={async (note) => {
             const id = rejectFor.id;
+            const to = rejectFor.to;
             setRejectFor(null);
-            await doTransition(id, 'doing', note);
+            await doTransition(id, to as TaskStatus, note);
           }}
         />
       )}
@@ -1482,7 +1516,12 @@ function TypePicker({
         type="button"
         className={'tb-typechip' + (cur ? '' : ' empty')}
         style={cur ? { background: cur.color + '22', color: cur.color, borderColor: cur.color + '55' } : undefined}
-        onClick={() => setOpen(!open)}
+        /*
+          ⛔ 必须 stopPropagation：整行 onClick 是"打开详情"，
+          不拦的话点类型会顺带弹出详情窗 —— 改个字段弹出一个窗，
+          等于行内编辑白做了。
+        */
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
         title={cur ? cur.name : '未分类（点击设置）'}
       >
         {cur ? cur.name : '—'}
@@ -2162,6 +2201,228 @@ function FlowSettingsModal({
   );
 }
 
+/* ================================================================ 行内编辑 */
+
+/*
+ * 行内编辑：**点一下就地改，不弹窗**（参考腾讯文档智能表的交互）。
+ *
+ * 之前改任何字段都要点开详情弹窗 —— 而实际使用里绝大多数改动是
+ * "把这条标成进行中""改个优先级"，为一两个字段开关一次弹窗太重，
+ * 而且弹窗盖住了列表，改完还得在几十行里找回刚才那一行在哪。
+ *
+ * ⛔ 停止冒泡是**必须的**：整行 onClick 是"打开详情"，
+ * 单元格里点一下会顺带把详情弹窗也打开 —— 改个状态弹出一个窗，
+ * 那就是弹窗没去掉，只是多了一步。
+ */
+
+/** 单选型（状态 / 优先级 / 认领人这类） */
+function InlinePick({
+  cur,
+  options,
+  onPick,
+  title,
+  dot,
+}: {
+  /** 当前显示的内容 */
+  cur: React.ReactNode;
+  options: {
+    id: string;
+    label: string;
+    /** 圆点颜色（状态 / 类型这类有色字段） */
+    color?: string;
+    /** 当前值 */
+    on?: boolean;
+    /** 走不通的选项：置灰并说明原因，而不是点了没反应 */
+    disabled?: boolean;
+    why?: string;
+  }[];
+  onPick: (id: string) => void;
+  title?: string;
+  dot?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <span
+      className={'tb-ic' + (open ? ' open' : '')}
+      ref={ref}
+      onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+      title={title}
+    >
+      {dot ? <span className="tb-col-dot" style={{ background: dot }} /> : null}
+      <span className="tb-ic-val">{cur}</span>
+      {open ? (
+        <span className="tb-ic-pop" onClick={(e) => e.stopPropagation()}>
+          {options.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              className={'tb-ic-opt' + (o.on ? ' on' : '')}
+              disabled={o.disabled}
+              title={o.disabled ? o.why : o.label}
+              onClick={() => {
+                if (o.disabled) return;
+                onPick(o.id);
+                setOpen(false);
+              }}
+            >
+              {o.color ? (
+                <span className="tb-col-dot" style={{ background: o.color }} />
+              ) : null}
+              <span className="tb-ic-txt">{o.label}</span>
+              {o.on ? <span className="tb-ic-ck">✓</span> : null}
+            </button>
+          ))}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** 文本 / 数字输入型（标题 / 说明 / 预估这类） */
+function InlineText({
+  value,
+  onCommit,
+  placeholder,
+  num,
+  title,
+  display,
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+  placeholder?: string;
+  /** 数字模式：只认数字（预估人日） */
+  num?: boolean;
+  title?: string;
+  /** 不编辑时显示的内容（默认是 value） */
+  display?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  /*
+    打开时把当前值带进输入框。
+    不带的话一点开就是空的，看着像"这行没内容"，
+    而实际上只是输入框没初始化 —— 那种误会会让人以为数据丢了。
+  */
+  useEffect(() => { if (open) setDraft(value); }, [open, value]);
+
+  const commit = () => {
+    setOpen(false);
+    const v = draft.trim();
+    if (v === value.trim()) return;                 // 没改就不写盘
+    if (num && v !== '' && !/^\d+(\.\d+)?$/.test(v)) return;   // 数字列不认别的
+    onCommit(v);
+  };
+
+  return (
+    <span className={'tb-ic' + (open ? ' open' : '')} title={title}>
+      {open ? (
+        <input
+          className="tb-ic-input"
+          autoFocus
+          value={draft}
+          placeholder={placeholder}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (isComposing(e.nativeEvent)) return;   // 中文输入法组词中不提交
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            if (e.key === 'Escape') { setDraft(value); setOpen(false); }
+          }}
+        />
+      ) : (
+        <span
+          className="tb-ic-val"
+          onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        >
+          {display !== undefined ? display : (value || <span className="tb-ldim">—</span>)}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** 多选型（标签：一条任务可以同时有多个） */
+function InlineTags({
+  cur,
+  defs,
+  onPick,
+  title,
+}: {
+  cur: string[];
+  defs: { id: string; name: string; color: string }[];
+  onPick: (id: string) => void;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <span
+      className={'tb-ic' + (open ? ' open' : '')}
+      ref={ref}
+      onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+      title={title}
+    >
+      <span className="tb-ic-val">
+        {cur.length > 0 ? (
+          <span className="tb-ltags">
+            {cur.map((id) => <TagChip key={id} id={id} defs={defs} />)}
+          </span>
+        ) : (
+          <span className="tb-ldim">—</span>
+        )}
+      </span>
+      {open ? (
+        /*
+          ⛔ 选完**不关闭**：标签是多选，勾一个就关的话
+          想勾三个就要点开三次，那还不如去详情里改。
+        */
+        <span className="tb-ic-pop" onClick={(e) => e.stopPropagation()}>
+          {defs.length === 0 ? (
+            <span className="tb-ic-hint">还没有标签，去列头的漏斗里新建</span>
+          ) : defs.map((d) => {
+            const on = cur.indexOf(d.id) >= 0;
+            return (
+              <button
+                key={d.id}
+                type="button"
+                className={'tb-ic-opt' + (on ? ' on' : '')}
+                onClick={() => onPick(d.id)}
+              >
+                <span className="tb-col-dot" style={{ background: d.color }} />
+                <span className="tb-ic-txt">{d.name}</span>
+                {on ? <span className="tb-ic-ck">✓</span> : null}
+              </button>
+            );
+          })}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /* ================================================================ 列表视图 */
 
 /**
@@ -2549,6 +2810,9 @@ function ListView({
   onBatchDelete,
   colHidden,
   colWidths,
+  onSetStatus,
+  onPatchField,
+  onToggleTag,
   onToggleCol,
   onColWidth,
   onColResizeEnd,
@@ -2594,6 +2858,18 @@ function ListView({
   onBatchPriority: (ids: string[], prio: string) => void;
   /** 批量删除（调用方负责先 confirm） */
   onBatchDelete: (ids: string[]) => void;
+  /*
+    行内改状态。
+
+    ⛔ needNote 的边（比如"打回"）不能就地改完就算了 ——
+    那条边要求写原因，写不进去的话事后没人知道为什么打回。
+    由调用方弹一个小输入框，不在这里另起一套。
+  */
+  onSetStatus: (id: string, to: string, needNote: boolean) => void;
+  /** 行内改普通字段（标题 / 说明 / 认领人 / 预估） */
+  onPatchField: (id: string, patch: Partial<Task>) => void;
+  /** 行内挂/摘一个标签 */
+  onToggleTag: (id: string, tagId: string) => void;
   /** 被隐藏的列（field 列表） */
   colHidden: string[];
   /** 用户手动拖过的列宽（field → px）。没拖过的列用默认值 */
@@ -2703,7 +2979,16 @@ function ListView({
       case 'priority':
         return (
           <span className="tb-lc c-priority" key={field}>
-            <PriorityBadge p={t.priority} />
+            <InlinePick
+              cur={<PriorityBadge p={t.priority} />}
+              title="点击改优先级"
+              options={PRIORITY_ORDER.map((pr) => ({
+                id: pr,
+                label: `${pr} ${PRIORITY_LABEL[pr]}`,
+                on: t.priority === pr,
+              }))}
+              onPick={(id) => onPatchField(t.id, { priority: id as Priority })}
+            />
           </span>
         );
       case 'id':
@@ -2716,7 +3001,13 @@ function ListView({
             {lk.locked ? (
               <span className="tb-lock" title={lockTitle(lk)}>🔒</span>
             ) : null}
-            <span className="tb-ltitle">{t.title}</span>
+            <InlineText
+              value={t.title}
+              display={<span className="tb-ltitle">{t.title}</span>}
+              placeholder="任务标题"
+              title="点击改标题"
+              onCommit={(v) => { if (v) onPatchField(t.id, { title: v }); }}
+            />
             {t.tags.length > 0 ? (
               <span className="tb-ltags">
                 {t.tags.map((tag) => <TagChip key={tag} id={tag} defs={tagDefs} />)}
@@ -2725,17 +3016,53 @@ function ListView({
           </span>
         );
       }
-      case 'status':
+      case 'status': {
+        /*
+          候选是**全部状态**，但走不通的置灰并说明原因。
+
+          为什么不给"能走的才列出来"：
+          那样用户看到的列表里少了几项，只会以为"这个状态没了"
+          （配置出错时会真的少，那时看不出区别）；
+          置灰 + tooltip 才说清"存在，但现在走不过去"。
+        */
+        const acts = actionsForIn(flow, t.status);
+        const opts = flow.statuses.map((sd) => {
+          const isCur = sd.id === t.status;
+          const a = acts.find((x) => x.to === sd.id);
+          return {
+            id: sd.id,
+            label: a ? a.label : sd.name,
+            color: sd.color,
+            on: isCur,
+            disabled: !isCur && !a,
+            why: `「${statusName(flow, t.status)}」不能直接走到「${sd.name}」`,
+          };
+        });
         return (
           <span className="tb-lc c-status" key={field}>
-            <span className="tb-col-dot" style={{ background: statusColor(flow, t.status) }} />
-            {statusName(flow, t.status)}
+            <InlinePick
+              cur={statusName(flow, t.status)}
+              dot={statusColor(flow, t.status)}
+              title="点击改状态"
+              options={opts}
+              onPick={(id) => {
+                const a = acts.find((x) => x.to === id);
+                onSetStatus(t.id, id, a ? a.needNote === true : false);
+              }}
+            />
           </span>
         );
+      }
       case 'assignee':
         return (
           <span className="tb-lc c-assignee" key={field}>
-            {t.assignee ? '@' + t.assignee : '未认领'}
+            <InlineText
+              value={t.assignee || ''}
+              display={t.assignee ? '@' + t.assignee : <span className="tb-ldim">未认领</span>}
+              placeholder="认领人（留空 = 未认领）"
+              title="点击改认领人"
+              onCommit={(v) => onPatchField(t.id, { assignee: v })}
+            />
           </span>
         );
       case 'type':
@@ -2758,25 +3085,40 @@ function ListView({
       case 'tags':
         return (
           <span className="tb-lc c-tags" key={field}>
-            {t.tags.length > 0 ? (
-              <span className="tb-ltags">
-                {t.tags.map((tag) => <TagChip key={tag} id={tag} defs={tagDefs} />)}
-              </span>
-            ) : (
-              <span className="tb-ldim">—</span>
-            )}
+            <InlineTags
+              cur={t.tags || []}
+              defs={tagDefs}
+              title="点击改标签（可多选）"
+              onPick={(id) => onToggleTag(t.id, id)}
+            />
           </span>
         );
       case 'summary':
         return (
-          <span className="tb-lc c-summary" key={field} title={t.summary}>
-            {t.summary || <span className="tb-ldim">—</span>}
+          <span className="tb-lc c-summary" key={field}>
+            <InlineText
+              value={t.summary || ''}
+              placeholder="任务说明"
+              title={t.summary || '点击填写说明'}
+              onCommit={(v) => onPatchField(t.id, { summary: v })}
+            />
           </span>
         );
       case 'estimate':
+        /*
+          数字列：只认数字。填"三天"直接忽略而不是写成 0 ——
+          写成 0 会把"没估"和"估了 0"混成一样，
+          而这两个在排期时含义完全不同。
+        */
         return (
           <span className="tb-lc c-estimate" key={field}>
-            {fmtEstimate(t.estimate) || <span className="tb-ldim">—</span>}
+            <InlineText
+              value={t.estimate ? String(t.estimate) : ''}
+              num
+              placeholder="人日"
+              title="点击填预估工作量（人日，可小数）"
+              onCommit={(v) => onPatchField(t.id, { estimate: v === '' ? 0 : Number(v) })}
+            />
           </span>
         );
       case 'createdAt':
@@ -3566,12 +3908,23 @@ function DetailModal({
   );
 }
 
-function RejectModal({ onClose, onOk }: { onClose: () => void; onOk: (note: string) => void }) {
+function RejectModal({
+  to, label, onClose, onOk,
+}: {
+  to: string;
+  label: string;
+  onClose: () => void;
+  onOk: (note: string) => void;
+}) {
   const [note, setNote] = useState('');
   return (
-    <Modal title="打回重修" onClose={onClose}>
+    /*
+      标题写"标为「X」"而不是写死"打回" ——
+      自定义流程里要求填原因的边不一定是打回。
+    */
+    <Modal title={`标为「${label || to}」`} onClose={onClose}>
       <label className="tb-mfield">
-        <span>打回原因 *</span>
+        <span>原因 *</span>
         <textarea
           autoFocus
           rows={4}
