@@ -137,6 +137,14 @@ const SORT_FIELDS: SortField[] = [
 
 /** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
 function groupLabel(key: string, by: GroupKey, flow?: FlowLike): string {
+  /*
+    空 key（**没选任何分组依据**时，所有任务落在同一个 key='' 的组里）。
+
+    ⛔ 不能把空串透出去：组头会显示成一个**空名字**，
+    用户看着一个没有标题的分组，不知道那是什么 ——
+    而弹层里那句"还没选任何列"在关掉弹层后就看不到了。
+  */
+  if (key === '') return '全部任务';
   if (by === 'status') return statusName(flow, key);
   if (by === 'priority') return `${key} ${PRIORITY_LABEL[key as Priority] || ''}`.trim();
   if (by === 'type') return key === NOTYPE ? '未分类' : typeName(flow && flow.typeDefs, key);

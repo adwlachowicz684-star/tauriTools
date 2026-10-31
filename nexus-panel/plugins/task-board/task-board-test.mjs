@@ -2628,6 +2628,34 @@ t('审查：滚动/改窗口尺寸时关掉筛选面板（否则面板与列头�
     && seg.indexOf("window.addEventListener('resize', close)") >= 0;
 })());
 
+
+/* ============================================================ 审查：空分组依据（本轮） */
+
+/*
+ * **没选任何分组依据时，组名是空白**：
+ * 所有任务落在同一个 key='' 的组里，groupLabel 把空串原样透出去 ——
+ * 组头显示成一个没有名字的分组，用户不知道那是什么。
+
+ * 而弹层里那句"还没选任何列 —— 所有任务会堆在一组里"
+ * 在**关掉弹层后就看不到了**，剩下的只有一个空白组头。
+ */
+t('审查：空分组依据时组名不是空白', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function groupLabel(');
+  const seg = app.slice(i, i + 700);
+  return seg.indexOf("if (key === '') return") >= 0;
+})());
+
+/* 分组依据为空时不会崩、且只得到一组（含全部任务） */
+t('审查：分组依据为空仍只得到一组且不抛错', (() => {
+  const tasks = [
+    normalizeTask({ id: '1', status: 'todo' }),
+    normalizeTask({ id: '2', status: 'done' }),
+  ];
+  const g = groupTasksBy(tasks, [], null);
+  return g.length === 1 && g[0].count === 2;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
