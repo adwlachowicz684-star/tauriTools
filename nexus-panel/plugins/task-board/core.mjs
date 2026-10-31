@@ -1049,9 +1049,14 @@ export function splitTask(tasks, id, titles) {
     childIds.push(cid);
     /*
       子任务继承父任务的**上下文**（标签、优先级、认领人），
-      但不继承状态与前置 ——
-      继承状态会让几条新子任务一出生就是"已完成"，
-      继承前置会让它们全部卡在同一处。
+      但不继承状态、前置与预估 ——
+      继承状态会让几条新子任务一出生就是"已完成"；
+      继承前置会让它们全部卡在同一处；
+      继承预估则更糟：父任务 5 人日拆成 3 条，
+      三条各带 5 → 合计变 15，**工作量凭空翻了三倍**。
+
+      ⛔ 子任务的预估必须留空让人重填 —— 拆分时没人知道那 5 人日该在三块之间怎么分。
+      （父任务变成组后，组的预估由子任务累加得出，所以父那条也一并清零。）
     */
     return normalizeTask({
       ...src,
@@ -1062,13 +1067,18 @@ export function splitTask(tasks, id, titles) {
       deps: [],
       summary: '',
       status: 'todo',
+      estimate: 0,
       createdAt: now,
       updatedAt: now,
       history: [],
     });
   });
+  /*
+    父任务变成组：状态/前置/标签/认领人清空（组的这些由下面推导），
+    预估也清零 —— 组的预估 = 子任务累加，留着原值会双计。
+  */
   const out = list.map((t) => (t.id === id
-    ? { ...t, kind: 'group', deps: [], tags: [], assignee: null, updatedAt: now }
+    ? { ...t, kind: 'group', deps: [], tags: [], assignee: null, estimate: 0, updatedAt: now }
     : t));
   return { tasks: [...out, ...kids], groupId: id, childIds };
 }

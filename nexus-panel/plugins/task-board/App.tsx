@@ -637,12 +637,24 @@ ${dir}
   const doSplit = (id: string, titles: string[]) =>
     withErr(async () => {
       if (!cfg || titles.length === 0) return;
+      /*
+        拆之前先看原任务估了多少 —— 子任务不会继承预估（那会让总工作量翻 N 倍），
+        所以原预估会在拆分后"消失"。不吭声的话，用户看着合计从 5 变成 0，
+        只会以为统计坏了，而不是"需要重新分配"。
+      */
+      const before = (store?.tasks || []).find((t) => t.id === id);
+      const had = Number(before?.estimate) || 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const r = splitTask(st.tasks, id, titles);
         return { ...st, tasks: r.tasks };
       });
       await refresh();
-      ctx.toast(`已拆成 ${titles.length} 条子任务`, 'ok');
+      ctx.toast(
+        had > 0
+          ? `已拆成 ${titles.length} 条子任务；原预估 ${fmtEstimate(had)} 人日需重新分配到各条`
+          : `已拆成 ${titles.length} 条子任务`,
+        'ok',
+      );
     })();
 
   /*
