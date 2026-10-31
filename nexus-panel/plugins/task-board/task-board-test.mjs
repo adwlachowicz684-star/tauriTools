@@ -1618,6 +1618,122 @@ t('共用目录：主界面有警示条（切项目"没生效"的真因要能自
     && app.indexOf('共用同一个数据目录') >= 0;
 })());
 
+
+/* ============================================================ 审查：改目录被静默回退（本轮） */
+
+/*
+ * **改「当前项目」的数据目录会被静默回退**（审查发现，与上一轮同源）。
+ *
+ * pickDirFor 只改 projects[] 里的值，不动上层 dataDir：
+ *   → c.dataDir 还是改之前的旧值，cur.dataDir 是新值
+ *   → 写回规则把 cur.dataDir 盖回旧值
+ *   → 界面 toast「已改」，实际没变。
+ *
+ * 而改**非当前**项目时反而正常（cur 没动，两边相等）——
+ * 所以这个 bug 只在"改你正在看的那个项目"时出现，恰恰是最常用的一种。
+ *
+ * 上一轮我让用户去「改数据目录」修共用目录问题，
+ * 如果他改的是当前项目，就会以为我还是没修好。
+ */
+t('改目录：改当前项目必须带上派生字段（否则被静默回退）', (() => {
+  const cfg = normalizeConfig({ projects: [{ id: 'p1', name: '甲', dataDir: '/a' }], currentId: 'p1' });
+  const patched = { ...cfg, projects: [{ id: 'p1', name: '甲', dataDir: '/new' }] };
+  const broken = normalizeConfig(patched);
+  const fixed = normalizeConfig(AIM(patched, cfg.currentId));
+  // broken 会被盖回 /a（这就是 bug）；fixed 才是 /new
+  return broken.dataDir === '/a' && fixed.dataDir === '/new'
+    && fixed.projects[0].dataDir === '/new';
+})());
+
+t('改目录：改非当前项目不受影响（两个项目各自的目录都对）', (() => {
+  const cfg = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/b' },
+    ],
+    currentId: 'p1',
+  });
+  const patched = {
+    ...cfg,
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/new' },
+    ],
+  };
+  const next = normalizeConfig(AIM(patched, cfg.currentId));
+  return next.dataDir === '/a' && next.projects[1].dataDir === '/new';
+})());
+
+/*
+ * 改完目录之后，共用目录的冲突应当消失 ——
+ * 这是验证"用户照提示操作后问题真的解决了"，而不只是"提示显示出来了"。
+ */
+t('改目录：修完之后共用冲突消失（照提示操作要真能解决）', (() => {
+  const cfg = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/a' },   // 写坏了：两个都指向 /a
+    ],
+    currentId: 'p2',
+  });
+  if (duplicateDataDirs(cfg).length !== 1) return false;
+  const patched = {
+    ...cfg,
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/b' },
+    ],
+  };
+  const next = normalizeConfig(AIM(patched, cfg.currentId));
+  return duplicateDataDirs(next).length === 0 && next.dataDir === '/b';
+})());
+
+
+/* ============================================================ 审查：换项目后的界面状态（本轮） */
+
+/*
+ * **换项目后文档提醒不再出现**（审查发现）：
+ * 注释里写的是"换个项目会重新提醒，那是另一个项目的事"，
+ * 但只有设置页那条路径（走 config 事件）重置了 docsHintClosed，
+ * 主视图切项目这条路径没重置 —— 在甲关掉提醒后切到乙，
+ * 乙的文档路径同样没设，却再也不提醒了。
+
+ * 说好会重新提醒却不提醒，比一开始就没这个机制更让人不信任。
+ */
+t('换项目：文档提醒要重新开始（换项目＝另一件事）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const clearViewState =');
+  const seg = app.slice(i, app.indexOf('};', i));
+  return seg.indexOf('setDocsHintClosed(false)') >= 0;
+})());
+
+/*
+ * 新建项目 / 导入项目后立刻提醒设文档路径 ——
+ * 那是这个项目最容易漏、漏了又最难补的一项（换机器就读不到了）。
+ */
+t('新建项目：清掉上一个项目的筛选与提醒（不会打开就是空看板）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  // 切项目、导入、新建三条路径都要走 clearViewState
+  const n = app.split('clearViewState();').length - 1;
+  return n >= 3;
+})());
+
+
+/*
+ * **切过去读不到时静默显示 0 条**（审查发现）：
+ * 目录没授权 / 路径写错 / 被删了都会走进 catch，
+ * 而原来 .catch(() => null) 之后一律当空项目 ——
+ * 和"这个项目确实是空的"长得一模一样。
+ *
+ * 用户切过去看到一片空白，分不清是"新项目还没建任务"还是"读不到"，
+ * 于是又绕回"切换没生效"那个误解。所以读不到要明说。
+ */
+t('切项目：读不到任务库要报出来（不能静默当空项目）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('catch (e: any) {\n        readErr = String(e?.message || e);') >= 0
+    && app.indexOf('但读不到它的任务库') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

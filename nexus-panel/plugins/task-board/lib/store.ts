@@ -86,7 +86,7 @@ async function authorize(ctx: PluginContext, cfg: TbConfig): Promise<void> {
  * 所以切换类操作必须显式把上层两个派生字段设成目标项目的值，
  * 让 c.dataDir === cur.dataDir，那条写回规则就不会误触发。
  */
-function aimAt(cfg: TbConfig, currentId: string): TbConfig {
+export function aimAt(cfg: TbConfig, currentId: string): TbConfig {
   const p = (cfg.projects || []).find((x) => x.id === currentId);
   if (!p) return { ...cfg, currentId };   // 找不到就交给 normalizeConfig 去回落
   return { ...cfg, currentId, dataDir: p.dataDir, docsDir: p.docsDir };
