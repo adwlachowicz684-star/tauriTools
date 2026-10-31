@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { isComposing } from '../../js/ime.js';
 import { useNexus } from '../../src/nexus-react';
 import * as S from './lib/store';
-import { currentProject } from './core';
+import { currentProject, duplicateDataDirs } from './core';
 import { DEFAULT_CONFIG } from './types';
 import type { TbConfig } from './types';
 
@@ -209,6 +209,14 @@ export default function Settings() {
 
   if (!loaded) return <div className="tb-set-wrap">加载中…</div>;
 
+  /*
+    已经写坏的配置要能被看见。
+    两个项目指向同一份 tasks.json 时，界面只显示项目名 ——
+    完全看不出它们其实是一份数据（在一个里改，另一个"同时"变）。
+    这里**只报不改**：改成什么目录只有用户知道，猜一个就是把数据挪到错地方。
+  */
+  const dupes = duplicateDataDirs(cfg);
+
   return (
     <div className="tb-set-wrap">
       <h2>任务管理器设置</h2>
@@ -220,10 +228,26 @@ export default function Settings() {
           <em>每个项目一份独立任务库（任务 / 流程 / 标签 / 身份表各自独立）</em>
         </header>
 
+        {dupes.length > 0 ? (
+          <div className="tb-sproj-dup">
+            ⚠ 有 {dupes.length} 组项目指向同一个数据目录
+            （在其中一个里的改动会同时出现在另一个里）：
+            {dupes.map((d) => (
+              <div key={d.dir} className="tb-sproj-dup-row">{d.dir}</div>
+            ))}
+            请用下面的「改数据目录」给其中一个换个位置。
+          </div>
+        ) : null}
+
         {cfg.projects.map((p) => {
           const on = p.id === cfg.currentId;
+          const dup = dupes.some((d) => d.ids.indexOf(p.id) >= 0);
           return (
-            <div key={p.id} className={'tb-sproj-row' + (on ? ' on' : '')}>
+            <div
+              key={p.id}
+              className={'tb-sproj-row' + (on ? ' on' : '') + (dup ? ' dup' : '')}
+              title={dup ? '这个项目与别的项目共用同一个数据目录' : undefined}
+            >
               <button
                 className={'tb-sproj-pick' + (on ? ' on' : '')}
                 title={on ? '当前项目' : '切到这个项目'}

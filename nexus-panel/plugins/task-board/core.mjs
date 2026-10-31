@@ -1467,6 +1467,32 @@ export function normalizeConfig(raw) {
   };
 }
 
+/**
+ * 找出**指向同一个数据目录**的项目（按目录分组）。
+ *
+ * 为什么需要它：曾经有个 bug 会在切项目时把旧项目的 dataDir 盖到新项目头上
+ * （见 store.ts 的 aimAt），配置一旦被那样写坏就留在磁盘上了。
+ * 两个项目指向同一份 tasks.json 时，在其中一个里的改动会"同时"出现在另一个里，
+ * 而界面只显示项目名 —— 完全看不出它们其实是一份数据。
+ *
+ * 这里**只报不改**：改成什么目录只有用户知道，猜一个就是把数据挪到错地方。
+ */
+export function duplicateDataDirs(cfg) {
+  const list = (cfg && Array.isArray(cfg.projects) ? cfg.projects : [])
+    .filter((p) => p && typeof p.dataDir === 'string' && p.dataDir.trim());
+  const byDir = new Map();
+  for (const p of list) {
+    const k = p.dataDir.trim();
+    if (!byDir.has(k)) byDir.set(k, []);
+    byDir.get(k).push(p.id);
+  }
+  const out = [];
+  for (const [dir, ids] of byDir) {
+    if (ids.length > 1) out.push({ dir, ids });
+  }
+  return out;
+}
+
 /** 当前项目对象 */
 export function currentProject(cfg) {
   const c = cfg && cfg.projects ? cfg : normalizeConfig(cfg);

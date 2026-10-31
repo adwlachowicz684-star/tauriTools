@@ -249,6 +249,9 @@ export declare function newProjectId(seen: Iterable<string> | Set<string>): stri
 /** 归一化配置（含老配置迁移 + dataDir/docsDir 反向写回当前项目） */
 export declare function normalizeConfig(raw: unknown): TbConfig;
 
+/** 找出指向同一个数据目录的项目（只报不改） */
+export declare function duplicateDataDirs(cfg: unknown): { dir: string; ids: string[] }[];
+
 /** 当前项目对象 */
 export declare function currentProject(cfg: unknown): TbProject;
 

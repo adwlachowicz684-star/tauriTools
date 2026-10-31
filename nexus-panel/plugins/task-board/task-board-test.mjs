@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 /* 源码扫描类测试要用：列数、props 透传这些 TS 查不出的问题靠读源码钉住 */
 const dir = path.dirname(fileURLToPath(import.meta.url));
 import {
+  duplicateDataDirs,
   STATUSES,
   canTransition,
   actionsFor,
@@ -1484,6 +1485,137 @@ t('行内改预估：非数字不落盘（没估 ≠ 0 人日）', (() => {
 t('行内编辑：打开时带入当前值（空框看着像数据丢了）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   return app.indexOf('if (open) setDraft(value);') >= 0;
+})());
+
+
+/* ============================================================ 切项目仍显示旧任务（本轮） */
+
+/*
+ * **切到项目乙，看到的还是甲的任务**（用户报的）—— 根因是个会写坏配置的 bug：
+ *
+ * normalizeConfig 有一条"派生字段反向写回"：
+ *   传入的 c.dataDir 与**新的当前项目**的 dataDir 不一致时，
+ *   就把新项目的 dataDir 改成 c.dataDir。
+ * 这条规则本身是对的（设置页直接改 dataDir 靠它写回）。
+ *
+ * 但 switchProject(cfg, 'p2') 传进去的 cfg 里，dataDir 还是 **p1 的**：
+ *   → cur 已经是 p2，c.dataDir 是 p1 的 → **p2.dataDir 被改成 p1 的目录**
+ *   → 切过去读的还是甲的文件。
+ *
+ * 更糟的是它**写进磁盘**：两个项目从此指向同一份 tasks.json，
+ * 在其中一个里改任何东西，另一个"同时"变，而界面只显示项目名，完全看不出。
+ *
+ * 修法是切换类操作显式把上层两个派生字段设成目标项目的值（aimAt），
+ * 让 c.dataDir === cur.dataDir，那条规则就不会误触发。
+ */
+
+/** 模拟 store.ts 的 aimAt + normalizeConfig（不依赖 TS，纯逻辑复算） */
+const AIM = (cfg, id) => {
+  const p = (cfg.projects || []).find((x) => x.id === id);
+  if (!p) return { ...cfg, currentId: id };
+  return { ...cfg, currentId: id, dataDir: p.dataDir, docsDir: p.docsDir };
+};
+
+t('切项目：切过去之后 dataDir 跟着走（否则看到的还是旧项目的任务）', (() => {
+  const cfg = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/b' },
+    ],
+    currentId: 'p1',
+  });
+  const next = normalizeConfig(AIM(cfg, 'p2'));
+  return next.currentId === 'p2' && next.dataDir === '/b'
+    && next.projects[1].dataDir === '/b';   // ⛔ 乙自己的目录不能被改成 /a
+})());
+
+/*
+ * 不修时的实际表现：乙的 dataDir 变成 /a ——
+ * 这条**反向钉住**那个 bug，改动如果回退了就会红。
+ */
+t('切项目：不带上派生字段就会把目标项目的目录改坏（回归钉）', (() => {
+  const cfg = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/b' },
+    ],
+    currentId: 'p1',
+  });
+  const broken = normalizeConfig({ ...cfg, currentId: 'p2' });
+  // 这就是用户遇到的现象：切到乙，dataDir 仍是 /a
+  return broken.projects[1].dataDir === '/a' && broken.dataDir === '/a';
+})());
+
+t('切项目：文档路径同样跟着走（不会把甲的文档挂到乙上）', (() => {
+  const cfg = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a', docsDir: '/da' },
+      { id: 'p2', name: '乙', dataDir: '/b', docsDir: '/db' },
+    ],
+    currentId: 'p1',
+  });
+  const next = normalizeConfig(AIM(cfg, 'p2'));
+  return next.docsDir === '/db' && next.projects[1].docsDir === '/db';
+})());
+
+t('切项目：目标项目没设目录时不覆盖成旧目录（空值不能被填成错的）', (() => {
+  const cfg = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '' },
+    ],
+    currentId: 'p1',
+  });
+  const next = normalizeConfig(AIM(cfg, 'p2'));
+  return next.projects[1].dataDir === '' && next.dataDir === '';
+})());
+
+t('删项目：回落后 dataDir 取自新当前项目（不是被删那个）', (() => {
+  const cfg = normalizeConfig({
+    projects: [
+      { id: 'p1', name: '甲', dataDir: '/a' },
+      { id: 'p2', name: '乙', dataDir: '/b' },
+    ],
+    currentId: 'p2',
+  });
+  const projects = cfg.projects.filter((p) => p.id !== 'p2');
+  const next = normalizeConfig(AIM({ ...cfg, projects }, projects[0].id));
+  return next.currentId === 'p1' && next.dataDir === '/a' && next.projects[0].dataDir === '/a';
+})());
+
+/*
+ * 已经写坏的配置（磁盘上留着两个项目同目录）要能查出来。
+ * 只报不改 —— 改成什么目录只有用户知道，猜一个就是把数据挪到错地方。
+ */
+t('查重：能找出指向同一个数据目录的项目', (() => {
+  const d = duplicateDataDirs({
+    projects: [
+      { id: 'p1', dataDir: '/a' },
+      { id: 'p2', dataDir: '/a' },
+      { id: 'p3', dataDir: '/c' },
+      { id: 'p4', dataDir: '' },     // 没设的不算重复
+      { id: 'p5', dataDir: '' },     // 同上
+    ],
+  });
+  return d.length === 1 && d[0].dir === '/a' && d[0].ids.join() === 'p1,p2';
+})());
+
+t('查重：没有重复时返回空（正常配置不该报警）', (() => {
+  return duplicateDataDirs({
+    projects: [{ id: 'p1', dataDir: '/a' }, { id: 'p2', dataDir: '/b' }],
+  }).length === 0;
+})());
+
+
+/*
+ * 主界面也要能看见共用目录。
+ * 只放在设置页不够：用户遇到的是"切项目没生效"，
+ * 他不会想到要去设置页找原因。
+ */
+t('共用目录：主界面有警示条（切项目"没生效"的真因要能自查）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('const sameDir = cfg ? duplicateDataDirs(cfg)') >= 0
+    && app.indexOf('共用同一个数据目录') >= 0;
 })());
 
 /* ---------------- 汇总 ---------------- */
