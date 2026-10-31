@@ -22490,6 +22490,88 @@ group('BUG 177 · 内容没读出来时回收附件：一个字节都不许删')
   }
 }
 
+group('BUG 178 · 导入别人的 .puml：节点文字首尾空白不能被 trim（与 Mermaid 那条同一条规矩）');
+
+{
+  const f178 = await import('./formats.js');
+  const N178 = (t, ch) => ({ data: { text: t }, children: ch || [] });
+  const wrap178 = (r) => JSON.stringify({ root: r });
+  const flat178 = (c) => {
+    if (!c) return null;
+    const out = [];
+    (function w(n, d) { out.push([n.data.text, d]); (n.children || []).forEach((x) => w(x, d + 1)); })(JSON.parse(c).root, 0);
+    return out;
+  };
+  const J178 = (v) => JSON.stringify(v);
+  // 本工具往返：toPlantUml → fromPlantUml
+  const rt178 = (t) => J178(flat178(f178.fromPlantUml(f178.toPlantUml(wrap178(N178(t, []))))));
+
+  /*
+   * ① ★ 本工具自己导出再导入，首尾空白必须原样回来。
+   *
+   * 写侧 kmToRows 早在 BUG 173 就换成 inlineTextKeepEdges（首尾不动），
+   * 读侧却还留着两处 trim —— 于是 `  会议  ` 导出成 `*   会议  `、导回来
+   * 只剩「会议」。与 Mermaid 那条是**同一条规矩的两个格式**，这边漏了就是只修一半。
+   */
+  for (const t of ['  会议  ', ' A', 'A ', ' A ', '\t制表\t', 'a  b']) {
+    eq(rt178(t), J178([[t, 0]]), '★ 本工具往返：文字 ' + J178(t) + ' 一字不改（早先首尾空白被 trim）');
+  }
+
+  // ② ★ 别人的 .puml 同样不能削：写侧没参与，纯粹是读侧在改内容
+  eq(J178(flat178(f178.fromPlantUml('*   会议  '))), J178([['  会议  ', 0]]),
+    '★ 别人写的 `*   会议  ` → 文字就是 `  会议  `（早先 → 「会议」）');
+  eq(J178(flat178(f178.fromPlantUml('***   深层  '))), J178([['  深层  ', 0]]),
+    '★ 多字符前缀（OrgMode 式）同样：前缀后只吃掉那一个分隔符空格');
+
+  /*
+   * ③ 反向边界：**装饰照旧要剥**，不能为了保住空白而一刀切不剥。
+   *    颜色标记 / 无边框下标 / 多行框都是语法，不是文字。
+   */
+  eq(J178(flat178(f178.fromPlantUml('* [#pink] 议题'))), J178([['议题', 0]]),
+    '★ 颜色标记照旧剥（BUG 130；这条不许被本改动带坏）');
+  eq(J178(flat178(f178.fromPlantUml('* [#pink]'))), J178([['[#pink]', 0]]),
+    '★ 剥完就空 → 它是文字本身（BUG 144，不许被带坏）');
+  eq(J178(flat178(f178.fromPlantUml('***_ Ubuntu'))), J178([['Ubuntu', 0]]),
+    '★ 无边框下标照旧剥（BUG 131）');
+  eq(J178(flat178(f178.fromPlantUml('** _ Ubuntu'))), J178([['_ Ubuntu', 0]]),
+    '★ 前缀与下划线之间有空格时，下划线是文字的一部分（BUG 131）');
+  eq(J178(flat178(f178.fromPlantUml('* :内容;'))), J178([['内容', 0]]),
+    '★ 多行框照旧剥（BUG 130）');
+
+  /*
+   * ④ 形态 ②（Markdown 缩进式）不受影响：层级靠**缩进**，
+   *    而行首缩进是在 `line` 上削掉的 —— 削行首与保留行尾必须两不耽误。
+   */
+  eq(J178(flat178(f178.fromPlantUml('* 甲 \n  * 乙 \n   * 丙 '))),
+    J178([['甲 ', 0], ['乙 ', 1], ['丙 ', 2]]),
+    '★ 缩进式的层级仍然正确，且各行文字尾部的空白照样保住');
+  eq(J178(flat178(f178.fromPlantUml('* A\n** B'))), J178([['A', 0], ['B', 1]]),
+    '★ OrgMode 式的层级仍然正确');
+
+  // ⑤ 空节点仍走占位（BUG 100 的取舍不动）：`* ` 不是"空白文字节点"
+  eq(J178(flat178(f178.fromPlantUml('* '))), J178([['未命名', 0]]),
+    '★ 前缀后什么都没有 → 仍是占位「未命名」（不许变成空白文字节点）');
+
+  // ⑥ CRLF：行尾的 \r 不是内容，必须去掉（否则往返后文字里多个 \r）
+  eq(J178(flat178(f178.fromPlantUml('* A  \r'))), J178([['A  ', 0]]),
+    '★ 行尾的 \\r 必须去掉（CRLF 文件里最后一行）');
+
+  // ⑦ 源码层（先剥注释：这些旧写法就写在注释里，不剥会命中注释而永远绿）
+  {
+    const s178 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    const i178 = s178.indexOf('const PUML_LINE');
+    ok(i178 > 0, '能定位 PUML_LINE');
+    ok(!/_\?\)\s*\\s\*/.test(s178.slice(i178, i178 + 120)),
+      '★ 前缀与文字之间只吃一个分隔符空格，不能写 \\s*（会把文字首部空白一起吃掉）');
+    const iF178 = s178.indexOf('export function fromPlantUml');
+    const body178 = s178.slice(iF178, iF178 + 3200);
+    ok(/let t = m\[3\];/.test(body178),
+      '★ 取出的文字不得再 trim（BUG 173 在写侧保下来的东西不能在读侧削掉）');
+    ok(!/const line = raw\.trim\(\);/.test(body178),
+      '★ 整行不得再 trim（行尾空白是内容的一部分）');
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');
