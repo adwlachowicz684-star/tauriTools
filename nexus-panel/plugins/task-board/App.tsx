@@ -2246,7 +2246,8 @@ function ImportProjectModal({
           {scan.restoreFailed ? (
             <div className="tb-scan-warn">
               ⚠ 探完没切回原来的数据目录：数据目录现在停在刚扫的这个目录上，
-              当前项目的读写都会指向它。请重新选一次数据目录。
+              当前项目的读写都会指向它（表现为整个看板变空）。请重新选一次数据目录，
+              或关掉重开恢复。
             </div>
           ) : null}
           {scan.sample.length > 0 ? (

@@ -246,6 +246,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+  「未配置」角标：有任务处于这个状态，但流程配置里没有它
+  （状态被删掉了，或由 AI 经 API 直接写入）。
+
+  ⛔ 没有这份样式的话，它渲染成列头里一段裸文字 ——
+  和状态名、数量挤在一起，也看不出它是"需要注意"而不是"又一个状态名"。
+  用 warn 色而不是灰：它要传达的是"这里有个对不上的地方"。
+*/
+.tb-col-ghost {
+  flex-shrink: 0;
+  padding: 0 var(--sp-1);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--r-sm);
+  color: var(--warn);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-mid, 500);
+  line-height: 1.6;
+}
+
 .tb-col-body {
   display: flex;
   flex-direction: column;
@@ -2067,6 +2086,17 @@ body.tb-col-resizing {
   align-items: center;
   gap: var(--sp-2);
   color: var(--text-mute);
+}
+
+/*
+  分组列：里面是 InlineText（点一下就地改分组名），
+  所以要像 c-title 那样撑开 —— 没有这份样式时列宽会被内容挤变形，
+  且"留空=不分组"那个占位（tb-ldim）会贴到边框上。
+*/
+.tb-lc.c-group {
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
 
 .tb-lc.c-assignee {

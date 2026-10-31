@@ -61,6 +61,13 @@ fi
 #    command -v 检查会让它一路走到"找不到 tsc"，报错却指错方向。
 #    找不到就明确让人装，不要去碰一个假路径。
 TSC="${AF_TSC:-$(command -v tsc 2>/dev/null || true)}"
+# 与 run-tests.sh 同一套兜底：npm script 环境下 PATH 里才有 tsc，
+# 直接 bash 跑时得回落到仓库内的那一份（缺了这条就是"明明装了却说找不到"）
+if [ -z "$TSC" ]; then
+  for c in "$PANEL/node_modules/typescript/bin/tsc" "$PANEL/node_modules/.bin/tsc"; do
+    if [ -x "$c" ]; then TSC="$c"; break; fi
+  done
+fi
 if [ -z "$TSC" ]; then
   echo "✗ 找不到 tsc：请先 npm install（typescript 在 devDependencies），或用 AF_TSC 指定路径"
   exit 1
@@ -105,7 +112,19 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "== 真实类型检查（strict，取自 $TSCONFIG_REAL）=="
-"$TSC" -p "$OUT/tsconfig.real.json" > "$OUT/tsc-real.log" 2>&1
+# ⛔ 不能直接写 "$TSC"：AF_TSC 允许带参数（`AF_TSC="node .../tsc"`），
+# 加引号后整串被当成**一个文件名**执行 → tsc 根本没跑。
+#
+# 而这里比 run-tests.sh 更危险：tsc 没跑时 tsc-real.log 是**空文件**，
+# 下面 `grep -c 'error TS'` 数出 0 条 → "0 条错误，通过"。
+# 也就是说**类型检查整个没跑，却报绿** —— 而且没人会去看那个空日志。
+read -r -a TSC_ARR <<< "$TSC"
+if ! "${TSC_ARR[@]}" --version > /dev/null 2>&1; then
+  echo "✗ tsc 跑不起来（AF_TSC=\"$TSC\"）—— 下面的『0 条错误』会是空日志数出来的，不可信"
+  "${TSC_ARR[@]}" --version 2>&1 | head -3
+  exit 1
+fi
+"${TSC_ARR[@]}" -p "$OUT/tsconfig.real.json" > "$OUT/tsc-real.log" 2>&1
 RAW="$(grep -c 'error TS' "$OUT/tsc-real.log" || true)"
 
 # ------------------------------------------------------------------

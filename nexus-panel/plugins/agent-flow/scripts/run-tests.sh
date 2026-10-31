@@ -125,9 +125,27 @@ if [ -z "$TSC" ]; then
   echo "✗ 找不到 tsc：typescript 是本项目的 devDependency，先跑 npm i"
   exit 1
 fi
-"$TSC" -p "$TSCONFIG" > /tmp/afts-tsc.log 2>&1
+# ⛔ 不能直接写 "$TSC"：AF_TSC 允许带参数（常见写法 `AF_TSC="node .../tsc"`），
+# 加引号后整串被当成**一个文件名**去执行 → tsc 根本没跑（退出码 127）。
+# 而 $OUT/tests 是上一轮留下的，下面那句"有产物吗"照样通过 ——
+# 于是**拿旧产物跑测试，改了被测文件结果也不变**，看着全绿其实一条没验。
+read -r -a TSC_ARR <<< "$TSC"
+# 先空跑一次 `--version` 确认这串命令真能起来：
+# "node /nope/tsc" 这种也能"执行"（退出 1 而不是 127），只查 127 会漏掉它。
+if ! "${TSC_ARR[@]}" --version > /dev/null 2>&1; then
+  echo "✗ tsc 跑不起来（AF_TSC=\"$TSC\"）—— 继续跑会拿上一轮的旧产物，结果不可信"
+  "${TSC_ARR[@]}" --version 2>&1 | head -3
+  exit 1
+fi
+"${TSC_ARR[@]}" -p "$TSCONFIG" > /tmp/afts-tsc.log 2>&1
+TSC_RC=$?
 # noEmitOnError=false，有类型错误也会照常输出 JS；
 # 但编译本身失败（语法错）就没有产物了，要拦住
+if [ "$TSC_RC" -eq 127 ]; then
+  echo "✗ tsc 没跑起来（AF_TSC=\"$TSC\"）—— 继续跑会拿上一轮的旧产物，结果不可信"
+  head -5 /tmp/afts-tsc.log
+  exit 1
+fi
 if [ ! -d "$OUT/tests" ]; then
   echo "✗ 编译没有产出，错误如下："
   head -30 /tmp/afts-tsc.log
