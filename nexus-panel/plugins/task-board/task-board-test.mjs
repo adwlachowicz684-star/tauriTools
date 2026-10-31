@@ -1147,6 +1147,69 @@ t('自查：「未分类」哨兵不给调色和删除按钮（摆着点不动 =
     && app.indexOf('!isSentinel(v)') >= 0;
 })());
 
+
+/* ============================================================ 端到端验收（第 5 轮） */
+
+/*
+ * 一条链路走完：建自定义类型 → 挂到任务 → 筛选 → 排序 → 分组。
+ *
+ * 前面几轮揪出的 bug 都是"每一环单独看都对、串起来就坏"：
+ * colRawValues 漏分支（筛选空）、cmpTask 漏分支（排序不动）、
+ * props 漏传（自定义类型选不到）。所以补一条走完整链路的测试，
+ * 只测单点的话这类问题会一漏再漏。
+ */
+t('端到端：自定义类型 → 挂载 → 筛选 → 排序 → 分组 全链路可用', (() => {
+  // ① 用户建一个自定义类型
+  let defs = normalizeTypeDefs([{ id: 'dev', name: '开发' }]);
+  defs = [...defs, { id: 't1', name: '自研类', color: '#22c55e' }];
+
+  // ② 挂到任务上
+  const tasks = [
+    normalizeTask({ id: 'a', title: '甲', type: 't1', status: 'doing' }),
+    normalizeTask({ id: 'b', title: '乙', type: 'dev', status: 'todo' }),
+    normalizeTask({ id: 'c', title: '丙', status: 'todo' }),   // 未分类
+  ];
+  const rows = tasks.map((t) => ({ task: t, groupPath: '', depth: 0 }));
+
+  // ③ 候选值里要有这个自定义类型（否则等于建不出来）
+  const opts = colFilterValues('type', rows, [], defs.map((d) => d.id));
+  if (opts.indexOf('t1') < 0) return false;
+  if (opts.indexOf(NOTYPE) < 0) return false;   // 未分类也要能筛
+
+  // ④ 按它筛选：能筛出自研类的那一条
+  const f = emptyColFilter();
+  f.values = ['t1'];
+  if (filterTasksByColumns(rows, { type: f }, '').length !== 1) return false;
+
+  // ⑤ 排序：自定义类型不在默认清单里 → 排最后，但在未分类之前
+  const sorted = sortRowsBy(rows, 'type', 'asc').map((r) => r.task.id);
+  if (sorted.join(',') !== 'b,a,c') return false;   // dev → t1 → 未分类
+
+  // ⑥ 分组：按类型分，未分类单独成组且置尾
+  const gs = groupTasksBy(tasks, 'type');
+  if (gs[gs.length - 1].key !== NOTYPE) return false;
+  if (gs.length !== 3) return false;
+
+  // ⑦ 两层分组：类型里再按状态分
+  const g2 = groupTasksBy(tasks, ['type', 'status']);
+  if (g2.some((g) => g.tasks.length !== 0)) return false;   // 中间层不装任务
+  if (!g2.every((g) => g.children.length > 0)) return false;
+
+  // ⑧ 改名不影响已挂的任务（存 id 不存名字）
+  const renamed = defs.map((d) => (d.id === 't1' ? { ...d, name: '改了名' } : d));
+  return typeName(renamed, tasks[0].type) === '改了名' && tasks[0].type === 't1';
+})());
+
+t('端到端：老库升级（没有 typeDefs / 任务没有 type）不会炸', (() => {
+  const st = normalizeStore({
+    nextId: 2,
+    tasks: [{ id: 'tb-0001', title: '老任务', status: 'todo', priority: 'P2', tags: [] }],
+  });
+  return st.typeDefs.length === 6
+    && st.tasks[0].type === ''
+    && colFilterValues('type', [], [], st.typeDefs.map((d) => d.id)).length === 7; // 六个 + 未分类
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
