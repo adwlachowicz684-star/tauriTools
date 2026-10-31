@@ -1828,7 +1828,7 @@ t('分组：行内能就地编辑（case group 要在 cellFor 里）', (() => {
  * 本环境没有 Rust 工具链编译不了，所以至少用源码扫描钉住"该出现的都出现了"。
  */
 t('分组：Rust 新建/改字段/MCP 都要贯通（AI 通道不能漏）', (() => {
-  const rp = path.join(dir, '../../../src-tauri/src/task_board.rs');
+  const rp = path.join(dir, '../../src-tauri/src/task_board.rs');
   if (!fs.existsSync(rp)) return true;   // 环境缺源码目录时跳过，不算失败
   const rus = fs.readFileSync(rp, 'utf8');
   return rus.indexOf('"group".to_string()') >= 0        // create + patch 写入
@@ -2536,8 +2536,19 @@ t('审查：恢复的隐藏列有上限（不会只剩一列）', (() => {
 
 /* ============================================================ 审查：AI 通道改不了任务说明（本轮） */
 
-const RS = path.join(dir, '../../../src-tauri/src/task_board.rs');
+const RS = path.join(dir, '../../src-tauri/src/task_board.rs');
 const rsSrc = fs.existsSync(RS) ? fs.readFileSync(RS, 'utf8') : '';
+/*
+ * ⛔ 路径拼错时 rsSrc 是空串，而下面每条判据都以 `!rsSrc ||` 开头
+ * （本意是「环境缺 Rust 源码就跳过」）—— 于是**整节空转还报绿**。
+ *
+ * 实测踩到：原来拼的是 '../../../src-tauri'（解析到仓库根，那里没有这个目录），
+ * 这一节十几条审查断言一直显示「通过」，其实一条都没跑 ——
+ * 包括上一轮才加的 4 条 summary 审查。修了路径它们才真正开始检查。
+ *
+ * 所以这里显式钉住可达性：宁可报红，不要静默空转。
+ */
+t('审查：Rust 源码路径可达（拼错的话下面整节空转还报绿）', rsSrc !== '');
 /* 环境缺 Rust 源码目录时这几条跳过（不算失败），原因同上方那条分组的 */
 const rsHas = (needle) => !rsSrc || rsSrc.indexOf(needle) >= 0;
 const rsSeg = (anchor, len) => {
@@ -2761,6 +2772,62 @@ t('审查：没有残留写死的 todo/claimed 过滤', (() => {
 })());
 
 t('审查：自定义流程的初始态不是 todo（所以写死必然失效）', initialStatus(FLOW2) === 's1');
+
+/* ============================================================ 审查：MCP 通道的状态枚举挡住自定义流程（本轮） */
+
+/*
+ * **MCP 工具表的 status 写成了封闭 enum（7 个默认态）**，
+ * 而运行时认的是**这份数据自己的 flow.statuses** —— statuses_for()
+ * 没配过才回落到默认那套，用户是可以自定义状态名的。
+ *
+ * 于是自定义流程下：
+ * · schema 告诉模型和客户端「只有这 7 个合法」 → AI 不会也不敢传自定义状态
+ * · 照 schema 做入参校验的客户端会**直接拒掉**合法的自定义状态
+ * 两条路结果一样：MCP 通道在自定义流程下用不了状态筛选与流转，
+ * 而 HTTP / 界面那条路是好的 —— 同一个动作换个通道就不行，且不报错。
+ *
+ * 改成开放字符串**不会**放宽校验：运行时本来就有 statuses_for /
+ * can_transition 两道，非法状态照样被拒。
+ *
+ * 顺带：这 7 个默认态原本在 Rust 里抄了三份（常量 + 两个 schema），
+ * 加一个状态要改三处，漏一处就是「运行时认、AI 通道不认」。
+ */
+const statusLine = (seg) => seg.split('\n').find((l) => l.trim().startsWith('"status":')) || '';
+const noClosedStatus = (seg) => statusLine(seg) !== '' && statusLine(seg).indexOf('"enum"') < 0;
+const prioListsSame = (src) => {
+  const lists = (src.match(/\[\s*"P0"[^\]]*\]/g) || []).map((s) => s.replace(/\s+/g, ''));
+  return lists.length >= 3 && lists.every((s) => s === lists[0]);
+};
+
+t('审查：MCP 列表工具的 status 不是封闭枚举', !rsSrc || noClosedStatus(rsSeg('"tb_list_tasks"', 2000)));
+
+t('审查：MCP 改任务工具的 status 不是封闭枚举', !rsSrc || noClosedStatus(rsSeg('"tb_update_task"', 2000)));
+
+/* 说明里要点名自定义来源，否则模型无从知道该去哪儿取合法值 */
+t('审查：MCP 的 status 说明里点名了 flow.statuses', !rsSrc || (() => {
+  const a = statusLine(rsSeg('"tb_list_tasks"', 2000));
+  const b = statusLine(rsSeg('"tb_update_task"', 2000));
+  return a.indexOf('flow.statuses') >= 0 && b.indexOf('flow.statuses') >= 0;
+})());
+
+/* 默认状态清单只应有一处定义（STATUSES 常量），不再抄进 schema */
+t('审查：默认状态清单在 Rust 里只有一处', !rsSrc || (rsSrc.match(/\["todo", "claimed"/g) || []).length === 1);
+
+/*
+ * 优先级清单抄了 4 遍（3 个 schema + 运行时校验那一处），没有常量。
+ * 加一档就要改 4 处，漏一处就是「AI 能传、运行时拒」或反过来。
+ */
+t('审查：优先级清单各处写法一致', !rsSrc || prioListsSame(rsSrc));
+
+/* 元断言：判据本身不失明 —— 合成样本必须被判否，真阴不误伤 */
+t('元：封闭枚举的判据抓得到（合成样本）',
+  noClosedStatus('"status": { "type": "string", "enum": ["todo"] },') === false);
+
+t('元：封闭枚举的判据不误伤（合成样本：enum 在隔壁的 priority 上）',
+  noClosedStatus('"status": { "type": "string", "description": "x" },\n"priority": { "enum": ["P0"] },') === true);
+
+t('元：优先级一致的判据抓得到（合成样本）',
+  prioListsSame('["P0","P1","P2","P3"] ["P0","P1","P2","P3"] ["P0","P1","P2","P4"]') === false);
 
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
