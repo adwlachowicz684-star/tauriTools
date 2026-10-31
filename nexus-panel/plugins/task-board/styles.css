@@ -321,14 +321,14 @@
   gap: var(--sp-1);
 }
 
-/*
-  ⛔ .tb-tag 只留一份（下面「标签：浅底深字 + 同色描边」那处）。
-  这里原先还有一份更早的写法（全圆胶囊 + accent 描边 + 固定 --text 字色），
-  与新版各写一半——想改形状改的是这份、想改尺寸改的是那份，改了没反应。
-  新版那处已写明颜色由 TagChip 内联给（取自标签定义），这里再给 color 会与
-  内联色抢：有内联色的标签不受影响（内联赢），没内联色的才会被它钉成 --text。
-  所以整份删掉，不把 color 搬过去。
-*/
+.tb-tag {
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text);
+  font-size: var(--fs-micro);
+  line-height: var(--lh-tight, 1.45);
+}
 
 .tb-task-foot {
   display: flex;
@@ -1151,13 +1151,6 @@ body.tb-col-resizing {
   color: var(--text-dim);
 }
 
-.tb-lpop-warn {
-  padding: 2px var(--sp-2);
-  border-radius: var(--r-xs);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-  color: var(--warn);
-  font-size: var(--fs-micro);
-}
 
 .tb-lpop-rename {
   flex: 1 1 auto;
@@ -1912,18 +1905,6 @@ body.tb-col-resizing {
   font-size: var(--fs-micro);
 }
 
-/* 分组列：就地填/改的分组名，超出省略（完整名在 title 里）。
-   与上面那条不是同一个东西：那条是派生出来的层级路径（只读），
-   这条是可编辑的字段值 —— 所以它还得能在 flex 行里收缩。 */
-.tb-lc.c-group {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
-}
-
 /* 说明列：一句话，超出省略 */
 .tb-lc.c-summary {
   overflow: hidden;
@@ -2229,6 +2210,17 @@ body.tb-col-resizing {
 .tb-stat-tags {
   display: flex;
   flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+
+/*
+  热门标签：一枚 chip + 计数。
+  计数单独成行内元素，不挤进 chip 里 —— chip 是"标签"这个概念的显示，
+  把 ×3 塞进去会让它看起来像标签名叫"登录 ×3"。
+*/
+.tb-stat-tagrow {
+  display: inline-flex;
+  align-items: center;
   gap: var(--sp-1);
 }
 
