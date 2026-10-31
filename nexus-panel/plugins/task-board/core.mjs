@@ -633,7 +633,13 @@ export function colFilterValues(field, rows, statusIds, typeIds) {
       而"把它们找出来补上归类"是刚建完类型紧接着要做的事 ——
       筛不到它就得一条条翻。
     */
-    case 'type': return ((typeIds || []).length ? [...typeIds] : TYPE_WORDS.slice()).concat([NOTYPE]);
+    /*
+      ⛔ 判据是"有没有传这个数组"，不是"数组空不空"。
+      用户把类型全删了时 typeIds 是 [] —— 那是合法状态，
+      按"空就退回默认六个"处理的话，下拉里会冒出六个已经不存在的类型，
+      勾了永远筛不到东西，而界面上看不出它们从哪来。
+    */
+    case 'type': return (Array.isArray(typeIds) ? [...typeIds] : TYPE_WORDS.slice()).concat([NOTYPE]);
     case 'tags': return allTags(tasks || []);
     /*
       数值列没有"候选值"可枚举，但**"没估"是个要能筛的选项** ——
@@ -1133,7 +1139,16 @@ export function normalizeTypeDefs(raw) {
       color: o && typeof o.color === 'string' && o.color ? o.color : (TYPE_COLORS[id] || '#78716c'),
     });
   }
-  return out.length > 0 ? out : DEFAULT_TYPES.map((t) => ({ ...t }));
+  /*
+    ⛔ 空数组必须**认**，不能补回默认六个。
+
+    "没有类型"是用户的合法选择（他就是不想分类），
+    而"没有这个字段"是老存档 —— 只有后者该补默认值。
+    混为一谈的结果是：用户把六个默认类型全删了，刷新一下它们又回来了，
+    界面上表现为"删不掉"，而没人会想到是兜底逻辑在作怪。
+    （标签那边 normalizeTagDefs 空数组就认，两边要一致。）
+  */
+  return out;
 }
 
 export function typeName(defs, id) {
