@@ -21146,6 +21146,120 @@ group('BUG 180 · 节点下划线丢在交换格式里必须计入提示');
 }
 
 
+
+/* ------------------------------------------------------------------
+   BUG 181：画布自己的主题与布局在交换格式里全丢，却一句都不说
+
+   `sheet.theme` / `sheet.layout` 是**画布级**数据：.json 工作簿带得走
+   （workbook.js 序列化那几处），而五种交换格式里没有任何一种有画布级
+   外观属性 —— FreeMind 只有节点级 COLOR / BACKGROUND_COLOR，OPML /
+   Mermaid / PlantUML / Markdown 连"外观"这个概念都没有。
+
+   导回侧实测写死默认值：`markdownToWorkbook` 与 `markdownToSheet` 两张
+   画布都给 `theme: DEFAULT_THEME, layout: DEFAULT_LAYOUT`。于是导出 .md
+   （最常被当成备份的格式）再导回，整本工作簿的外观全变回默认，状态栏
+   却只说「已保存」—— 而导入是**整体替换且不可撤销**。
+
+   与 BUG 123（画布级 xrelationships 漏统计）是同一个洞的第 5 次重演：
+   新数据收进来了，丢失统计没同步。所以这一节**不只钉 theme / layout 两个
+   键**，⑦ 还钉住通则：导回侧写死默认值的画布字段必须都在 LOSS_KEYS 里
+   —— 将来再往画布上加一个同类字段，漏了当场报红。
+   ------------------------------------------------------------------ */
+
+group('BUG 181 · 画布主题与布局丢失必须计入提示');
+
+{
+  const f181 = await import('./formats.js');
+  const th181 = await import('./themes.js');
+  const content181 = JSON.stringify({
+    root: { data: { id: 'r', text: '中心' }, children: [{ data: { id: 'a', text: 'A' } }] },
+    template: 'default', theme: 'fresh-blue',
+  });
+  const D181 = { theme: th181.DEFAULT_THEME, layout: th181.DEFAULT_LAYOUT };
+
+  // ① 默认值不许喊丢（否则**每次**导出都冒一句没意义的提示 → 提示变噪音）
+  {
+    const l = f181.exchangeLoss(content181, 'markdown', D181);
+    eq(l.theme, 0, '★ 默认主题不算丢（虚报会让提示变噪音）');
+    eq(l.layout, 0, '★ 默认布局不算丢');
+  }
+
+  // ② 非默认值必须报出来
+  {
+    const l = f181.exchangeLoss(content181, 'markdown',
+      { theme: 'dark-slate', layout: 'org-chart' });
+    eq(l.theme, 1, '★ 非默认主题要报');
+    eq(l.layout, 1, '★ 非默认布局要报');
+  }
+
+  // ③ 导回新建的画布（theme / layout 为 null）不算丢
+  {
+    const l = f181.exchangeLoss(content181, 'markdown', { theme: null, layout: null });
+    eq(l.theme, 0, '★ null（导回新建的画布）不算丢');
+    eq(l.layout, 0, '★ null layout 不算丢');
+  }
+
+  // ④ 多画布导出时逐张相加（同 BUG 124：不能用当前画布一份代替整本）
+  {
+    const all = f181.exchangeLossAll([
+      { content: content181, theme: 'dark-slate', layout: D181.layout },
+      { content: content181, theme: D181.theme, layout: 'org-chart' },
+    ], 'markdown');
+    eq(all.theme, 1, '★ 主题跨画布累加');
+    eq(all.layout, 1, '★ 布局跨画布累加');
+  }
+
+  // ⑤ 画布级不计进 nodes（一句"涉及 N 个节点"对"整张画布换主题"不成立）
+  {
+    const l = f181.exchangeLoss(content181, 'markdown',
+      { theme: 'dark-slate', layout: 'org-chart' });
+    eq(l.nodes, 0, '★ 主题 / 布局不计进 nodes（同 BUG 123 对关系线的处理）');
+  }
+
+  // ⑥ 源码契约：判据必须取 themes.js 的默认值
+  //    ⚠️ formats.js 本地另有一个 `DEFAULT_THEME = 'fresh-blue-compat'`
+  //       （stringifyKm 写进 content JSON 的兼容值），与 `sheet.theme` 的
+  //       默认值 'fresh-blue' **不是一回事**。拿它去比 sheet.theme 会把
+  //       默认主题判成"非默认" —— 于是每次导出都虚报。
+  {
+    const src = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/from '\.\/themes\.js'/.test(src), '★ formats.js 从 themes.js 取画布默认值（不抄第二份）');
+    ok(/SHEET_THEME_DEFAULT/.test(src) && /SHEET_LAYOUT_DEFAULT/.test(src),
+      '★ 用别名常量，避免与本地 fresh-blue-compat 混淆');
+    ok(/out\.theme = th && th !== SHEET_THEME_DEFAULT/.test(src),
+      '★ 判的是 sheet.theme 是否等于 themes.js 的默认值');
+    ok(/out\.layout = ly && ly !== SHEET_LAYOUT_DEFAULT/.test(src),
+      '★ 判的是 sheet.layout 是否等于 themes.js 的默认值');
+  }
+
+  // ⑦ 通则：导回侧写死默认值的画布字段，必须都在 LOSS_KEYS 里
+  //    这是防"第 6 次重演"的那一条 —— 只看 ①② 那两个键，将来加第三个
+  //    同类字段照样漏。判据取"导回时回落默认"这个本质，而不是键名清单。
+  {
+    const wbSrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+    const fmtSrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    const keys = new Set();
+    for (const m of wbSrc.matchAll(/\b([a-zA-Z_]\w*)\s*:\s*DEFAULT_[A-Z_]+/g)) {
+      keys.add(m[1] === 'template' ? 'layout' : m[1]);
+    }
+    ok(keys.size > 0, '能在导回侧定位写死默认值的画布字段');
+    const at = fmtSrc.indexOf('const LOSS_KEYS = [');
+    ok(at > -1, '能定位 LOSS_KEYS');
+    const win = fmtSrc.slice(at, at + 600);
+    for (const k of keys) {
+      ok(new RegExp(`'${k}'`).test(win),
+        `★ 导回侧写死默认的画布字段 ${k} 必须在 LOSS_KEYS 里（漏了就是第 6 次重演）`);
+    }
+  }
+
+  // ⑧ 界面要有中文名（不然统计到了也说不出来）
+  {
+    const idxSrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    ok(/theme: '画布主题'/.test(idxSrc), '★ index.js 有画布主题的中文名');
+    ok(/layout: '画布布局'/.test(idxSrc), '★ index.js 有画布布局的中文名');
+  }
+}
+
 /* ------------------------------------------------------------------
    BUG 155：导入 .xmind 时没还原成的附件 / 图片必须数出来
    ------------------------------------------------------------------ */
