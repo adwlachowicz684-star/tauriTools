@@ -1361,6 +1361,49 @@ t('列宽：松手时落盘（不落盘 = 白拖）', (() => {
     && app.indexOf("persist('colWidths', colWidthRef.current)") >= 0;
 })());
 
+
+/* ============================================================ 矮画布下面板被截（本轮） */
+
+/*
+ * **任务少时画布塌成几十像素，筛选面板被截掉一半**（用户报的）。
+ *
+ * 链路上有三处都要堵，缺一个就还会复发：
+ *   ① 内容区最小高度 —— 画布不随任务条数忽高忽低
+ *   ② 面板限高 + 内部滚动 —— 选项多时底部那些永远点不到
+ *   ③ 下方空间不够时向上翻 —— 矮画布下默认往下展必然出界
+ */
+t('矮画布：列表内容区有最小高度（画布不随任务条数塌陷）', (() => {
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  const i = css.indexOf('.tb-list-body {');
+  const seg = css.slice(i, css.indexOf('}', i));
+  return /min-height:\s*\d+px/.test(seg);
+})());
+
+t('矮画布：面板限高且内部可滚（选项多时不会溢出画布）', (() => {
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  const i = css.indexOf('.tb-lpop {');
+  const seg = css.slice(i, css.indexOf('}', i));
+  return /max-height:/.test(seg) && /overflow-y:\s*auto/.test(seg);
+})());
+
+t('矮画布：下方空间不够时向上翻（有 is-up 样式与翻转判断）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  const hasStyle = /\.tb-lpop\.is-up\s*\{[\s\S]*?bottom:/.test(css);
+  const hasLogic = app.indexOf('if (below < 8 && above > below) setFlip(true);') >= 0;
+  return hasStyle && hasLogic;
+})());
+
+/*
+ * 上下都不够时**不翻** —— 翻上去同样被裁的话，翻就是白翻，还多一次跳动。
+ * 那种情况交给 CSS 的 max-height 内部滚动。
+ */
+t('矮画布：翻上去也不够时就保持向下（不全屏翻转）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('const above = r.top;') >= 0
+    && app.indexOf('above > below') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

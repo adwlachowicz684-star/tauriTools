@@ -1523,6 +1523,13 @@ body.tb-col-resizing {
   top: calc(100% + var(--sp-1));
   left: 0;
   z-index: var(--z-pop);
+  /*
+    限高 + 内部滚动：选项多（状态/认领人/标签可能有几十个）时，
+    面板会长到超出画布，底部那些选项永远点不到。
+    与其让它溢出被裁，不如在面板内部滚。
+  */
+  max-height: min(60vh, 320px);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
@@ -1537,6 +1544,16 @@ body.tb-col-resizing {
 .tb-lpop.is-right {
   left: auto;
   right: 0;
+}
+
+/*
+  下方空间不够时向上翻。
+  默认永远往下展，遇到矮画布就成了"只露出上半截" ——
+  那种截断看不出是空间不够，只会以为面板没画完整。
+*/
+.tb-lpop.is-up {
+  top: auto;
+  bottom: calc(100% + var(--sp-1));
 }
 .tb-lpop-title {
   font-size: var(--fs-micro);
@@ -1800,6 +1817,15 @@ body.tb-col-resizing {
 .tb-list-body {
   display: flex;
   flex-direction: column;
+  /*
+    ⚠️ 最小高度不能省。
+    任务只有两三条时内容区塌成几十像素，整个画布跟着变矮（宿主 iframe
+    按内容撑高），列头往下展开的筛选面板就落到可视区外面被截掉 ——
+    看到的是"面板只露出一半"，而用户只会以为是面板坏了。
+
+    给一个下限，画布不随任务条数忽高忽低，面板也总有地方展开。
+  */
+  min-height: 320px;
 }
 
 .tb-lrow {

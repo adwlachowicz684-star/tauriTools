@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
 import * as S from './lib/store';
 import {
@@ -2292,7 +2292,6 @@ function ColFilterPop({
   onRemoveType?: (id: string) => void;
 }) {
   const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
-  const cls = 'tb-lpop' + (anchorRight ? ' is-right' : '');
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState(TAG_COLORS[6]);
   const isTag = col.field === 'tags';
@@ -2307,9 +2306,34 @@ function ColFilterPop({
   */
   const isSentinel = (id: string) => isType && id === NOTYPE;
 
+  /*
+    下方空间不够时**向上翻**。
+
+    为什么必须动态判断而不是写死往下：
+    列表容器是滚动区，表头又 sticky 在顶部 ——
+    写死往下，遇到矮画布（任务只有两三条时就会这样）
+    面板落到可视区外面被裁掉，只露出上半截。
+    那种截断看不出是"空间不够"，只会以为面板没画完整。
+
+    上下都不够时**不翻**，交给 CSS 的 max-height 内部滚动 ——
+    翻上去同样被裁的话，翻就是白翻，还多一次跳动。
+  */
+  const popRef = useRef<HTMLDivElement | null>(null);
+  const [flip, setFlip] = useState(false);
+  useLayoutEffect(() => {
+    const el = popRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const vh = window.innerHeight || 0;
+    const below = vh - r.bottom;
+    const above = r.top;
+    if (below < 8 && above > below) setFlip(true);
+  }, [col.field, options.length]);
+  const cls = 'tb-lpop' + (anchorRight ? ' is-right' : '') + (flip ? ' is-up' : '');
+
   if (col.kind === 'enum') {
     return (
-      <div className={cls} onClick={(e) => e.stopPropagation()}>
+      <div ref={popRef} className={cls} onClick={(e) => e.stopPropagation()}>
         <div className="tb-lpop-title">按{col.label}筛选</div>
         {options.length === 0 ? (
           <div className="tb-lpop-hint">这一列当前没有可选的值</div>
@@ -2407,7 +2431,7 @@ function ColFilterPop({
 
   if (col.kind === 'text') {
     return (
-      <div className={cls} onClick={(e) => e.stopPropagation()}>
+      <div ref={popRef} className={cls} onClick={(e) => e.stopPropagation()}>
         <div className="tb-lpop-title">按{col.label}筛选</div>
         <input
           className="tb-lpop-input"
@@ -2426,7 +2450,7 @@ function ColFilterPop({
   if (col.kind === 'num') {
     const none = (filter.values || []).indexOf(UNESTIMATED) >= 0;
     return (
-      <div className={cls} onClick={(e) => e.stopPropagation()}>
+      <div ref={popRef} className={cls} onClick={(e) => e.stopPropagation()}>
         <div className="tb-lpop-title">按{col.label}筛选</div>
         <div className="tb-lpop-row">
           <input
@@ -2477,7 +2501,7 @@ function ColFilterPop({
   }
 
   return (
-    <div className={cls} onClick={(e) => e.stopPropagation()}>
+    <div ref={popRef} className={cls} onClick={(e) => e.stopPropagation()}>
       <div className="tb-lpop-title">按{col.label}筛选</div>
       <div className="tb-lpop-row">
         <input
@@ -2501,7 +2525,6 @@ function ColFilterPop({
     </div>
   );
 }
-
 function ListView({
   rows,
   allRows,
