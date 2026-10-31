@@ -2566,6 +2566,26 @@ t('审查：建任务时会写入 summary 字段', rsHas('"summary".to_string(),
 
 t('审查：patch 的字段循环里有 summary', rsHas('["title", "detail", "summary", "priority", "reporter"]'));
 
+
+/* ============================================================ 审查：切配置后残留旧项目数据（本轮） */
+
+/*
+ * **设置页改完配置，主视图读不到新目录时留着旧 store**：
+ * 界面显示的是**上一个项目的任务**，而写入用的是新目录（cfgRef 已经换了）——
+ * 于是"看着甲的任务、点删除删的是乙里同 id 的那条（很可能没有）"，
+ * 静默失败，且没人会对上原因。
+
+ * 与 doSwitchProject 里那条"读不到要明说"是同一个判据：
+ * 两条路径必须一致，否则一个项目能报、另一个不报。
+ */
+t('审查：配置事件里读失败会清空显示（不留着上一个项目的数据）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf("ctx.on('task-board:config'");
+  const seg = app.slice(i, i + 1200);
+  return seg.indexOf('setStore(normalizeStore(null))') >= 0
+    && seg.indexOf('读不到它的任务库') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
