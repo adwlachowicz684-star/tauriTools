@@ -246,6 +246,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+  「未配置」角标：有任务处于这个状态，但流程配置里没有它
+  （状态被删掉了，或由 AI 经 API 直接写入）。
+
+  ⛔ 没有这份样式的话，它渲染成列头里一段裸文字 ——
+  和状态名、数量挤在一起，也看不出它是"需要注意"而不是"又一个状态名"。
+  用 warn 色而不是灰：它要传达的是"这里有个对不上的地方"。
+*/
+.tb-col-ghost {
+  flex-shrink: 0;
+  padding: 0 var(--sp-1);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--r-sm);
+  color: var(--warn);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-mid, 500);
+  line-height: 1.6;
+}
+
 .tb-col-body {
   display: flex;
   flex-direction: column;
@@ -853,66 +872,6 @@
 }
 
 /* ------------------------------------------------ 列表视图 */
-
-/*
-  列表与右侧详情面板**并列**（不是弹窗盖在上面）。
-
-  面板是非模态的：它占右侧一条，列表照常滚、照常点，
-  不关也能继续操作 —— 这正是"详情不干扰操作"的关键。
-*/
-.tb-viewarea {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-}
-
-.tb-viewarea > .tb-list {
-  /*
-    ⛔ min-width: 0 不能省：
-    flex 子项默认 min-width:auto，宽表格会把面板直接挤出可视区 ——
-    看着像"面板没出来"，其实是它跑到屏幕外面去了。
-  */
-  min-width: 0;
-}
-
-/* 右侧详情面板 */
-.tb-dpanel {
-  flex: none;
-  inline-size: 380px;
-  /* 窄窗口下不能把列表挤没：给它一个上限 */
-  max-inline-size: 45%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-inline-start: 1px solid var(--divider);
-  background: color-mix(in srgb, var(--bg) 92%, var(--accent));
-}
-
-.tb-dpanel-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-3);
-  border-block-end: 1px solid var(--divider);
-}
-
-.tb-dpanel-title {
-  flex: 1;
-  min-inline-size: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-body);
-  font-weight: 600;
-}
-
-.tb-dpanel-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--sp-3);
-}
 
 .tb-list {
   flex: 1;
@@ -2104,12 +2063,7 @@ body.tb-col-resizing {
   padding: var(--sp-2);
   border-block-end: 1px solid var(--divider);
   border-radius: var(--r-xs);
-  /*
-    ⛔ cursor 不能是 pointer：整行**不再**可点开详情了。
-    摆个手型光标而点了没反应，比没有光标更骗人 ——
-    可点的那些单元格（.tb-ic）自己带 pointer，那是真的能点。
-  */
-  cursor: default;
+  cursor: pointer;
   transition: background-color var(--dur-fast) ease;
 }
 
@@ -2154,6 +2108,17 @@ body.tb-col-resizing {
   align-items: center;
   gap: var(--sp-2);
   color: var(--text-mute);
+}
+
+/*
+  分组列：里面是 InlineText（点一下就地改分组名），
+  所以要像 c-title 那样撑开 —— 没有这份样式时列宽会被内容挤变形，
+  且"留空=不分组"那个占位（tb-ldim）会贴到边框上。
+*/
+.tb-lc.c-group {
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
 
 .tb-lc.c-assignee {
@@ -2395,6 +2360,10 @@ body.tb-col-resizing {
 }
 
 /* 可点击的历史行（统计视图的「最近动态」复用 .tb-hev） */
+.tb-click {
+  cursor: pointer;
+}
+
 .tb-stat-panel .tb-hev {
   border-radius: var(--r-xs);
   padding: 0 var(--sp-1);
