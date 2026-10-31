@@ -1404,6 +1404,88 @@ t('矮画布：翻上去也不够时就保持向下（不全屏翻转）', (() =
     && app.indexOf('above > below') >= 0;
 })());
 
+
+/* ============================================================ 行内编辑（本轮） */
+
+/*
+ * **改一个字段要开一次详情弹窗**（用户提的）：
+ * 而实际使用里绝大多数改动是"标成进行中""改个优先级"，
+ * 为一两个字段开关弹窗太重，弹窗还盖住列表，
+ * 改完得在几十行里找回刚才那一行在哪。
+ */
+
+/*
+ * ⛔ 单元格里点一下会冒泡到行，顺带把详情弹窗也打开 ——
+ * 那就等于弹窗没去掉，只是多了一步。
+ * 每个行内编辑组件的点击都必须 stopPropagation。
+ */
+t('行内编辑：点击不冒泡到行（否则改个字段还弹出详情窗）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const marks = app.split('e.stopPropagation()').length - 1;
+  // InlinePick / InlineText / InlineTags 三处都要有
+  return app.indexOf("onClick={(e) => { e.stopPropagation(); setOpen(!open); }}") >= 0
+    && app.indexOf("onClick={(e) => { e.stopPropagation(); setOpen(true); }}") >= 0
+    && marks >= 8;
+})());
+
+/*
+ * 状态列的候选是**全部状态**，走不通的置灰。
+ * 只列"能走的"会让用户以为少掉的那些状态不存在 ——
+ * 而配置出错时会真的少，那时两种情形看不出区别。
+ */
+t('行内改状态：走不通的选项置灰并给原因', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('disabled: !isCur && !a') >= 0
+    && app.indexOf('不能直接走到') >= 0;
+})());
+
+/*
+ * needNote 的边（打回）必须能填原因，而且**不能写死成回到 doing** ——
+ * 自定义流程后任何一条边都可能要求填原因，
+ * 写死的话那些边会集体跳回 doing，界面上写的却是另一个状态名。
+ */
+t('行内改状态：needNote 的边弹原因框，且目标状态不被写死', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("const to = rejectFor.to;") >= 0
+    && app.indexOf("await doTransition(id, to as TaskStatus, note);") >= 0
+    && app.indexOf("onSetStatus={(id, to, needNote) => (needNote ? setRejectFor({ id: id, to })") >= 0;
+})());
+
+/*
+ * 标签多选：选完**不关闭**。
+ * 勾一个就关的话想勾三个要开三次，那还不如去详情里改。
+ */
+t('行内改标签：多选不随点击关闭（勾一个就关要多开三次）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function InlineTags');
+  // 用下一个顶层分隔符切，不能用 app.indexOf('function ')（组件内部就有）
+  const j = app.indexOf('/* ================================================================ 列表视图 */', i);
+  const seg = app.slice(i, j);
+  // 选项的 onClick 只调 onPick，不跟 setOpen(false) —— 跟了就是"勾一个就关"
+  return seg.indexOf('onClick={() => onPick(d.id)}') >= 0
+    && seg.indexOf('onPick(d.id);\n                setOpen(false)') < 0
+    && seg.indexOf('onPick(d.id); setOpen(false)') < 0;
+})());
+
+/*
+ * 数字列只认数字，填"三天"忽略而不是写成 0。
+ * 写成 0 会把"没估"和"估了 0"混成一样，排期时含义完全不同。
+ */
+t('行内改预估：非数字不落盘（没估 ≠ 0 人日）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("if (num && v !== '' && !/^\\d+(\\.\\d+)?$/.test(v)) return;") >= 0;
+})());
+
+/*
+ * 打开编辑框时要把当前值带进去。
+ * 不带的话一点开是空的，看着像"这行没内容"，
+ * 而实际上只是输入框没初始化 —— 那种误会会让人以为数据丢了。
+ */
+t('行内编辑：打开时带入当前值（空框看着像数据丢了）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('if (open) setDraft(value);') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

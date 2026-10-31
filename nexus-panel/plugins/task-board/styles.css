@@ -885,6 +885,107 @@
   min-width: 940px;
 }
 
+/* ---------- 行内编辑（点一下就地改，不弹窗） ---------- */
+
+.tb-ic {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  cursor: pointer;
+}
+
+.tb-ic-val {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 悬停给个可点的暗示：否则看不出这一格能改 */
+.tb-ic:hover .tb-ic-val {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.tb-ic-input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: 1px var(--sp-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-xs);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font: inherit;
+  font-size: inherit;
+}
+
+.tb-ic-pop {
+  position: absolute;
+  z-index: 9;
+  inset-block-start: calc(100% + 2px);
+  inset-inline-start: 0;
+  min-inline-size: 9em;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--sp-1);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  background: var(--bg-pop);
+  box-shadow: var(--shadow-pop);
+  cursor: default;
+}
+
+.tb-ic-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: start;
+  cursor: pointer;
+}
+
+.tb-ic-opt:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.tb-ic-opt.on {
+  color: var(--accent);
+}
+
+/* 走不通的选项：置灰并给原因（点了没反应比不让点更困惑，所以是 disabled + tooltip） */
+.tb-ic-opt:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tb-ic-txt {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-ic-ck {
+  flex: 0 0 auto;
+}
+
+.tb-ic-hint {
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
 /* 拖宽把手：贴在列头单元格右缘 */
 .tb-lresize {
   position: absolute;
