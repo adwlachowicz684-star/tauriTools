@@ -1143,6 +1143,14 @@ body.tb-col-resizing {
   color: var(--accent);
 }
 
+/* 卡片上的分组：中性配色，与"标签"（有自定义色）区分开 ——
+   两者都挂在任务上，长得一样就分不清哪个是分组 */
+.tb-tag-group {
+  background: var(--bg-3);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
 .tb-lpop-warn {
   padding: 2px var(--sp-2);
   border-radius: var(--r-xs);
