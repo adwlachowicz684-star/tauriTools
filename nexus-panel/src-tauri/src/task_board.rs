@@ -793,7 +793,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "tb_list_tasks",
             "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）",
             json!({
-                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部" },
+                "status":   { "type": "string", "description": "按状态过滤，缺省=全部。状态 id 取自这份数据自己的 flow.statuses（用户可自定义）；没配过时是 todo/claimed/doing/hold/review/done/cancelled" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "按优先级过滤" },
                 "tag":      { "type": "string", "description": "按标签过滤" },
                 "assignee": { "type": "string", "description": "按认领人过滤；传 \"__none__\" 查未认领" },
@@ -828,7 +828,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "流转/修改任务：认领、开工、提交审查、通过、打回、退回、改字段",
             json!({
                 "id":       { "type": "string", "description": "任务 id" },
-                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）" },
+                "status":   { "type": "string", "description": "目标状态 id（取自这份数据的 flow.statuses，用户可自定义；没配过时是 todo/claimed/doing/hold/review/done/cancelled）。流转图校验：没配流转表时 todo/claimed 不可直跳 done" },
                 "assignee": { "type": "string", "description": "认领人；已被他人认领会被拒绝；空串=释放认领" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
