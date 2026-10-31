@@ -2377,11 +2377,39 @@ function FlowSettingsModal({
     /* id 用名字的拼音不行（没那个库），用稳定后缀 + 序号，用户可在下面改名 */
     let id = `s${draft.statuses.length + 1}`;
     while (ids.includes(id)) id += '_';
+    /*
+      ⛔ 取色不能按"已有数量取模"（这里原来就是这么写的）：
+      取模恰好会落在**已被占用**的那一档上 ——
+      于是新建的状态和某个已有状态同色，而配色的唯一作用就是一眼区分。
+
+      与新建类型 / 新建标签统一判据：取第一个还没人用的颜色。
+      三个入口必须一致，否则同一个"新建"动作在不同地方得到不同颜色，
+      看着像三条互不相干的规则。
+    */
+    const used = new Set(draft.statuses.map((s2) => s2.color));
+    const color = TAG_COLORS.find((c) => !used.has(c))
+      || TAG_COLORS[draft.statuses.length % TAG_COLORS.length];
+    /*
+      新建状态**顺手接一条边**（从原来的最后一个状态指过来）。
+
+      ⛔ 不接的话新状态是个**孤岛**：它出现在下拉里、也出现在看板列上，
+      但没有任何路径能走到它 —— 所有任务上一个状态都点不到它，
+      用户在流转矩阵里不一定反应得过来要去勾哪几格。
+      （列表里点状态会看到它置灰 + tooltip 解释"走不过去"，
+        但那是在**用**的时候才发现，不如建的时候就接上。）
+
+      接哪条：追加在末尾 → 从原末尾状态过来，符合"流程里加一步"的直觉。
+      不对的话用户在矩阵里取消即可，比自己找到该勾哪格容易。
+    */
+    const prevId = draft.statuses.length > 0 ? draft.statuses[draft.statuses.length - 1].id : '';
     setDraft((d) => ({
       ...d,
       statuses: [...d.statuses, {
-        id, name, color: TAG_COLORS[d.statuses.length % TAG_COLORS.length], enter: `标为「${name}」`, done: false,
+        id, name, color, enter: `标为「${name}」`, done: false,
       }],
+      transitions: prevId
+        ? { ...d.transitions, [prevId]: [...(d.transitions[prevId] || []), id] }
+        : d.transitions,
     }));
     setNewName('');
   };
