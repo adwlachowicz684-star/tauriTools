@@ -394,12 +394,6 @@ export const LIST_COLUMNS = [
   { field: 'priority', label: '优先级', kind: 'enum' },
   { field: 'id', label: 'ID', kind: 'text' },
   { field: 'title', label: '标题', kind: 'text' },
-  /*
-    所属组**只作显示与筛选**，组标题本身不参与标题搜索 ——
-    搜"登录"不该把挂在登录组下的所有任务全带出来，
-    那是"扩展范围"，而搜索是"收窄范围"。
-  */
-  { field: 'groupPath', label: '所属组', kind: 'text' },
   { field: 'status', label: '状态', kind: 'enum' },
   { field: 'assignee', label: '认领人', kind: 'enum' },
   { field: 'type', label: '任务类型', kind: 'enum' },
@@ -651,15 +645,30 @@ export function colFilterValues(field, rows, statusIds, typeIds) {
   }
 }
 
-/* ============================================================ 任务组嵌套
+/* ============================================================ 组（平铺迁移）
  *
- * 组就是一条 kind='group' 的记录，别的记录用 parent 指向它。
- * 组自己也可以有 parent —— 于是可以一直套下去。
+ * 「任务组」从**数据结构**改成了**视图概念**：
+ * 现在是"选一列作为分组依据，按那一列的值聚合显示"，
+ * 数据里不再有 kind='group' 的记录，也不再有父子层级。
  *
- * 为什么不让 group 单独成一个数组：那样"把两条任务并成一个组"
- * 就要在两种数据结构之间搬，而分组/拆组是高频操作。
+ * 之前是手动建组（新建组 / 合并成组 / 拆分），那套东西的问题是：
+ * 层级要人维护，而人维护的层级和"我现在想按状态看"这类临时视角
+ * 是两件事 —— 前者改数据，后者只是换个看法。混在一起的结果是
+ * 想换个看法时不得不去改数据，而改完数据又回不到原来的看法。
  */
 
+/**
+ * 把**所有手动组一次性平铺**：组记录删掉，下面的任务上提到顶层，
+ * 依赖"整个组"的地方改指到组里的具体任务。
+ *
+ * ⛔ 依赖不能简单丢掉：deps 指向组 g 的语义是"等 g 里全部完成"，
+ * 而 g 删掉之后那条依赖会变成指向一个不存在的 id ——
+ * 界面上会显示成"前置已被删除"，任务永远解锁不了。
+ * 所以把它展开成组内的**全部叶子任务**，语义完全等价
+ * （原来"等 g 全部完成"，展开后"等 a、b、c 全部完成"）。
+ *
+ * @returns {{tasks, removed:number, remapped:number}}
+ */
 /**
  * id → 任务的索引。
  *
@@ -692,6 +701,7 @@ export function indexTasks(tasks) {
   }
   return { byId, parentOf };
 }
+
 
 /** 从根到该节点的组链（不含自己）。是环也不会死循环 —— 构造时已断 */
 export function ancestorChain(id, parentOf, limit = 32) {
@@ -787,6 +797,68 @@ export function groupStatus(groupId, tasks, flow) {
   return initialStatus(flow);
 }
 
+export function flattenAllGroups(tasks) {
+  const list = tasks || [];
+  const groups = list.filter((t) => t.kind === 'group');
+  if (groups.length === 0) return { tasks: list, removed: 0, remapped: 0 };
+  const groupIds = new Set(groups.map((g) => g.id));
+  const { parentOf } = indexTasks(list);
+
+  /** 一个组下面的全部叶子任务（递归穿过多层组） */
+  const leavesOf = (gid) => {
+    const out = [];
+    const seen = new Set();
+    const walk = (id) => {
+      if (seen.has(id)) return;          // 环：不该有，但文件是 AI 能改的
+      seen.add(id);
+      for (const t of list) {
+        if ((parentOf[t.id] || null) !== id) continue;
+        if (t.kind === 'group') walk(t.id);
+        else out.push(t.id);
+      }
+    };
+    walk(gid);
+    return out;
+  };
+  const leafCache = new Map();
+  for (const gid of groupIds) leafCache.set(gid, leavesOf(gid));
+
+  let remapped = 0;
+  const now = Date.now();
+  const out = [];
+  for (const t of list) {
+    if (t.kind === 'group') continue;
+    /*
+      parent 一路往上走到第一个"不是组"的祖先。
+      组全删了，所以结果必然是 null ——
+      但按链走而不是直接置空，是为了文件里还有别的结构时不误判。
+    */
+    let p = parentOf[t.id];
+    while (p !== undefined && p !== null && groupIds.has(p)) p = parentOf[p];
+    const nextDeps = [];
+    const seenD = new Set();
+    for (const d of t.deps || []) {
+      if (groupIds.has(d)) {
+        remapped += 1;
+        for (const leaf of (leafCache.get(d) || [])) {
+          if (leaf === t.id || seenD.has(leaf)) continue;   // 不依赖自己
+          seenD.add(leaf);
+          nextDeps.push(leaf);
+        }
+        continue;
+      }
+      if (d === t.id || seenD.has(d)) continue;
+      seenD.add(d);
+      nextDeps.push(d);
+    }
+    const sameDeps = nextDeps.length === (t.deps || []).length
+      && nextDeps.every((x, k) => x === (t.deps || [])[k]);
+    const changed = (p || null) !== (t.parent || null) || !sameDeps;
+    out.push(changed ? { ...t, parent: p || null, deps: nextDeps, updatedAt: now } : t);
+  }
+  return { tasks: out, removed: groups.length, remapped };
+}
+
 /* ============================================================ 前置任务
  *
  * 锁定状态是**算出来的**，不存字段。
@@ -872,10 +944,6 @@ export function sortRowsBy(rows, field, dir = 'asc') {
   const cmp = (ra, rb) => {
     let r = 0;
     switch (field) {
-      case 'groupPath':
-        r = String(ra.groupPath || '').localeCompare(String(rb.groupPath || ''), 'zh-Hans-CN');
-        if (r === 0) r = ra.depth - rb.depth;
-        break;
       case 'summary':
         r = String(ra.task.summary || '').localeCompare(String(rb.task.summary || ''), 'zh-Hans-CN');
         break;
@@ -940,195 +1008,6 @@ function cmpTask(a, b, field, sign) {
   if (r !== 0) return r * sign;
   if (field === 'updatedAt' || field === 'createdAt') return a.id.localeCompare(b.id);
   return (b.updatedAt || 0) - (a.updatedAt || 0);
-}
-
-/* ============================================================ 合并成组 */
-
-/**
- * 把若干任务并进一个新组。
- *
- * 组**新建**在给定的父组下（parentId 为空则建在顶层），
- * 被合并的任务改挂到它下面 —— 于是可以一层层套下去。
- *
- * ⛔ 跳过被合并任务里的**组**：把组塞进组会让"组里有组"和
- * "任务被归拢"两种语义混在一起，而合并通常指"这几条活归成一批"。
- *
- * ⛔ 跳过祖先：把 A 并进一个挂在 A 下面的组，等于让 A 成为自己的祖先，
- * 之后任何沿父链向上走的代码都会绕不出来。
- *
- * @returns {{tasks, groupId}}
- */
-export function mergeIntoGroup(tasks, ids, title, parentId = null) {
-  const list = tasks || [];
-  const want = new Set(ids || []);
-  const { byId, parentOf } = indexTasks(list);
-  const groupId = `grp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-  const now = Date.now();
-  const group = normalizeTask({
-    id: groupId,
-    title: title || '新任务组',
-    kind: 'group',
-    parent: parentId || null,
-    deps: [],
-    status: 'todo',
-    priority: 'P2',
-    tags: [],
-    reporter: 'manual',
-    assignee: null,
-    createdAt: now,
-    updatedAt: now,
-    history: [],
-  });
-  const out = [group];
-  for (const t of list) {
-    if (!want.has(t.id)) { out.push(t); continue; }
-    if (t.kind === 'group') { out.push(t); continue; }                 // 不合并组
-    if (isAncestor(groupId, t.id, parentOf, byId)) { out.push(t); continue; }
-    out.push({ ...t, parent: groupId, updatedAt: now });
-  }
-  return { tasks: out, groupId };
-}
-
-/** a 是否是 b 的祖先（沿父链向上找） */
-export function isAncestor(a, b, parentOf, byId) {
-  const seen = new Set();
-  let cur = parentOf[b];
-  while (cur !== undefined && !seen.has(cur)) {
-    seen.add(cur);
-    if (cur === a) return true;
-    cur = parentOf[cur];
-  }
-  return false;
-}
-
-/**
- * 新建一个空组（之后再把任务拖/指派进去）。
- *
- * ⛔ 不能建在自己下面 —— 那会当场成环。
- */
-export function createGroup(tasks, title, parentId = null) {
-  const list = tasks || [];
-  const groupId = `grp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-  const now = Date.now();
-  const group = normalizeTask({
-    id: groupId,
-    title: title || '新任务组',
-    kind: 'group',
-    parent: parentId && parentId !== groupId ? parentId : null,
-    deps: [],
-    status: 'todo',
-    priority: 'P2',
-    tags: [],
-    reporter: 'manual',
-    assignee: null,
-    createdAt: now,
-    updatedAt: now,
-    history: [],
-  });
-  return { tasks: [...list, group], groupId };
-}
-
-/**
- * 拆散一个组：组本身删掉，它下面的任务**上提一层**
- * （挂到这个组的父组下，没有父组就回到顶层）。
- *
- * 为什么不是连任务一起删：拆组是"不要这个归拢了"，
- * 不是"这些活也别干了"。删掉整棵子树是最难挽回的一种误操作。
- */
-export function dissolveGroup(tasks, groupId) {
-  const list = tasks || [];
-  const { parentOf } = indexTasks(list);
-  const g = list.find((t) => t.id === groupId);
-  if (!g || g.kind !== 'group') return { tasks: list };
-  const now = Date.now();
-  const out = [];
-  for (const t of list) {
-    if (t.id === groupId) continue;
-    if (parentOf[t.id] === groupId) {
-      out.push({ ...t, parent: g.parent || null, updatedAt: now });
-      continue;
-    }
-    out.push(t);
-  }
-  return { tasks: out };
-}
-
-/**
- * 把一个任务拆成若干子任务。
- *
- * 原任务**变成组**（保留它的 id —— 这样依赖它、引用它的地方不用改），
- * 子任务新建在它下面。于是可以一直拆下去：子任务本身也能再拆。
- *
- * 为什么不保留原任务为"活"、另建子任务：
- *   那样原任务与子任务会并存，两边都有进度，
- *   而"这条到底算做完了没有"要看哪一边就成了新的问题。
- *   变成组之后，组的状态由子任务推导，只有一个答案。
- *
- * @returns {{tasks, groupId, childIds}}
- */
-export function splitTask(tasks, id, titles) {
-  const list = tasks || [];
-  const names = (titles || []).map((x) => String(x || '').trim()).filter(Boolean);
-  const src = list.find((t) => t.id === id);
-  if (!src || names.length === 0) return { tasks: list, groupId: '', childIds: [] };
-  const now = Date.now();
-  const childIds = [];
-  const kids = names.map((title, i) => {
-    const cid = `sub_${id}_${i + 1}_${Math.random().toString(36).slice(2, 6)}`;
-    childIds.push(cid);
-    /*
-      子任务继承父任务的**上下文**（标签、优先级、认领人），
-      但不继承状态、前置与预估 ——
-      继承状态会让几条新子任务一出生就是"已完成"；
-      继承前置会让它们全部卡在同一处；
-      继承预估则更糟：父任务 5 人日拆成 3 条，
-      三条各带 5 → 合计变 15，**工作量凭空翻了三倍**。
-
-      ⛔ 子任务的预估必须留空让人重填 —— 拆分时没人知道那 5 人日该在三块之间怎么分。
-      （父任务变成组后，组的预估由子任务累加得出，所以父那条也一并清零。）
-    */
-    return normalizeTask({
-      ...src,
-      id: cid,
-      title,
-      kind: 'task',
-      parent: id,
-      deps: [],
-      summary: '',
-      status: 'todo',
-      estimate: 0,
-      createdAt: now,
-      updatedAt: now,
-      history: [],
-    });
-  });
-  /*
-    父任务变成组：状态/前置/标签/认领人清空（组的这些由下面推导），
-    预估也清零 —— 组的预估 = 子任务累加，留着原值会双计。
-  */
-  const out = list.map((t) => (t.id === id
-    ? { ...t, kind: 'group', deps: [], tags: [], assignee: null, estimate: 0, updatedAt: now }
-    : t));
-  return { tasks: [...out, ...kids], groupId: id, childIds };
-}
-
-/**
- * 一个组的预估工作量 = 它下面**所有层**叶子任务的和。
- *
- * 组自己不存预估 —— 存了就有两个可改的地方，改了子任务组不变、
- * 改了组子任务不动，最后不知道该信哪个。组是容器，工作量永远从底下算。
- *
- * 逐层累加而不是只算直接子任务：拆分出来的嵌套组，
- * 只看一层会把下面几层的活全漏掉，合计偏小。
- */
-export function groupEstimate(groupId, tasks) {
-  const ctx = indexTasks(tasks || []);
-  let sum = 0;
-  for (const t of tasks || []) {
-    if (t.kind === 'group') continue;
-    if (parentChainHas(t.id, groupId, ctx.parentOf)) sum += Number(t.estimate) || 0;
-  }
-  return Math.round(sum * 100) / 100;
 }
 
 /** 全部任务的工作量合计（组不计 —— 会计双份） */

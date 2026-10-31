@@ -872,8 +872,13 @@
    免得「各写一半」被 regression 守卫盯上） */
 .tb-lgrid {
   display: grid;
-  /* 1 列勾选 + 12 列：优先级/ID/标题/所属组/状态/认领人/类型/标签/说明/预估/创建/更新 */
-  grid-template-columns: 26px 56px 70px minmax(0, 1fr) 108px 88px 96px 84px 116px 132px 62px 84px 84px;
+  /*
+    1 列勾选 + 11 列：优先级/ID/标题/状态/认领人/类型/标签/说明/预估/创建/更新
+
+    ⚠️ 顺序与数量必须和 LIST_COLUMNS、行内单元格**三处一致** ——
+    少一格会让后面所有列整体错位，且 TypeScript 查不出来（有测试钉住）。
+  */
+  grid-template-columns: 26px 56px 70px minmax(0, 1fr) 88px 96px 84px 116px 132px 62px 84px 84px;
   gap: var(--sp-2);
   align-items: center;
   min-width: 940px;
@@ -1299,6 +1304,18 @@
   gap: var(--sp-2);
   padding-block-end: var(--sp-2);
 }
+/* 批量操作的下拉：与"新建任务"这类按钮同高，别抢主按钮的注意力 */
+.tb-lbatch {
+  height: 26px;
+  padding-inline: var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
 .tb-ltools-hint {
   color: var(--text-mute);
   font-size: var(--fs-micro);
