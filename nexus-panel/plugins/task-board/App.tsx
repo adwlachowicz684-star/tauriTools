@@ -677,11 +677,20 @@ export default function App() {
     而界面上只显示"0 / 12"，看不出是没任务还是筛掉了。
     那种"这个项目是空的"错觉比多一次重新筛选麻烦得多。
   */
+  /*
+    换项目 / 新建项目时清掉与"上一个项目"绑定的界面状态。
+
+    ⛔ 文档提醒也必须重置：注释里写的是"换个项目会重新提醒，那是另一个项目的事"，
+    但原来只有设置页那边（走 config 事件）重置了，主视图切换项目这条路径没重置 ——
+    于是在甲关掉提醒后切到乙，乙的文档路径同样没设，却再也不提醒了。
+    说好会重新提醒却不提醒，比一开始就没这个机制更让人不信任。
+  */
   const clearViewState = () => {
     setColFilters({});
     setQ('');
     setChecked(new Set());
     setDetailId(null);
+    setDocsHintClosed(false);
   };
 
   const doSwitchProject = (id: string) =>
@@ -690,10 +699,30 @@ export default function App() {
       const next = await S.switchProject(ctx, cfg, id);
       setCfg(next);
       clearViewState();
-      const st = await S.readStore(ctx, next.dataDir).catch(() => null);
+      /*
+        ⛔ 读失败不能静默当"空项目"：
+        目录没授权、路径写错、被删了 —— 这些都会走进 catch，
+        而 .catch(() => null) 之后一律显示 0 条任务，
+        和"这个项目确实是空的"长得一模一样。
+
+        用户切过去看到一片空白，分不清是"新项目还没建任务"
+        还是"读不到"，于是会以为切换没生效（又绕回上一个误解）。
+        所以读不到要明说。
+      */
+      let st: TaskStore | null = null;
+      let readErr = '';
+      try {
+        st = await S.readStore(ctx, next.dataDir);
+      } catch (e: any) {
+        readErr = String(e?.message || e);
+      }
       setStore(st || normalizeStore(null));
       await restartServiceIfOn(cfg, next);
-      ctx.toast(`已切到「${currentProject(next).name}」`, 'ok');
+      if (readErr) {
+        ctx.toast(`已切到「${currentProject(next).name}」，但读不到它的任务库：${readErr}`, 'err');
+      } else {
+        ctx.toast(`已切到「${currentProject(next).name}」`, 'ok');
+      }
     })();
 
   /** 服务在跑的话重启它，让新数据目录生效。重启失败要说出来，不能假装还在服务。 */
@@ -1304,10 +1333,21 @@ ${dir}
               const next = await S.importProject(ctx, cfg, name, dataDir, docsDir);
               setCfg(next);
               clearViewState();
-              const st = await S.readStore(ctx, next.dataDir).catch(() => null);
+              let st: TaskStore | null = null;
+              let readErr = '';
+              try {
+                st = await S.readStore(ctx, next.dataDir);
+              } catch (e2: any) {
+                readErr = String(e2?.message || e2);
+              }
               setStore(st || normalizeStore(null));
               await restartServiceIfOn(cfg, next);
-              ctx.toast(`已导入项目「${currentProject(next).name}」`, 'ok');
+              ctx.toast(
+                readErr
+                  ? `已导入「${currentProject(next).name}」，但读不到它的任务库：${readErr}`
+                  : `已导入项目「${currentProject(next).name}」`,
+                readErr ? 'err' : 'ok',
+              );
             })();
           }}
         />

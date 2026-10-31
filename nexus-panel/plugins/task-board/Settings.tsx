@@ -103,10 +103,27 @@ export default function Settings() {
     }
   };
 
+  /*
+    改名只改内存里的 cfg，落盘由下面的 onBlur 触发。
+
+    ⛔ 不能 onChange 里就写盘：那是每敲一个字写一次，输入会卡。
+    也不能只改内存不落盘（改完刷新名字就回去了，而界面上一直显示着新名字，
+    看上去"改成功了"）—— 所以在失焦/回车时补一次保存。
+  */
   const renameProject = (c: TbConfig, id: string, name: string): TbConfig => ({
     ...c,
     projects: c.projects.map((p) => (p.id === id ? { ...p, name } : p)),
   });
+
+  const commitCfg = async (c: TbConfig) => {
+    try {
+      const next = await S.saveConfig(ctx, c);
+      setCfg(next);
+      ctx.emit('task-board:config', next);
+    } catch (e: any) {
+      setMsg(String(e?.message || e));
+    }
+  };
 
   const doAddProject = async () => {
     const nm = newName.trim();
@@ -131,12 +148,22 @@ export default function Settings() {
     try {
       const r = await ctx.services.call('folder-picker', 'pick', {});
       if (!r?.path) return;
-      const next = await S.saveConfig(ctx, {
+      /*
+        ⛔ 必须走 aimAt：**改的是当前项目时，不带上派生字段就会被静默回退**。
+
+        normalizeConfig 的写回规则是"c.dataDir !== cur.dataDir 就把 cur 改成 c.dataDir"，
+        而这里的 cfg 里 dataDir 还是**改之前**的值 ——
+        于是刚选好的新目录被旧值盖回去，界面提示"已改"、实际没变。
+
+        改非当前项目时反而正常（cur 没动，两边相等），
+        所以这个 bug 只在"改你正在看的那个项目"时出现 —— 恰恰是最常用的一种。
+      */
+      const next = await S.saveConfig(ctx, S.aimAt({
         ...cfg,
         projects: cfg.projects.map((x) => (
           x.id === id ? { ...x, dataDir: String(r.path) } : x
         )),
-      });
+      }, cfg.currentId));
       setCfg(next);
       ctx.emit('task-board:config', next);
       ctx.toast(`「${p.name}」的数据目录已改`, 'ok');
@@ -267,6 +294,17 @@ export default function Settings() {
                 className="tb-sproj-name"
                 value={p.name}
                 onChange={(ev) => setCfg(renameProject(cfg, p.id, ev.target.value))}
+                onBlur={(ev) => {
+                  /* 失焦才落盘。空名不提交 —— 清成空会被 normalizeConfig 补成"项目 N"，
+                     而界面上那一刻显示的是空的，看着像改名失败了 */
+                  if (!ev.target.value.trim()) { setCfg(cfg); return; }
+                  void commitCfg(renameProject(cfg, p.id, ev.target.value.trim()));
+                }}
+                onKeyDown={(ev) => {
+                  if (!isComposing(ev.nativeEvent) && ev.key === 'Enter') {
+                    (ev.target as HTMLInputElement).blur();
+                  }
+                }}
               />
               <span className="tb-sproj-dir" title={p.dataDir || '（未设）'}>
                 {p.dataDir || '（未设数据目录）'}
