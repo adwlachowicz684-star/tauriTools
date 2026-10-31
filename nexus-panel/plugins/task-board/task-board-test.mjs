@@ -1210,6 +1210,37 @@ t('端到端：老库升级（没有 typeDefs / 任务没有 type）不会炸', 
     && colFilterValues('type', [], [], st.typeDefs.map((d) => d.id)).length === 7; // 六个 + 未分类
 })());
 
+
+/* ============================================================ 自查补测（第 7 轮） */
+
+/*
+ * **删空类型后一刷新又回来了**（自查发现）：
+ * normalizeTypeDefs 把"空数组"当成"配置坏了"补回默认六个，
+ * 于是用户在界面上把六个默认类型全删掉，重载之后它们又冒出来 ——
+ * 表现为"删不掉"，而没人会想到是兜底逻辑在作怪。
+ *
+ * 区分两种情形：
+ *   · 没有这个字段 / 字段坏了 → 老存档，补默认值（对）
+ *   · 有这个字段但是空数组 → 用户就是不想分类，**必须认**（错在这）
+ */
+t('自查：用户把类型删空后，重载不该复活（空数组 ≠ 配置坏了）', (() => {
+  return normalizeTypeDefs([]).length === 0
+    && normalizeStore({ tasks: [], typeDefs: [] }).typeDefs.length === 0;
+})());
+
+t('自查：老存档（没有 typeDefs 字段）仍补默认六个', (() => {
+  return normalizeStore({ tasks: [] }).typeDefs.length === 6;
+})());
+
+t('自查：字段坏成非数组时也补默认六个（不让整份文件打不开）', (() => {
+  return normalizeTypeDefs('坏值').length === 6 && normalizeTypeDefs(42).length === 6;
+})());
+
+t('自查：类型定义为空时，候选值里不该出现那六个已经不存在的类型', (() => {
+  const vs = colFilterValues('type', [], [], []);
+  return vs.length === 1 && vs[0] === NOTYPE;   // 只剩「未分类」
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
