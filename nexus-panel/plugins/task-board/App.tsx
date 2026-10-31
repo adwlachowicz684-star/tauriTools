@@ -361,11 +361,22 @@ export default function App() {
     if (!c || typeof c.dataDir !== 'string') return;
     setCfg(c);
     setDocsHintClosed(false);   // 换了项目/配置 → 提醒重新开始（那是另一件事）
+    /*
+      ⛔ 读不到时**必须把显示清空**，不能留着旧 store：
+      留着的话界面显示的是**上一个项目的任务**，
+      而写入用的是新目录（cfgRef 已经换了）——
+      于是"看着甲的任务、点删除删的是乙里同 id 的那条（很可能没有）"，
+      静默失败，且没人会对上原因。
+
+      这与下面 doSwitchProject 里那条"读不到要明说"是同一个判据，
+      两条路径必须一致。
+    */
     S.readStore(ctx, c.dataDir)
       .then((st) => setStore(st))
-      /* 读不到新目录的任务不弹错：2s 轮询下一拍还会再试，
-         而这里正处在"设置刚改完"的时刻，弹错会盖掉"已保存"。 */
-      .catch(() => {});
+      .catch((e: unknown) => {
+        setStore(normalizeStore(null));
+        ctx.toast(`已切到新配置，但读不到它的任务库：${String((e as Error)?.message || e)}`, 'err');
+      });
   }), [ctx]);
 
   /* ---------- 派生数据 ---------- */
