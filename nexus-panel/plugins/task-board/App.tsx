@@ -373,6 +373,16 @@ export default function App() {
   const statusIds = flow.statuses.map((s) => s.id);
   const typeDefs = store ? store.typeDefs : [];
   const typeIds = typeDefs.map((d) => d.id);
+  /*
+    标签 id → 显示名的映射。排序要用它：
+    任务上存的是 id、界面显示的是名字，按 id 排出来的顺序看着像随机。
+  */
+  const tagDefs = store ? store.tagDefs : [];
+  const tagNames = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const d of tagDefs) m[d.id] = d.name;
+    return m;
+  }, [tagDefs]);
 
   const flatRows = useMemo(() => flattenTasks(store ? store.tasks : []), [store]);
   const filteredRows = useMemo(
@@ -395,17 +405,21 @@ export default function App() {
         于是列表里点了"按更新排"，切到看板顺序纹丝不动，
         而顶栏还写着"排序：更新 ↓"，看着像生效了，实际没有。
       */
-      const list = sortTasksBy(filtered, sort.field, sort.dir);
+      const list = sortTasksBy(filtered, sort.field, sort.dir, tagNames);
       for (const t of list) {
         if (!map[t.status]) map[t.status] = [];   // 配置里没有的状态也要有地方放
         map[t.status].push(t);
       }
     }
     return map;
-  }, [store, filtered, flow]);
+  }, [store, filtered, flow, tagNames]);
   const listRows = useMemo(
-    () => sortRowsBy(filteredRows, sort.field, sort.dir),
-    [filteredRows, sort],
+    () => sortRowsBy(filteredRows, sort.field, sort.dir, tagNames),
+    /*
+      ⛔ tagNames 必须进依赖：改了标签名之后排序结果会变，
+      不重算的话列表还停在旧顺序上 —— 而改名明明已经生效了。
+    */
+    [filteredRows, sort, tagNames],
   );
 
   /* ---------- 列级筛选的操作 ---------- */
@@ -524,6 +538,12 @@ export default function App() {
   };
 
   /** 类型定义表改名/调色/增删（与标签同构：改一处，所有行一起变） */
+  /*
+    类型改名 / 改色。
+    ⛔ 必须立刻重读：原来这里没有 refresh，只靠 2s 轮询兜 ——
+    改名之后下拉里、筛选摘要里、列表里全是旧名字，要等两秒才变，
+    看着像点了没反应。（删类型、删标签、改标签那边都有 refresh，就这里漏了。）
+  */
   const setTypeDef = (id: string, patch: { name?: string; color?: string }) =>
     withErr(async () => {
       if (!cfg) return;
@@ -531,6 +551,7 @@ export default function App() {
         ...st,
         typeDefs: (st.typeDefs || []).map((d) => (d.id === id ? { ...d, ...patch } : d)),
       }));
+      await refresh();
     })();
 
   const createType = (name: string, color: string) =>
@@ -552,6 +573,11 @@ export default function App() {
           : (TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[defs.length % TAG_COLORS.length]);
         return { ...st, typeDefs: [...defs, { id, name, color: want }] };
       });
+      /*
+        同上：新建完必须立刻重读，否则下拉里要等两秒才出现这个类型，
+        而这两秒里用户已经按了回车却什么都没看到，会以为没建成。
+      */
+      await refresh();
     })();
 
   /*
@@ -878,14 +904,33 @@ ${dir}
   const doAddTag = (name: string, color: string) =>
     withErr(async () => {
       if (!cfg || !name.trim()) return;
+      const nm = name.trim();
+      /*
+        ⛔ 同名时必须**说出来**：原来直接 return null（不写盘也不提示），
+        用户敲完名字按回车，输入框清空了而下拉里什么都没多 ——
+        看着就像"新建这个功能坏了"。同名是用户的输入问题，得让他知道。
+      */
+      let made = false;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
-        if (defs.some((d) => d.name === name.trim())) return null;   // 同名不重复建
+        made = false;
+        if (defs.some((d) => d.name === nm)) return null;   // 同名不重复建
+        /*
+          颜色同样要去重（与新建类型同一判据）：
+          传进来的色已被占用时取第一个没被占用的 ——
+          连着建几个标签却拿到同一个颜色，颜色就失去了"一眼区分"的作用。
+        */
+        const used = new Set(defs.map((d) => d.color));
+        const want = (color && !used.has(color))
+          ? color
+          : (TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[defs.length % TAG_COLORS.length]);
         const id = `tg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-        defs.push({ id, name: name.trim(), color });
+        defs.push({ id, name: nm, color: want });
+        made = true;
         return { ...st, tagDefs: defs };
       });
       await refresh();
+      if (!made) ctx.toast(`已经有同名标签「${nm}」了`, 'err');
     })();
 
   const doSetTagColor = (id: string, color: string) =>
