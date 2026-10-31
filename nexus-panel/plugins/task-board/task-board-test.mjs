@@ -2817,6 +2817,49 @@ t('审查：列表与详情都把 store 传给 lockOf', (() => {
     && app.indexOf('lockOf(task, tasks, taskStore)') >= 0;
 })());
 
+
+/* ============================================================ 审查：通知在自定义流程下永远不触发（本轮） */
+
+/*
+ * **通知的触发状态写死 'review'**：
+ * 自定义流程里"审查"那一步可能叫别的（'待审'、's4'…），
+ * 于是配了 notifyUrl 却**永远收不到通知**，而且没有任何提示 ——
+ * 用户只会在对端排查，想不到是这边压根没发。
+
+ * 做成配置 notifyStatus（默认 'review'，老配置语义不变）。
+ */
+t('审查：通知触发状态走配置（不写死 review）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("to === (cfg.notifyStatus || 'review')") >= 0
+    && app.indexOf("if (to === 'review') await S.notifyWebhook") < 0;
+})());
+
+t('审查：notifyStatus 有默认值（老配置迁移后仍是 review）', (() => {
+  const c = normalizeConfig({ projects: [{ id: 'p1', name: 'x', dataDir: '/a', docsDir: '' }], currentId: 'p1' });
+  return c.notifyStatus === 'review';
+})());
+
+t('审查：配置里已有的 notifyStatus 会被保留', (() => {
+  const c = normalizeConfig({
+    projects: [{ id: 'p1', name: 'x', dataDir: '/a', docsDir: '' }],
+    currentId: 'p1',
+    notifyStatus: 's4',
+  });
+  return c.notifyStatus === 's4';
+})());
+
+/* 下发给 Rust：两边必须同一个判据，否则 AI 通道与界面行为不一致 */
+t('审查：notifyStatus 一并下发给 Rust', (() => {
+  const st = fs.readFileSync(path.join(dir, 'lib', 'store.ts'), 'utf8');
+  return st.indexOf("notifyStatus: cfg.notifyStatus || 'review',") >= 0;
+})());
+
+/* 触发状态变了要重启服务（它是在启动时下发的） */
+t('审查：改触发状态会重启 HTTP 服务', (() => {
+  const st = fs.readFileSync(path.join(dir, 'Settings.tsx'), 'utf8');
+  return st.indexOf('next.notifyStatus !== prev.notifyStatus') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -247,6 +247,8 @@ export interface TbConfig {
   token: string;
   autoStart: boolean;
   notifyUrl: string;
+  /** 流转到哪个状态时发通知（默认 review）。自定义流程下可改 */
+  notifyStatus: string;
 }
 
 /** 新项目 id：p1 / p2… */

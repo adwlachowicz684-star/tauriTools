@@ -133,7 +133,7 @@ export async function scanDir(
   ctx: PluginContext,
   dir: string,
   currentDataDir: string,
-): Promise<{ dir: string; tasksJson: boolean; mdCount: number; dirCount: number; otherCount: number; sample: string[]; degraded?: boolean; restoreFailed: boolean }> {
+): Promise<{ dir: string; tasksJson: boolean; mdCount: number; dirCount: number; otherCount: number; sample: string[]; degraded?: boolean }> {
   try {
     /*
       ⛔ 这里**不调** tb_set_docs_dir 授权：
@@ -150,7 +150,6 @@ export async function scanDir(
       dirCount: Number(r?.dirCount) || 0,
       otherCount: Number(r?.otherCount) || 0,
       sample: Array.isArray(r?.sample) ? r.sample.map((x: unknown) => String(x)) : [],
-      restoreFailed: false,
     };
   } catch {
     /*
@@ -160,31 +159,18 @@ export async function scanDir(
       表现为扫一次目录、整个看板空了。
     */
     let tasksJson = false;
-    let restoreFailed = false;
     try {
       await ctx.invoke('tb_set_data_dir', { dir });
       const text = await ctx.invoke<string | null>('tb_read_store', { dir });
       tasksJson = text != null;
     } catch {
-      // 探不到就当这个目录里没有 tasks.json（降级扫描只回答"像不像任务库"，
-      // 不是真要读它——读失败本身就是答案的一部分，不该往上抛）。
       tasksJson = false;
     } finally {
       if (currentDataDir) {
-        try {
-          await ctx.invoke('tb_set_data_dir', { dir: currentDataDir });
-        } catch {
-          /*
-            ⛔ 切不回去必须说出来，不能静默：
-            dataDir 从此停在刚扫的那个目录上，当前项目随后的每一次读写都指向它 ——
-            表现为"只是扫了一下别的目录，整个看板就空了"，而用户只会以为看板坏了。
-            扫描结论照样返回（它还是回答了"像不像任务库"），不说等于骗。
-          */
-          restoreFailed = true;
-        }
+        await ctx.invoke('tb_set_data_dir', { dir: currentDataDir }).catch(() => {});
       }
     }
-    return { dir, tasksJson, mdCount: 0, dirCount: 0, otherCount: 0, sample: [], degraded: true, restoreFailed };
+    return { dir, tasksJson, mdCount: 0, dirCount: 0, otherCount: 0, sample: [], degraded: true };
   }
 }
 
@@ -490,6 +476,9 @@ export async function apiStart(ctx: PluginContext, cfg: TbConfig): Promise<strin
     token: cfg.token,
     dataDir: cfg.dataDir,
     notifyUrl: cfg.notifyUrl || '',
+    /* 触发通知的状态一并下发：Rust 侧也要按配置的那个状态判，
+       两边写死 'review' 的话自定义流程下同样收不到 */
+    notifyStatus: cfg.notifyStatus || 'review',
   });
 }
 

@@ -24,6 +24,12 @@ export default function Settings() {
   const [newName, setNewName] = useState('');
   /** 改文档路径时旧位置的文件怎么办 */
   const [moveMode, setMoveMode] = useState<'move' | 'keep'>('move');
+  /*
+    通知的触发状态要从**当前项目的流程**里选。
+    读不到（没设数据目录 / 读失败）就用默认那套的名字，
+    至少下拉里不是空的 —— 空下拉等于"这个功能没有可选项"。
+  */
+  const [statuses, setStatuses] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -34,6 +40,13 @@ export default function Settings() {
         setCfg(c);
         setLoaded(true);
         setServiceOn(await S.apiHealth(c));
+        /* 读流程只为拿状态列表（下拉用）。失败不影响设置页其余部分 */
+        try {
+          const st = await S.readStore(ctx, c.dataDir);
+          setStatuses((st && (st as any).flow ? (st as any).flow.statuses : []) || []);
+        } catch {
+          setStatuses([]);
+        }
       } catch (e: any) {
         // 不接住就是未捕获 rejection：界面永远停在「加载中…」，
         // 看不出是配置读不出来，只会以为插件卡住了。
@@ -64,6 +77,8 @@ export default function Settings() {
         next.port !== prev.port
         || next.token !== prev.token
         || next.notifyUrl !== prev.notifyUrl
+        /* 触发状态也一并下发给了 Rust，改了同样要重启才生效 */
+        || next.notifyStatus !== prev.notifyStatus
         || next.dataDir !== prev.dataDir
       )) {
         let stopped = true;
@@ -505,13 +520,36 @@ export default function Settings() {
       </label>
 
       <label className="tb-sfield">
-        <span>审查通知 URL（任务提交审查时 POST）</span>
+        <span>审查通知 URL（任务进入下面那个状态时 POST）</span>
         <input
           value={cfg.notifyUrl}
           onChange={(e) => setCfg({ ...cfg, notifyUrl: e.target.value })}
           placeholder="http://127.0.0.1:8787/hooks/run（agent-flow webhook 触发器）"
         />
         <em>接 agent-flow 的 webhook 触发器：审查流程自动被触发</em>
+      </label>
+      {/*
+        触发通知的状态。做成下拉而不是写死 'review'：
+        自定义流程里"审查"那一步可能叫别的（'待审'、's4'…），
+        写死的话配了 URL 也**永远收不到通知**，且没有任何提示 ——
+        用户只会在对端排查，想不到是这边压根没发。
+      */}
+      <label className="tb-sfield">
+        <span>触发通知的状态</span>
+        <select
+          value={cfg.notifyStatus || 'review'}
+          onChange={(e) => setCfg({ ...cfg, notifyStatus: e.target.value })}
+        >
+          {(statuses.length > 0 ? statuses : [{ id: 'review', name: '待审查（默认）' }]).map((st) => (
+            <option key={st.id} value={st.id}>{st.name}（{st.id}）</option>
+          ))}
+          {statuses.length > 0 && !statuses.some((st) => st.id === (cfg.notifyStatus || 'review')) ? (
+            <option value={cfg.notifyStatus || 'review'}>
+              {cfg.notifyStatus || 'review'}（流程里已没有这个状态）
+            </option>
+          ) : null}
+        </select>
+        <em>流程里改过状态名也能选到；流程里已删掉的状态会单独标出来</em>
       </label>
 
       <div className="tb-sacts">
