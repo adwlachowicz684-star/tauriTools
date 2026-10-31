@@ -943,11 +943,13 @@ t('自查：类型列的下拉必须拿到 typeIds 与类型相关回调（漏�
   const i = app.indexOf('<ColFilterPop');
   const call = app.slice(i, app.indexOf('/>', i));
   return [
-    'colFilterValues(c.field, allRows, statusIds, typeIds)',
+    'statusIds, typeIds,',          // 现在还多传了 tagIds（换行写法）
+    'tagDefs.map((d) => d.id)',
     'typeDefs={typeDefs}',
     'onCreateType={onCreateType}',
     'onTypeColor={onTypeColor}',
     'onRemoveType={onRemoveType}',
+    'onRenameType={onRenameType}',
   ].every((needle) => call.indexOf(needle) >= 0);
 })());
 
@@ -1851,6 +1853,111 @@ t('标题列：不再夹带标签（标签有独立一列，重复显示会挤�
   const j = app.indexOf("case 'status': {", i);
   const seg = app.slice(i, j);
   return seg.indexOf('TagChip') < 0 && seg.indexOf('tb-ltags') < 0;
+})());
+
+
+/* ============================================================ 筛选面板：标签增改删（本轮） */
+
+/*
+ * 标签的候选原来**只从数据里去重**（allTags），
+ * 于是刚新建、还没挂到任何任务上的标签在下拉里选不到 ——
+ * 那个标签等于建不出来（而它明明已经在定义表里了）。
+ */
+t('标签筛选：候选包含定义表里还没挂上任务的新标签', (() => {
+  const rows = [{ task: normalizeTask({ id: '1', tags: ['tg_a'] }), depth: 0, path: [] }];
+  const v = colFilterValues('tags', rows, [], [], ['tg_a', 'tg_new']);
+  return v.indexOf('tg_new') >= 0 && v.indexOf('tg_a') >= 0;
+})());
+
+/*
+ * ⛔ 反过来也不能只取定义表：任务上可能是个裸名字
+ * （老数据、或 AI 直接写进 JSON 的），没建过定义 ——
+ * 只取定义表的话那些任务就永远筛不到。
+ */
+t('标签筛选：候选也包含数据里的裸标签（AI 直接写进 JSON 的那种）', (() => {
+  const rows = [{ task: normalizeTask({ id: '1', tags: ['性能'] }), depth: 0, path: [] }];
+  const v = colFilterValues('tags', rows, [], [], ['tg_a']);
+  return v.indexOf('性能') >= 0;
+})());
+
+t('标签筛选：定义表优先，且不重复', (() => {
+  const rows = [
+    { task: normalizeTask({ id: '1', tags: ['tg_b'] }), depth: 0, path: [] },
+    { task: normalizeTask({ id: '2', tags: ['tg_a'] }), depth: 0, path: [] },
+  ];
+  const v = colFilterValues('tags', rows, [], [], ['tg_a', 'tg_b']);
+  return v.join(',') === 'tg_a,tg_b';
+})());
+
+/*
+ * 显示名映射：任务上存的是 id（tg_xxxx），
+ * 下拉里与筛选摘要都得显示名字 —— 不映射的话用户看到的
+ * 是一串没人看得懂的 id，而且改名之后 id 和名字会差得更远。
+ */
+t('标签：筛选面板里显示名字而不是原始 id', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("if (field === 'tags') return defs?.find((d) => d.id === v)?.name || v;") >= 0;
+})());
+
+/*
+ * ⛔ 定义表必须**按列取**：原来 filterSummary 一律传 typeDefs，
+ * 于是标签列的筛选摘要显示成原始 id，
+ * 而同一个筛选在下拉面板里显示的是名字 —— 两处说法不一样。
+ */
+t('标签：筛选摘要用的是标签定义表（不是类型定义表）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("const defs = col.field === 'tags' ? tagDefs : typeDefs;") >= 0
+    && app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [])') >= 0;
+})());
+
+/*
+ * 删标签必须**连带把任务上的摘掉**。
+ * 只删定义的话：任务上还留着那个 id → chip 显示成原始 id，
+ * 而且它会从数据里继续冒出来（"删了又复活"），
+ * 这时的标签既改不了名也改不了色（没有定义可改）。
+ */
+t('标签：删除会连带从任务上摘掉（否则显示成原始 id 且删了又复活）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const doRemoveTag =');
+  const seg = app.slice(i, app.indexOf('改字段（说明', i));
+  return seg.indexOf('tags: t.tags.filter((x) => x !== id)') >= 0
+    && seg.indexOf('tagDefs: defs') >= 0;
+})());
+
+/*
+ * 正在用这个标签做筛选时要一并清掉：
+ * 留着就是"筛一个已经不存在的标签"，命中数变成 0，
+ * 而界面上分不清是"没有符合的任务"还是"筛的东西没了"。
+ */
+t('标签：删掉正在筛选的标签会顺手清掉那个筛选', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const doRemoveTag =');
+  const seg = app.slice(i, app.indexOf('改字段（说明', i));
+  return seg.indexOf('setColFilters((prev) => {') >= 0
+    && seg.indexOf('delete next.tags;') >= 0;
+})());
+
+/* 增改删三件事在面板上都要有入口，且标签与类型同构 */
+t('标签：面板上有新建 / 改名 / 改色 / 删除四个入口', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('onCreateTag={onCreateTag}') >= 0
+    && app.indexOf('onRenameTag={onRenameTag}') >= 0
+    && app.indexOf('onRemoveTag={onRemoveTag}') >= 0
+    && app.indexOf('onTagColor={onTagColor}') >= 0
+    && app.indexOf('onRenameTag={doRenameTag}') >= 0
+    && app.indexOf('onRemoveTag={doRemoveTag}') >= 0;
+})());
+
+/*
+ * 哨兵值（「未分类」）不该给改名/删除按钮 ——
+ * 它没有定义可改，点了"删"会弹确认框然后什么都没发生，
+ * 而用户已经以为自己删掉了什么。
+ */
+t('标签/类型：哨兵值不显示改名与删除按钮', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const pop = app.slice(app.indexOf('function ColFilterPop'), app.indexOf("if (col.kind === 'text') {"));
+  return pop.indexOf('(isTag || isType) && !isSentinel(v) ? (') >= 0
+    && pop.indexOf('(isType ? onRemoveType : onRemoveTag)') >= 0;
 })());
 
 /* ---------------- 汇总 ---------------- */

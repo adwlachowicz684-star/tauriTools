@@ -887,6 +887,69 @@ ${dir}
     })();
 
   /*
+    标签改名。只改**定义**（任务上存的是 id），
+    所以改一处、所有挂这个标签的行一起变。
+
+    ⛔ 不能去改任务上的 id：那样等于换了个标签，
+    原名和新名会同时存在，而界面上看不出它们原本是一个。
+  */
+  const doRenameTag = (id: string, name: string) =>
+    withErr(async () => {
+      if (!cfg || !id || !name.trim()) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
+        const idx = defs.findIndex((d) => d.id === id);
+        /* 定义不存在（任务上写的是裸名字）→ 补一条，否则改名无处可落 */
+        if (idx < 0) defs.push({ id, name: name.trim(), color: TAG_COLORS[6] });
+        else defs[idx] = { ...defs[idx], name: name.trim() };
+        return { ...st, tagDefs: defs };
+      });
+      await refresh();
+    })();
+
+  /*
+    删标签：删定义，并**从所有任务上摘掉**。
+
+    ⛔ 只删定义不摘任务是最坏的一种：任务上还留着那个 id，
+    而定义没了 → chip 显示成原始 id（tg_xxxx），
+    筛选下拉里它还会从数据里冒出来（"删了又复活"），
+    而且这时的标签既改不了名也改不了色（没有定义可改）。
+  */
+  const doRemoveTag = (id: string) =>
+    withErr(async () => {
+      if (!cfg || !id) return;
+      const nm = (store ? store.tagDefs : []).find((d) => d.id === id)?.name || id;
+      let n = 0;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = (Array.isArray(st.tagDefs) ? st.tagDefs : []).filter((d) => d.id !== id);
+        const tasks = (st.tasks || []).map((t) => {
+          if (!Array.isArray(t.tags) || t.tags.indexOf(id) < 0) return t;
+          n += 1;
+          return { ...t, tags: t.tags.filter((x) => x !== id) };
+        });
+        return { ...st, tagDefs: defs, tasks };
+      });
+      /*
+        正在用这个标签做筛选的话要一并清掉：
+        留着就是"筛一个已经不存在的标签" ——
+        命中数变成 0，而界面上分不清是"没有符合的任务"还是"筛的东西没了"。
+      */
+      setColFilters((prev) => {
+        const f = prev.tags;
+        if (!f || f.values.indexOf(id) < 0) return prev;
+        const values = f.values.filter((x) => x !== id);
+        if (values.length === 0) {
+          const next: Partial<Record<SortField, ColFilter>> = { ...prev };
+          delete next.tags;
+          return next;
+        }
+        return { ...prev, tags: { ...f, values } };
+      });
+      await refresh();
+      ctx.toast(`已删标签「${nm}」${n > 0 ? `，并从 ${n} 条任务上摘掉` : ''}`, 'ok');
+    })();
+
+  /*
     改字段（说明 / 前置）。
 
     与流转分开：流转走 applyTransition（有状态机校验、要写历史），
@@ -1123,7 +1186,7 @@ ${dir}
             const f = colFilters[c.field] as ColFilter;
             return (
               <span key={c.field} className="tb-chip">
-                {c.label}：{filterSummary(c, f, typeDefs)}
+                {c.label}：{filterSummary(c, f, typeDefs, store ? store.tagDefs : [])}
                 <button
                   type="button"
                   className="tb-chip-x"
@@ -1257,6 +1320,8 @@ ${dir}
           tagDefs={store.tagDefs}
           onCreateTag={doAddTag}
           onTagColor={doSetTagColor}
+          onRenameTag={doRenameTag}
+          onRemoveTag={doRemoveTag}
           checked={checked}
           onCheck={(id, on) => setChecked((prev) => {
             const next = new Set(prev);
@@ -2585,6 +2650,11 @@ function optionLabel(
   */
   if (field === 'type') return v === NOTYPE ? '未分类' : (typeName(defs, v) || v);
   if (field === 'assignee') return v || '未认领';
+  /*
+    标签同理：任务上存的是 **id**（tg_xxxx），直接显示没人看得懂。
+    认不出来就退回 id —— 至少看得见这里挂了个东西（AI 直接写进 JSON 的裸标签就是这种）。
+  */
+  if (field === 'tags') return defs?.find((d) => d.id === v)?.name || v;
   return v;
 }
 
@@ -2595,9 +2665,17 @@ function optionLabel(
  * chip 上写 "dev" 而筛选面板里写 "开发" —— 同一个筛选两处说法不一样，
  * 会让人以为那是两个不同的东西。
  */
-function filterSummary(col: ListColumn, f: ColFilter, typeDefs?: TagDef[]): string {
+function filterSummary(
+  col: ListColumn, f: ColFilter, typeDefs?: TagDef[], tagDefs?: TagDef[],
+): string {
   if (col.kind === 'enum') {
-    return f.values.map((v) => optionLabel(col.field, v, typeDefs)).join('、');
+    /*
+      ⛔ 定义表要**按列取**：原来一律传 typeDefs，
+      于是标签列的筛选摘要显示成原始 id（tg_xxxx）——
+      而同一个筛选在下拉面板里显示的是名字，两处说法不一样。
+    */
+    const defs = col.field === 'tags' ? tagDefs : typeDefs;
+    return f.values.map((v) => optionLabel(col.field, v, defs)).join('、');
   }
   if (col.kind === 'text') return f.text.trim();
   const lo = f.min.trim();
@@ -2618,8 +2696,8 @@ function filterSummary(col: ListColumn, f: ColFilter, typeDefs?: TagDef[]): stri
  */
 function ColFilterPop({
   col, filter, options, onChange, onClear, anchorRight,
-  tagDefs, onCreateTag, onTagColor,
-  typeDefs, onCreateType, onTypeColor, onRemoveType,
+  tagDefs, onCreateTag, onTagColor, onRenameTag, onRemoveTag,
+  typeDefs, onCreateType, onTypeColor, onRemoveType, onRenameType,
 }: {
   col: ListColumn;
   filter: ColFilter;
@@ -2633,12 +2711,18 @@ function ColFilterPop({
   onCreateTag?: (name: string, color: string) => void;
   /** 改某个标签的颜色 */
   onTagColor?: (id: string, color: string) => void;
+  /** 标签改名（改的是定义：所有挂它的行一起变） */
+  onRenameTag?: (id: string, name: string) => void;
+  /** 删标签：调用方负责把任务上的这个标签摘掉，这里只管问一句 */
+  onRemoveTag?: (id: string) => void;
   /** 类型定义。只任务类型列用得到 —— 与标签同构，同样可增删改色 */
   typeDefs?: TagDef[];
   onCreateType?: (name: string, color: string) => void;
   onTypeColor?: (id: string, color: string) => void;
   /** 删类型。调用方负责先把挂着的任务清空，这里只管问一句 */
   onRemoveType?: (id: string) => void;
+  /** 类型改名（与标签同构：改的是定义） */
+  onRenameType?: (id: string, name: string) => void;
 }) {
   const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
   const [newName, setNewName] = useState('');
@@ -2648,6 +2732,8 @@ function ColFilterPop({
   /* 两种列共用同一套"定义表 + 改色 + 新建"的交互 */
   const defs = isType ? (typeDefs || []) : (tagDefs || []);
   const colorOf = (id: string) => defs.find((d) => d.id === id)?.color || '';
+  /* 正在改名的那一条（'' = 没在改）。标签与类型共用同一套输入 */
+  const [editing, setEditing] = useState('');
   /*
     「未分类」是哨兵值，不是定义表里的一条。
     给它摆上调色和删除按钮是骗人：改色改不到任何东西（没有定义可改），
@@ -2722,15 +2808,63 @@ function ColFilterPop({
                     ))}
                   </span>
                 ) : null}
-                {isType && onRemoveType && !isSentinel(v) ? (
+                {/*
+                  改名 / 删除：标签与类型**同构**，共用一套。
+
+                  摆在这儿而不是只放在行内单元格里 ——
+                  行内那个下拉是"给这一条改"，而这里是"改这个标签本身"；
+                  顺手能在这里做，就不用为了改个名字先去找某一行挂着它。
+                */}
+                {(isTag || isType) && !isSentinel(v) ? (
+                  editing === v ? (
+                    <input
+                      className="tb-lpop-rename"
+                      autoFocus
+                      defaultValue={optionLabel(col.field, v, defs)}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={(e) => {
+                        const nv = e.target.value.trim();
+                        if (nv && nv !== optionLabel(col.field, v, defs)) {
+                          if (isType) onRenameType?.(v, nv);
+                          else onRenameTag?.(v, nv);
+                        }
+                        setEditing('');
+                      }}
+                      onKeyDown={(e) => {
+                        if (isComposing(e.nativeEvent)) return;
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                        if (e.key === 'Escape') setEditing('');
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="tb-lpop-edit"
+                      title={`给这个${isType ? '类型' : '标签'}改名`}
+                      onClick={() => setEditing(v)}
+                    >
+                      ✎
+                    </button>
+                  )
+                ) : null}
+                {(isTag || isType) && !isSentinel(v)
+                  && (isType ? onRemoveType : onRemoveTag) ? (
                   <button
                     type="button"
                     className="tb-act sm warn tb-lpop-del"
-                    title="删除这个类型（挂在这个类型上的任务会变成「未分类」）"
+                    title={isType
+                      ? '删除这个类型（挂在这个类型上的任务会变成「未分类」）'
+                      : '删除这个标签（会从所有挂它的任务上摘掉）'}
                     onClick={() => {
                       const nm = optionLabel(col.field, v, defs);
-                      if (window.confirm(`删除类型「${nm}」？\n\n挂在这个类型上的任务会变成「未分类」。`)) {
-                        onRemoveType(v);
+                      if (isType) {
+                        if (window.confirm(`删除类型「${nm}」？\n\n挂在这个类型上的任务会变成「未分类」。`)) {
+                          onRemoveType!(v);
+                        }
+                      } else if (window.confirm(
+                        `删除标签「${nm}」？\n\n会从所有挂这个标签的任务上摘掉。`,
+                      )) {
+                        onRemoveTag!(v);
                       }
                     }}
                   >
@@ -2890,6 +3024,8 @@ function ListView({
   tagDefs,
   onCreateTag,
   onTagColor,
+  onRenameTag,
+  onRemoveTag,
   checked,
   onCheck,
   onBatchStatus,
@@ -2938,6 +3074,10 @@ function ListView({
   tagDefs: TagDef[];
   onCreateTag: (name: string, color: string) => void;
   onTagColor: (id: string, color: string) => void;
+  /** 标签改名（改定义，所有挂它的行一起变） */
+  onRenameTag: (id: string, name: string) => void;
+  /** 删标签：连带把任务上的这个标签摘掉 */
+  onRemoveTag: (id: string) => void;
   checked: Set<string>;
   onCheck: (id: string, on: boolean) => void;
   /** 批量改状态（走流转规则，走不通的跳过并报数） */
@@ -3374,17 +3514,23 @@ function ListView({
                     不传的话会退回默认六个，用户自定义的类型在下拉里根本选不到 ——
                     那个类型等于建不出来（而它明明已经出现在列表里了）。
                   */
-                  options={colFilterValues(c.field, allRows, statusIds, typeIds)}
+                  options={colFilterValues(
+                    c.field, allRows, statusIds, typeIds,
+                    tagDefs.map((d) => d.id),
+                  )}
                   onChange={(nf) => onFilter(c.field, nf)}
                   onClear={() => onClearFilter(c.field)}
                   anchorRight={ci >= shown.length - 3}
                   tagDefs={tagDefs}
                   onCreateTag={onCreateTag}
                   onTagColor={onTagColor}
+                  onRenameTag={onRenameTag}
+                  onRemoveTag={onRemoveTag}
                   typeDefs={typeDefs}
                   onCreateType={onCreateType}
                   onTypeColor={onTypeColor}
                   onRemoveType={onRemoveType}
+                  onRenameType={onRenameType}
                 />
               ) : null}
               {/*
