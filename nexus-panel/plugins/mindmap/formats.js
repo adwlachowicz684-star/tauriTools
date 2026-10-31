@@ -1838,6 +1838,20 @@ const NODE_STYLE_KEYS = [
   'node-line-stroke', 'node-line-width', 'color', 'font-size',
   'font-family', 'text-align', 'vertical-align',
   'font-weight', 'font-style', 'font-strikethrough',
+  /*
+   * BUG 180：下划线（`data.underline`）。
+   *
+   * 它是 xmind.js 读 XMind 的 `fo:text-decoration` 时落下的（写侧再写回去，
+   * 成对存在，见 xmind.js 那两处注释）—— 所以 .xmind 与 .json 都带得走。
+   * 但**五种交换格式一个都没有对应属性**：FreeMind 的 `<font>` 只有
+   * NAME/SIZE/BOLD/ITALIC，OPML 只有 text/_note，Mermaid / PlantUML /
+   * Markdown 更没有。实测产物里连 "underline" 字样都没有。
+   *
+   * 而它不在这个数组里 → `exchangeLoss` 报 style:0 / nodes:0 → 导出时
+   * 那句「装不下…」**整句不出现**，界面只说「已保存」。与 BUG 123 / 127 /
+   * 152 是同一个洞：数据收进来了，丢失统计没同步。
+   */
+  'underline',
 ];
 
 /**
