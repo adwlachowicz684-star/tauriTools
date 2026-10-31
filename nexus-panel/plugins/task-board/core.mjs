@@ -585,7 +585,19 @@ export function filterTasksByColumns(rows, filters, q) {
     }
     if (kw) {
       const t = row.task;
-      const hay = `${t.id} ${t.title} ${t.detail} ${t.summary || ''}`.toLowerCase();
+      /*
+        ⛔ 分组名**必须在搜索范围里**：
+        列表里明明有一列显示着"登录"，在上面敲"登录"却搜不到 ——
+        那是最让人怀疑的一种"搜不到"（看得见的东西搜不着）。
+
+        分组是自由文本，用户敲的就是那个词；
+        而它这一列虽然能筛（列头漏斗），但顶栏这个框是更常用的入口。
+
+        ⛔ 标签**不进**搜索：任务上存的是 id（tg_xxxx），
+        搜 id 没有意义；要按标签找请用标签列上的筛选（那儿显示的是名字）。
+      */
+      const hay = `${t.id} ${t.title} ${t.detail} ${t.summary || ''} ${t.group || ''}`
+        .toLowerCase();
       if (hay.indexOf(kw) < 0) return false;
     }
     return true;
