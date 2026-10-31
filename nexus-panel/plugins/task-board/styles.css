@@ -1143,6 +1143,14 @@ body.tb-col-resizing {
   color: var(--accent);
 }
 
+.tb-lpop-warn {
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  font-size: var(--fs-micro);
+}
+
 .tb-lpop-rename {
   flex: 1 1 auto;
   min-inline-size: 0;

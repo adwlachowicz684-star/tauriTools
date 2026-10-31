@@ -471,6 +471,19 @@ export default function App() {
           所以调用方会把这种情况下的勾选框置灰（不是点了才提示）。
         */
         if (LIST_COLUMNS.length - next.length <= 1) return prev;
+        /*
+          ⛔ 藏掉**正在排序的那一列**时，必须把排序挪走：
+          排序只能点列头改，列头随列一起消失了 ——
+          于是顶栏写着"排序：分组 ↓"，而列表里根本没有分组列，
+          顺序看着像随机，且没有任何入口能改它（只能去点别的列头撞运气）。
+
+          自动落到默认排序（更新 ↓）并说明，比留一个不可解释的顺序要好。
+        */
+        if (sort.field === field) {
+          setSort({ field: 'updatedAt', dir: 'desc' });
+          persist('sort', { field: 'updatedAt', dir: 'desc' });
+          ctx.toast(`「${sortLabel(field as SortField)}」列已隐藏，排序改为「更新 ↓」`, 'ok');
+        }
         next.push(field);
       }
       persist('colHidden', next);
@@ -876,36 +889,51 @@ ${dir}
   const doBatchType = (ids: string[], typeId: string) =>
     withErr(async () => {
       if (!cfg || ids.length === 0) return;
+      /*
+        ⛔ 报数要用**实际命中数**，不能用 ids.length：
+        勾选到写盘之间任务可能已被别的通道删掉（AI 经 API 删、或另一窗口），
+        那时 toast 说"已把 3 条改了"而实际只改了 1 条 ——
+        这种报数撒谎比不报更糟，因为没人会去核对。
+      */
+      let hit = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
+        let k = 0;
         /* 改的是任务，要推进 updatedAt（否则"更新"列不动，看着像没改） */
-        return {
-          ...st,
-          tasks: st.tasks.map((t) => (
-            want.has(t.id) ? { ...t, type: typeId, updatedAt: Date.now() } : t
-          )),
-        };
+        const tasks = st.tasks.map((t) => {
+          if (!want.has(t.id)) return t;
+          k += 1;
+          return { ...t, type: typeId, updatedAt: Date.now() };
+        });
+        hit = k;
+        return { ...st, tasks };
       });
       setChecked(new Set());
       await refresh();
-      ctx.toast(`已把 ${ids.length} 条的类型改为「${typeId === NOTYPE ? '未分类' : typeName(typeDefs, typeId)}」`, 'ok');
+      if (hit === 0) ctx.toast('没有一条改成功（它们可能已被删除）', 'err');
+      else ctx.toast(`已把 ${hit} 条的类型改为「${typeId === NOTYPE ? '未分类' : typeName(typeDefs, typeId)}」`, 'ok');
     })();
 
   const doBatchPriority = (ids: string[], prio: string) =>
     withErr(async () => {
       if (!cfg || ids.length === 0 || !prio) return;
+      /* 同上：报数用实际命中数，不用 ids.length */
+      let hit = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
-        return {
-          ...st,
-          tasks: st.tasks.map((t) => (
-            want.has(t.id) ? { ...t, priority: prio as Priority, updatedAt: Date.now() } : t
-          )),
-        };
+        let k = 0;
+        const tasks = st.tasks.map((t) => {
+          if (!want.has(t.id)) return t;
+          k += 1;
+          return { ...t, priority: prio as Priority, updatedAt: Date.now() };
+        });
+        hit = k;
+        return { ...st, tasks };
       });
       setChecked(new Set());
       await refresh();
-      ctx.toast(`已把 ${ids.length} 条的优先级改为 ${prio}`, 'ok');
+      if (hit === 0) ctx.toast('没有一条改成功（它们可能已被删除）', 'err');
+      else ctx.toast(`已把 ${hit} 条的优先级改为 ${prio}`, 'ok');
     })();
 
   /*
@@ -915,14 +943,34 @@ ${dir}
   const doBatchDelete = (ids: string[]) =>
     withErr(async () => {
       if (!cfg || ids.length === 0) return;
-      if (!window.confirm(`删除选中的 ${ids.length} 条任务？\n\n不可撤销。`)) return;
+      /*
+        删之前要说清两件事：**条数**，以及**有多少条任务在依赖它们**。
+
+        ⛔ 依赖不说出来是坑：删掉之后那些任务的前置变成"已被删除"，
+        永远解锁不了（而界面上只显示一把锁，不说清是哪个前置没了）。
+        用户是在不知情的情况下制造了一批永远卡住的任务。
+      */
+      const want = new Set(ids);
+      const broken = (store ? store.tasks : []).filter(
+        (t) => !want.has(t.id) && (t.deps || []).some((d) => want.has(d)),
+      );
+      const msg = `删除选中的 ${ids.length} 条任务？\n\n不可撤销。`
+        + (broken.length > 0
+          ? `\n\n另有 ${broken.length} 条任务把它们列为前置，删除后那些任务会永远卡住：\n`
+            + broken.slice(0, 5).map((t) => `· ${t.id}`).join('\n')
+            + (broken.length > 5 ? `\n…等 ${broken.length} 条` : '')
+          : '');
+      if (!window.confirm(msg)) return;
+      let hit = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const want = new Set(ids);
-        return { ...st, tasks: st.tasks.filter((t) => !want.has(t.id)) };
+        const before = st.tasks.length;
+        const tasks = st.tasks.filter((t) => !want.has(t.id));
+        hit = before - tasks.length;
+        return { ...st, tasks };
       });
       setChecked(new Set());
       await refresh();
-      ctx.toast(`已删除 ${ids.length} 条`, 'ok');
+      ctx.toast(`已删除 ${hit} 条`, 'ok');
     })();
 
   /*
@@ -1091,6 +1139,24 @@ ${dir}
   const doDelete = (id: string) =>
     withErr(async () => {
       if (!cfg) return;
+      /*
+        与批量删除同一判据：**有几条任务把它列为前置**要说出来。
+        删掉之后那些任务的前置变成"已被删除"，永远解锁不了 ——
+        用户是在不知情的情况下制造了一批永远卡住的任务，
+        而界面上只显示一把锁，不说清是哪个前置没了。
+      */
+      const dependents = (store ? store.tasks : []).filter(
+        (t) => t.id !== id && (t.deps || []).indexOf(id) >= 0,
+      );
+      if (dependents.length > 0) {
+        const ok = window.confirm(
+          `删除 ${id}？\n\n有 ${dependents.length} 条任务把它列为前置，`
+          + '删除后那些任务会永远卡住：\n'
+          + dependents.slice(0, 5).map((t) => `· ${t.id}`).join('\n')
+          + (dependents.length > 5 ? `\n…等 ${dependents.length} 条` : ''),
+        );
+        if (!ok) return;
+      }
       await S.deleteTask(ctx, cfg.dataDir, id);
       setDetailId(null);
       await refresh();
@@ -3113,6 +3179,14 @@ function ColFilterPop({
           onChange={(e) => set({ max: e.target.value })}
         />
       </div>
+      {/*
+        起止填反了要明确说出来：那样命中数恒为 0，
+        而界面上只显示"0 / 12" —— 分不清是"这段时间没有任务"
+        还是"我把日期填反了"，后者根本不会有人往那个方向想。
+      */}
+      {filter.min && filter.max && filter.min > filter.max ? (
+        <div className="tb-lpop-warn">起始晚于结束，这样一条都筛不到</div>
+      ) : null}
       <div className="tb-lpop-foot">
         <span className="tb-lpop-hint">只填一边也行</span>
         <button type="button" className="tb-act sm" onClick={onClear}>清除</button>

@@ -2162,6 +2162,69 @@ t('审查：详情面板里有分组字段', (() => {
     && app.indexOf('placeholder="分组名（留空 = 不分组）"') >= 0;
 })());
 
+
+/* ============================================================ 审查：报数撒谎 / 隐藏排序列 / 删除破坏依赖（本轮） */
+
+/*
+ * **批量操作报数用的是 ids.length，不是实际命中数**。
+ * 勾选到写盘之间任务可能已被别的通道删掉（AI 经 API 删、或另一窗口），
+ * 那时 toast 说"已把 3 条改了"而实际只改了 1 条 ——
+ * 报数撒谎比不报更糟，因为没人会去核对。
+ */
+t('审查：批量改类型报实际命中数（不用 ids.length）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const seg = app.slice(app.indexOf('const doBatchType ='), app.indexOf('const doBatchPriority ='));
+  return seg.indexOf('hit = k') >= 0 && seg.indexOf('${ids.length}') < 0
+    && seg.indexOf('没有一条改成功') >= 0;
+})());
+
+t('审查：批量改优先级报实际命中数', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const seg = app.slice(app.indexOf('const doBatchPriority ='), app.indexOf('批量删除'));
+  return seg.indexOf('hit = k') >= 0 && seg.indexOf('${ids.length}') < 0;
+})());
+
+t('审查：批量删除报实际删除数', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const seg = app.slice(app.indexOf('const doBatchDelete ='), app.indexOf('标签定义落在'));
+  return seg.indexOf('hit = before - tasks.length') >= 0 && seg.indexOf('已删除 ${hit} 条') >= 0;
+})());
+
+/*
+ * **删除任务会破坏依赖**：删掉之后那些任务的前置变成"已被删除"，
+ * 永远解锁不了。用户是在不知情的情况下制造了一批永远卡住的任务 ——
+ * 而界面上只显示一把锁，不说清是哪个前置没了。
+ */
+t('审查：删除任务会提示有几条任务依赖它（批量与单条都要）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const b = app.slice(app.indexOf('const doBatchDelete ='), app.indexOf('标签定义落在'));
+  const o = app.slice(app.indexOf('const doDelete ='), app.indexOf('const switchMe ='));
+  return b.indexOf('broken.length > 0') >= 0 && b.indexOf('列为前置') >= 0
+    && o.indexOf('dependents.length > 0') >= 0 && o.indexOf('列为前置') >= 0;
+})());
+
+/*
+ * **藏掉正在排序的那一列，排序就没人能改了**：
+ * 排序只能点列头改，列头随列一起消失 ——
+ * 顶栏写着"排序：分组 ↓"，而列表里没有分组列，
+ * 顺序看着像随机，且没有任何入口能改它。
+ */
+t('审查：隐藏排序依据列时排序会挪走（否则没人能改排序）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const seg = app.slice(app.indexOf('const toggleCol ='), app.indexOf('const colWidthRef'));
+  return seg.indexOf("if (sort.field === field)") >= 0
+    && seg.indexOf("field: 'updatedAt', dir: 'desc'") >= 0;
+})());
+
+/*
+ * 时间区间填反了（起始晚于结束）命中数恒为 0，
+ * 而界面只显示"0 / 12" —— 没人会往"我把日期填反了"那个方向想。
+ */
+t('审查：时间区间填反了要在面板里说出来', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('起始晚于结束，这样一条都筛不到') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
