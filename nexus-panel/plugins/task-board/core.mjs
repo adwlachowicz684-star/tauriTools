@@ -1398,7 +1398,7 @@ const STALE_MS = 7 * 24 * 3600 * 1000;
 
 /**
  * 统计（「统计」视图数据源）。now 可注入，保证单测不依赖真实时钟。
- * - open = 未完成总数；active = doing + review（真正在流转的）
+ * - open = 未完成总数；active = 未完成且不是初始态（真正在流转的；按 flow 配置判，不写死状态名）
  * - stale = 未完成且超过 7 天没动过，按 updatedAt 升序（最僵硬的在前）
  * - recent = 跨任务合并 history，按时间倒序前 8 条（带 taskId/title 便于跳转）
  * - byAssignee 的 __none__ 置顶；topTags 取前 10
