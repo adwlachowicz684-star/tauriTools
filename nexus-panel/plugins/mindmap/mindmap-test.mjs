@@ -22360,6 +22360,136 @@ group('BUG 175 · 启动读取必须走严格版：读不出来不得当成「�
   }
 }
 
+/* ============================================================
+   BUG 177 · 内容没读出来时，回收孤儿附件会把**仍在使用的字节**删掉
+   ============================================================ */
+
+/**
+ * ⓘ 为什么是 BUG：
+ *
+ *   启动时内容读失败 → workbook 退成 `wb.newWorkbook()`（一张空画布），
+ *   `bootContentUnread` 打标记、persist 拒写（BUG 175）。但 gcOrphanAssets
+ *   ① 收的正是**内存里这份**引用 —— 空画布一个引用都收不到，于是这份脑图
+ *   真内容引用的每一个 assetId 都不在 live 里，被当成「没人引用」**全删掉**。
+ *
+ *   后果是永久的：内容还在原键里（刷新可能读回来），字节已经没了 ——
+ *   下次打开节点上附件图标还在、点开只说「附件数据已丢失」。
+ *   而这次删除**本身是成功的**，removed / bytes 照报，一句提示都没有。
+ *
+ *   触发路径还很常见：侧栏「移除附件」就调 gcAssets（panels.js），
+ *   用户点一下移除一个附件，顺带把这份脑图里**其余所有**附件字节也删了。
+ *
+ *   修法是「读不出来就一个字节都不删」—— 回收是为了腾配额，
+ *   误删是永久丢数据，两者不是一个量级。
+ */
+group('BUG 177 · 内容没读出来时回收附件：一个字节都不许删');
+{
+  const rawIdx = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  const bare = stripCommentsFlatJs(rawIdx);
+
+  /* ---------- ① 源码契约：判据只有一处 ---------- */
+  ok(/if \(bootContentUnread\) return \{ removed: 0, bytes: 0, failed: 0, aborted: true, reason: 'unread' \}/.test(bare),
+    '★ gcOrphanAssets 必须在内容没读出来时立即中止（reason=unread）');
+  {
+    /*
+     * 只数 gcOrphanAssets 内部：persist 里另有一处（读不出来就拒写），
+     * 那是 BUG 175 的、与本条无关 —— 全文件数会把那条算进来，恒为 2。
+     */
+    const gs = bare.indexOf('async function gcOrphanAssets(quiet = false) {');
+    ok(gs > 0, '能定位 gcOrphanAssets（去注释后）');
+    const ge = bare.indexOf('\n}\n', gs);
+    const gbody = bare.slice(gs, ge);
+    const heads = [...gbody.matchAll(/if \(bootContentUnread\)/g)];
+    eq(heads.length, 1, '★ gcOrphanAssets 里 bootContentUnread 判据只有一处（不许留第二份）');
+  }
+  ok(/function gcAbortText/.test(bare), '中止原因文案走共用函数');
+  ok(/gcAbortText\(gc\)/.test(bare) && /gcAbortText\(r\)/.test(bare),
+    '★ 两处调用方（deleteFile / gcAssets）都用共用文案');
+  ok(!/快照读取不完整，为避免误删/.test(bare), '不得再留写死的旧中止文案');
+
+  /* ---------- ② 行为级：抽出 gcOrphanAssets 真身跑三种情形 ---------- */
+  {
+    const s = rawIdx.indexOf('async function gcOrphanAssets(quiet = false) {');
+    ok(s > 0, '能定位 gcOrphanAssets');
+    const e = rawIdx.indexOf('\n}\n', s);
+    ok(e > s, '能切出 gcOrphanAssets 函数体');
+    const body = rawIdx.slice(rawIdx.indexOf('{', s) + 1, e);
+    const wb = await import('./workbook.js');
+    const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+    const run = new AsyncFn(
+      'quiet', 'wb', 'fileIndex', 'currentFileId', 'workbook',
+      'store', 'picons', 'status', 'io', 'bootContentUnread',
+      body,
+    );
+
+    const mk = (opts = {}) => {
+      const deleted = [];
+      const store = {
+        keys: async () => ['asset:A1', 'asset:A2'],
+        get: async () => ({ size: 100 }),
+        del: async (k) => { deleted.push(k); return true; },
+        doc: () => ({ load: async () => null }),
+        listBackupsStrict: async () => ({ list: [], enumFailed: false, failed: 0 }),
+      };
+      return {
+        deleted,
+        args: [true, wb, [{ id: 'f1', name: '甲' }], 'f1',
+          opts.workbook || { sheets: [] }, store,
+          { loadLibraryStrict: async () => ({ ok: true, groups: [] }) },
+          () => {}, { formatSize: (n) => n + 'B' }, !!opts.bootContentUnread],
+      };
+    };
+    // 画布里带一个 A1 引用（content 是 JSON 串，见 collectAssetRefs）
+    const sheetWith = (a) => ({
+      sheets: [{
+        id: 's1',
+        content: JSON.stringify({
+          root: { data: { text: 'x', file: JSON.stringify([{ n: 'a.txt', a }]) } },
+        }),
+      }],
+    });
+
+    // ⓐ 内容没读出来（内存里是空画布）→ 一个都不许删
+    {
+      const t = mk({ bootContentUnread: true });
+      const r = await run(...t.args);
+      eq(r.aborted, true, '★ 内容没读出来必须中止（不是「删了 0 个」）');
+      eq(r.reason, 'unread', '★ 中止原因要带回 unread（调用方据此说不同的话）');
+      eq(t.deleted.length, 0, '★ 内容没读出来时一个字节都不许删（删了就是永久丢附件）');
+      eq(r.removed, 0, '★ 报数必须是 0（不得把「没敢删」报成「删掉了」）');
+    }
+    // ⓑ 正常：画布引用 A1 → 只删真孤儿 A2
+    {
+      const t = mk({ workbook: sheetWith('A1') });
+      const r = await run(...t.args);
+      eq(r.aborted, false, '★ 正常路径不得中止（改动不得影响正常回收）');
+      eq(t.deleted.join(','), 'asset:A2', '★ 正常路径只删真孤儿，仍在用的 A1 必须保住');
+    }
+    // ⓒ 反向：正常启动但画布本来就没引用 → 不得因修复变成一律不删
+    {
+      const t = mk({ workbook: { sheets: [] } });
+      const r = await run(...t.args);
+      eq(r.aborted, false, '★ 正常空画布不得中止（中止过头等于回收功能整个失效）');
+      eq(t.deleted.length, 2, '★ 正常空画布时两个都该回收（不许退化成一律不删）');
+    }
+  }
+
+  /* ---------- ③ 文案：两种中止原因必须说得不同 ---------- */
+  {
+    const s = rawIdx.indexOf('function gcAbortText(r) {');
+    ok(s > 0, '能定位 gcAbortText');
+    const e = rawIdx.indexOf('\n}\n', s);
+    ok(e > s, '能切出 gcAbortText 函数体');
+    const body = rawIdx.slice(rawIdx.indexOf('{', s) + 1, e);
+    const Fn = Object.getPrototypeOf(function () {}).constructor;
+    const text = new Fn('r', body);
+    ok(/内容没读出来/.test(text({ reason: 'unread' })),
+      '★ 内容没读出来要说「内容没读出来」（说成快照读全会让人以为数据没事）');
+    ok(!/内容没读出来/.test(text({ aborted: true })),
+      '★ 快照读不全时不得说成内容没读出来（指错方向等于白说）');
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');
