@@ -1345,7 +1345,8 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
             }
         }
         if let Some(v) = str_field(body, "type") {
-            let cur = obj.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            // 取所有权：下面 obj.insert 是可变借用，&str 借到 obj 上会冲突（E0502）
+            let cur = obj.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let next = v.trim();
             if cur != next {
                 obj.insert("type".to_string(), json!(next));
@@ -1354,7 +1355,7 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
                     obj,
                     &by,
                     "type",
-                    &format!("{} -> {}", if cur.is_empty() { "未分类" } else { cur },
+                    &format!("{} -> {}", if cur.is_empty() { "未分类" } else { cur.as_str() },
                              if next.is_empty() { "未分类" } else { next }),
                 );
             }
