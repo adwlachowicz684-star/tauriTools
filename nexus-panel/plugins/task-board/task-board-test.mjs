@@ -2469,6 +2469,70 @@ t('审查：搜索仍能命中标题与说明', (() => {
   return filterTasksByColumns(rows, {}, '登录').length === 2;
 })());
 
+
+/* ============================================================ 审查：统计口径 + 存档恢复（本轮） */
+
+const CUSTOM_FLOW = {
+  statuses: [
+    { id: 's1', name: '待办', color: '#888888', enter: '开始', done: false },
+    { id: 's2', name: '开发中', color: '#888888', enter: '开工', done: false },
+    { id: 's3', name: '已完成', color: '#888888', enter: '完成', done: true },
+  ],
+  transitions: {},
+  edges: {},
+};
+
+/*
+ * **「进行中」写死成 `status === 'doing' || status === 'review'`**：
+ * 自定义流程里那个状态可能叫别的（"开发中"、"联调"…），
+ * 也可能有更多中间态 —— 于是这一项**恒为 0**，
+ * 而卡片上还写着"进行中 doing + review"，那条提示也就成了假话。
+ *
+ * 判据改为"未完成 + 不是初始态"，与流程配置一致。
+ */
+t('审查：自定义流程下「进行中」不恒为 0', (() => {
+  const tasks = [
+    normalizeTask({ id: 'a', status: 's1' }),
+    normalizeTask({ id: 'b', status: 's2' }),
+    normalizeTask({ id: 'c', status: 's3' }),
+  ];
+  const st = statsOf({ tasks, flow: CUSTOM_FLOW }, Date.now());
+  return st.active === 1 && st.open === 2 && st.done === 1;
+})());
+
+/* 默认流程下行为不变（todo 不算进行中） */
+t('审查：默认流程下「进行中」= doing + review（行为未变）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'a', status: 'todo' }),
+    normalizeTask({ id: 'b', status: 'doing' }),
+    normalizeTask({ id: 'c', status: 'review' }),
+    normalizeTask({ id: 'd', status: 'done' }),
+  ];
+  return statsOf({ tasks, flow: null }, Date.now()).active === 2;
+})());
+
+/* 卡片上的提示不能再写死状态 id */
+t('审查：卡片提示不写死状态 id', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf("hint: 'doing + review'") < 0
+    && app.indexOf("hint: '已开工、未完成'") >= 0;
+})());
+
+/*
+ * **存档里读回来的隐藏列没有数量上限**：
+ * 界面上不让把最后一列也藏掉，但从存档读回来没有这道闸 ——
+ * 存档可能是旧版本写的（那时列更少，藏 8 个只剩 1 个是合法的），
+ * 升级到 13 列后还是只剩 1 个。
+
+ * 于是打开就是一张几乎空的表格，而列设置面板里所有列都显示"已显示"
+ * （因为数量刚好合法）—— 无从下手。
+ */
+t('审查：恢复的隐藏列有上限（不会只剩一列）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('if (hs.length > LIST_COLUMNS.length - 2)') >= 0
+    && app.indexOf('hs = hs.slice(0, LIST_COLUMNS.length - 2)') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -1472,10 +1472,26 @@ export function statsOf(store, now = Date.now()) {
     数字和眼前的东西对不上，比没有数字更可疑。
   */
   const leaves = tasks.filter((t) => t.kind !== 'group');
+  /*
+    「进行中」= 未完成、且不是初始态。
+
+    ⛔ 原来写死成 `status === 'doing' || status === 'review'`：
+    自定义流程里那个状态可能叫别的（"开发中"、"联调"…），
+    也可能有更多中间态 —— 于是这一项**恒为 0**，
+    而卡片上还写着"进行中 doing + review"，那条提示也就成了假话。
+
+    判据改用"未完成 + 不是初始态"，与流程配置一致。
+    （初始态单独排除：刚建还没开工的不算"进行中"，
+      否则"未完成"和"进行中"两个数会挨得很近，看不出区别。）
+  */
+  const initId = initialStatus(store.flow);
+  const active = leaves.filter(
+    (t) => !statusDone(store.flow, t.status) && t.status !== initId,
+  ).length;
   return {
     total: leaves.length,
     open: leaves.filter((t) => !statusDone(store.flow, t.status)).length,
-    active: leaves.filter((t) => t.status === 'doing' || t.status === 'review').length,
+    active,
     done: leaves.filter((t) => statusDone(store.flow, t.status)).length,
     byStatus,
     estimateByStatus,
