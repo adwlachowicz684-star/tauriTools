@@ -27,8 +27,9 @@
  * 不是"看源码里有没有那几个字"。
  */
 
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { dirname, join } from 'node:path';
 import ts from 'typescript';
 
@@ -55,7 +56,12 @@ function t(name, ok, detail = '') {
 
 const SCRATCH = join(ROOT, '.rt', 'tbcorrupt');
 const ENGINE = 'plugins/agent-flow/engine';
-const SRC = [
+/*
+  写死清单会随上游加文件而失效：attachmentFile 现在引了 textFile，
+  而清单里没有 → 整份测试崩在 import 上（崩掉的脚本一条断言都跑不到）。
+  改成从入口递归展开相对 import：上游再加被引用的文件也不会崩。
+*/
+const ENTRY = [
   `${ENGINE}/taskBoard.ts`,
   `${ENGINE}/kv.ts`,
   `${ENGINE}/exportDir.ts`,
@@ -63,6 +69,31 @@ const SRC = [
   `${ENGINE}/attachmentStore.ts`,
   `${ENGINE}/attachmentFile.ts`,
 ];
+const SRC = new Set(ENTRY);
+{
+  const queue = [...ENTRY];
+  while (queue.length) {
+    const rel = queue.pop();
+    let src = '';
+    try {
+      src = rd(rel);
+    } catch {
+      continue;
+    }
+    for (const m of src.matchAll(/from\s+'(\.[^']*)'/g)) {
+      let p = m[1];
+      if (!p.endsWith('.ts')) p += '.ts';
+      const dep = path.posix.normalize(path.posix.join(path.posix.dirname(rel), p));
+      // 只收 engine 内、确实存在的；lib/tauri 之类外部依赖走桩，不转译
+      if (!dep.startsWith(ENGINE + '/')) continue;
+      if (!existsSync(join(ROOT, dep))) continue;
+      if (!SRC.has(dep)) {
+        SRC.add(dep);
+        queue.push(dep);
+      }
+    }
+  }
+}
 
 rmSync(SCRATCH, { recursive: true, force: true });
 
@@ -78,6 +109,23 @@ for (const rel of SRC) {
   const dst = join(SCRATCH, 'm', rel.replace('plugins/agent-flow/', '').replace(/\.ts$/, '.js'));
   mkdirSync(dirname(dst), { recursive: true });
   writeFileSync(dst, transpile(rel, rd(rel)));
+}
+
+/*
+  自检：转译产物的相对 import 必须全部能解析。
+  缺一个文件，整份测试会崩在 import 上 —— 而崩掉的脚本一条断言都跑不到，
+  在体检报告上只显示"崩了"，看不出底下压着多少条没验。
+*/
+{
+  const miss = [];
+  for (const rel of SRC) {
+    const dst = join(SCRATCH, 'm', rel.replace('plugins/agent-flow/', '').replace(/\.ts$/, '.js'));
+    const code = readFileSync(dst, 'utf8');
+    for (const m of code.matchAll(/from '(\.[^']*)'/g)) {
+      if (!existsSync(join(dirname(dst), m[1]))) miss.push(`${rel} → ${m[1]}`);
+    }
+  }
+  t('自检：转译产物的相对 import 全部可解析', miss.length === 0 ? true : `缺失 ${miss.join('; ')}`);
 }
 
 /* lib/tauri 是唯一的外层依赖（真身要 Tauri 后端），用桩替换。

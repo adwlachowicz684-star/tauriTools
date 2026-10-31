@@ -85,6 +85,26 @@ function innerBrace(src, marker) {
   return src.slice(open + 1, close);
 }
 
+/**
+ * 取**满足条件**的那个块，而不是第一个。
+ * ⛔ 直接取第一个会漂：上游在备注框之前又加了 onKeyDown，
+ *    第一个匹配变成了别的输入框，切出来的块里压根没有 onComment ——
+ *    于是"组合中不提交"看着是绿的，验的却是另一段代码。
+ */
+function innerBraceWhere(src, marker, pred) {
+  let i = src.indexOf(marker);
+  while (i >= 0) {
+    const open = i + marker.length - 1;
+    const close = matchBrace(src, open);
+    if (close >= 0) {
+      const body = src.slice(open + 1, close);
+      if (pred(body)) return body;
+    }
+    i = src.indexOf(marker, i + 1);
+  }
+  return '';
+}
+
 function count(src, needle) {
   let n = 0, i = 0;
   for (;;) { const k = src.indexOf(needle, i); if (k < 0) break; n++; i = k + needle.length; }
@@ -113,7 +133,13 @@ console.log('\n=== 1. 输入法判据真身 ===');
 
 /* ── 2. 备注框 onKeyDown：真身实跑 ──────────────────────────── */
 console.log('\n=== 2. 备注框回车（真身实跑）===');
-const kdBody = innerBrace(appSrc, 'onKeyDown={(e) => {');
+/*
+  ⛔ 取**满足条件**的那个块，不是第一个：上游在备注框之前又加了别的
+  onKeyDown（带 setEditing 的那个），第一个匹配变成了它 ——
+  切出来的块里没有 onComment，于是"组合中不提交"看着是绿的，
+  验的其实是另一段代码（本轮实测：长度 221，且崩在 setEditing 未定义）。
+*/
+const kdBody = innerBraceWhere(appSrc, 'onKeyDown={(e) => {', (b) => b.includes('onComment'));
 t('（前置）切到了备注框的 keydown 块', kdBody.includes('onComment') && kdBody.includes("'Enter'"), `长度 ${kdBody.length}`);
 {
   let called = null;
@@ -122,8 +148,18 @@ t('（前置）切到了备注框的 keydown 块', kdBody.includes('onComment') 
     called = null;
     cleared = 0;
     // eslint-disable-next-line no-new-func
-    const fn = new Function('e', 'isComposing', 'note', 'onComment', 'setNote', kdBody);
-    fn(evt, isComposing, note, (v) => { called = v; }, () => { cleared++; });
+    // ⛔ 必须转译：上游这段现在是 `(e.target as HTMLInputElement).blur()`，
+    //    带 TS 断言直接塞给 new Function 会 SyntaxError，整份测试崩在半路。
+    const fn = new Function('e', 'isComposing', 'note', 'onComment', 'setNote', transpile(kdBody));
+    /*
+      ⛔ 补上 target（防御）：别处那几个 onKeyDown 里有
+      `(e.target as HTMLInputElement).blur()`。一旦定位漂过去（见上面的
+      innerBraceWhere），桩里没有 target 就会抛 "Cannot read properties of
+      undefined"，整份测试崩在半路 —— 崩掉的脚本一条断言都跑不到，
+      在报告上只显示"崩了"，看不出底下压着多少条没验。
+    */
+    const e = Object.assign({ target: { blur() {} } }, evt);
+    fn(e, isComposing, note, (v) => { called = v; }, () => { cleared++; });
     return { called, cleared };
   };
   const a = run({ key: 'Enter', nativeEvent: { isComposing: true } }, 'wo');
@@ -229,9 +265,19 @@ t('（前置）切到了新建弹窗的 onCreate', onCreateExpr.includes('create
 console.log('\n=== 4. 设置页「用默认」（真身实跑）===');
 {
   const marker = 'onClick={async () => {';
-  t('（前置）「用默认」按钮定位唯一', count(setSrc, marker) === 1, `出现 ${count(setSrc, marker)} 次`);
-  const body = innerBrace(setSrc, marker);
-  t('（前置）切到了「用默认」块体', body.includes('tb_default_dir'), `长度 ${body.length}`);
+  /*
+    ⛔ marker 现在出现多次（上游在设置页又加了别的 async onClick），
+    取第一个会切到别的按钮：切出来的块里既没有 tb_default_dir 也没有
+    try/catch，于是"失败有提示""提示带真原因"两条全红 —— 红的是别的按钮，
+    而「用默认」真实的行为一条都没验到。必须按内容定位。
+  */
+  const nMarker = count(setSrc, marker);
+  if (nMarker > 1) {
+    t('（自检）朴素取第一个会漂到别的按钮 → 必须按内容定位',
+      !innerBrace(setSrc, marker).includes('tb_default_dir'), `marker 出现 ${nMarker} 次`);
+  }
+  const body = innerBraceWhere(setSrc, marker, (b) => b.includes('tb_default_dir'));
+  t('（前置）切到了「用默认」块体', body.includes('tb_default_dir') && body.includes('setMsg'), `长度 ${body.length}`);
   const js = transpile('(async () => {' + body + '})');
   const run = async (invokeImpl) => {
     const msgs = [];

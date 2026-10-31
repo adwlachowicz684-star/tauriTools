@@ -1912,6 +1912,18 @@ body.tb-col-resizing {
   font-size: var(--fs-micro);
 }
 
+/* 分组列：就地填/改的分组名，超出省略（完整名在 title 里）。
+   与上面那条不是同一个东西：那条是派生出来的层级路径（只读），
+   这条是可编辑的字段值 —— 所以它还得能在 flex 行里收缩。 */
+.tb-lc.c-group {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+
 /* 说明列：一句话，超出省略 */
 .tb-lc.c-summary {
   overflow: hidden;

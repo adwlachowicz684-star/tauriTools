@@ -24,6 +24,15 @@ import {
   parseBoard, serializeBoard, mergeBoards, emptyBoard,
   type TaskBoard,
 } from './taskBoard';
+/*
+  ⛔ 判据只有一份，在 textFile.ts —— 这里不再自己定义。
+  曾经存在过两份（这份 + textFile 那份），于是：
+    附件清单走 textFile 那份，任务清单与元数据走这份。
+  两份内容当时一模一样，但从此会各改各的 ——
+  哪天只改一边，就会出现"附件清单认坏了、任务清单照旧整份覆盖"
+  这种界面上看不出差别的分叉。判据必须只有一个实现。
+*/
+import { isParseableJson } from './textFile';
 
 /** 项目名里的非法字符换成下划线；空项目名退回 all */
 export function boardFileName(projectKey: string, projectName: string): string {
@@ -38,32 +47,10 @@ export function boardPathOf(dir: string, projectKey: string, projectName: string
 export type FsResult = { ok: boolean; text: string };
 
 /*
- * 清单文件"坏没坏"的判据。任务板（tasks-*.json）与附件（attachments-*.json）
- * 共用这一份 —— 两份清单并排放在同一个导出目录里，一旦口径分叉，
- * 同一个损坏的文件在两个面板里一个报"读不出来"、一个当"没有"，
- * 是最难自查的那类不一致（attachmentFile.ts 从本文件 re-export 它）。
- *
- * ⛔ 为什么不能靠 parseBoard / parseAttachments 自己判断：
- *    那两个函数的契约是"解析不出来就退成空清单"（既有测试钉住了这个行为：
- *    `parseBoard('不是 json').nodes` 必须是 {}）。这个契约对**单条解析**
- *    是对的 —— 手改坏了也不至于让整个面板崩掉。
- *    但 commit 路径拿这个"空"当"磁盘上是空的"去三方合并，
- *    合并结果就只剩本地这一份，写回去**把损坏的文件整份盖掉**——
- *    而损坏的 JSON 往往手改几行就能救回来，一盖就永远没了。
- *    所以"能不能解析"必须是一个**独立于解析结果**的 observable 信号。
- *
- * 空文件**不算损坏**（第一次用它本来就是空的），返回 true。
+ * 判据转出去给老调用方（boardMetaFile 及其测试从本文件取）。
+ * 实现在 textFile.ts，不另抄一份 —— 理由见上面的 import 注释。
  */
-export function isParseableJson(raw: string): boolean {
-  const s = String(raw ?? '');
-  if (!s.trim()) return true;
-  try {
-    const v = JSON.parse(s);
-    return !!v && typeof v === 'object';
-  } catch {
-    return false;
-  }
-}
+export { isParseableJson };
 
 /** "不存在"的几种说法。Rust 侧与浏览器侧措辞不同，都要认 */
 const NOT_FOUND = /不存在|not found|no such|ENOENT/i;
