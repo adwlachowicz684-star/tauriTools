@@ -463,9 +463,40 @@ export default function App() {
     写死五列的话，用户新增的状态在看板上根本没有落脚的地方 ——
     那些任务会"消失"（不在任何一列里）。
   */
+  /*
+    看板列 = 流程里的状态 **+ 数据里实际在用的、但配置里没有的状态**。
+
+    ⛔ 只按配置渲染的话：任务状态在流程里被删掉（或 AI 经 API 直接写了个
+    配置里没有的状态），那些任务在看板上**凭空消失** ——
+    而它们在列表里还在。用户会以为看板漏渲染了任务，
+    更糟的是"总数对不上"这种错没人会往"状态不在配置里"想。
+
+    这里给它们单独一列，并在列头标明，让"为什么会有这一列"看得见：
+    静默丢弃比多一列难查得多。
+  */
+  const ghostStatuses = useMemo(() => {
+    const known = new Set(flow.statuses.map((s) => s.id));
+    const seen: string[] = [];
+    if (store) {
+      for (const t of store.tasks) {
+        if (known.has(t.status) || seen.indexOf(t.status) >= 0) continue;
+        seen.push(t.status);
+      }
+    }
+    return seen;
+  }, [store, flow]);
+
+  const boardColumns = useMemo(
+    () => [
+      ...flow.statuses,
+      ...ghostStatuses.map((id) => ({ id, name: id, color: '#78716c' })),
+    ],
+    [flow, ghostStatuses],
+  );
+
   const byColumn = useMemo(() => {
     const map: Record<string, Task[]> = {};
-    for (const s of flow.statuses) map[s.id] = [];
+    for (const s of boardColumns) map[s.id] = [];
     if (store) {
       /*
         看板也跟随用户点的排序。
@@ -475,12 +506,12 @@ export default function App() {
       */
       const list = sortTasksBy(filtered, sort.field, sort.dir, tagNames);
       for (const t of list) {
-        if (!map[t.status]) map[t.status] = [];   // 配置里没有的状态也要有地方放
+        if (!map[t.status]) map[t.status] = [];
         map[t.status].push(t);
       }
     }
     return map;
-  }, [store, filtered, flow, tagNames]);
+  }, [store, filtered, boardColumns, tagNames]);
   const listRows = useMemo(
     () => sortRowsBy(filteredRows, sort.field, sort.dir, tagNames),
     /*
@@ -1517,12 +1548,20 @@ ${dir}
       {/* 看板：一列一个状态（列是用户配的，不是写死五列） */}
       {view === 'board' && (
         <div className="tb-board">
-          {flow.statuses.map((sd) => (
+          {boardColumns.map((sd) => (
             <section key={sd.id} className="tb-col">
               <header className="tb-col-head">
                 <span className="tb-col-dot" style={{ background: sd.color }} />
                 {sd.name}
                 <span className="tb-col-num">{(byColumn[sd.id] || []).length}</span>
+                {ghostStatuses.indexOf(sd.id) >= 0 ? (
+                  <span
+                    className="tb-col-ghost"
+                    title={`有任务处于「${sd.id}」，但流程配置里没有这个状态——它可能是被删掉的状态，或由 AI 经 API 写入。请到流程设置里补上或改掉这些任务`}
+                  >
+                    未配置
+                  </span>
+                ) : null}
               </header>
               <div className="tb-col-body">
                 {(byColumn[sd.id] || []).length === 0 && <div className="tb-col-empty">空</div>}
@@ -4148,6 +4187,17 @@ function StatsView({
   tagDefs: TagDef[];
   onOpen: (id: string) => void;
 }) {
+  /*
+    状态分布要显示的行 = 流程配置里的状态 + 数据里出现但配置里没有的。
+    后者若漏掉，各状态之和会比总任务数少 —— 差额去哪了完全看不出来。
+  */
+  const statsByStatus = [
+    ...flow.statuses,
+    ...Object.keys(stats.byStatus || {})
+      .filter((id) => !flow.statuses.some((s) => s.id === id))
+      .map((id) => ({ id, name: `${id}（未配置）`, color: '#78716c' })),
+  ];
+
   const typeRows = Object.entries(stats.byType || {}).sort((a, b) => b[1] - a[1]);
   const maxType = Math.max(1, ...typeRows.map(([, n2]) => n2));
   const maxStatus = Math.max(1, ...Object.values(stats.byStatus));
@@ -4177,7 +4227,17 @@ function StatsView({
       <div className="tb-stat-grid">
         <section className="tb-stat-panel">
           <header className="tb-stat-panel-head">状态分布</header>
-          {flow.statuses.map((sd) => (
+          {/*
+            和看板同一条规则：**数据里实际在用的、配置里没有的状态也要显示**。
+
+            ⛔ 只遍历 flow.statuses 的话，处于"未配置状态"的任务
+            哪里都不显示 —— 于是总任务数比各状态之和**多**，
+            而用户只会以为是统计算错了，想不到是有一批任务被悄悄漏掉了。
+
+            （这也正是看板刚修的那个问题的同一类：
+             配置驱动渲染时，"配置里没有"不能等于"不存在"。）
+          */}
+          {statsByStatus.map((sd) => (
             <BarRow
               key={sd.id}
               label={sd.name}

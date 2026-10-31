@@ -2213,6 +2213,25 @@ body.tb-col-resizing {
   gap: var(--sp-1);
 }
 
+
+/*
+  看板里"流程配置里没有的状态"那一列的标记。
+
+  ⛔ 不能只靠 tooltip：鼠标不悬停时完全看不出这一列是特殊的，
+  于是用户会以为"我的流程里有这个状态"—— 而配置里其实没有，
+  改流程时也找不到它。
+*/
+.tb-col-ghost {
+  margin-left: auto;
+  padding: 0 var(--sp-1);
+  border-radius: 999px;
+  border: 1px dashed var(--nx-bd-strong, #9ca3af);
+  color: var(--nx-fg-dim, #9ca3af);
+  font-size: 10px;
+  line-height: 16px;
+  cursor: help;
+}
+
 /*
   热门标签：一枚 chip + 计数。
   计数单独成行内元素，不挤进 chip 里 —— chip 是"标签"这个概念的显示，
