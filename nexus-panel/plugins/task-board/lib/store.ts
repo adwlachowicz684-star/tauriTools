@@ -317,6 +317,8 @@ export async function createTask(
   draft: {
     title: string;
     detail?: string;
+    /** 任务说明（与 detail 分开：说明是"要做什么"，详情是复现/期望行为） */
+    summary?: string;
     priority?: string;
     tags?: string[];
     assignee?: string;
@@ -344,7 +346,14 @@ export async function createTask(
       id,
       title: draft.title.trim(),
       detail: (draft.detail || '').trim(),
-      summary: '',
+      /*
+        ⛔ 这里原来是写死的 `summary: ''` ——
+        而上面那段注释说的正是"每个字段都显式写出来，
+        不靠 normalizeTask 兜底：字段在文件里**看得见** AI 才会去填"。
+        summary 恰好被写死成空 —— 从界面建的任务永远没有说明。
+        （这个字段漏的第六处：新建弹窗、Rust 四处、这里。）
+      */
+      summary: (draft.summary || '').trim(),
       kind: 'task' as const,
       parent: null,
       deps: [] as string[],

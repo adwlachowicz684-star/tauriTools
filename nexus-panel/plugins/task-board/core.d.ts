@@ -8,10 +8,6 @@ export declare function actionsFor(status: string): { to: string; label: string;
 export declare function normalizeTask(raw: any): Task;
 export declare function normalizeStore(raw: any): TaskStore;
 export declare function sortTasks<T extends { priority: string; updatedAt: number }>(tasks: T[]): T[];
-export declare function filterTasks<T extends { id: string; title: string; detail: string; tags: string[]; assignee: string | null; priority: string }>(
-  tasks: T[],
-  f: { priority?: string; tag?: string; assignee?: string; q?: string },
-): T[];
 export declare function allTags(tasks: { tags: string[] }[], limit?: number): string[];
 
 /* ---------------------------------------------------- 任务组嵌套 */

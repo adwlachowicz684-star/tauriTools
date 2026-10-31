@@ -365,22 +365,6 @@ export function sortTasks(tasks) {
   });
 }
 
-/** 过滤：优先级 / 标签 / 认领人 / 关键词（标题+详情+id） */
-export function filterTasks(tasks, f) {
-  const q = (f.q || '').trim().toLowerCase();
-  return tasks.filter((t) => {
-    if (f.priority && t.priority !== f.priority) return false;
-    if (f.tag && !t.tags.includes(f.tag)) return false;
-    if (f.assignee === '__none__' && t.assignee) return false;
-    if (f.assignee && f.assignee !== '__none__' && t.assignee !== f.assignee) return false;
-    if (q) {
-      const hay = `${t.id} ${t.title} ${t.detail}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-}
-
 /* ============================================================ 列级筛选
  *
  * 每一列都能筛 —— "哪些任务该出现"由列上的筛选决定，不由顶栏那排
@@ -486,7 +470,17 @@ export function colRawValues(task, field) {
   switch (field) {
     case 'priority': return [task.priority];
     case 'status': return [task.status];
-    case 'assignee': return [task.assignee || ''];
+    /*
+      未认领统一用 **UNASSIGNED 哨兵**，不用空串。
+
+      ⛔ 空串不行：分组那条路径上 `key === ''` 已经被
+      "没选任何分组依据 → 全部任务"占用了（见 groupLabel），
+      两个含义撞在同一个值上，分不清是"没人认领"还是"没分组依据"。
+
+      而筛选这边原来用 ''、分组那边用 '__none__' ——
+      同一件事两个哨兵，各改一处就会错（筛得到但分组分不出，或反之）。
+    */
+    case 'assignee': return [task.assignee || UNASSIGNED];
     /* 空类型落到 NOTYPE 哨兵，这样"未分类"才筛得到 */
     case 'type': return [task.type || NOTYPE];
     case 'tags': return task.tags || [];
@@ -647,8 +641,8 @@ export function colFilterValues(field, rows, statusIds, typeIds, tagIds) {
     case 'assignee': {
       const names = [...new Set(tasks.map((t) => t.assignee).filter(Boolean))];
       names.sort((a, b) => a.localeCompare(b));
-      // 未认领（空串）排最后：它是"没人"，不该顶在名单前面
-      return [...names, ''];
+      // 未认领置尾：它是"没人"，不该顶在名单前面。哨兵与 colRawValues 一致
+      return [...names, UNASSIGNED];
     }
     /*
       类型取**定义表**（用户增删改过）。从数据里去重的话，
@@ -932,7 +926,7 @@ export function isDone(id, tasks, ctx, flow) {
     return kids.length > 0 && kids.every((x) => statusDone(flow, x.status));
   }
   /*
-    ⛔ 不能写死 `status === 'done'`：
+    ⛔ 不能把完成判据写死成默认那个 done 的 id：
     自定义流程的完成态可能叫 's3'、'完工'…，
     写死的话**没有一条前置会解锁** ——
     依赖它的任务永远卡在"等前置"，而前置明明已经做完了。
@@ -1520,7 +1514,7 @@ export function statsOf(store, now = Date.now()) {
   /*
     「进行中」= 未完成、且不是初始态。
 
-    ⛔ 原来写死成 `status === 'doing' || status === 'review'`：
+    ⛔ 原来写死成默认那两个中间态的 id（doing / review）：
     自定义流程里那个状态可能叫别的（"开发中"、"联调"…），
     也可能有更多中间态 —— 于是这一项**恒为 0**，
     而卡片上还写着"进行中 doing + review"，那条提示也就成了假话。

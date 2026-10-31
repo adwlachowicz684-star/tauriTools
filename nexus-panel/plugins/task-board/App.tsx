@@ -790,17 +790,46 @@ export default function App() {
   const doClaim = (id: string) =>
     withErr(async () => {
       if (!cfg) return;
+      let claimed = false;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const idx = st.tasks.findIndex((t) => t.id === id);
         if (idx < 0) return null;
-        const next = applyTransition(st.tasks[idx], 'claimed', me);
-        if (!next) return null;
-        next.assignee = me; // 认领必须署名
+        const cur = st.tasks[idx];
+        /*
+          认领推进到哪一步，**不能写死 'claimed'**。
+
+          ⛔ 写死的后果（自定义流程下必现）：
+          applyTransition 走流转校验，'claimed' 不在用户配的流程里 →
+          返回 null → 这个回调返回 null → mutate **什么都不写** ——
+          而下面照样弹「已认领」。那是**撒谎**：
+          任务其实还是没人认领，别人可以同时认领它，
+          而本人以为自己负责这条。（比直接报错糟得多。）
+
+          改成从流程里取：只在**初始态**时推进（走第一条边），
+          不在初始态就只署名、不改状态 ——
+          认领的本质是署名，不该因为流程里没有那条边就整个失败。
+        */
+        const init = initialStatus(flow);
+        let next = null;
+        if (cur.status === init) {
+          const acts = actionsForIn(flow, cur.status);
+          if (acts.length > 0) next = applyTransition(cur, acts[0].to, me);
+        }
+        /* 流程里没有可走的边（终态、或只配了一个状态）：只署名 */
+        if (!next) next = { ...cur };
+        if (next.assignee === me && next.status === cur.status) return null;
+        next.assignee = me;               // 认领必须署名
         const tasks = [...st.tasks];
         tasks[idx] = next;
+        claimed = true;                   // 整体赋值：mutate 冲突重试不会重复计数
         return { ...st, tasks };
       });
       await refresh();
+      /* 没认领成就不要报成功 —— 那是最难自查的一种错 */
+      if (!claimed) {
+        ctx.toast(`${id} 认领未生效（任务不存在，或它已经是你认领的）`, 'err');
+        return;
+      }
       ctx.toast(`${id} 已由 ${me} 认领`, 'ok');
     })();
 
@@ -1290,7 +1319,13 @@ ${dir}
   }
 
   const detail = detailId ? store.tasks.find((t) => t.id === detailId) : null;
-  const openCount = store.tasks.filter((t) => t.status !== 'done').length;
+  /*
+    未完成 = **不算完成**，判据要认流程配置。
+    ⛔ 写死 `!== 'done'` 的话，自定义流程里的完成态（'完工'、's3'…）
+    全被算成未完成 —— 顶栏那个数字虚高，
+    而用户只会以为"还有这么多没做完"，不会想到是判据写死了。
+  */
+  const openCount = store.tasks.filter((t) => !statusDone(flow, t.status)).length;
 
   return (
     <div className="tb-wrap">
@@ -2987,7 +3022,8 @@ function optionLabel(
     否则 chip 上会显示 "__notype__"，没人看得懂那一串下划线是什么。
   */
   if (field === 'type') return v === NOTYPE ? '未分类' : (typeName(defs, v) || v);
-  if (field === 'assignee') return v || '未认领';
+  /* 老存档 / AI 手写的数据里可能是空串，两种哨兵都认 */
+  if (field === 'assignee') return !v || v === UNASSIGNED ? '未认领' : v;
   /*
     标签同理：任务上存的是 **id**（tg_xxxx），直接显示没人看得懂。
     认不出来就退回 id —— 至少看得见这里挂了个东西（AI 直接写进 JSON 的裸标签就是这种）。
@@ -4259,6 +4295,8 @@ function NewTaskModal({
   onCreate: (draft: {
     title: string;
     detail: string;
+    /** 任务说明（与详情分开：说明是"要做什么"，详情是复现/期望行为） */
+    summary: string;
     priority: string;
     tags: string[];
     assignee: string;
@@ -4271,6 +4309,7 @@ function NewTaskModal({
 }) {
   const [title, setTitle] = useState('');
   const [detail, setDetail] = useState('');
+  const [summary, setSummary] = useState('');
   const [priority, setPriority] = useState<Priority>('P2');
   const [tagsText, setTagsText] = useState('');
   const [assignee, setAssignee] = useState('');
@@ -4287,6 +4326,22 @@ function NewTaskModal({
       <label className="tb-mfield">
         <span>详情</span>
         <textarea rows={4} value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="复现步骤 / 期望行为（可选）" />
+      </label>
+      {/*
+        任务说明。⛔ 这个字段后来才加，而新建弹窗一直没有它 ——
+        于是从这儿建出来的任务永远没有说明，
+        只能建完再进详情补（AI 那侧的通道也是同样情况，已一并补）。
+        说明与详情分开：说明是"要做什么"（原始要求），
+        详情是复现/期望行为 —— 混成一个字段的话，做完之后
+        没人会去清理说明，最后两个都变成过程记录。
+      */}
+      <label className="tb-mfield">
+        <span>任务说明（可选）</span>
+        <input
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          placeholder="要做什么（与详情分开：详情写复现/期望行为）"
+        />
       </label>
       <div className="tb-mrow">
         <label className="tb-mfield">
@@ -4372,6 +4427,7 @@ function NewTaskModal({
             onCreate({
               title,
               detail,
+              summary,
               priority,
               tags: tagsText.split(/[,，]/).map((s2) => s2.trim()).filter(Boolean),
               assignee,
@@ -4404,10 +4460,13 @@ function NewTaskModal({
 function DraftInput({
   value,
   placeholder,
+  num,
   onCommit,
 }: {
   value: string;
   placeholder?: string;
+  /** 数字模式：只认数字（详情里的预估人日） */
+  num?: boolean;
   onCommit: (v: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
@@ -4418,7 +4477,14 @@ function DraftInput({
   }, [value, editing]);
   const commit = () => {
     setEditing(false);
-    if (draft !== value) onCommit(draft);
+    if (draft === value) return;
+    /*
+      数字列只认数字。填"三天"直接忽略而不是写成 0 ——
+      写成 0 会把"没估"和"估了 0"混成一样，
+      而这两个在排期时含义完全不同。
+    */
+    if (num && draft.trim() !== '' && !/^\d+(\.\d+)?$/.test(draft.trim())) return;
+    onCommit(draft);
   };
   return (
     <input
@@ -4578,6 +4644,20 @@ function DetailModal({
           value={task.group || ''}
           placeholder="分组名（留空 = 不分组）"
           onCommit={(v) => onPatch({ group: v })}
+        />
+
+        {/*
+          预估工作量。**详情面板里也要能改**：列表行内那处是"顺手改一下"，
+          而详情是"把这条的所有字段看一遍再定"的地方 ——
+          尤其估人日这种要斟酌的值，更适合在这儿改而不是在窄单元格里点。
+          只有列表能改的话，从详情进来会以为这条压根不能估。
+        */}
+        <span className="tb-dlabel">预估工作量（人日）</span>
+        <DraftInput
+          value={task.estimate ? String(task.estimate) : ''}
+          num
+          placeholder="留空 = 没估（可填小数，0.5 = 半天）"
+          onCommit={(v) => onPatch({ estimate: v === '' ? 0 : Number(v) })}
         />
       </div>
 

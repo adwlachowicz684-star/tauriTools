@@ -6,8 +6,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/* 源码扫描类测试要用：列数、props 透传这些 TS 查不出的问题靠读源码钉住 */
 const dir = path.dirname(fileURLToPath(import.meta.url));
+
+/* 源码扫描类测试要用：列数、props 透传这些 TS 查不出的问题靠读源码钉住 */
+const appSrc = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+const coreSrc = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
 import {
   duplicateDataDirs,
   STATUSES,
@@ -16,7 +19,6 @@ import {
   normalizeTask,
   normalizeStore,
   sortTasks,
-  filterTasks,
   allTags,
   nextTaskId,
   pushHistory,
@@ -124,12 +126,24 @@ const list = [
   { ...mk('t1', 'P0', 1), tags: ['bug', 'ui'], assignee: 'dev-a' },
   { ...mk('t2', 'P2', 2), tags: ['feat'], assignee: null },
 ];
-t('过滤优先级', filterTasks(list, { priority: 'P0' }).length === 1);
-t('过滤标签', filterTasks(list, { tag: 'feat' })[0].id === 't2');
-t('过滤未认领', filterTasks(list, { assignee: '__none__' })[0].id === 't2');
-t('过滤认领人', filterTasks(list, { assignee: 'dev-a' })[0].id === 't1');
-t('关键词命中 id', filterTasks(list, { q: 't2' }).length === 1);
-t('关键词不命中', filterTasks(list, { q: 'zzz' }).length === 0);
+/*
+ * 这几条原来测的是 filterTasks —— 那是**老的一整套过滤**（顶栏四个下拉时代）。
+ * 界面早就全改用 filterTasksByColumns（列级筛选），filterTasks 成了死代码，
+ * 只剩测试在用。两份实现就是两份真相：
+ * 改搜索时很容易改错地方（改了它而界面走的是另一套）。已删。
+
+ * 这里改成走**现在真正在用的**那一套，覆盖不丢。
+ */
+const R = (ts) => ts.map((t) => ({ task: normalizeTask(t), depth: 0, path: [], groupPath: '' }));
+const byVals = (v) => ({ values: [v] });
+const idOf = (r, i) => r[i].task.id;
+
+t('过滤优先级', filterTasksByColumns(R(list), { priority: byVals('P0') }, '').length === 1);
+t('过滤标签', idOf(filterTasksByColumns(R(list), { tags: byVals('feat') }, ''), 0) === 't2');
+t('过滤未认领', idOf(filterTasksByColumns(R(list), { assignee: byVals(UNASSIGNED) }, ''), 0) === 't2');
+t('过滤认领人', idOf(filterTasksByColumns(R(list), { assignee: byVals('dev-a') }, ''), 0) === 't1');
+t('关键词命中 id', filterTasksByColumns(R(list), {}, 't2').length === 1);
+t('关键词不命中', filterTasksByColumns(R(list), {}, 'zzz').length === 0);
 
 /* ---------------- 标签统计 ---------------- */
 t('allTags 按次数倒序去重（同次数保持插入序）', allTags([...list, { ...mk('t3', 'P2', 3), tags: ['bug'] }]).join() === 'bug,ui,feat');
@@ -280,9 +294,15 @@ t('colFilterActive：各类型只认自己那几个字段', (() => {
     && colFilterActive(COL('time'), { ...e, min: '不是日期' }) === false;
 })());
 
-t('colRawValues：认领人空串表示未认领；标签是多值',
+/*
+ * 未认领的哨兵**统一为 UNASSIGNED**，不再用空串：
+ * 空串在分组那条路径上已被"没选分组依据 → 全部任务"占用。
+ * 而此前筛选用 ''、分组用 '__none__' —— 同一件事两个哨兵，
+ * 各改一处就会错（筛得到但分组分不出，或反之）。
+ */
+t('colRawValues：未认领用 UNASSIGNED 哨兵（不是空串）；标签是多值',
   colRawValues(TB_TASKS[0], 'assignee')[0] === 'w1'
-  && colRawValues(TB_TASKS[1], 'assignee')[0] === ''
+  && colRawValues(TB_TASKS[1], 'assignee')[0] === UNASSIGNED
   && colRawValues(TB_TASKS[0], 'status')[0] === 'done'
   && colRawValues(TB_TASKS[2], 'tags').length === 2);
 
@@ -294,8 +314,8 @@ t('按优先级筛：拿显示文案去筛不该命中（筛选按原始值）',
 
 t('按状态筛', filterTasksByColumns(TB_ROWS, onlyFilter('status', { values: ['todo'] }), '').length === 1);
 
-t('按认领人筛：空串能筛出没人认领的（"找没人领的"是常用查询）', (() => {
-  const hit = filterTasksByColumns(TB_ROWS, onlyFilter('assignee', { values: [''] }), '');
+t('按认领人筛：UNASSIGNED 能筛出没人认领的（"找没人领的"是常用查询）', (() => {
+  const hit = filterTasksByColumns(TB_ROWS, onlyFilter('assignee', { values: [UNASSIGNED] }), '');
   return hit.length === 1 && hit[0].task.id === 'tb-0002';
 })());
 
@@ -343,7 +363,7 @@ t('colFilterValues：优先级/状态取全量；认领人从数据去重且未�
   const st = colFilterValues('status', TB_ROWS);
   const as = colFilterValues('assignee', TB_ROWS);
   return pri.length === 4 && st.length === STATUSES.length
-    && as[as.length - 1] === '' && as.indexOf('w1') >= 0 && as.indexOf('w2') >= 0;
+    && as[as.length - 1] === UNASSIGNED && as.indexOf('w1') >= 0 && as.indexOf('w2') >= 0;
 })());
 
 t('colFilterValues：标签取全部去重', colFilterValues('tags', TB_ROWS).indexOf('ui') >= 0);
@@ -2993,6 +3013,169 @@ t('审查：groupLabel 的调用点传了 tagDefs', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   return app.indexOf('groupLabel(node.key, by, flow, tagDefs)') >= 0;
 })());
+
+
+/* ============================================================ 守卫（防同类问题复发） */
+
+/*
+ * **守卫 1：业务判据里不许出现写死的默认状态 id**
+ *
+ * 状态由用户在界面上配置之后，'todo'/'done'/'review' 这些只是**默认值**，
+ * 不再是业务判据。写死的话只在默认流程下成立 ——
+ * 这一轮里它一共出现在五个不同入口（状态名、详情按钮、isDone、
+ * webhook、分组排序），分五轮才清完，每一轮都以为"这是最后一处"。
+
+ * 判据形如 `x === 'done'`；`cfg.notifyStatus || 'review'` 这种
+ * **配置默认值**不算（那是给没配过的老存档兜底，不是判据）。
+ */
+/*
+  ⛔ 必须同时匹配 `!==`：写死判据里"不等于 done"和"等于 done"一样常见
+  （openCount 那条正是 `t.status !== 'done'`）。
+  只写 `===` 的话，反向验证时注入 `!==` 居然不红 —— 守卫自己有洞。
+*/
+const WRITE_DEAD_STATUS = /[!=]==\s*['"](todo|claimed|doing|hold|review|done|cancelled)['"]/;
+
+/*
+  ⛔ 必须**先剥离注释**再匹配，不能靠"行首是不是 // 或 *"来判断：
+  注释里很自然会写出"⛔ 写死 `!== 'done'` 的话…"这种说明，
+  而它恰好符合判据模式 —— 那样守卫要么误报（红得好没道理），
+  要么为了不误报去改注释措辞（本末倒置，而且一改再改）。
+
+  下面这个剥离不处理字符串里的 //（比如 URL），
+  对这个用途足够，且比改注释措辞健壮得多。
+*/
+const stripComments = (src) => {
+  let out = '';
+  let inBlock = false;
+  for (const line of src.split('\n')) {
+    let res = '';
+    let i = 0;
+    while (i < line.length) {
+      if (inBlock) {
+        const end = line.indexOf('*/', i);
+        if (end < 0) { i = line.length; break; }
+        inBlock = false;
+        i = end + 2;
+        continue;
+      }
+      const b = line.indexOf('/*', i);
+      const sl = line.indexOf('//', i);
+      if (b >= 0 && (sl < 0 || b < sl)) {
+        res += line.slice(i, b);
+        inBlock = true;
+        i = b + 2;
+        continue;
+      }
+      if (sl >= 0) { res += line.slice(i, sl); break; }
+      res += line.slice(i);
+      break;
+    }
+    out += res + '\n';
+  }
+  return out;
+};
+
+t('守卫：业务判据里没有写死的默认状态 id', (() => {
+  const files = ['App.tsx', 'Settings.tsx', 'core.mjs', 'lib/store.ts'];
+  const bad = [];
+  for (const f of files) {
+    const src = stripComments(fs.readFileSync(path.join(dir, f), 'utf8'));
+    src.split('\n').forEach((l, i) => {
+      if (WRITE_DEAD_STATUS.test(l)) bad.push(`${f}:${i + 1}: ${l.trim().slice(0, 70)}`);
+    });
+  }
+  return bad.length === 0;
+})());
+
+/* 守卫自身要经得起反向验证：剥离确实生效 */
+t('守卫自检：stripComments 能去掉块注释里的判据字样', (() => {
+  const src = "/* ⛔ 写死 x !== 'done' 是不对的 */\nconst y = 1;";
+  return !WRITE_DEAD_STATUS.test(stripComments(src));
+})());
+
+/*
+ * **守卫 2：同一个"空值"概念不许有两个哨兵**
+ *
+ * 未认领此前在筛选路径上是 ''、在分组路径上是 '__none__' ——
+ * 同一件事两个哨兵，改一处就会错（筛得到但分组分不出，或反之）。
+ */
+t('守卫：未认领只有一个哨兵（筛选与分组取值一致）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'a', assignee: 'w1' }),
+    normalizeTask({ id: 'b' }),
+  ];
+  const rows = tasks.map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  /* 筛选用到的原始值 */
+  const rawNone = colRawValues(tasks[1], 'assignee')[0];
+  /* 分组用到的 key */
+  const g = groupTasksBy(tasks, ['assignee'], null);
+  const gNone = g.find((x) => !x.tasks.every((t) => t.assignee));
+  /* 候选值里也必须能选到它，否则"找没人认领的"在下拉里没有入口 */
+  const opts = colFilterValues('assignee', rows);
+  return rawNone === UNASSIGNED
+    && gNone !== undefined && gNone.key === UNASSIGNED
+    && opts.indexOf(UNASSIGNED) >= 0;
+})());
+
+
+/*
+ * **守卫 3：字段 × 入口的覆盖矩阵**
+ *
+ * 这是"新字段没在所有入口落实"的防复发网。
+ * 那个错在这几轮里反复出现：group 漏了 5 处（store / 详情 / 新建弹窗 /
+ * 看板卡片 / 全局搜索），summary 漏了 Rust 那 4 处，notifyStatus 漏了消费侧。
+ * 每次都只补发现的那处，下一轮换个维度又抓到同一字段的另一处。
+
+ * 所以这里把"哪些字段必须出现在哪些入口"固定下来：
+ * 以后加新字段，忘了在某个入口落实，这条立刻变红。
+ */
+const SEG = (src, from, until) => {
+  const i = src.indexOf(from);
+  if (i < 0) return '';
+  const j = until ? src.indexOf(until, i + from.length) : -1;
+  return src.slice(i, j < 0 ? i + 6000 : j);
+};
+
+const HAS = (seg, f) => seg.indexOf(f) >= 0          /* 兜底：字段串直接出现 */
+  || seg.indexOf(`"${f}"`) >= 0 || seg.indexOf(`'${f}'`) >= 0
+  || seg.indexOf(`${f}:`) >= 0 || seg.indexOf(`task.${f}`) >= 0
+  || seg.indexOf(`t.${f}`) >= 0 || seg.indexOf(`draft.${f}`) >= 0;
+
+const MATRIX = [
+  /* [入口名, 片段, 必须出现的字段] */
+  ['新建弹窗', () => SEG(appSrc, 'function NewTaskModal(', '\nfunction '),
+    ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group']],
+  ['详情面板', () => SEG(appSrc, 'function DetailModal({', '\nfunction '),
+    ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group', 'tags', 'assignee', 'deps']],
+  ['全局搜索', () => SEG(coreSrc, 'const hay = ', '\n    }'),
+    ['t.id', 't.title', 't.detail', 't.summary', 't.group', 't.assignee']],
+];
+
+for (const [name, get, fields] of MATRIX) {
+  t(`守卫：字段覆盖矩阵 —— ${name}`, (() => {
+    const seg = get();
+    if (!seg) return false;
+    return fields.every((f) => HAS(seg, f));
+  })());
+}
+
+/*
+ * Rust 那一侧同样要覆盖（AI 走 MCP/HTTP 建任务，
+ * 字段在 schema 里看不见，AI 就不会去填）。
+ * 本环境缺 Rust 源码时跳过，不算失败。
+ */
+if (rsSrc) {
+  const RS_CREATE = SEG(rsSrc, '"tb_create_task"', '"tb_get_task"');
+  const RS_UPDATE = SEG(rsSrc, '"tb_update_task"', '"tb_add_event"');
+  const RS_PATCH = SEG(rsSrc, 'for key in ["title"', ']');
+  for (const [name, seg, fields] of [
+    ['Rust 建任务 schema', RS_CREATE, ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group', 'tags']],
+    ['Rust 改任务 schema', RS_UPDATE, ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group', 'tags', 'assignee']],
+    ['Rust patch 字段循环', RS_PATCH, ['title', 'detail', 'summary', 'priority']],
+  ]) {
+    t(`守卫：字段覆盖矩阵 —— ${name}`, seg.length > 0 && fields.every((f) => seg.indexOf(`"${f}"`) >= 0));
+  }
+}
 
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
