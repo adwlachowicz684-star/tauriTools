@@ -1284,6 +1284,46 @@ t('自查：标签分组是多值并集（一条带两个标签会同时进两�
   return g.length === 2 && sum === 3 && sum > tasks.length;
 })());
 
+
+/* ============================================================ 自查补测（第 9 轮） */
+
+/*
+ * **拆分任务会让总工作量翻 N 倍**（自查发现）：
+ * 子任务用 `...src` 继承了父任务的全部字段，其中就包括 estimate。
+ * 父任务 5 人日拆成 3 条 → 三条各带 5 → 合计从 5 变成 15。
+ *
+ * 这个错特别坏：数字是"变多了"而不是"变没了"，
+ * 排期时按 15 人日排，实际只有 5 —— 而且没人会怀疑统计。
+ *
+ * 修法：子任务预估留空（拆分时没人知道那 5 人日该在三块之间怎么分），
+ * 父任务变组后预估也清零（组的预估由子任务累加，留着会双计）。
+ */
+t('自查：拆分后子任务不继承预估（否则总工作量翻 N 倍）', (() => {
+  const src = [normalizeTask({ id: 'p1', title: '父', estimate: 5 })];
+  const r = splitTask(src, 'p1', ['A', 'B', 'C']);
+  const kids = r.tasks.filter((t) => t.id.indexOf('sub_') === 0);
+  return kids.length === 3 && kids.every((k) => k.estimate === 0);
+})());
+
+t('自查：拆分后父任务（变组）的预估也清零（组的预估由子累加）', (() => {
+  const src = [normalizeTask({ id: 'p1', title: '父', estimate: 5 })];
+  const r = splitTask(src, 'p1', ['A', 'B']);
+  return r.tasks.find((t) => t.id === 'p1').estimate === 0;
+})());
+
+t('自查：拆分后合计不会超过拆分前（5 → 0，而不是 15）', (() => {
+  const before = statsOf({ tasks: [normalizeTask({ id: 'p1', estimate: 5 })], flow: null });
+  const r = splitTask([normalizeTask({ id: 'p1', estimate: 5 })], 'p1', ['A', 'B', 'C']);
+  const after = statsOf({ tasks: r.tasks, flow: null });
+  return before.estimateTotal === 5 && after.estimateTotal <= before.estimateTotal;
+})());
+
+t('自查：给子任务重新估完之后合计正确（各 2 → 6）', (() => {
+  const r = splitTask([normalizeTask({ id: 'p1', estimate: 5 })], 'p1', ['A', 'B', 'C']);
+  const re = r.tasks.map((t) => (t.id.indexOf('sub_') === 0 ? { ...t, estimate: 2 } : t));
+  return statsOf({ tasks: re, flow: null }).estimateTotal === 6;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
