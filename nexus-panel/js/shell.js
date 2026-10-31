@@ -217,16 +217,26 @@ async function openPluginSettings() {
       <div class="drawer-body" id="dw-body">
         <div class="loader"><div class="spinner"></div>正在载入设置…</div>
       </div>
-      <div id="dw-shell"></div>
-    </div>`;
+      <div class="dw-shell" id="dw-shell"></div>
+    </div>
+    <footer class="drawer-foot">
+      <span class="drawer-foot-note">部分改动（如严格沙箱）需重载插件后生效</span>
+      <button class="p-btn" id="dw-reload" title="重载插件">↻ 重载</button>
+    </footer>`;
   mask.appendChild(drawer);
   document.body.appendChild(mask);
   raf(() => mask.classList.add('on'));
 
   mask.addEventListener('click', (e) => { if (e.target === mask) closePluginSettings(); });
   drawer.querySelector('#dw-close').onclick = closePluginSettings;
+  /* 底部的「↻ 重载」：沙箱这类改动要重载才生效，而抽屉里此前没有入口 ——
+     提示写着"重载后生效"，用户却得先关掉抽屉、再回顶栏找那个 ↻。
+     与顶栏 #bar-reload 同一个动作，不另写一个。 */
+  drawer.querySelector('#dw-reload').onclick = () => {
+    if (host.state.activeId) host.mount(host.state.activeId);
+  };
 
-  renderShellSection(drawer.querySelector('#dw-shell'), manifest);
+  renderShellSection(drawer.querySelector('.dw-shell'), manifest);
 
   const body = drawer.querySelector('#dw-body');
   /* 插件不一定提供了自己的设置面板。没提供就**别让引擎挂载**：
@@ -249,7 +259,7 @@ async function openPluginSettings() {
       <div class="nx-empty drawer-empty">
         「${escapeHtml(manifest.name)}」没有提供自己的设置面板。
         <br />
-        下面的沙箱设置由外壳提供，对所有插件都有效。
+        下面的沙箱、插件主题与外链由外壳提供，对所有插件都有效。
       </div>`;
   }
 }

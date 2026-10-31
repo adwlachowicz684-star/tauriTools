@@ -13,10 +13,19 @@ export default function PluginSettingsDrawer({
   manifest,
   onClose,
   mountSettings,
+  onReload,
   hasPluginSettings = true,
 }: {
   manifest: PluginManifest;
   onClose: () => void;
+  /**
+   * 重载当前插件。
+   *
+   * 「严格沙箱」这类改动要重载才生效，而抽屉里此前没有这个入口 ——
+   * 提示写着"重载后生效"，用户却得先关掉抽屉、再回顶栏找 ↻。
+   * 与无构建版（js/shell.js）同一个动作。
+   */
+  onReload: () => void;
   mountSettings: (container: HTMLElement, manifest: PluginManifest) => Promise<() => void>;
   /**
    * 插件是否提供了自己的设置面板。
@@ -96,13 +105,18 @@ export default function PluginSettingsDrawer({
                 ? <div className="nx-empty drawer-empty">
                     「{manifest.name}」没有提供自己的设置面板。
                     <br />
-                    下面的沙箱与插件主题由外壳提供，对所有插件都有效。
+                    下面的沙箱、插件主题与外链由外壳提供，对所有插件都有效。
                   </div>
                 : <div className="loader"><div className="spinner" />正在载入设置…</div>}
           </div>
           {/* 下半：外壳固定提供的开关区块 */}
           <SandboxSection manifest={manifest} />
         </div>
+        {/* 底部固定条：上下两条夹住中间可滚动区，滚到下面也能一键重载 */}
+        <footer className="drawer-foot">
+          <span className="drawer-foot-note">部分改动（如严格沙箱）需重载插件后生效</span>
+          <button className="p-btn" title="重载插件" onClick={onReload}>↻ 重载</button>
+        </footer>
       </aside>
     </div>
   );

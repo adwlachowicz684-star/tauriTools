@@ -79,17 +79,23 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
     );
   };
 
+  /*
+   * 外层必须是 .dw-shell，不能省。
+   *
+   * css/neumorphism.css 里那两条内边距规则此前写的是 #dw-shell（id 选择器），
+   * 而无构建版（js/shell.js）确实给了这个 id、React 版这里是 Fragment ——
+   * 于是同一份样式只有无构建版生效，Vite 版的外壳区一直贴着抽屉边，
+   * 与上方插件区错开一截。两版共用同一个类名才不会再各修一次。
+   */
   return (
-    <>
+    <div className="dw-shell">
       {/*
        * 保存失败的说明放在**所有分组之上**：失败可能来自沙箱开关，也可能来自
        * 插件主题那两个下拉，放在某一组里面的话，另一组出问题时这句在折叠状态下
        * 根本看不见 —— 而那两个下拉自己不会发声（成功时也不需要发声）。
        */}
       {err ? (
-        <div className="p-muted" style={{ padding: '0 0 10px', fontSize: '11px', color: 'var(--danger)' }}>
-          保存失败：{err}
-        </div>
+        <div className="dw-err">保存失败：{err}</div>
       ) : null}
       <SettingGroup
         title="沙箱"
@@ -171,6 +177,6 @@ export default function SandboxSection({ manifest }: { manifest: PluginManifest 
           <div className="p-muted cfg-row-note">这个插件没有发起外部请求。</div>
         )}
       </SettingGroup>
-    </>
+    </div>
   );
 }

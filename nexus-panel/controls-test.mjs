@@ -3351,13 +3351,26 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
   t('开关两版都用 dw-switch', /dw-switch/.test(rss) && /dw-switch/.test(rsx));
   t('dw-switch 有关/开两态', /\.dw-switch\.on/.test(css));
 
-  /* 7) 外壳区与上方插件区必须对齐：#dw-shell 原先完全没有内边距 */
+  /* 7) 外壳区与上方插件区必须对齐。
+     两条：CSS 里有内边距 + **两版都真的套了这个容器**。
+
+     只钉前一条不够 —— 判据原先写的是 #dw-shell（id 选择器），
+     而无构建版有这个 id、React 版（SandboxSection）返回的是 Fragment，
+     没有。于是"CSS 里有 padding"永远为真，而 Vite 版那段一直贴着抽屉边。
+     钉死类名 + 两版都出现，才不会再各修一次。 */
   {
-    const i = css.indexOf('#dw-shell {');
-    const block = i < 0 ? '' : css.slice(i, css.indexOf('}', i));
-    t('#dw-shell 主规则有内边距（与 .drawer-body 对齐）',
+    const m = /\.dw-shell\s*\{([^}]*)\}/.exec(css);
+    const block = m ? m[1] : '';
+    t('.dw-shell 主规则有内边距（与 .drawer-body 对齐）',
       /padding/.test(block),
       /padding/.test(block) ? '已对齐' : '缺 padding → 与上方插件区不对齐');
+    /* 取样用全文 shell 而不是 rss：rss 只截了 settingGroup→hostRow 之间，
+       而这个容器在 openPluginSettings() 里（更早），截不到 → 判据空转。 */
+    t('无构建版套了 .dw-shell 容器',
+      /class="dw-shell"/.test(shell) && /querySelector\('\.dw-shell'\)/.test(shell),
+      /dw-shell/.test(shell) ? '已套' : '缺容器 → 外壳区贴边');
+    t('React 版套了 .dw-shell 容器', /className="dw-shell"/.test(rsx),
+      /dw-shell/.test(rsx) ? '已套' : '缺容器 → Vite 版外壳区贴边，样式对它不生效');
   }
 
   /* 8) 已删除的「主题适配」不能再出现在界面文案里 ——
@@ -3367,6 +3380,19 @@ console.log('\n=== 41. 档位数值关系：只验名字不够，值的关系也
     !/主题适配/.test(drawerTsx) && !/主题适配/.test(rss));
   t('类型声明不再有已删除的 adaptTheme 字段',
     !/^\s*adaptTheme\s*:/m.test(stripComments(read('js/plugin-config.d.ts'))));
+
+  /* 9) 抽屉底部必须有「重载」入口，且两版都有。
+     「严格沙箱」这类改动要重载才生效 —— 提示写着"重载后生效"，
+     抽屉里却没有入口，用户得先关掉抽屉、再回顶栏找那个 ↻。
+     只钉"有按钮"不够：两版各写一套时，漏掉的那版照样没人报。 */
+  t('无构建版抽屉底部有重载入口',
+    /drawer-foot/.test(shell) && /dw-reload/.test(shell)
+    && /host\.mount\(host\.state\.activeId\)/.test(shell),
+    /drawer-foot/.test(shell) ? '已有' : '缺底部条 → 改完沙箱无处重载');
+  t('React 版抽屉底部有重载入口',
+    /drawer-foot/.test(drawerTsx) && /onReload/.test(drawerTsx)
+    && /onReload=\{reload\}/.test(stripComments(read('src/App.tsx'))),
+    /drawer-foot/.test(drawerTsx) ? '已有' : '缺底部条 → Vite 版改完沙箱无处重载');
 }
 
 /* ============================================================

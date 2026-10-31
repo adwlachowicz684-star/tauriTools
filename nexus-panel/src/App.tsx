@@ -498,6 +498,7 @@ export default function App() {
           manifest={activePlugin}
           onClose={closePluginSettings}
           mountSettings={mountSettings}
+          onReload={reload}
           /* 插件是否提供了自己的设置面板。没有就**不能**调 mountSettings：
              SDK 的 settingsFn 缺省会回退 mainFn，抽屉里会显示插件主界面。 */
           hasPluginSettings={hasSettings}
