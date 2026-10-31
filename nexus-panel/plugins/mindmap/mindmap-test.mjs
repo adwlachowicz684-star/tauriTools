@@ -21021,6 +21021,130 @@ group('BUG 152 · 交换格式丢掉的概要与标注必须计入提示');
   }
 }
 
+/* ============================================================
+   BUG 180：节点下划线在五种交换格式里全丢，却一句都不说
+
+   `data.underline` 是 xmind.js 读 XMind 的 `fo:text-decoration` 时落下的：
+   写侧再原样写回去，两处成对存在（xmind.js 那两处注释写明了「只为与写侧
+   成对，保证导入 → 再导出不把它丢掉」）。所以 **.xmind 与 .json 都带得走**。
+
+   但五种交换格式**一个都没有对应属性**：
+     · FreeMind 的 `<font>` 只有 NAME / SIZE / BOLD / ITALIC
+     · OPML 只有 text / _note / url
+     · Mermaid / PlantUML / Markdown 更没有下划线的写法
+   实测产物里连 "underline" 字样都搜不到。
+
+   而它不在 `NODE_STYLE_KEYS` 里 → `exchangeLoss` 报 style:0 / nodes:0 →
+   导出时那句「装不下…」**整句不出现**，界面只说「已保存」。
+   与 BUG 123 / 127 / 152 / 135 是同一个洞：数据收进来了，丢失统计没同步。
+
+   触发：导入别人在 XMind 里给节点加了下划线的 .xmind → 导出成 .opml / .md
+   当备份 —— 那两个是最常被当成备份的格式，而导入是整体替换且不可撤销。
+   ------------------------------------------------------------------ */
+
+group('BUG 180 · 节点下划线丢在交换格式里必须计入提示');
+
+{
+  const f180 = await import('./formats.js');
+  const KINDS = ['markdown', 'freemind', 'opml', 'mermaid', 'plantuml'];
+  /*
+   * 节点文字用中性的 AAA —— 早先探针拿属性名当文字，于是「产物里含 underline」
+   * 恒真，什么都测不出来（BUG 131 那类假绿）。这里判的是**导回后的 data**，
+   * 不是产物里有没有某个词。
+   */
+  const mk180 = (extra) => JSON.stringify({ root: { data: { id: 'r', text: 'ROOT' }, children: [
+    { data: { id: 'a', text: 'AAA', ...(extra || {}) } },
+  ] } });
+  const U = { underline: true };
+
+  // ① 事实：四种可导回的格式里，下划线都没了（导回后 data.underline 不在）
+  {
+    const back = { freemind: (t) => f180.fromFreemind(t), opml: (t) => f180.fromOpml(t),
+      mermaid: (t) => f180.fromMermaid(t), plantuml: (t) => f180.fromPlantUml(t) };
+    for (const [name, fn] of Object.entries({
+      freemind: (c) => f180.toFreemind(c), opml: (c) => f180.toOpml(c, 'T'),
+      mermaid: (c) => f180.toMermaid(c), plantuml: (c) => f180.toPlantUml(c) })) {
+      const txt = fn(JSON.parse(mk180(U)));
+      const km = JSON.parse(back[name](txt));
+      const flat = [];
+      (function walk(n) { flat.push(n); (n.children || []).forEach(walk); })(km.root);
+      const a = flat.find((n) => n.data?.text === 'AAA');
+      ok(a && !a.data.underline, `★ ${name}：导回后下划线没了（这就是要报出来的事实）`);
+    }
+  }
+
+  // ② 五种格式都必须计入 —— 原来全是 0，于是提示整段不出现
+  {
+    const content = mk180(U);
+    for (const kind of KINDS) {
+      const l = f180.exchangeLoss(content, kind, {});
+      eq(l.style, 1, `★ ${kind}：下划线计入样式丢失`);
+      ok(l.nodes > 0, `★ ${kind}：nodes > 0（否则提示整段不出现）`);
+    }
+  }
+
+  // ③ 边界：不设不能喊（干净画布平白报丢失同样是谎报）
+  {
+    eq(f180.exchangeLoss(mk180({}), 'opml').style, 0, '没设下划线报 0');
+    eq(f180.exchangeLoss(mk180({}), 'opml').nodes, 0, '★ 干净画布不能平白喊丢东西');
+    /*
+     * 「清除全部样式」走内核的 `setData(k)`（单参 = 赋 undefined），
+     * 于是 d[k] != null 为假 —— 清过的节点**不能**再被算成丢样式。
+     * 这一条守的是「点过清除之后导出不该还喊丢东西」。
+     */
+    const cleared = JSON.parse(mk180(U));
+    cleared.root.children[0].data.underline = undefined;
+    eq(f180.exchangeLoss(JSON.stringify(cleared), 'opml').style, 0,
+      '★ 清除样式后（undefined）不再计入');
+    // 删除线是**已被计入**的同类键，不许因为这次改动丢掉
+    eq(f180.exchangeLoss(mk180({ 'font-strikethrough': true }), 'opml').style, 1,
+      '★ 反向：删除线仍计入（不许改坏了既有口径）');
+    /*
+     * underline 必须与其余 14 个键走**同一套**通用判据（`some` 命中即算），
+     * 不许给它开特例 —— 各写一份判据正是本项目反复撞的坑。
+     */
+    eq(f180.exchangeLoss(mk180({ underline: false }), 'opml').style,
+      f180.exchangeLoss(mk180({ 'font-strikethrough': false }), 'opml').style,
+      '★ underline 与 font-strikethrough 判据一致（不许开特例）');
+    // style 数的是**节点**不是属性条数（`some` 命中一次即 bump）
+    const both = f180.exchangeLoss(mk180({ underline: true, 'font-strikethrough': true }), 'opml', {});
+    eq(both.style, 1, '同一节点两条装饰只计 1 处（style 数的是节点）');
+    eq(both.nodes, 1, '★ nodes 是去重后的节点数（不是丢失条数）');
+  }
+
+  // ④ 跨画布累加：Markdown 导出的是整本工作簿
+  {
+    const sheets = ['a', 'b'].map((k) => ({ id: k, content: mk180(U) }));
+    const all = f180.exchangeLossAll(sheets, 'markdown');
+    eq(all.style, 2, '★ exchangeLossAll 累加下划线（两张画布各 1）');
+    eq(all.nodes, 2, '★ nodes 也累加');
+  }
+
+  // ⑤ 反向边界：XMind 自己**带得走**下划线，那边不能跟着喊丢
+  {
+    const xm = await import('./xmind.js');
+    const sheets = [{ id: 's1', title: 'T', content: mk180(U) }];
+    const l = xm.xmindLossCount(sheets);
+    eq(l.blocked + l.unlinked + l.images + l.fmIcons + l.fmCloud, 0,
+      '★ XMind 不因下划线报任何损失（它带得走 —— 写侧有 fo:text-decoration）');
+  }
+
+  // ⑥ 源码契约：键必须收在 NODE_STYLE_KEYS 里，且不得抄第二份
+  {
+    const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
+    const plain = stripCommentsFlatJs(src);
+    ok(/const NODE_STYLE_KEYS = \[/.test(plain), '能定位 NODE_STYLE_KEYS');
+    const at = plain.indexOf('const NODE_STYLE_KEYS = [');
+    const win = plain.slice(at, at + 900);
+    ok(/'underline'/.test(win), '★ NODE_STYLE_KEYS 带上 underline');
+    eq((plain.match(/const NODE_STYLE_KEYS/g) || []).length, 1,
+      '★ NODE_STYLE_KEYS 只有一处定义（各抄一份必漏）');
+    // 写侧成对：XMind 写回 fo:text-decoration 时必须带上 underline
+    const xsrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    ok(/data\?\.underline/.test(xsrc), '★ XMind 写侧仍写 underline（成对，不许单向删）');
+  }
+}
+
 
 /* ------------------------------------------------------------------
    BUG 155：导入 .xmind 时没还原成的附件 / 图片必须数出来
