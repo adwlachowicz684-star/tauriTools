@@ -306,9 +306,21 @@ console.log('\n=== 5. 设置页初始化（真身实跑）===');
   const run = async (loadImpl, healthImpl) => {
     const st = { loaded: 0, msg: [], cfg: null };
     // eslint-disable-next-line no-new-func
-    const fn = new Function('ctx', 'alive', 'S', 'setCfg', 'setLoaded', 'setMsg', 'setServiceOn', 'return ' + js + ';')(
-      { invoke: async () => 'x' }, true, { loadConfig: loadImpl, apiHealth: healthImpl || (async () => false) },
-      (v) => { st.cfg = v; }, () => { st.loaded++; }, (v) => st.msg.push(v), () => {});
+    /*
+      ⛔ 桩必须把初始化块里用到的每个 setter / 方法都给到。
+      漏一个的后果不是"那条断言红"，而是**假象**：
+      缺的 setter 抛 ReferenceError → 被被测代码自己的 catch 接住 →
+      走了"加载失败"分支，于是成功路径被判成失败（loaded 记了两次、还写了错误提示）。
+      实测踩到：notifyStatus 那版新增了 readStore / setStatuses，桩没跟上，
+      这一节从 43/0 变成 41/2 —— 看着像设置页坏了，其实是桩漏了。
+    */
+    const fn = new Function(
+      'ctx', 'alive', 'S', 'setCfg', 'setLoaded', 'setMsg', 'setServiceOn', 'setStatuses',
+      'return ' + js + ';',
+    )(
+      { invoke: async () => 'x' }, true,
+      { loadConfig: loadImpl, apiHealth: healthImpl || (async () => false), readStore: async () => null },
+      (v) => { st.cfg = v; }, () => { st.loaded++; }, (v) => st.msg.push(v), () => {}, () => {});
     st.threw = await awaitSafe(fn());
     return st;
   };
