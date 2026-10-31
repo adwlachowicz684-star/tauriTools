@@ -472,11 +472,21 @@ export function colFilterActive(col, f) {
  * 是很常用的查询），所以不能返回空数组：空数组在这里表示
  * "这行在该列上没有值，不匹配任何选项"。
  */
+/*
+  任务在某个列上的**原始值**（多值列返回多个）。
+
+  ⚠️ 加新列时必须同步这里。漏掉 → 该列返回 [] → enum 匹配直接判 false
+  → **勾任何值结果都是空**，而界面上看不出"筛选坏了"，
+    只显示"没有符合条件的任务"，用户会以为真的没有。
+  （2026-10-28 自查第 3 轮：「任务类型」列就漏在这儿，筛选 100% 失效。）
+*/
 export function colRawValues(task, field) {
   switch (field) {
     case 'priority': return [task.priority];
     case 'status': return [task.status];
     case 'assignee': return [task.assignee || ''];
+    /* 空类型落到 NOTYPE 哨兵，这样"未分类"才筛得到 */
+    case 'type': return [task.type || NOTYPE];
     case 'tags': return task.tags || [];
     default: return [];
   }
@@ -617,16 +627,19 @@ export function colFilterValues(field, rows, statusIds, typeIds) {
       用户刚新建、还没挂到任何任务上的类型在下拉里就选不到，
       那个类型等于建不出来。
     */
-    case 'type': return (typeIds || []).length ? [...typeIds] : TYPE_WORDS.slice();
+    /*
+      类型候选 = 定义表 + 「未分类」。
+      未分类必须能筛：一堆任务没归类是常态，
+      而"把它们找出来补上归类"是刚建完类型紧接着要做的事 ——
+      筛不到它就得一条条翻。
+    */
+    case 'type': return ((typeIds || []).length ? [...typeIds] : TYPE_WORDS.slice()).concat([NOTYPE]);
     case 'tags': return allTags(tasks || []);
     /*
       数值列没有"候选值"可枚举，但**"没估"是个要能筛的选项** ——
       "找那些还没估工作量的"是排期前最常见的一次查询。
       它不是 0，是缺失，所以必须单列，不能混进区间里。
     */
-    case 'type':
-      r = (TYPE_RANK[a.type] ?? 99) - (TYPE_RANK[b.type] ?? 99);
-      break;
     case 'estimate': return [UNESTIMATED];
     default: return [];
   }
@@ -861,6 +874,16 @@ function cmpTask(a, b, field, sign) {
     case 'createdAt':
       r = (a[field] || 0) - (b[field] || 0);
       break;
+    case 'type':
+      /*
+        按默认清单的顺序排，不按字典序 ——
+        按拼音排出来是"BUG/优化/开发/调研"，看着像随机。
+        自定义类型不在表里，落 99 排最后（它们之间的先后没意义），
+        未分类同理恒排最后：它是"还没归类"，不该混在中间。
+      */
+      r = (TYPE_RANK[a.type] ?? 99) - (TYPE_RANK[b.type] ?? 99)
+        || (a.type ? 0 : 1) - (b.type ? 0 : 1);
+      break;
     case 'estimate':
       r = (Number(a.estimate) || 0) - (Number(b.estimate) || 0);
       break;
@@ -1086,7 +1109,7 @@ export const DEFAULT_TYPES = [
 ];
 
 const TYPE_COLORS = Object.fromEntries(DEFAULT_TYPES.map((t) => [t.id, t.color]));
-/** 类型 id → 显示名。没配过的原样显示 id（AI 手写的） */
+/** 默认类型的 id 清单（顺序即排序权重；也是没配过定义表时的候选值） */
 export const TYPE_WORDS = ['dev', 'bug', 'opt', 'research', 'review', 'plan'];
 
 /**
@@ -1304,55 +1327,34 @@ export function groupTasks(tasks, key) {
  * - assignee：未认领恒排最后，与方向无关
  * - 同级兜底：更新时间倒序（新的在前）；排时间字段本身时按 id 升序保稳定
  */
+/*
+ * 按任意列排序（看板用）。
+ *
+ * ⚠️ 这里**复用 cmpTask**，不再自己写一份 switch。
+ * 此前这里与 cmpTask 各有一份字段分支 —— 加「任务类型」时只改了其中一份，
+ * 于是同一列在列表里能排、在看板里排不动，而界面上看不出差别。
+ * 两份排序逻辑迟早要分叉，这是必然的，不是"小心点就行"。
+ */
 export function sortTasksBy(tasks, field, dir = 'asc') {
   const sign = dir === 'desc' ? -1 : 1;
-  const cmp = (a, b) => {
-    let r = 0;
-    switch (field) {
-      case 'priority':
-        r = (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
-        break;
-      case 'status':
-        r = (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
-        break;
-      case 'assignee': {
-        if (!a.assignee && !b.assignee) r = 0;
-        else if (!a.assignee) return 1;
-        else if (!b.assignee) return -1;
-        else r = a.assignee.localeCompare(b.assignee);
-        break;
-      }
-      case 'updatedAt':
-      case 'createdAt':
-        r = (a[field] || 0) - (b[field] || 0);
-        break;
-      case 'title':
-        r = a.title.localeCompare(b.title, 'zh-Hans-CN');
-        break;
-      case 'id':
-        r = a.id.localeCompare(b.id);
-        break;
-      case 'tags': {
-        /*
-          标签是多值的，排序键取"拼起来的串"。
-          按第一个标签比会让 [b,a] 与 [a,b] 排在不同位置 ——
-          同一个任务自己跟自己不一致；拼串是唯一确定的。
-        */
-        const ta = (a.tags || []).slice().sort().join(',');
-        const tb = (b.tags || []).slice().sort().join(',');
-        r = ta.localeCompare(tb, 'zh-Hans-CN');
-        break;
-      }
-      default:
-        r = 0;
-    }
-    if (r !== 0) return r * sign;
-    if (field === 'updatedAt' || field === 'createdAt') return a.id.localeCompare(b.id);
-    return (b.updatedAt || 0) - (a.updatedAt || 0);
-  };
-  return [...tasks].sort(cmp);
+  return [...tasks].sort((a, b) => {
+    /*
+      sign 直接交给 cmpTask，不在外面再乘一次。
+      cmpTask 里"未认领恒排最后"是提前 return（刻意不带 sign）——
+      外面再乘一次就会在降序时把它翻到最前面，那条保证就没了。
+    */
+    const r = cmpTask(a, b, field, sign);
+    if (r !== 0) return r;
+    /*
+      兜底保持看板原有的手感：同分时更新时间新的在前，再同分按优先级。
+      不加优先级的话，改完这一处会发现看板里同一列的任务
+      顺序变得跟以前不一样，而没人动过排序设置。
+    */
+    const byTime = (b.updatedAt || 0) - (a.updatedAt || 0);
+    if (byTime !== 0) return byTime;
+    return (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
+  });
 }
-
 const STALE_MS = 7 * 24 * 3600 * 1000;
 
 /**

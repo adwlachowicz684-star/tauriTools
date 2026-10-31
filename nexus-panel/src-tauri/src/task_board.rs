@@ -129,6 +129,32 @@ pub fn tb_set_docs_dir(state: State<'_, TbState>, dir: String) -> Result<String,
     Ok(canon.to_string_lossy().to_string())
 }
 
+/// 搬文档用的**严格**授权检查：只认确认过的目录，不含 pending_dir。
+///
+/// ⛔ 这条必须与 authorized_any 分开：pending_dir 是"用户选了、但只打算看一眼"
+/// （扫描目标），而搬文档是破坏性操作（源目录会被移空）。
+/// 让一个只读统计用的槽去授权搬移，等于扫一眼就能把文档搬走 ——
+/// 而用户并没有确认要用那个目录。
+fn authorized_move_end(state: &TbState, dir: &str) -> Result<PathBuf, String> {
+    let want = PathBuf::from(dir);
+    let canon = if want.exists() {
+        want.canonicalize().unwrap_or(want.clone())
+    } else {
+        want.clone()
+    };
+    let data = state.data_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let docs = state.docs_dir.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let prev = state.docs_dir_prev.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let ok = data.as_ref().map(|d| *d == canon).unwrap_or(false)
+        || docs.as_ref().map(|d| *d == canon).unwrap_or(false)
+        || prev.as_ref().map(|d| *d == canon).unwrap_or(false);
+    if ok {
+        Ok(canon)
+    } else {
+        Err("该目录尚未授权（请先在设置里确认目录）".to_string())
+    }
+}
+
 /// 这个路径在已授权的目录里吗（数据目录或文档目录任一）。
 fn authorized_any(state: &TbState, dir: &str) -> Result<PathBuf, String> {
     let want = PathBuf::from(dir);
@@ -173,8 +199,8 @@ pub fn tb_move_docs(
     from: String,
     to: String,
 ) -> Result<Value, String> {
-    let src = authorized_any(&state, &from)?;
-    let dst = authorized_any(&state, &to)?;
+    let src = authorized_move_end(&state, &from)?;
+    let dst = authorized_move_end(&state, &to)?;
     if src == dst {
         return Err("源目录与目标目录相同".to_string());
     }

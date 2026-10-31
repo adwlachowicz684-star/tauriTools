@@ -48,7 +48,7 @@ import {
   normalizeFlow,
   relTime,
   sortRowsBy,
-  sortTasks,
+  sortTasksBy,
   splitTask,
   statsOf,
   typeColor,
@@ -306,7 +306,13 @@ export default function App() {
     const map: Record<string, Task[]> = {};
     for (const s of flow.statuses) map[s.id] = [];
     if (store) {
-      const list = sortTasks(filtered);
+      /*
+        看板也跟随用户点的排序。
+        原来这里用 sortTasks（写死"优先级 + 更新时间"）——
+        于是列表里点了"按更新排"，切到看板顺序纹丝不动，
+        而顶栏还写着"排序：更新 ↓"，看着像生效了，实际没有。
+      */
+      const list = sortTasksBy(filtered, sort.field, sort.dir);
       for (const t of list) {
         if (!map[t.status]) map[t.status] = [];   // 配置里没有的状态也要有地方放
         map[t.status].push(t);
@@ -883,7 +889,7 @@ ${dir}
             const f = colFilters[c.field] as ColFilter;
             return (
               <span key={c.field} className="tb-chip">
-                {c.label}：{filterSummary(c, f)}
+                {c.label}：{filterSummary(c, f, typeDefs)}
                 <button
                   type="button"
                   className="tb-chip-x"
@@ -2053,15 +2059,25 @@ function optionLabel(
 ): string {
   if (field === 'priority') return `${v} ${PRIORITY_LABEL[v as Priority] || ''}`.trim();
   if (field === 'status') return STATUS_LABEL[v as TaskStatus] || v;
-  if (field === 'type') return typeName(defs, v) || v;
+  /*
+    未分类是哨兵值（不在定义表里），必须在这里单独认 ——
+    否则 chip 上会显示 "__notype__"，没人看得懂那一串下划线是什么。
+  */
+  if (field === 'type') return v === NOTYPE ? '未分类' : (typeName(defs, v) || v);
   if (field === 'assignee') return v || '未认领';
   return v;
 }
 
-/** 已生效筛选的一句摘要，写在 chip 上 */
-function filterSummary(col: ListColumn, f: ColFilter): string {
+/**
+ * 已生效筛选的一句摘要，写在 chip 上。
+ *
+ * 传 typeDefs：类型列显示的是 id（'dev'），不查定义表的话
+ * chip 上写 "dev" 而筛选面板里写 "开发" —— 同一个筛选两处说法不一样，
+ * 会让人以为那是两个不同的东西。
+ */
+function filterSummary(col: ListColumn, f: ColFilter, typeDefs?: TagDef[]): string {
   if (col.kind === 'enum') {
-    return f.values.map((v) => optionLabel(col.field, v)).join('、');
+    return f.values.map((v) => optionLabel(col.field, v, typeDefs)).join('、');
   }
   if (col.kind === 'text') return f.text.trim();
   const lo = f.min.trim();
@@ -2133,7 +2149,7 @@ function ColFilterPop({
                       values: on ? filter.values.filter((x) => x !== v) : [...filter.values, v],
                     })}
                   />
-                  <span>{optionLabel(col.field, v)}</span>
+                  <span>{optionLabel(col.field, v, defs)}</span>
                 </label>
                 {/*
                   标签列才给调色。

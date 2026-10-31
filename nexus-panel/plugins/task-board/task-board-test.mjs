@@ -1040,6 +1040,78 @@ t('自查：行内单元格的顺序与列定义一致（数量对了但顺序�
   return norm.length === fields.length && norm.every((x, k) => x === fields[k]);
 })());
 
+
+/* ============================================================ 自查补测（第 3 轮） */
+
+/*
+ * ⚠️ 这条盯的是**每个 enum 列都必须在 colRawValues 里有分支**。
+ *
+ * 真实故障（本轮揪出）：加了「任务类型」列，也给了它候选值和排序权重，
+ * 却漏了 colRawValues —— 于是该列返回 []，enum 匹配直接判 false，
+ * **勾任何值结果都是空**。
+ *
+ * 这个错比"报错"更坏：界面上只显示"没有符合条件的任务"，
+ * 用户会以为真的没有这类任务，而不是筛选坏了。
+ * TypeScript 查不出来（返回 [] 类型合法），只能靠这条钉住。
+ */
+t('自查：每个 enum 列都要能在 colRawValues 里取到值（漏了 = 该列筛选 100% 失效）', (() => {
+  const enumCols = LIST_COLUMNS.filter((c) => c.kind === 'enum');
+  const t = normalizeTask({
+    id: 'probe',
+    status: 'doing',
+    priority: 'P1',
+    assignee: 'who',
+    type: 'dev',
+    tags: ['tg'],
+  });
+  return enumCols.every((c) => colRawValues(t, c.field).length > 0);
+})());
+
+t('自查：类型列能筛到具体类型（上轮勾任何值都是空）', (() => {
+  const rows = [
+    normalizeTask({ id: 'a', type: 'dev' }),
+    normalizeTask({ id: 'b', type: 'bug' }),
+  ].map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  const f = emptyColFilter();
+  f.values = ['dev'];
+  return filterTasksByColumns(rows, { type: f }, '').length === 1;
+})());
+
+t('自查：类型列能筛到"未分类"（没归类是常态，找出来补上才是刚需）', (() => {
+  const rows = [
+    normalizeTask({ id: 'a', type: 'dev' }),
+    normalizeTask({ id: 'b' }),
+  ].map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  const f = emptyColFilter();
+  f.values = [NOTYPE];
+  return filterTasksByColumns(rows, { type: f }, '').length === 1;
+})());
+
+t('自查：类型列排序按默认清单顺序，不按字典序', (() => {
+  const rows = [
+    normalizeTask({ id: 'a', type: 'research' }),
+    normalizeTask({ id: 'b', type: 'bug' }),
+    normalizeTask({ id: 'c', type: 'dev' }),
+  ].map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  const out = sortRowsBy(rows, 'type', 'asc').map((r) => r.task.type);
+  // dev(0) < bug(1) < research(4)；按字典序会排成 bug,dev,research
+  return out.join(',') === 'dev,bug,research';
+})());
+
+t('自查：类型列排序时未分类恒排最后', (() => {
+  const rows = [
+    normalizeTask({ id: 'a' }),
+    normalizeTask({ id: 'b', type: 'dev' }),
+  ].map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  const out = sortRowsBy(rows, 'type', 'asc').map((r) => r.task.type || 'x');
+  return out[out.length - 1] === 'x';
+})());
+
+t('自查：类型候选值里带「未分类」（否则筛不到没归类的任务）', (() => {
+  const vs = colFilterValues('type', [], [], ['dev', 'bug']);
+  return vs.indexOf(NOTYPE) >= 0 && vs.indexOf('dev') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
