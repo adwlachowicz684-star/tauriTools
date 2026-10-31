@@ -5,7 +5,7 @@ import {
 import { migrateLlmToCredentials } from '../engine/llmCredential';
 import {
   parseStore, serializeStore, decryptStore, encryptStore,
-  newDeviceSalt, collectDeviceSignals,
+  newDeviceSalt, collectDeviceSignals, judgeUnlock,
   defaultBackend, type StoredFile, type VaultMode,
 } from '../engine/credentialStore';
 import { deviceSeed, clearKeyCache } from '../engine/crypto';
@@ -367,11 +367,24 @@ export function useCredentialVault({
     const be = beRef.current;
     if (!be) { setUnlockErr('环境不支持加密'); return; }
     const r = await decryptStore(be, store, pass);
-    if (store.credentials.length > 0 && r.failed.length === store.credentials.length) {
+    /*
+     * ⛔ 部分失败**不能**静默放行：
+     * 以前只判"是不是全失败"，于是三条里解不开一条也照常解锁、
+     * 错误区被 setUnlockErr('') 清空 —— 用户看到的是"解锁成功"，
+     * 而那一条的 secret 是空串，用到它的节点要等运行时才报错，
+     * 且在连接列表里它看起来和别的一模一样。
+     */
+    const v = judgeUnlock(store.credentials.length, r.failed.length);
+    if (v.kind === 'all') {
       setUnlockErr('口令不对，一条都没解开。');
       return;
     }
-    setUnlockErr('');
+    if (v.kind === 'partial') {
+      setUnlockErr(`有 ${v.failedCount} 条连接解不开（口令不对或数据损坏）——`
+        + ' 其余已解锁，但用到那几条的节点会取不到密钥。');
+    } else {
+      setUnlockErr('');
+    }
     setVaultKey(pass);
     setCredentials(r.credentials);
   }, [store]);

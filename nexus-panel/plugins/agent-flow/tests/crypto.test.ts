@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readSrc } from './srcScan';
 import {
   bytesToB64, b64ToBytes, isCipherBundle, secretKind, deviceSeed,
   encryptString, decryptString, deriveKey, webCryptoBackend,
@@ -8,7 +9,7 @@ import {
 } from '../engine/crypto';
 import {
   parseStore, serializeStore, encryptStore, decryptStore, emptyStore,
-  newDeviceSalt, migratePlaintext, STORE_VERSION,
+  newDeviceSalt, migratePlaintext, STORE_VERSION, judgeUnlock,
 } from '../engine/credentialStore';
 
 const be = webCryptoBackend();
@@ -426,4 +427,40 @@ test('解密: 正常解密时 failed 为空（反例，防过度修复）', asyn
   const r = await decryptStore(be, file, PASS);
   assert.deepEqual(r.failed, [], '正常条目不该被算成失败');
   assert.equal(r.credentials[0].secret, 'k');
+});
+
+/* ---------- 解锁判定：部分失败不许静默放行 ---------- */
+
+test('解锁判定: 全解开 → ok', () => {
+  assert.deepEqual(judgeUnlock(3, 0), { kind: 'ok' });
+});
+
+test('解锁判定: 一条都没解开 → all', () => {
+  assert.deepEqual(judgeUnlock(3, 3), { kind: 'all' });
+});
+
+test('解锁判定: 解不开一部分 → partial，且带条数', () => {
+  assert.deepEqual(judgeUnlock(3, 1), { kind: 'partial', failedCount: 1 });
+});
+
+test('解锁判定: 空库也放行（反例，防过度修复）', () => {
+  assert.deepEqual(judgeUnlock(0, 0), { kind: 'ok' }, '没有凭据不该被判成"一条都没解开"');
+});
+
+test('解锁判定: 没失败时绝不报 partial（反例，防过度修复）', () => {
+  assert.notEqual(judgeUnlock(5, 0).kind, 'partial');
+  assert.notEqual(judgeUnlock(5, 0).kind, 'all');
+});
+
+/* ---------- 源码守卫：unlock 必须走 judgeUnlock ---------- */
+
+test('源码守卫: unlock 用 judgeUnlock 判放行，且部分失败要说出来', () => {
+  const src = readSrc('hooks/useCredentialVault.ts');
+  assert.ok(/judgeUnlock\(/.test(src), 'unlock 要走 judgeUnlock，不能自己判"是不是全失败"');
+  const at = src.indexOf('judgeUnlock(store.credentials.length');
+  assert.ok(at >= 0, '要能找到调用处');
+  const win = src.slice(at, at + 700);
+  assert.ok(/v\.kind === 'partial'/.test(win), '必须处理 partial 分支');
+  assert.ok(/setUnlockErr\(`?[^`]*\$\{v\.failedCount\}/.test(win) || /setUnlockErr\(/.test(win),
+    'partial 分支必须说出来');
 });
