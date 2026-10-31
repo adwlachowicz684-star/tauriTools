@@ -3263,6 +3263,45 @@ t('守卫：core.mjs 没有无人调用的导出（无两份真相）', (() => {
   return dead.length === 0;
 })());
 
+
+/*
+ * **守卫 6：配置驱动渲染时，"配置里没有"不能等于"不存在"**
+ *
+ * 看板列、统计状态分布都遍历 `flow.statuses` 渲染。
+ * 任务状态可以是配置里没有的（状态被删掉、或 AI 经 API 直接写了个），
+ * 那些任务于是**哪里都不显示**：
+ * · 看板：列是按配置渲染的 → 任务凭空消失（列表里还在）
+ * · 统计：各状态之和 < 总任务数，差额去哪了看不出来
+
+ * 两者都不会报错，只是"东西少了"，用户只会以为漏渲染或算错了。
+
+ * 判据：这两处渲染不能再直接遍历 flow.statuses。
+ */
+/*
+  ⛔ 判据必须**按渲染块**判定，不能全文件搜 `flow.statuses.map`：
+  批量改状态的下拉本来就该只列配置里的状态（目标只能是已定义的状态），
+  那里的 `flow.statuses.map` 是正确的。
+  全文件搜的话守卫恒红 —— 反而抓不到真正的回归。
+*/
+const blockOf = (src, from, until) => {
+  const i = src.indexOf(from);
+  if (i < 0) return '';
+  const j = src.indexOf(until, i + from.length);
+  return src.slice(i, j < 0 ? i + 4000 : j);
+};
+
+t('守卫：看板列不只遍历 flow.statuses（未配置状态也要有列）', (() => {
+  const src = stripComments(appSrc);
+  const seg = blockOf(src, "{view === 'board' && (", '{view ===');
+  return seg.indexOf('boardColumns.map((sd)') >= 0
+    && seg.indexOf('flow.statuses.map') < 0;
+})());
+
+t('守卫：统计状态分布不只遍历 flow.statuses', (() => {
+  const src = stripComments(appSrc);
+  return src.indexOf('{statsByStatus.map((sd) => (') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
