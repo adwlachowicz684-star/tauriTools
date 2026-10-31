@@ -2438,6 +2438,37 @@ t('审查：详情的可选前置用 dependsOn 过滤', (() => {
   return app.indexOf('!dependsOn(tasks, t.id, task.id)') >= 0;
 })());
 
+
+/* ============================================================ 审查：全局搜索搜不到分组（本轮） */
+
+/*
+ * **顶栏搜索框不搜分组名**：列表里明明有一列显示着"登录"，
+ * 在上面敲"登录"却搜不到 —— 那是最让人怀疑的一种搜不到
+ * （看得见的东西搜不着）。
+
+ * 分组是自由文本，用户敲的就是那个词；
+ * 这一列虽然能筛（列头漏斗），但顶栏这个框是更常用的入口。
+ */
+t('审查：全局搜索能搜到分组名', (() => {
+  const rows = [
+    normalizeTask({ id: '1', title: '甲', group: '登录' }),
+    normalizeTask({ id: '2', title: '乙', group: '支付' }),
+    normalizeTask({ id: '3', title: '丙' }),
+  ].map((t) => ({ task: t, depth: 0, path: [] }));
+  return filterTasksByColumns(rows, {}, '登录').map((r) => r.task.id).join() === '1'
+    && filterTasksByColumns(rows, {}, '支付').map((r) => r.task.id).join() === '2'
+    && filterTasksByColumns(rows, {}, '甲乙').length === 0;
+})());
+
+/* 标题/说明仍照常命中（加字段不能把原有的搜坏） */
+t('审查：搜索仍能命中标题与说明', (() => {
+  const rows = [
+    normalizeTask({ id: '1', title: '登录页改版', summary: '' }),
+    normalizeTask({ id: '2', title: '甲', summary: '处理登录态' }),
+  ].map((t) => ({ task: t, depth: 0, path: [] }));
+  return filterTasksByColumns(rows, {}, '登录').length === 2;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
