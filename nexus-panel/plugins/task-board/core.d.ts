@@ -195,7 +195,7 @@ export interface GroupNode {
 }
 
 /** 按多列分组，列顺序 = 层级（第一个最外层） */
-export declare function groupTasksBy(tasks: Task[], keys: string | string[]): GroupNode[];
+export declare function groupTasksBy(tasks: Task[], keys: GroupKey[], flow?: unknown): GroupNode[];
 export type GroupKey = 'status' | 'priority' | 'assignee' | 'type' | 'tag' | 'group';
 
 export interface TaskGroup<K extends string = string> {
