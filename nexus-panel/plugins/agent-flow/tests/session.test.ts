@@ -5,11 +5,6 @@ import {
   loadSession, saveSession, resetSession, sessionName,
   type Session,
 } from '../engine/session';
-import {
-  emptyBoard, addNode, claimTask, takeOver, releaseTask,
-  isClaimedBy, takeOverNote, isTask,
-  type BoardTask, type TaskBoard,
-} from '../engine/taskBoard';
 
 /** 内存版 KV —— 不碰 localStorage，测试可重复 */
 function memKV(init: Record<string, string> = {}): { get: (k: string) => string | null; set: (k: string, v: string) => void; store: Record<string, string> } {
@@ -69,6 +64,11 @@ test('label 只影响显示，不影响 id', () => {
 });
 
 /*
+  ⛔ 文件头那句 `from '../engine/taskBoard'` 也必须一起删掉：
+     engine/taskBoard.ts 已随 #399 移除，留着 import 会让整个文件
+     Cannot find module 崩掉，连带上面这 6 条正常的 session 用例一起红 ——
+     而崩的样子是"模块找不到"，看不出是这里多了一行 import。
+
   ⛔ 认领 / 接手那 8 条已随任务板一起删掉。
 
   engine/taskBoard.ts 在 #399 被整块移除（claimTask / takeOver / releaseTask /
