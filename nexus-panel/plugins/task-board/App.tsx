@@ -745,7 +745,14 @@ export default function App() {
       const task = await S.transitionTask(ctx, cfg.dataDir, me, id, to, note);
       await refresh();
       if (to === 'review') await S.notifyWebhook(cfg, task);
-      ctx.toast(`${id} → ${STATUS_LABEL[to]}`, 'ok');
+      /*
+        ⛔ 状态名不能查写死的 STATUS_LABEL：
+        那是**默认那五个**的名字表，自定义流程的 id（s2、'完工'…）在里面查不到，
+        于是 toast 显示的是原始 id（"tb-0001 → s2"），
+        而列表里同一条显示的是"开发中" —— 两处说法不一样。
+        用 statusName(flow, to)：它认流程配置。
+      */
+      ctx.toast(`${id} → ${statusName(flow, to)}`, 'ok');
     })();
 
   const doClaim = (id: string) =>
@@ -1410,7 +1417,7 @@ ${dir}
             const f = colFilters[c.field] as ColFilter;
             return (
               <span key={c.field} className="tb-chip">
-                {c.label}：{filterSummary(c, f, typeDefs, store ? store.tagDefs : [])}
+                {c.label}：{filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow)}
                 <button
                   type="button"
                   className="tb-chip-x"
@@ -2916,9 +2923,15 @@ function optionLabel(
   field: SortField,
   v: string,
   defs?: { id: string; name: string }[],
+  flow?: FlowLike,
 ): string {
   if (field === 'priority') return `${v} ${PRIORITY_LABEL[v as Priority] || ''}`.trim();
-  if (field === 'status') return STATUS_LABEL[v as TaskStatus] || v;
+  /*
+    状态名走 statusName(flow, v)，不查写死的 STATUS_LABEL：
+    自定义流程的 id 在那张默认表里查不到，于是筛选面板里显示
+    "s2"，而列表同一行显示"开发中" —— 同一个筛选两处说法不一样。
+  */
+  if (field === 'status') return statusName(flow, v as TaskStatus);
   /*
     未分类是哨兵值（不在定义表里），必须在这里单独认 ——
     否则 chip 上会显示 "__notype__"，没人看得懂那一串下划线是什么。
@@ -2941,7 +2954,7 @@ function optionLabel(
  * 会让人以为那是两个不同的东西。
  */
 function filterSummary(
-  col: ListColumn, f: ColFilter, typeDefs?: TagDef[], tagDefs?: TagDef[],
+  col: ListColumn, f: ColFilter, typeDefs?: TagDef[], tagDefs?: TagDef[], flow?: FlowLike,
 ): string {
   if (col.kind === 'enum') {
     /*
@@ -2973,6 +2986,8 @@ function ColFilterPop({
   col, filter, options, onChange, onClear, anchorRight,
   tagDefs, onCreateTag, onTagColor, onRenameTag, onRemoveTag,
   typeDefs, onCreateType, onTypeColor, onRemoveType, onRenameType,
+  /** 流程配置：状态名要认自定义流程，不能查写死的默认表 */
+  flow,
 }: {
   col: ListColumn;
   filter: ColFilter;
@@ -2998,6 +3013,8 @@ function ColFilterPop({
   onRemoveType?: (id: string) => void;
   /** 类型改名（与标签同构：改的是定义） */
   onRenameType?: (id: string, name: string) => void;
+  /** 流程配置（状态名认自定义流程，不能查写死的默认表） */
+  flow?: FlowLike;
 }) {
   const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
   const [newName, setNewName] = useState('');
@@ -3060,7 +3077,7 @@ function ColFilterPop({
                       values: on ? filter.values.filter((x) => x !== v) : [...filter.values, v],
                     })}
                   />
-                  <span>{optionLabel(col.field, v, defs)}</span>
+                  <span>{optionLabel(col.field, v, defs, flow)}</span>
                 </label>
                 {/*
                   标签列与类型列都能直接调色。
@@ -3077,7 +3094,7 @@ function ColFilterPop({
                         type="button"
                         className={'tb-swatch' + (colorOf(v) === c ? ' on' : '')}
                         style={{ background: c }}
-                        title={`把「${optionLabel(col.field, v, defs)}」改成这个颜色`}
+                        title={`把「${optionLabel(col.field, v, defs, flow)}」改成这个颜色`}
                         onClick={() => (isType ? onTypeColor!(v, c) : onTagColor!(v, c))}
                       />
                     ))}
@@ -3095,11 +3112,11 @@ function ColFilterPop({
                     <input
                       className="tb-lpop-rename"
                       autoFocus
-                      defaultValue={optionLabel(col.field, v, defs)}
+                      defaultValue={optionLabel(col.field, v, defs, flow)}
                       onClick={(e) => e.stopPropagation()}
                       onBlur={(e) => {
                         const nv = e.target.value.trim();
-                        if (nv && nv !== optionLabel(col.field, v, defs)) {
+                        if (nv && nv !== optionLabel(col.field, v, defs, flow)) {
                           if (isType) onRenameType?.(v, nv);
                           else onRenameTag?.(v, nv);
                         }
@@ -3131,7 +3148,7 @@ function ColFilterPop({
                       ? '删除这个类型（挂在这个类型上的任务会变成「未分类」）'
                       : '删除这个标签（会从所有挂它的任务上摘掉）'}
                     onClick={() => {
-                      const nm = optionLabel(col.field, v, defs);
+                      const nm = optionLabel(col.field, v, defs, flow);
                       if (isType) {
                         if (window.confirm(`删除类型「${nm}」？\n\n挂在这个类型上的任务会变成「未分类」。`)) {
                           onRemoveType!(v);
@@ -3809,6 +3826,7 @@ function ListView({
                 <ColFilterPop
                   col={c}
                   filter={f || emptyColFilter()}
+                  flow={flow}
                   /*
                     typeIds 必须传：类型候选取的是**定义表**，不是数据去重。
                     不传的话会退回默认六个，用户自定义的类型在下拉里根本选不到 ——
