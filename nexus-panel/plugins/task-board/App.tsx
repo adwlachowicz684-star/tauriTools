@@ -1674,6 +1674,7 @@ ${dir}
           stats={stats}
           flow={flow}
           typeDefs={typeDefs}
+          tagDefs={store.tagDefs}
           onOpen={(id) => setDetailId(id)}
         />
       )}
@@ -4137,12 +4138,14 @@ function BarRow({
 }
 
 function StatsView({
-  stats, flow, typeDefs, onOpen,
+  stats, flow, typeDefs, tagDefs, onOpen,
 }: {
   stats: TbStats;
   flow: { statuses: { id: string; name: string; color: string }[] };
   /** 类型定义表（显示类型名与颜色） */
   typeDefs: TagDef[];
+  /** 标签定义表（热门标签面板要显示名字，不能显示 id） */
+  tagDefs: TagDef[];
   onOpen: (id: string) => void;
 }) {
   const typeRows = Object.entries(stats.byType || {}).sort((a, b) => b[1] - a[1]);
@@ -4229,8 +4232,18 @@ function StatsView({
           {stats.topTags.length === 0 && <div className="tb-col-empty">暂无标签</div>}
           <div className="tb-stat-tags">
             {stats.topTags.map((x) => (
-              <span key={x.tag} className="tb-tag">
-                {x.tag} <em className="tb-stat-hint">×{x.count}</em>
+              /*
+                ⛔ 标签必须走 TagChip：任务上存的是 id（tg_xxxx），
+                裸渲染的话面板上是一串没人看得懂的字符，而且没有颜色 ——
+                和列表、卡片里同一个标签的样子都不一样。
+
+                这是"id → 显示名"映射散落的**第五处**
+                （列表行、筛选面板、筛选摘要、看板卡片都修过了，
+                 统计面板这一处一直漏着）。
+              */
+              <span key={x.tag} className="tb-stat-tagrow">
+                <TagChip id={x.tag} defs={tagDefs} />
+                <em className="tb-stat-hint">×{x.count}</em>
               </span>
             ))}
           </div>

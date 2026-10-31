@@ -11,6 +11,9 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 /* 源码扫描类测试要用：列数、props 透传这些 TS 查不出的问题靠读源码钉住 */
 const appSrc = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
 const coreSrc = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+const storeSrc = fs.readFileSync(path.join(dir, 'lib', 'store.ts'), 'utf8');
+/* 本测试自身：有些导出只被测试覆盖，那也算有引用（不算死代码） */
+const testSrc = fs.readFileSync(path.join(dir, 'task-board-test.mjs'), 'utf8');
 import {
   duplicateDataDirs,
   STATUSES,
@@ -3176,6 +3179,89 @@ if (rsSrc) {
     t(`守卫：字段覆盖矩阵 —— ${name}`, seg.length > 0 && fields.every((f) => seg.indexOf(`"${f}"`) >= 0));
   }
 }
+
+
+/*
+ * **守卫 4：标签 id 不许裸渲染**
+ *
+ * 任务上存的是标签 id（tg_xxxx），界面要显示名字 + 颜色。
+ * 这个映射散落在五处，各写各的，于是不断漏：
+ *   列表行 / 筛选面板 / 筛选摘要 / 看板卡片 / **统计面板**
+ * 前四处是分四轮才补齐的，第五处（热门标签）这轮才撞见。
+
+ * 判据：JSX 里出现 `{x.tag}`、`{tag}` 这种**直接把 id 当文本渲染**的写法。
+ * TagChip / TagPicker 这些组件内不算（它们本来就该拿 id，
+ * 自己负责查表）。
+ */
+t('守卫：没有把标签 id 当文本直接渲染的地方', (() => {
+  const src = stripComments(appSrc);
+  const bad = [];
+  src.split('\n').forEach((l, i) => {
+    /* 组件自身的实现允许拿 id；这里只盯"渲染处" */
+    if (/function\s+(TagChip|TagPicker|TypePicker)/.test(src.slice(Math.max(0, src.indexOf(l) - 4000), src.indexOf(l)))) {
+      /* 后面的 TagChip 定义整段跳过：下面用行范围判断 */
+    }
+    /*
+      ⛔ 判据必须排除**属性位置**：`key={tag}` / `id={tag}` 里的 tag
+      是"把这行的标识交给 React / 交给 TagChip 去查表"，那是对的；
+      只有 `{tag}` 出现在**子元素位置**（当文本渲染）才是裸渲染。
+      不看位置的话，`<TagChip key={tag} id={tag} …/>` 会被误判成违规，
+      于是守卫恒红 —— 反向验证时它根本抓不到真正的回归。
+    */
+    const m = l.match(/(^|[^=\w])\{\s*(?:x\.tag|t\.tag|tag)\s*\}/);
+    if (m) bad.push(`${i + 1}: ${l.trim().slice(0, 70)}`);
+  });
+  /* 排除 TagChip 自身那一段（它内部拿 id 是对的） */
+  const chipStart = src.indexOf('function TagChip(');
+  const chipEnd = src.indexOf('\nfunction ', chipStart + 10);
+  const real = bad.filter((b) => {
+    const ln = Number(b.split(':')[0]) - 1;
+    const off = src.split('\n').slice(0, ln).join('\n').length;
+    return !(off >= chipStart && off < chipEnd);
+  });
+  return real.length === 0;
+})());
+
+/*
+ * 统计面板必须拿到标签定义表 —— 拿不到就无从显示名字，
+ * 而它又是唯一一处"从统计结果反查定义"的地方（别的都在任务行上）。
+ */
+t('守卫：统计面板收到标签定义表', (() => {
+  const src = stripComments(appSrc);
+  return src.indexOf('tagDefs={store.tagDefs}') >= 0
+    && src.indexOf('stats, flow, typeDefs, tagDefs, onOpen,') >= 0;
+})());
+
+
+/*
+ * **守卫 5：core.mjs 不许有"没人调用"的导出**
+ *
+ * 两份实现就是两份真相：改搜索时很容易改错地方
+ * （改了 filterTasks 而界面走的是 filterTasksByColumns），
+ * 或者对着一份死代码反复修、界面纹丝不动。
+
+ * 这轮据此清掉两个：
+ * · filterTasks —— 顶栏四下拉时代的老过滤，界面早全改用列级筛选
+ * · groupStatus —— **手动组时代**的残留（用 parentOf 找子任务算组状态）。
+ *   手动组已平铺成"按列分组"（视图概念），数据里不再有 kind='group'，
+ *   于是它成了没人调用、却还带着一整套"判据不能写死 done"注释的死代码。
+
+ * 判据：导出名在 App.tsx / store.ts / core.mjs 自身 / 本测试里的调用次数 ≤ 1
+ * （1 = 只有它自己的定义那处）。
+ */
+t('守卫：core.mjs 没有无人调用的导出（无两份真相）', (() => {
+  const names = [...coreSrc.matchAll(/export function (\w+)/g)].map((m) => m[1]);
+  const dead = [];
+  for (const n of names) {
+    const re = new RegExp('\\b' + n + '\\s*\\(', 'g');
+    const uses = (appSrc.match(re) || []).length
+      + (coreSrc.match(re) || []).length
+      + (storeSrc.match(re) || []).length
+      + (testSrc.match(re) || []).length;
+    if (uses <= 1) dead.push(n);
+  }
+  return dead.length === 0;
+})());
 
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
