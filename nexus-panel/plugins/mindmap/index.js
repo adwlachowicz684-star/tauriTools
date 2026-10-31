@@ -2856,7 +2856,9 @@ async function gcOrphanAssets(quiet = false) {
       image: '图片与图标', attachment: '附件', boundary: '外框',
       markers: '标记图标',
       // BUG 152：概要 / 标注 —— 交换格式没有对应概念，会被写成普通分支
-      summary: '概要', callout: '标注' };
+      summary: '概要', callout: '标注',
+      // BUG 181：画布主题 / 布局 —— 五种格式都没有画布级外观属性，导回一律回落默认
+      theme: '画布主题', layout: '画布布局' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);
     /*
