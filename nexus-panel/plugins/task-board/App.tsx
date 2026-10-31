@@ -432,9 +432,15 @@ export default function App() {
   }, [tagDefs]);
 
   const flatRows = useMemo(() => flattenTasks(store ? store.tasks : []), [store]);
+  /*
+    typeDefs 要传进去：搜索要匹配**类型的显示名**（"开发"），
+    而任务上存的是 id（'dev'）—— 不传就只能按 id 搜，用户搜不到。
+    ⛔ 依赖里也要带上：改了类型名，同一个关键词的命中结果会变，
+    漏了依赖就停在旧结果上（看着像搜索坏了）。
+  */
   const filteredRows = useMemo(
-    () => filterTasksByColumns(flatRows, colFilters, q),
-    [flatRows, colFilters, q],
+    () => filterTasksByColumns(flatRows, colFilters, q, typeDefs),
+    [flatRows, colFilters, q, typeDefs],
   );
   const filtered = useMemo(() => filteredRows.map((r) => r.task), [filteredRows]);
   /*
