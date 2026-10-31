@@ -34,7 +34,7 @@ export interface FlatRow {
 export declare function flattenTasks(tasks: Task[]): FlatRow[];
 
 /** 组的状态由下面推导；空组返回 null */
-export declare function groupStatus(groupId: string, tasks: Task[]): TaskStatus | null;
+export declare function groupStatus(groupId: string, tasks: Task[], flow?: FlowLike | null): TaskStatus | null;
 
 /* ---------------------------------------------------- 前置任务 */
 

@@ -1324,6 +1324,63 @@ t('自查：给子任务重新估完之后合计正确（各 2 → 6）', (() =>
   return statsOf({ tasks: re, flow: null }).estimateTotal === 6;
 })());
 
+
+/* ============================================================ 自查补测（第 10 轮） */
+
+/*
+ * **自定义流程下，组永远显示"待办"**（自查发现）：
+ * groupStatus 硬编码判断 `status === 'done'`，不认用户改过的终态 id。
+ * 用户把终态叫 's2' / '完工' / '已交付' 之后，
+ * 下面每条都已完成，组却还是"待办"。
+ *
+ * 这个错只在**改过流程**的项目里出现 —— 用默认流程看不出来，
+ * 所以特别容易漏。
+ */
+t('自查：自定义流程下组的状态能推导出来（不硬编码 done）', (() => {
+  const flow = {
+    statuses: [
+      { id: 's1', name: '待办', color: '#78716c', enter: '', done: false },
+      { id: 's2', name: '完工', color: '#22c55e', enter: '', done: true },
+    ],
+  };
+  const tasks = [
+    normalizeTask({ id: 'g', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g', status: 's2' }),
+    normalizeTask({ id: 'b', parent: 'g', status: 's2' }),
+  ];
+  return groupStatus('g', tasks, flow) === 's2';
+})());
+
+t('自查：自定义流程下组未完成时落到初始态，不谎报进度', (() => {
+  const flow = {
+    statuses: [
+      { id: 's1', name: '待办', color: '#78716c', enter: '', done: false },
+      { id: 's2', name: '完工', color: '#22c55e', enter: '', done: true },
+    ],
+  };
+  const tasks = [
+    normalizeTask({ id: 'g', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g', status: 's2' }),
+    normalizeTask({ id: 'b', parent: 'g', status: 's1' }),
+  ];
+  return groupStatus('g', tasks, flow) === 's1';
+})());
+
+t('自查：默认流程不受影响（全完成 = done）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g', status: 'done' }),
+  ];
+  return groupStatus('g', tasks, null) === 'done';
+})());
+
+t('自查：合并成组不双计工作量（组自身为 0，合计仍 5）', (() => {
+  const tasks = [normalizeTask({ id: 'a', estimate: 2 }), normalizeTask({ id: 'b', estimate: 3 })];
+  const r = mergeIntoGroup(tasks, ['a', 'b'], '组');
+  const g = r.tasks.find((t) => t.id === r.groupId);
+  return g.estimate === 0 && statsOf({ tasks: r.tasks, flow: null }).estimateTotal === 5;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
