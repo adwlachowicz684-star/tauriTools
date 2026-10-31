@@ -2586,6 +2586,48 @@ t('审查：配置事件里读失败会清空显示（不留着上一个项目�
     && seg.indexOf('读不到它的任务库') >= 0;
 })());
 
+
+/* ============================================================ 审查：弹窗与浮层的关闭（本轮） */
+
+/*
+ * **Modal 没有 Escape 关闭**，但加了也不能无脑加：
+ * 详情面板里的自由文本字段用 Escape 表示"撤销我打的字"，
+ * 若在弹窗层也直接关，一次 Escape 会**同时**撤销草稿并关掉整个窗口 ——
+ * 用户只想撤掉一个错字，结果整个详情没了。
+
+ * 所以：焦点在输入框里时不关（交给输入框，它会 stopPropagation），
+ * 焦点不在输入框时才是"关闭弹窗"。
+ */
+t('审查：Modal 支持 Escape 关闭（且避开输入框）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function Modal({');
+  const seg = app.slice(i, i + 1400);
+  return seg.indexOf("e.key !== 'Escape'") >= 0
+    && seg.indexOf("tag === 'input'") >= 0;      // 输入框里不关
+})());
+
+t('审查：草稿输入里的 Escape 会阻止冒泡（不连带关掉弹窗）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function DraftInput({');
+  const seg = app.slice(i, app.indexOf('function DetailModal({', i));
+  return seg.indexOf("e.key === 'Escape'") >= 0 && seg.indexOf('e.stopPropagation()') >= 0;
+})());
+
+/*
+ * **筛选面板不随滚动关闭**：面板 absolute 定位在单元格上，
+ * 滚动时单元格动了而面板不跟着动 —— 于是面板飘在半空、
+ * 和它所属的列头对不上，看着像面板自己跑到了别的地方。
+
+ * 点错了选项却毫不知情，比"面板自动关掉要重新点一次"糟得多。
+ */
+t('审查：滚动/改窗口尺寸时关掉筛选面板（否则面板与列头错位）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf("if (!openCol) return;");
+  const seg = app.slice(i, i + 1200);
+  return seg.indexOf("window.addEventListener('scroll', close, true)") >= 0
+    && seg.indexOf("window.addEventListener('resize', close)") >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -3406,7 +3406,24 @@ function ListView({
       setOpenCol('');
     };
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    /*
+      ⛔ 滚动与改变窗口尺寸时要**关掉面板**：
+      面板是 absolute 定位在单元格上的，滚动时单元格动了而面板不跟着动
+      （它挂在一个不随内容滚动的容器里），于是面板会飘在半空、
+      和它所属的列头对不上 —— 看着像面板自己跑到了别的地方。
+
+      点错了选项却毫不知情，比"面板自动关掉要重新点一次"糟得多，
+      所以这里选关掉。
+    */
+    const close = () => setOpenCol('');
+    window.addEventListener('resize', close);
+    /* 捕获阶段：滚动可能发生在任意内层容器上，冒泡阶段收不全 */
+    window.addEventListener('scroll', close, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+    };
   }, [openCol]);
 
   useEffect(() => {
@@ -4333,7 +4350,17 @@ function DraftInput({
       onKeyDown={(e) => {
         if (isComposing(e.nativeEvent)) return;
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        if (e.key === 'Escape') { setDraft(value); setEditing(false); }
+        /*
+          撤销草稿。⛔ 必须 stopPropagation：
+          Modal 也监听 Escape（关闭弹窗），不挡的话这次按键会**同时**
+          撤销草稿并关掉整个详情窗口 ——
+          而用户按 Escape 的意图只是"撤掉我打的字"。
+        */
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          setDraft(value);
+          setEditing(false);
+        }
       }}
     />
   );
@@ -4622,6 +4649,29 @@ function Modal({
   wide?: boolean;
   children: React.ReactNode;
 }) {
+  /*
+    Escape 关闭。
+
+    ⛔ 但**焦点在输入框里时不关**：详情面板里的自由文本字段
+    用 Escape 表示"撤销我打的字"（DraftInput 就是这个语义），
+    如果这里同时把整个弹窗关掉，那一次 Escape 会做两件事 ——
+    用户想撤掉一个错字，结果整个详情窗口没了，刚才看的内容全得重新找。
+
+    所以输入框里的 Escape 交给输入框自己（它会 stopPropagation），
+    焦点不在输入框时才是"关闭弹窗"。
+  */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const el = e.target as HTMLElement | null;
+      const tag = (el?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
     <div className="tb-mask" onClick={onClose}>
       <div className={'tb-modal' + (wide ? ' wide' : '')} onClick={(e) => e.stopPropagation()}>
