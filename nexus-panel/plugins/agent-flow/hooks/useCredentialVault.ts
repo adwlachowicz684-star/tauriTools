@@ -130,10 +130,16 @@ export function useCredentialVault({
   const ranLlmMigrationRef = useRef(false);
   const migrateLlmNow = useCallback((creds: Credential[]) => {
     if (ranLlmMigrationRef.current) return creds;
-    ranLlmMigrationRef.current = true;
     const r = migrateLlmToCredentials(
       canvasesRef.current as never, creds, (partial) => makeCredential(partial),
     );
+    /*
+     * 闸门**跑成功之后**才关上。
+     * 以前它设在调用之前：migrateLlmToCredentials 一旦抛异常，
+     * 闸门已经关死，而 creds 原样返回 —— 那些密钥再也不会被收进来，
+     * 且没有任何提示。
+     */
+    ranLlmMigrationRef.current = true;
     if (r.migrated === 0) return creds;
     setCanvases((cvs) => applyLlmPatches(cvs, r.patches));
     return r.credentials;
@@ -359,6 +365,23 @@ export function useCredentialVault({
   const lockVault = useCallback(() => {
     clearKeyCache();
     loadedCredsRef.current = null;
+    /*
+     * ⛔ 迁移闸门**必须**跟着一起重置。
+     *
+     * migrateLlmToCredentials 自己的注释写着「它在**每次加载时跑**
+     * （老画布随时可能被打开）」，而 ranLlmMigrationRef 是一个
+     * 跨解锁周期存活的 ref，锁定→解锁不会清它 —— 于是那句话是假的：
+     * 整个会话只迁移一次。
+     *
+     * 后果：会话中途导入/新建的老式节点（data.llm.apiKey 还在）
+     * 永远不会被收进连接库。节点本身还能跑（用内联配置），所以看不出异常；
+     * 但这类画布一旦导出分享，内联密钥就跟着文件走了 —— 而"连接单独存
+     * 一个 key"这套设计的全部目的正是**不让它跟着走**。
+     *
+     * 重置是安全的：迁移本身幂等（canMigrateLlm 只认还有密钥的节点，
+     * 且先找可复用连接），重复跑不会多出连接。
+     */
+    ranLlmMigrationRef.current = false;
     setVaultKey(null);
     setCredentials([]);
   }, []);
