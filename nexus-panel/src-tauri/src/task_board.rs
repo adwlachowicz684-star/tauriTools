@@ -439,8 +439,12 @@ pub fn tb_default_dir(app: tauri::AppHandle) -> Result<String, String> {
 
 /// 启动 HTTP 服务。返回实际使用的 token（留空时为 ""）。
 /// 端口已被本服务占用时直接报错，避免把旧服务的数据目录悄悄换掉。
-/// `notify_url` 非空时：任务经 HTTP 进入 review 会向它 POST 一份通知
+/// `notify_url` 非空时：任务经 HTTP 进入 `notify_status` 会向它 POST 一份通知
 /// （agent-flow webhook 触发器地址，见 docs/AGENT-FLOW.md）。
+///
+/// ⛔ `notify_status` 必须由前端下发，不能在这里写死 "review"：
+/// 自定义流程里那一步可能叫别的名字，写死的话配了 notify_url 也**永远收不到通知**
+/// （界面那条通道能收到、HTTP 这条收不到 —— 两边不一致，且没有提示）。
 #[tauri::command]
 pub fn tb_http_start(
     state: State<'_, TbState>,
@@ -448,6 +452,7 @@ pub fn tb_http_start(
     token: String,
     data_dir: String,
     notify_url: String,
+    notify_status: String,
 ) -> Result<String, String> {
     // 起服务的目录必须先进授权表（UI 改设置时已授权；这里兜底再授一次）
     let dir = tb_set_data_dir_inner(&state, &data_dir)?;
@@ -479,6 +484,7 @@ pub fn tb_http_start(
     let token_c = token.clone();
     let dir_c = dir.clone();
     let notify_c = notify_url.clone();
+    let notify_status_c = notify_status.clone();
 
     thread::spawn(move || {
         // 并发连接上限：连上不发数据的慢速连接不能把线程堆爆
@@ -501,12 +507,13 @@ pub fn tb_http_start(
                     let dir_t = dir_c.clone();
                     let token_t = token_c.clone();
                     let notify_t = notify_c.clone();
+                    let notify_status_t = notify_status_c.clone();
                     thread::spawn(move || {
                         let mut s = stream;
                         let _ = s.set_read_timeout(Some(Duration::from_secs(10)));
                         // 写超时：持全局文件锁期间写响应，慢客户端不能拖死其他通道
                         let _ = s.set_write_timeout(Some(Duration::from_secs(10)));
-                        handle_conn(&mut s, &dir_t, &token_t, &notify_t);
+                        handle_conn(&mut s, &dir_t, &token_t, &notify_t, &notify_status_t);
                         live_c.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
@@ -566,7 +573,13 @@ struct Request {
     token_header: String,
 }
 
-fn handle_conn(stream: &mut TcpStream, dir: &PathBuf, expect_token: &str, notify_url: &str) {
+fn handle_conn(
+    stream: &mut TcpStream,
+    dir: &PathBuf,
+    expect_token: &str,
+    notify_url: &str,
+    notify_status: &str,
+) {
     let req = match read_request(stream) {
         Some(r) => r,
         None => {
