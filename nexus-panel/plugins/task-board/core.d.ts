@@ -184,6 +184,7 @@ export declare function typeColor(defs: unknown, id: string): string;
 
 /** 未填类型的哨兵 key（仅 type 分组时使用） */
 export declare const NOTYPE: string;
+export declare const NOGROUP: string;
 
 export declare function groupValuesOf(t: Task, key: string): string[];
 
@@ -198,7 +199,7 @@ export interface GroupNode {
 
 /** 按多列分组，列顺序 = 层级（第一个最外层） */
 export declare function groupTasksBy(tasks: Task[], keys: string | string[]): GroupNode[];
-export type GroupKey = 'status' | 'priority' | 'assignee' | 'type' | 'tag';
+export type GroupKey = 'status' | 'priority' | 'assignee' | 'type' | 'tag' | 'group';
 
 export interface TaskGroup<K extends string = string> {
   key: K;
@@ -210,7 +211,7 @@ export declare function groupTasks(tasks: Task[], key: GroupKey): GroupNode[];
 
 export type SortField =
   | 'priority' | 'status' | 'assignee' | 'type' | 'tags' | 'summary' | 'estimate'
-  | 'updatedAt' | 'createdAt' | 'title' | 'id';
+  | 'updatedAt' | 'createdAt' | 'title' | 'id' | 'group';
 
 /** 多字段排序；assignee 未认领恒排最后；同级按 updatedAt 倒序兜底 */
 export declare function sortTasksBy(tasks: Task[], field: SortField, dir?: 'asc' | 'desc'): Task[];

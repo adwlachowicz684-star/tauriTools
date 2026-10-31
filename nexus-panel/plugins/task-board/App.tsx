@@ -42,6 +42,7 @@ import {
   lockOf,
   newDefId,
   NOTYPE,
+  NOGROUP,
   normalizeFlow,
   relTime,
   sortRowsBy,
@@ -80,7 +81,7 @@ const VIEWS: { key: TbView; label: string; title: string }[] = [
   { key: 'stats', label: '统计', title: '统计：分布 / 负载 / 最近动态' },
 ];
 
-const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'type', 'tag'];
+const GROUP_KEYS: GroupKey[] = ['status', 'priority', 'assignee', 'type', 'tag', 'group'];
 
 /** 分组依据的显示名（分组设置面板与面包屑共用） */
 const GROUP_LABEL: Record<GroupKey, string> = {
@@ -89,6 +90,7 @@ const GROUP_LABEL: Record<GroupKey, string> = {
   assignee: '认领人',
   type: '任务类型',
   tag: '标签',
+  group: '分组',
 };
 
 /*
@@ -111,6 +113,7 @@ const DEFAULT_COL_W: Record<string, string> = {
   priority: '56px',
   id: '70px',
   title: 'minmax(0, 1fr)',
+  group: '100px',
   status: '88px',
   assignee: '96px',
   type: '84px',
@@ -128,7 +131,7 @@ const MAX_COL_W = 1200;
 
 const SORT_FIELDS: SortField[] = [
   'priority', 'status', 'assignee', 'type', 'tags', 'summary',
-  'estimate', 'updatedAt', 'createdAt', 'title', 'id',
+  'estimate', 'updatedAt', 'createdAt', 'title', 'id', 'group',
 ];
 
 /** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
@@ -138,6 +141,7 @@ function groupLabel(key: string, by: GroupKey, flow?: FlowLike): string {
   if (by === 'type') return key === NOTYPE ? '未分类' : typeName(flow && flow.typeDefs, key);
   if (key === UNASSIGNED) return '未认领';
   if (key === NOTAG) return '无标签';
+  if (key === NOGROUP) return '未分组';
   return key;
 }
 /** 排序字段 → 展示名。与列头用的是同一套名字，两处说法必须一致 */
@@ -153,6 +157,7 @@ const SORT_LABEL: Record<SortField, string> = {
   estimate: '预估',
   createdAt: '创建',
   updatedAt: '更新',
+  group: '分组',
 };
 function sortLabel(f: SortField): string {
   return SORT_LABEL[f] || f;
@@ -3076,6 +3081,25 @@ function ListView({
         );
       case 'id':
         return <span className="tb-lc c-id" key={field}>{t.id}</span>;
+      case 'group':
+        /*
+          分组列：点一下就地填/改分组名。
+
+          这就是以前的"手动分组"，但它**只是一列值** ——
+          归拢关系由"按列分组"机制表达（分组设置里选「分组」这一列即可），
+          于是它能和任意其它列组合成多层级，而旧的手动组只能一层层嵌套。
+        */
+        return (
+          <span className="tb-lc c-group" key={field}>
+            <InlineText
+              value={t.group || ''}
+              display={t.group || <span className="tb-ldim">—</span>}
+              placeholder="分组名（留空=不分组）"
+              title={t.group || '点击设置分组'}
+              onCommit={(v) => onPatchField(t.id, { group: v })}
+            />
+          </span>
+        );
       case 'title': {
         /* 锁定只在标题列显示时才算 —— 标题列被隐藏就别白跑 */
         const lk = lockOf(t, store);

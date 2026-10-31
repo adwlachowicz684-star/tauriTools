@@ -811,6 +811,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "自由标签" },
                 "type":     { "type": "string", "description": "任务类型 id（dev/bug/opt/research/review/plan，或自定义类型的 id）；缺省=未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；缺省 0=没估" },
+                "group":    { "type": "string", "description": "分组名（手动分组；留空=不分组）。按此列分组即可重现手动分组的归拢效果" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
             }),
             vec!["title"],
@@ -834,6 +835,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签" },
                 "type":     { "type": "string", "description": "任务类型 id；传空串=清成未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数" },
+                "group":    { "type": "string", "description": "分组名；传空串=取消分组" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
             }),
@@ -1284,6 +1286,16 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
             .cloned()
             .unwrap_or(json!([])),
     );
+    /*
+      分组列：相当于以前的"手动分组"，但只是一列字符串值 ——
+      归拢由"按列分组"机制表达，不再有组记录/父子层级。
+      显式写进文件（哪怕为空）：这份 JSON 是给 AI 直接读改的，
+      字段在文件里**看得见**它才会去填。
+    */
+    task.insert(
+        "group".to_string(),
+        json!(str_field(body, "group").unwrap_or_default().trim()),
+    );
     task.insert("reporter".to_string(), json!(reporter));
     task.insert("assignee".to_string(), json!(str_field(body, "assignee")));
     task.insert("createdAt".to_string(), json!(now_ms()));
@@ -1357,6 +1369,22 @@ fn patch_task(dir: &PathBuf, id: &str, body: &Value) -> Result<(Value, bool), St
                     "type",
                     &format!("{} -> {}", if cur.is_empty() { "未分类" } else { cur.as_str() },
                              if next.is_empty() { "未分类" } else { next }),
+                );
+            }
+        }
+        if let Some(v) = str_field(body, "group") {
+            // 取所有权：下面 obj.insert 是可变借用，&str 借到 obj 上会冲突（E0502）
+            let cur = obj.get("group").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let next = v.trim();
+            if cur != next {
+                obj.insert("group".to_string(), json!(next));
+                changed = true;
+                push_history(
+                    obj,
+                    &by,
+                    "group",
+                    &format!("{} -> {}", if cur.is_empty() { "未分组" } else { cur.as_str() },
+                             if next.is_empty() { "未分组" } else { next }),
                 );
             }
         }

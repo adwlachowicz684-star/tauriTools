@@ -83,6 +83,13 @@ export interface Task {
   estimate: number;
   /** 任务类型，存的是 typeDefs 里的 id（'dev'/'bug'…）。'' = 未分类 */
   type: string;
+  /**
+   * 分组名。留空 = 不分组。
+   *
+   * 相当于以前的"手动分组"，但只是一列**值**：不再有组记录、也不再有父子层级，
+   * 归拢完全由通用的"按列分组"机制表达（在分组设置里选这一列即可）。
+   */
+  group: string;
   tags: string[];
   reporter: string;
   assignee: string | null;
