@@ -549,6 +549,15 @@ export function toFreemind(content, rels = null) {
     const inner = [];
     const fontAttrs = freemindFontAttrs(n?.data);
     if (fontAttrs) inner.push(`<font ${fontAttrs}/>`);
+    /*
+     * BUG 182：`<edge COLOR WIDTH/>` —— 与 `<font>` 同级的**标准子元素**，
+     * 承载连线的颜色与粗细。早先只写 `<font>`，于是我们自己导出的 .mm
+     * 在 FreeMind / Freeplane 里**看不到连线配色**；而 `EXCHANGE_KEEP`
+     * 也据此声称这个格式装不下连线样式，导出时凭空多报一句「样式 N 处」。
+     * 与读侧 `freemindEdge()` 成对（缺一侧就是单向丢）。
+     */
+    const edgeAttrs = freemindEdgeAttrs(n?.data);
+    if (edgeAttrs) inner.push(`<edge ${edgeAttrs}/>`);
     for (const ic of Array.isArray(n?.data?.fmIcons) ? n.data.fmIcons : []) {
       const b = String(ic ?? '').trim();
       if (b) inner.push(`<icon BUILTIN="${escXml(b)}"/>`);
@@ -585,6 +594,22 @@ export function toFreemind(content, rels = null) {
     const w = String(data?.['font-weight'] || '').trim().toLowerCase();
     if (w === 'bold' || (Number(data?.['font-weight']) || 0) >= 600) a.push('BOLD="true"');
     if (String(data?.['font-style'] || '').trim().toLowerCase() === 'italic') a.push('ITALIC="true"');
+    return a.length ? a.join(' ') : '';
+  }
+
+  /**
+   * 内核的连线 data 键 → `<edge>` 的属性串（没有则返回 ''）。
+   *
+   * BUG 182：与 `freemindFontAttrs` 同形，读侧 `freemindEdge()` 的**另一半**。
+   * `WIDTH` 只写整数 —— FreeMind 的属性表里它是粗细档位，写 "2px" 之类会
+   * 让别的软件读不出来（同 BUG 117 对 `SIZE` 的处理）。
+   */
+  function freemindEdgeAttrs(data) {
+    const a = [];
+    const col = normColor(data?.['node-line-stroke']);
+    if (col) a.push(`COLOR="${escXml(col)}"`);
+    const w = fontSizeNum(data?.['node-line-width']);
+    if (w > 0) a.push(`WIDTH="${w}"`);
     return a.length ? a.join(' ') : '';
   }
 
@@ -1506,6 +1531,9 @@ function freemindStyle(el) {
    */
   const f = freemindFont(el);
   for (const k of Object.keys(f)) out[k] = f[k];
+  // BUG 182：连线颜色 / 粗细（`<edge COLOR WIDTH/>`，见 freemindEdge 的说明）
+  const eg = freemindEdge(el);
+  for (const k of Object.keys(eg)) out[k] = eg[k];
   return out;
 }
 
@@ -1531,6 +1559,42 @@ function freemindFont(el) {
     if (size > 0) out['font-size'] = size;
     if (isTrueAttr(c.getAttribute?.('BOLD'))) out['font-weight'] = 'bold';
     if (isTrueAttr(c.getAttribute?.('ITALIC'))) out['font-style'] = 'italic';
+    break;
+  }
+  return out;
+}
+
+/**
+ * 取 <node> 的 `<edge>` 子元素（FreeMind 的**连线**写法），没有则返回空对象。
+ *
+ * BUG 182：`<edge COLOR WIDTH STYLE/>` 是 FreeMind 1.0.1 的标准子元素，
+ * 承载的是**连线的颜色与粗细**。早先一概不读 —— 而 `parseFreemind` 头那句
+ * 注释还写着「`<edge>` / `<hook>` 之类一概忽略，它们承载的都是样式，本工具
+ * 的主题体系不认」，这句是**错的**：`node-line-stroke` / `node-line-width`
+ * 是 kityminder 的 data 键（XMind 侧对应 `line-color` / `line-width`，
+ * xmind.js 的 StyleMap 双向都读写），读出来画布上**就能看见**。
+ *
+ * 于是导入别人的 .mm，节点连线的颜色与粗细**静默丢失** —— 它根本没进 data，
+ * 所以 `unsupportedFmExtrasTip` 那类提示也数不到它，一个字都不说。
+ * 与 BUG 127 漏掉 `<font>` 是同一个洞（读侧漏了一类标准子元素）。
+ *
+ * 只认第一个 —— FreeMind 一个节点只有一条 <edge>。
+ *
+ * ⓘ `STYLE`（bezier / sharp_bezier / linear…）是**连线形状**，内核没有对应
+ *   概念（连线的走向由布局决定），读不了也写不回 —— 属已知取舍，与
+ *   structureClass 同一口径，不是漏写。
+ */
+function freemindEdge(el) {
+  const out = {};
+  const kids = el ? (el.children || el.childNodes) : null;
+  for (const c of Array.from(kids || [])) {
+    if (c.nodeType !== 1) continue;
+    if (String(c.nodeName || '').toLowerCase() !== 'edge') continue;
+    const col = normColor(c.getAttribute?.('COLOR'));
+    if (col) out['node-line-stroke'] = col;
+    // WIDTH 是整数（FreeMind 的粗细档位），只取数字部分，剥不出来就不设
+    const w = Number(fontSizeNum(c.getAttribute?.('WIDTH')));
+    if (w > 0) out['node-line-width'] = w;
     break;
   }
   return out;
@@ -1893,8 +1957,11 @@ export const EXCHANGE_KEEP = {
     // FreeMind 官方属性表里 arrowlink 只有 color / destination /
     // startarrow / endarrow / startinclination / endinclination，没有标题。
     relationships: true,
+    // BUG 182：连线的颜色 / 粗细走 `<edge COLOR WIDTH/>`（读侧 freemindEdge、
+    //   写侧 freemindEdgeAttrs 成对）—— 与 BUG 127 补的字体四项同一条规矩。
     styleKeys: ['color', 'background',
-      'font-family', 'font-size', 'font-weight', 'font-style'] },
+      'font-family', 'font-size', 'font-weight', 'font-style',
+      'node-line-stroke', 'node-line-width'] },
   // BUG 153：备注走 `_note`（通行的非标准写法，往返实测保得住）
   opml: { hyperlink: true, note: true },
   mermaid: {},
