@@ -3574,6 +3574,59 @@ t('审查：删分组是把任务清成未分组，不是删任务', (() => {
   return /group:\s*''/.test(seg) && !/filter\(\(t\) => t\.group !== id\)/.test(seg);
 })());
 
+
+/* ============================================================ AI 通道能看见定义表（本轮） */
+
+/*
+ * ⛔ 缺口：两条读通道（GET /api/tasks、tb_list_tasks）原来只返回
+ * tasks + agents，**不带定义表**。
+ *
+ * 而 tb_create_task 的 schema 又要求 `type` 填"任务类型 id（或自定义类型的 id）"、
+ * `group` 填"分组名" —— 等于让 AI 填一个它看不见的枚举。后果：
+ *   · 填了不存在的类型 id → 那一列显示成原始 id，任务看着像没分类
+ *   · 填了新的分组名 → 凭空造出没有定义的分组（没颜色、也改不了色）
+ *   · 标签写裸名字 → 脱离定义表，永远选不到颜色
+ *
+ * 之前几轮只贯通了**写入**侧（type/summary/group 都能写），
+ * 没人问过"AI 从哪里知道有哪些可选值"。
+ */
+/*
+  ⛔ 这两条**必须分别钉在各自的通道上**，不能笼统地全文件搜一个字符串。
+
+  实测踩到：注入"HTTP 那条退回旧行为"的缺陷，
+  而守卫仍全绿 —— 因为 MCP 那条还留着同样的片段，全局搜照样命中。
+  于是守卫分不清"两条通道都带"和"只有一条带"，
+  真正的回归（HTTP 通道退回）看不出来。
+
+  所以改成按锚点切片，各自在**自己的块内**判。
+*/
+t('守卫：HTTP 读通道带定义表（AI 才看得见有哪些分组/类型）', (() => {
+  const seg = rsSeg('("GET", ["api", "tasks"])', 320);
+  return !rsSrc || seg.indexOf('"defs"') >= 0;
+})());
+/*
+  切片长度要够：tb_list_tasks 的实现里过滤逻辑很长，
+  `"defs"` 那行离锚点 7.5k 字符 —— 切 2600 根本切不到，
+  于是判据恒假（红）。这不是代码有问题，是守卫自己的窗口开小了。
+*/
+t('守卫：MCP 列表带定义表', (() => {
+  const seg = rsSeg('"tb_list_tasks"', 8200);
+  return !rsSrc || seg.indexOf('"defs": defs_of(&store)') >= 0;
+})());
+
+/* 三张表都要带，漏一张就有一个字段仍然靠猜 */
+t('守卫：defs 含三张定义表', (() => {
+  const seg = rsSeg('fn defs_of', 400);
+  return !rsSrc
+    || (seg.indexOf('groupDefs') >= 0 && seg.indexOf('typeDefs') >= 0 && seg.indexOf('tagDefs') >= 0);
+})());
+
+/* schema 要指路：不写"先调 tb_list_tasks 看 defs"的话，AI 未必知道去哪查 */
+t('守卫：建任务 schema 提示先看 defs', (() => {
+  const seg = rsSeg('"tb_create_task"', 2600);
+  return !rsSrc || seg.indexOf('defs.groupDefs') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

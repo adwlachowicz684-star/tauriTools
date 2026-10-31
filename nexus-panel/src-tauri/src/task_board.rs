@@ -670,7 +670,8 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
         ("GET", ["api", "health"]) => ok_json(json!({"ok": true, "service": "task-board"})),
         ("GET", ["api", "tasks"]) => match load_tasks(dir) {
             Ok(store) => ok_json(json!({"ok": true, "tasks": store.get("tasks").cloned().unwrap_or(json!([])),
-                       "agents": store.get("agents").cloned().unwrap_or(json!([]))})),
+                       "agents": store.get("agents").cloned().unwrap_or(json!([])),
+                       "defs": defs_of(&store)})),
             Err(e) => (500, err_json(&e), None),
         },
         ("GET", ["api", "tasks", id]) => match load_tasks(dir) {
@@ -807,7 +808,7 @@ pub fn mcp_tools() -> Vec<Value> {
     vec![
         tool(
             "tb_list_tasks",
-            "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）",
+            "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）。响应里的 defs 带了三张定义表（groupDefs/typeDefs/tagDefs）——建任务或改字段前先读它，才知道分组与类型有哪些可选值",
             json!({
                 "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "按优先级过滤" },
@@ -825,10 +826,10 @@ pub fn mcp_tools() -> Vec<Value> {
                 "detail":   { "type": "string", "description": "复现步骤/期望行为，可选" },
                 "summary":  { "type": "string", "description": "任务说明（与详情分开：说明是要做什么，详情是复现/期望行为）" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "默认 P2" },
-                "tags":     { "type": "array", "items": { "type": "string" }, "description": "自由标签" },
-                "type":     { "type": "string", "description": "任务类型 id（dev/bug/opt/research/review/plan，或自定义类型的 id）；缺省=未分类" },
+                "tags":     { "type": "array", "items": { "type": "string" }, "description": "标签；先调 tb_list_tasks 看 defs.tagDefs 里已有哪些（用已有项的 id，不要自造裸名字——裸名字没有定义、没有颜色）" },
+                "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些（默认 dev/bug/opt/research/review/plan，用户可能自定义过）；缺省=未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；缺省 0=没估" },
-                "group":    { "type": "string", "description": "分组名（手动分组；留空=不分组）。按此列分组即可重现手动分组的归拢效果" },
+                "group":    { "type": "string", "description": "分组名（留空=不分组）。先调 tb_list_tasks 看 defs.groupDefs 里已有哪些——归到已有分组，不要自造近义名（'登录'和'登陆'会分成两组）" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
             }),
             vec!["title"],
@@ -850,10 +851,10 @@ pub fn mcp_tools() -> Vec<Value> {
                 "title":    { "type": "string", "description": "改标题" },
                 "detail":   { "type": "string", "description": "改详情" },
                 "summary":  { "type": "string", "description": "改任务说明" },
-                "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签" },
-                "type":     { "type": "string", "description": "任务类型 id；传空串=清成未分类" },
+                "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签；先调 tb_list_tasks 看 defs.tagDefs 里已有哪些" },
+                "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；传空串=清成未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数" },
-                "group":    { "type": "string", "description": "分组名；传空串=取消分组" },
+                "group":    { "type": "string", "description": "分组名；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；传空串=取消分组" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
             }),
@@ -952,7 +953,7 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
                     true
                 })
                 .collect();
-            Ok(json!({ "count": hit.len(), "tasks": hit }))
+            Ok(json!({ "count": hit.len(), "tasks": hit, "defs": defs_of(&store) }))
         })(),
         "tb_create_task" => create_task(dir, args).map(|t| json!({ "created": t })),
         "tb_get_task" => (|| -> Result<Value, String> {
@@ -1132,6 +1133,29 @@ fn push_history(task: &mut Map<String, Value>, by: &str, action: &str, note: &st
             arr.drain(0..excess);
         }
     }
+}
+
+/*
+ * 三张**定义表**（分组 / 任务类型 / 标签）。
+ *
+ * ⛔ 为什么读通道必须带上它们：
+ * tb_create_task 的 schema 要求 `type` 填"任务类型 id（dev/bug/… 或**自定义类型**的 id）"、
+ * `group` 填"分组名"、而 `tags` 实际也挂着一张带颜色的定义表 ——
+ * 但两条读通道（GET /api/tasks、tb_list_tasks）原来只返回 tasks + agents，
+ * AI **看不到这些 id 有哪些**，只能瞎猜：
+ *
+ *   · 填一个不存在的类型 id → 那列显示成原始 id，任务看着像没分类
+ *   · 填一个新的分组名 → 凭空造出一个没有定义的分组（无颜色、也改不了色）
+ *   · 标签写裸名字 → 脱离定义表，永远选不到颜色
+ *
+ * 让 AI 先看见再填，比事后纠正便宜得多。
+ */
+fn defs_of(store: &Value) -> Value {
+    json!({
+        "groupDefs": store.get("groupDefs").cloned().unwrap_or(json!([])),
+        "typeDefs":  store.get("typeDefs").cloned().unwrap_or(json!([])),
+        "tagDefs":   store.get("tagDefs").cloned().unwrap_or(json!([])),
+    })
 }
 
 fn str_field(body: &Value, key: &str) -> Option<String> {
