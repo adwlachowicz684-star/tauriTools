@@ -154,14 +154,28 @@ export default function Settings() {
       /* 先把目标项目设为当前，再改它的文档路径 ——
          setDocsDir 只作用于当前项目（配置里只有一份当前路径）。 */
       const base = await S.switchProject(ctx, cfg, id);
+      /*
+        ⛔ 切换**已经落盘了**，所以无论后面成功失败，界面都必须跟到 base。
+        不跟的话：磁盘上的当前项目是新的，界面还拿着旧 dataDir 去读 ——
+        而授权表已经指向新项目，那次读会被直接拒掉。
+        结果是"报了个错，顺带整个面板空了"，没人会对上原因。
+      */
+      setCfg(base);
+      ctx.emit('task-board:config', base);
+
       const move = moveMode === 'move' && !!p.docsDir && p.docsDir !== docsDraft;
-      const res = await S.setDocsDir(ctx, base, docsDraft.trim(), move);
-      setCfg(res.cfg);
+      try {
+        const res = await S.setDocsDir(ctx, base, docsDraft.trim(), move);
+        setCfg(res.cfg);
+        ctx.emit('task-board:config', res.cfg);
+        if (res.warning) setMsg(res.warning);
+        else if (move) ctx.toast(`文档已整体搬到新位置（${res.moved} 项）`, 'ok');
+        else ctx.toast('文档路径已保存', 'ok');
+      } catch (e2: any) {
+        // 路径没改成，但项目已经切过去了 —— 这句话必须说清，否则用户以为全都没生效
+        setMsg(`文档路径没改：${String(e2?.message || e2)}（项目已切到「${p.name}」）`);
+      }
       setDocsEdit('');
-      ctx.emit('task-board:config', res.cfg);
-      if (res.warning) setMsg(res.warning);
-      else if (move) ctx.toast(`文档已整体搬到新位置（${res.moved} 项）`, 'ok');
-      else ctx.toast('文档路径已保存', 'ok');
     } catch (e: any) {
       setMsg(String(e?.message || e));
     }
