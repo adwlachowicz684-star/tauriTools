@@ -150,6 +150,33 @@ function colorOf(v: unknown, fallback: string): string {
  * 或让 next 指向已不存在的 id —— 留着那些悬空引用，
  * 界面上表现为"点了流转没反应"，而看不出是配置坏了。
  */
+/**
+ * 归一里那一半：**保证每个非终态都有去处**。
+ *
+ * 判据只此一份，`parseMeta`（读盘）与 `removeStatus`（删状态）都调它 ——
+ * 两处各写一份的话，删完界面上是死局、存盘再读回来又活了，
+ * 而用户只会以为自己记错了。
+ *
+ * 为什么"没有别的非终态可去"时要退一步允许终态：
+ * 只剩自己一个非终态时按原规则算出来是空 —— 于是这条任务**永远推不动**，
+ * 连"已完成 / 已取消"都到不了，比流程设错严重得多。
+ *
+ * ⛔ 只在这里兜底，`setNext` 不动：那里是用户**显式**勾出来的结果，
+ *    勾空是他在表达"这个状态不该流出"，替他填回去等于跟他抢控件。
+ */
+function ensureReachable(statuses: StatusDef[]): void {
+  if (statuses.length < 2) return;
+  const ids = statuses.map((s) => s.id);
+  const nonFinal = statuses.filter((s) => !s.final).map((s) => s.id);
+  for (const s of statuses) {
+    if (s.final) { s.next = []; continue; }
+    s.next = s.next.filter((x) => ids.indexOf(x) >= 0 && x !== s.id);
+    if (s.next.length > 0) continue;
+    const others = nonFinal.filter((x) => x !== s.id);
+    s.next = others.length > 0 ? others : ids.filter((x) => x !== s.id);
+  }
+}
+
 export function parseMeta(raw: string | null, project = '', projectName = ''): BoardMeta {
   if (!raw) return emptyMeta(project, projectName);
   let parsed: unknown;
@@ -187,18 +214,8 @@ export function parseMeta(raw: string | null, project = '', projectName = ''): B
     return { ...emptyMeta(project, projectName), updatedAt: num(o.updatedAt) };
   }
 
-  const ids = new Set(statuses.map((s) => s.id));
-  const nonFinal = statuses.filter((s) => !s.final).map((s) => s.id);
-  for (const s of statuses) {
-    // 清掉指向不存在状态的流转
-    s.next = s.next.filter((x) => ids.has(x) && x !== s.id);
-    if (s.final) { s.next = []; continue; }
-    /*
-      非终态却完全没有可去的地方 = 这条任务被钉死，再也推不动。
-      看着像"流程设好了"，实际是死局，所以兜底放开到全部非终态。
-    */
-    if (s.next.length === 0) s.next = nonFinal.filter((x) => x !== s.id);
-  }
+  /* 清掉指向不存在状态的流转，并保证没有状态被钉死（判据见 ensureReachable） */
+  ensureReachable(statuses);
 
   /* ---- 标签 ---- */
   const rawTags = Array.isArray(o.tags) ? o.tags : [];
@@ -365,6 +382,16 @@ export function removeStatus(m: BoardMeta, id: string): BoardMeta {
   b.statuses = b.statuses.filter((s) => s.id !== id);
   // 别的状态 next 里指向它的也要清掉，否则流转表里出现不存在的目标
   for (const s of b.statuses) s.next = s.next.filter((x) => x !== id);
+  /*
+   * ⛔ 清完之后必须再走一次"有没有被钉死"的归一。
+   *
+   *    删掉中间那个状态（待办 → 评审 → 完成 里的「评审」）之后，
+   *    「待办」的 next 就被清空了 —— 它是非终态却无处可去，
+   *    界面上表现为流转下拉是空的、点了没反应，而看不出是刚才删的那一下造成的。
+   *
+   *    判据与读盘归一同一份（ensureReachable），不在这里另写一遍。
+   */
+  ensureReachable(b.statuses);
   b.updatedAt = Date.now();
   return b;
 }
@@ -377,11 +404,15 @@ export function updateStatus(m: BoardMeta, id: string, patch: Partial<StatusDef>
   if (patch.color !== undefined) s.color = colorOf(patch.color, s.color);
   if (patch.final !== undefined) {
     s.final = patch.final;
-    // 变成终态就不能再流出；变回非终态时若 next 为空要给回全部非终态
-    if (s.final) s.next = [];
-    else if (s.next.length === 0) {
-      s.next = b.statuses.filter((x) => !x.final && x.id !== id).map((x) => x.id);
-    }
+    /*
+     * 变成终态就不能再流出；变回非终态时若无处可去要补上 ——
+     * 判据与读盘归一、删状态同一份（ensureReachable）。
+     *
+     * ⛔ 这里以前自己算"其它非终态"：只剩自己一个非终态时算出来是空，
+     *    于是把「已完成」的终态勾掉之后，那条任务连"已完成 / 已取消"
+     *    都到不了 —— 死局，且看不出是刚勾的那一下造成的。
+     */
+    ensureReachable(b.statuses);
   }
   b.updatedAt = Date.now();
   return b;

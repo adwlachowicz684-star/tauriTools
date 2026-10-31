@@ -4680,3 +4680,81 @@ input.mono, textarea.mono {
 }
 /* 色板：12 个预设色，点一下选中 */
 .ttb-swatches { display: flex; flex-wrap: wrap; gap: 3px; }
+
+/* ---------- 标签格与标签弹层（BoardTable 用）---------- */
+
+/*
+ * ⚠️ 上一批「补回被清理掉的样式」里漏掉的六个 ——
+ *    而 .ttb-tags / .ttb-tag-add / .ttb-tagpop-* / .ttb-dim
+ *    正是 BoardTable 标签列那一格在用的，缺了就是一排没底色的裸文字
+ *    加一个定位乱掉的弹层，且不报错。
+ *
+ *    补的时候只按"组件里有没有用到"逐项核，不按"这段看起来属于谁"整段搬 ——
+ *    后一种做法正是这一连串漏补的成因。
+ */
+.ttb-dim { color: var(--af-mute); opacity: .55; }
+.ttb-tags {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: nowrap;
+  overflow: visible;
+}
+.ttb-tag-add {
+  flex: none;
+  background: none;
+  border: 1px dashed var(--af-line, #444);
+  border-radius: var(--af-r-xs, 4px);
+  color: var(--af-mute);
+  font-size: var(--fs-micro, 10px);
+  line-height: 14px;
+  padding: 0 4px;
+  cursor: pointer;
+  opacity: .45;
+}
+.ttb-tags:hover .ttb-tag-add { opacity: 1; }
+.ttb-tag-add:hover { color: var(--af-accent); border-color: var(--af-accent); }
+.ttb-tagpop-title { font-size: var(--fs-micro, 10px); color: var(--af-mute); }
+.ttb-tagpop-new { display: flex; flex-direction: column; gap: 4px; }
+.ttb-tagpop-name { width: 100%; font-size: var(--fs-micro, 10px); padding: 2px 5px; }
+
+/* ---------- 所属组格 / 短 id / 附件格（BoardTable 用）---------- */
+
+.ttb-attach { color: var(--af-accent); }
+.ttb-sid {
+  font-family: var(--af-mono, ui-monospace, monospace);
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-mute);
+  white-space: nowrap;
+}
+.ttb-sid.is-mine {
+  color: var(--af-accent);
+  font-weight: var(--fw-strong, 600);
+}
+.ttb-group {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--af-mute);
+  font-size: var(--fs-micro, 10px);
+}
+
+/*
+ * BoardTable 底部那句「组不单独成行」的说明。
+ *
+ * 这个类名是**新组件带来的**，此前从来没配过样式 ——
+ * 不是被谁删了，是写组件时漏了。没有样式的后果是它顶着默认字号，
+ * 混在任务行里像一条数据，而不是一句说明。
+ *
+ * 判据走 .ttb-hint 那一档（最小字号 + 次要色），不另起一档字号。
+ */
+.btb-foot {
+  flex: none;
+  padding: 5px 8px;
+  font-size: var(--fs-micro, 10px);
+  color: var(--af-mute);
+  border-top: 1px solid var(--af-divider);
+}
