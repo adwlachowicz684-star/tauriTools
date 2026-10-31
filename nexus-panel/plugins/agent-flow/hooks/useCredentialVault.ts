@@ -382,6 +382,12 @@ export function useCredentialVault({
     if (v.kind === 'partial') {
       setUnlockErr(`有 ${v.failedCount} 条连接解不开（口令不对或数据损坏）——`
         + ' 其余已解锁，但用到那几条的节点会取不到密钥。');
+    } else if (r.plaintext > 0) {
+      /*
+       * 明文不算"解不开"（它读得出来了），但要说清**还没转成密文** ——
+       * 否则用户以为已经安全，而磁盘上仍是明文。
+       */
+      setUnlockErr(`有 ${r.plaintext} 条连接原本是明文，已取回；保存后会转成密文。`);
     } else {
       setUnlockErr('');
     }

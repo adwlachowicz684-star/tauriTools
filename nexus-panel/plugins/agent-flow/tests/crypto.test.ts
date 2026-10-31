@@ -405,13 +405,51 @@ test('缓存: 条目数有上限，不会无限增长', async () => {
   assert.ok(keyCacheSize() > 0);
 });
 
-/* ---------- 明文条目必须计入 failed ---------- */
+/* ---------- 明文：要取回来，不能算"解不开"，更不能清空 ---------- */
 
-test('解密: 明文条目算"没解出来"，不能静默清空', async () => {
+/*
+ * ⛔ 这条**反转过一次**，值得写清为什么：
+ *
+ * 上一版断言的是「明文 → failed，secret 清空」。那是个错误的方向：
+ * 明文**读得出来**，算"解不开"是谎报；而清空之后，下一次落盘的
+ * `secret: ''` 会把磁盘上那份明文覆盖成空 —— 密钥永久丢失，
+ * 连原始明文都没得救。真正该做的是取回来、并在落盘时转成密文。
+ */
+test('解密: 明文条目要取回来，不能清空', async () => {
   const file = { version: STORE_VERSION, credentials: [{ id: 'a', secret: 'ghp_plain_on_disk' }] } as never;
   const r = await decryptStore(be, file, PASS);
-  assert.deepEqual(r.failed, ['a'], '明文条目必须计入 failed');
-  assert.equal(r.credentials[0].secret, '', '明文不当密钥用');
+  assert.deepEqual(r.failed, [], '明文读得出来，不是"解不开"');
+  assert.equal(r.credentials[0].secret, 'ghp_plain_on_disk', '明文要取回来，清空就永久丢了');
+  assert.equal(r.plaintext, 1, '要报出"有几条原本是明文"');
+});
+
+test('解密: 明文落盘后变密文（老存档自愈）', async () => {
+  const file = { version: STORE_VERSION, credentials: [{ id: 'a', secret: 'ghp_plain_on_disk' }] } as never;
+  const r = await decryptStore(be, file, PASS);
+  const enc = await encryptStore(be, emptyStore('S'), r.credentials, PASS);
+  const dumped = serializeStore(enc);
+  assert.equal(dumped.includes('ghp_plain_on_disk'), false, '落盘不该还是明文');
+  const back = await decryptStore(be, parseStore(dumped), PASS);
+  assert.equal(back.credentials[0].secret, 'ghp_plain_on_disk', '转密文后还能还原');
+  assert.equal(back.plaintext, 0, '已经不是明文了');
+});
+
+test('解密: 空密钥不算"解不开"（反例，防误报锁死）', async () => {
+  const file = { version: STORE_VERSION, credentials: [{ id: 'a', secret: '' }] } as never;
+  const r = await decryptStore(be, file, PASS);
+  assert.deepEqual(r.failed, [], '没填密钥不该报"解不开"');
+  assert.equal(r.plaintext, 0);
+  assert.equal(judgeUnlock(1, r.failed.length).kind, 'ok', '否则一条空密钥会被判成"口令不对"');
+});
+
+test('读盘: 明文必须真的保留（注释曾经是假话）', async () => {
+  const raw = JSON.stringify({
+    ...emptyStore('S'),
+    credentials: [{ id: 'a', name: 'a', kind: 'github', secret: 'ghp_legacy', capabilities: [], createdAt: 1 }],
+  });
+  const f = parseStore(raw);
+  assert.equal(f.credentials[0].secret, 'ghp_legacy',
+    'parseStore 曾两个分支都返回空串 —— 明文在读盘那一刻就没了，migrate 永远救不了');
 });
 
 test('解密: 密文解不出来也计入 failed（原有行为不变）', async () => {
@@ -463,4 +501,24 @@ test('源码守卫: unlock 用 judgeUnlock 判放行，且部分失败要说出�
   assert.ok(/v\.kind === 'partial'/.test(win), '必须处理 partial 分支');
   assert.ok(/setUnlockErr\(`?[^`]*\$\{v\.failedCount\}/.test(win) || /setUnlockErr\(/.test(win),
     'partial 分支必须说出来');
+});
+
+/* ---------- 源码守卫 ---------- */
+
+test('源码守卫: parseStore 不得把明文抹成空（两分支同值曾是假话）', () => {
+  const src = readSrc('engine/credentialStore.ts');
+  const at = src.indexOf('secret: isCipherBundle');
+  assert.ok(at >= 0, '要能找到 parseStore 里那一行');
+  const seg = src.slice(at, src.indexOf(String.fromCharCode(10), at) + 200);
+  assert.ok(!/\?\s*''\s*:\s*''/.test(seg),
+    '两个分支都返回空串 = 明文在读盘那一刻就被抹掉，后面 migrate 永远救不了');
+});
+
+test('源码守卫: decryptStore 必须调用 migratePlaintext（否则明文永远转不成密文）', () => {
+  const src = readSrc('engine/credentialStore.ts');
+  const at = src.indexOf('export async function decryptStore');
+  assert.ok(at >= 0, '要能找到 decryptStore');
+  const body = src.slice(at, src.indexOf('export async function encryptStore'));
+  assert.ok(/migratePlaintext\(/.test(body),
+    'migratePlaintext 曾是全项目零调用方：明文永远转不成密文，且落盘时被空值覆盖');
 });

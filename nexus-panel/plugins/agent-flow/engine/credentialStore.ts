@@ -20,7 +20,18 @@ import {
  * 反而让"有多少条连接、分别能干什么"在界面上都显示不出来。
  */
 export type StoredCredential = Omit<Credential, 'secret'> & {
-  secret: CipherBundle | '';
+  /**
+   * 磁盘上的形态：密文 bundle，或**尚未加密的明文**。
+   *
+   * ⛔ 以前这里是 `CipherBundle | ''`，于是"磁盘上躺着明文"这件事
+   * **在类型上就无法表示** —— parseStore 里那句注释写着
+   * 「明文兼容：老数据进来直接保留」，而它两个分支都只能返回 ''，
+   * 因为类型不允许返回字符串。
+   *
+   * 结果是：明文在**读盘那一刻**就被抹掉，migratePlaintext 永远看不到它
+   * （found 恒 0，成了死代码），老存档的密钥永久丢失且无任何提示。
+   */
+  secret: CipherBundle | string;
 };
 
 /**
@@ -89,8 +100,12 @@ export function parseStore(raw: string | null): StoredFile {
       name: typeof x.name === 'string' && x.name.trim() !== '' ? x.name : `连接 ${i + 1}`,
       kind: (x.kind === 'github' || x.kind === 'llm' || x.kind === 'generic' || x.kind === 'cli')
         ? x.kind as Credential['kind'] : 'generic',
-      // 明文兼容：老数据进来直接保留，由 migrate 决定是否加密
-      secret: isCipherBundle(x.secret) ? x.secret : (typeof x.secret === 'string' ? '' : ''),
+      /*
+       * ⛔ 以前这里两个分支都返回 ''（"保留明文"是句假话）——
+       * 明文在读盘时就被抹掉，后面 migrate 拿到的永远是空。
+       * 现在真的保留，交给 migratePlaintext 转成密文。
+       */
+      secret: isCipherBundle(x.secret) ? x.secret : (typeof x.secret === 'string' ? x.secret : ''),
       meta: (x.meta && typeof x.meta === 'object') ? x.meta as Record<string, string> : undefined,
       capabilities: Array.isArray(x.capabilities) ? x.capabilities as Credential['capabilities'] : [],
       identity: typeof x.identity === 'string' ? x.identity : undefined,
@@ -114,20 +129,20 @@ export async function decryptStore(
   be: CryptoBackend,
   file: StoredFile,
   pass: string,
-): Promise<{ credentials: Credential[]; failed: string[] }> {
+): Promise<{ credentials: Credential[]; failed: string[]; plaintext: number }> {
   const out: Credential[] = [];
   const failed: string[] = [];
   for (const sc of file.credentials) {
     if (!isCipherBundle(sc.secret)) {
       /*
-        ⛔ 明文条目**必须**计入 failed —— 它代表"这条密钥没能以密文形式存下来"
-        （老版本遗留、或 encryptString 失败后原样落盘）。
-
-        以前这里只清空 secret 就 continue，于是 failed 是空的：
-        界面显示这条连接没有密钥，而调用方拿不到任何"没解出来"的信号 ——
-        用户以为自己从没填过，可磁盘上那份明文其实还在，只是读不出来了。
-      */
-      failed.push(sc.id);
+       * 不是密文 → 要么**空密钥**（用户还没填），要么老存档遗留的**明文**。
+       *
+       * ⛔ 曾经把这两种一律计入 failed，两个方向都错：
+       *   空密钥 → 假警报。一条都没填的库会被 judgeUnlock 判成 'all'，
+       *           于是"口令不对，一条都没解开"，拿正确口令也进不去。
+       *   明文   → 它其实读得出来，算"解不开"是谎报；
+       *           下面 migratePlaintext 会把它取回来，落盘时转成密文。
+       */
       out.push({ ...sc, secret: '' } as Credential);
       continue;
     }
@@ -139,7 +154,15 @@ export async function decryptStore(
       out.push({ ...sc, secret: '' } as Credential);
     }
   }
-  return { credentials: out, failed };
+  /*
+   * 明文迁移**只能**在这里做 —— 这是唯一还看得到磁盘原始形态的地方。
+   *
+   * ⛔ migratePlaintext 此前全项目零调用方（只有测试在用）：明文永远转不成
+   * 密文，而下一次落盘时 `secret: ''` 会把磁盘上那份明文**覆盖成空** ——
+   * 密钥永久丢失，连原始明文都没得救了，且全程无提示。
+   */
+  const mig = await migratePlaintext(be, file.credentials, pass, out);
+  return { credentials: mig.credentials, failed, plaintext: mig.done };
 }
 
 /* ------------------------------------------------------------------ */
@@ -172,8 +195,19 @@ export function serializeStore(file: StoredFile): string {
 export type MigrationResult = {
   /** 需要迁移的条数（原本是明文且有内容） */
   found: number;
-  /** 成功加密的条数 */
+  /**
+   * 已取回并写回**待加密**的条数。
+   *
+   * ⛔ 以前这里写"成功加密的条数"，而加密根本不在这里发生 ——
+   * 这一步只把明文塞回 credentials，真正的加密在后面 encryptStore。
+   * 名字说"已加密"、算的是"已取出"，encryptStore 一旦失败，
+   * 报出去的"成功 N 条"就是假的。
+   */
   done: number;
+  /** found 里找不到对应连接的条数（明文还在磁盘上，这一步救不回来） */
+  skipped: number;
+  /** 被抢救回来的连接 id —— 调用方靠它把这些从 failed 里摘掉 */
+  rescued: string[];
   credentials: Credential[];
 };
 
@@ -191,6 +225,8 @@ export async function migratePlaintext(
 ): Promise<MigrationResult> {
   let found = 0;
   let done = 0;
+  let skipped = 0;
+  const rescued: string[] = [];
   const byId = new Map(into.map((c) => [c.id, c]));
   for (const old of oldCredentials || []) {
     if (secretKind(old?.secret) !== 'plain') continue;
@@ -198,16 +234,19 @@ export async function migratePlaintext(
     if (!plain) continue;
     found += 1;
     const target = byId.get(old.id);
-    if (!target) continue;
-    try {
-      // 写回 target.secret，让后续 encryptStore 把它加密落盘
-      target.secret = plain;
-      done += 1;
-    } catch {
-      // 加密失败就维持原样，不影响其它条目
-    }
+    if (!target) { skipped += 1; continue; }
+    /*
+     * ⛔ 以前这里包了个 try/catch，注释写着"加密失败就维持原样" ——
+     * 而这一行是**普通赋值**，secret 不是 getter，永远不会抛。
+     * 那个 catch 是死的：它让人以为失败被兜住了，实际没有任何失败路径。
+     *
+     * 真正的加密在后面 encryptStore；这里只负责把明文塞回去。
+     */
+    target.secret = plain;
+    done += 1;
+    rescued.push(old.id);
   }
-  return { found, done, credentials: into };
+  return { found, done, skipped, rescued, credentials: into };
 }
 
 /* ------------------------------------------------------------------ */
