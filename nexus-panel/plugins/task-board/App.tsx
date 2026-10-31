@@ -43,6 +43,7 @@ import {
   newDefId,
   NOTYPE,
   NOGROUP,
+  statusDone,
   dependsOn,
   normalizeFlow,
   relTime,
@@ -1535,6 +1536,7 @@ ${dir}
           rows={listRows}
           allRows={flatRows}
           store={store.tasks}
+          taskStore={store}
           flow={flow}
           statusIds={statusIds}
           typeDefs={typeDefs}
@@ -1693,6 +1695,7 @@ ${dir}
           task={detail}
           me={me}
           tasks={store.tasks}
+          taskStore={store}
           tagDefs={store.tagDefs}
           typeDefs={typeDefs}
           flow={flow}
@@ -1813,17 +1816,33 @@ function TaskCard({
           <span className="tb-who none">未认领</span>
         )}
         <div className="tb-task-acts">
-          {task.status === 'todo' && (
+          {/* 同详情面板：认领按钮的判据是**初始态**，不写死 'todo' */}
+          {task.status === initialStatus(flow) && (
             <button className="tb-act sm" onClick={onClaim} title={`以 ${me} 身份认领`}>
               认领
             </button>
           )}
           {acts
-            .filter((a) => !(task.status === 'todo' && a.to === 'claimed'))
+            /*
+            过滤：从初始态直接"认领"这一步单独有按钮（上面那个），
+            这里不再重复摆一次。
+
+            ⛔ 不能写死 'todo' / 'claimed'：自定义流程里初始态可能叫别的，
+            认领那一步也可能叫别的。用流程里的**初始态**判，
+            而"认领"这一步的特征是"从初始态出发的第一步"，
+            保留原语义即可（重复按钮只是看着乱，不阻断操作）。
+          */
+          .filter((a) => !(task.status === initialStatus(flow) && a.to === (flow.statuses[1] || {}).id))
             .map((a) => (
               <button
                 key={a.to}
-                className={'tb-act sm' + (a.to === 'done' ? ' primary' : '') + (a.needNote ? ' warn' : '')}
+                /*
+                主按钮（高亮）的判据是"这条边通向完成态"，
+                ⓘ 不能写死 'done'：自定义流程下完成态可能叫 's3'、'完工'…
+                写死的话**没有一个按钮会高亮**，
+                而高亮正是用来暗示"这一步是往前推进"的。
+              */
+              className={'tb-act sm' + (statusDone(flow, a.to) ? ' primary' : '') + (a.needNote ? ' warn' : '')}
                 onClick={() => onAction(a.to as TaskStatus, a.needNote)}
               >
                 {a.label}
@@ -2037,7 +2056,7 @@ function ImportProjectModal({
   const [dir, setDir] = useState('');
   const [scan, setScan] = useState<null | {
     dir: string; tasksJson: boolean; mdCount: number;
-    dirCount: number; otherCount: number; sample: string[]; degraded?: boolean; restoreFailed?: boolean;
+    dirCount: number; otherCount: number; sample: string[]; degraded?: boolean;
   }>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -2109,12 +2128,6 @@ function ImportProjectModal({
           {scan.degraded ? (
             <div className="tb-scan-warn">
               ⚠ 后端扫描不可用，只验证了有没有 tasks.json（文档数量没能统计）
-            </div>
-          ) : null}
-          {scan.restoreFailed ? (
-            <div className="tb-scan-warn">
-              ⚠ 验证完没能切回当前项目的目录 —— 数据目录现在停在刚扫的这个上，
-              当前项目随后的读写都会指向它（表现为整个看板变空）。关掉重开可恢复。
             </div>
           ) : null}
           {scan.sample.length > 0 ? (
@@ -3318,6 +3331,8 @@ function ListView({
   rows,
   allRows,
   store,
+  /** 完整 store（含 flow）。形参里的 store 是 Task[]，拿不到 flow */
+  taskStore,
   flow,
   statusIds,
   typeDefs,
@@ -3359,6 +3374,8 @@ function ListView({
   allRows: FlatRow[];
   /** 全量任务，用于算前置锁定 */
   store: Task[];
+  /** 完整 store（含 flow）：算前置"是否已完成"要认自定义流程，不能写死 'done' */
+  taskStore: TaskStore;
   flow: FlowLike;
   /** 状态筛选的候选值（用户配了哪些状态） */
   statusIds: string[];
@@ -3565,7 +3582,8 @@ function ListView({
         );
       case 'title': {
         /* 锁定只在标题列显示时才算 —— 标题列被隐藏就别白跑 */
-        const lk = lockOf(t, store);
+        /* 传 store：isDone 要认自定义流程的完成态（不能写死 'done'） */
+        const lk = lockOf(t, allRows.map((r) => r.task), taskStore);
         return (
           <span className="tb-lc c-title" key={field}>
             {lk.locked ? (
@@ -4402,6 +4420,8 @@ function DetailModal({
   task,
   me,
   tasks,
+  /** 完整 store（lockOf 需要它才能拿到 flow，见下方 lock 处） */
+  taskStore,
   tagDefs,
   typeDefs,
   flow,
@@ -4417,6 +4437,8 @@ function DetailModal({
   me: string;
   /** 全量任务：算前置锁定要用 */
   tasks: Task[];
+  /** 完整 store（含 flow）：算前置"是否已完成"要认自定义流程 */
+  taskStore: TaskStore;
   tagDefs: TagDef[];
   /** 类型定义表（详情里可改这条的类型） */
   typeDefs: TagDef[];
@@ -4434,11 +4456,25 @@ function DetailModal({
 }) {
   const [note, setNote] = useState('');
   const [confirmDel, setConfirmDel] = useState(false);
-  const acts = actionsFor(task.status);
+  /*
+    ⛔ 必须用 actionsForIn(flow, …)，不能用 actionsFor(…)：
+    后者是**默认流程**写死的那一套（认领/开始/提交审查…）。
+    自定义流程下它算出来的按钮，指向的状态在本项目里可能根本不存在
+    → doTransition 走流转校验失败 → **按钮点了没反应**（只弹个错）。
+
+    而且漏掉用户新加的状态：详情里看不到"标为完工"这种按钮，
+    于是自定义的状态只能从列表那一列里点，详情这儿像是坏了。
+  */
+  const acts = actionsForIn(flow, task.status);
   const hist = [...task.history].reverse();
 
   const { byId } = indexTasks(tasks);
-  const lock = lockOf(task, tasks);
+  /*
+    传 store：isDone 要认自定义流程的完成态。
+    不传的话 lockOf 拿不到 flow → 退回默认判据 →
+    自定义流程下**没有一条前置会解锁**（前置做完了也还是锁着）。
+  */
+  const lock = lockOf(task, tasks, taskStore);
   /*
     可选的前置：排除自己，并**排除会成环的**。
 
@@ -4559,17 +4595,24 @@ function DetailModal({
       {task.detail && <div className="tb-ddetail">{task.detail}</div>}
 
       <div className="tb-dacts">
-        {task.status === 'todo' && (
+        {/*
+          认领按钮只在**初始态**出现。
+          ⛔ 判据不能写死 'todo'：自定义流程的初始态可能叫别的
+          （'待办'/'新建'/'s1'…），写死的话自定义流程下
+          这个按钮**永远不出现**，而"认领"是详情里最常用的动作 ——
+          详情这儿像是少了功能。
+        */}
+        {task.status === initialStatus(flow) && (
           <button className="tb-act sm" onClick={onClaim}>
             认领（{me}）
           </button>
         )}
         {acts
-          .filter((a) => !(task.status === 'todo' && a.to === 'claimed'))
+          .filter((a) => !(task.status === initialStatus(flow) && a.to === (flow.statuses[1] || {}).id))
           .map((a) => (
             <button
               key={a.to}
-              className={'tb-act sm' + (a.to === 'done' ? ' primary' : '') + (a.needNote ? ' warn' : '')}
+              className={'tb-act sm' + (statusDone(flow, a.to) ? ' primary' : '') + (a.needNote ? ' warn' : '')}
               onClick={() => onAction(a.to as TaskStatus, a.needNote)}
             >
               {a.label}
