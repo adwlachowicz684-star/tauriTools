@@ -1908,7 +1908,7 @@ t('标签：筛选面板里显示名字而不是原始 id', (() => {
 t('标签：筛选摘要用的是标签定义表（不是类型定义表）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   return app.indexOf("const defs = col.field === 'tags' ? tagDefs : typeDefs;") >= 0
-    && app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [])') >= 0;
+    && app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow)') >= 0;
 })());
 
 /*
