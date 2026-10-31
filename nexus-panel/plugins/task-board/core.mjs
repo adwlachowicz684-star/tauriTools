@@ -1293,9 +1293,29 @@ export function groupValuesOf(t, key) {
   return [''];
 }
 
-function sortGroups(groups, key) {
+function sortGroups(groups, key, flow) {
   if (key === 'status') {
-    groups.sort((a, b) => (STATUS_RANK[a.key] ?? 9) - (STATUS_RANK[b.key] ?? 9));
+    /*
+      ⛔ 不能查写死的 STATUS_RANK（默认那七个）：
+      自定义流程的状态 id 在那张表里查不到 → 全部落到 9 → **顺序随机**。
+
+      "按状态分组"其实是这些组唯一有意义的顺序（待办→在做→已完成），
+      顺序乱了之后，看"还有多少没做完"就得从头扫一遍。
+      改成按**流程里配置的先后**（statuses 数组的下标）排。
+    */
+    const order = (flow && Array.isArray(flow.statuses) && flow.statuses.length)
+      ? flow.statuses.map((x) => x.id)
+      : null;
+    groups.sort((a, b) => {
+      if (order) {
+        const ia = order.indexOf(a.key);
+        const ib = order.indexOf(b.key);
+        const ra = ia < 0 ? 99 : ia;
+        const rb = ib < 0 ? 99 : ib;
+        if (ra !== rb) return ra - rb;
+      }
+      return (STATUS_RANK[a.key] ?? 9) - (STATUS_RANK[b.key] ?? 9);
+    });
   } else if (key === 'priority') {
     groups.sort((a, b) => PRIORITIES.indexOf(a.key) - PRIORITIES.indexOf(b.key));
   } else if (key === 'assignee') {
@@ -1344,7 +1364,7 @@ function sortGroups(groups, key) {
  *
  * 传单个字符串也认（等价于只分一层）—— 兼容老调用点。
  */
-export function groupTasksBy(tasks, keys) {
+export function groupTasksBy(tasks, keys, flow) {
   const ks = (Array.isArray(keys) ? keys : [keys]).filter(Boolean);
   const list = tasks || [];
   if (ks.length === 0) {
@@ -1367,7 +1387,7 @@ export function groupTasksBy(tasks, keys) {
         g.count += 1;
       }
     }
-    sortGroups(groups, key);
+    sortGroups(groups, key, flow);
     if (depth < ks.length - 1) {
       for (const g of groups) {
         g.children = build(g.tasks, depth + 1);

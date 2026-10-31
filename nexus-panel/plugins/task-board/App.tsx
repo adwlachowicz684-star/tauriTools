@@ -495,8 +495,13 @@ export default function App() {
   const filteredOn = activeCols.length > 0 || q.trim() !== '';
   /* 分组视图要的是 Task[]（它自己按字段聚合，不看层级） */
   const groups = useMemo(
-    () => groupTasksBy(listRows.map((r) => r.task), groupKeys),
-    [listRows, groupKeys],
+    /*
+      传 flow：按状态分组时，组顺序要按**流程里配置的先后**排。
+      不传的话自定义流程的 id 在默认排名表里查不到 → 全部落到同一档 →
+      顺序变成数据里的先后顺序，"待办/在做/已完成"的推进感全没了。
+    */
+    () => groupTasksBy(listRows.map((r) => r.task), groupKeys, flow),
+    [listRows, groupKeys, flow],
   );
   const stats = useMemo<TbStats | null>(() => (store ? statsOf(store) : null), [store]);
 

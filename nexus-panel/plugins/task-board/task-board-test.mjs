@@ -2923,6 +2923,55 @@ t('审查：调用点传了 typeDefs 且在依赖里', (() => {
     && app.indexOf('[flatRows, colFilters, q, typeDefs]') >= 0;
 })());
 
+
+/* ============================================================ 审查：按状态分组在自定义流程下顺序乱（本轮） */
+
+const FLOW4 = {
+  statuses: [
+    { id: 's1', name: '待办', color: '#888888', enter: '', done: false },
+    { id: 's2', name: '开发中', color: '#888888', enter: '', done: false },
+    { id: 's3', name: '完工', color: '#888888', enter: '', done: true },
+  ],
+  transitions: {},
+  edges: {},
+};
+
+/*
+ * **按状态分组时查写死的 STATUS_RANK**（默认那七个）：
+ * 自定义流程的状态 id 在那张表里查不到 → 全部落到同一档 →
+ * **顺序变成数据在文件里的先后顺序**（实测 s3 → s1 → s2）。
+
+ * "按状态分组"其实是这些组唯一有意义的顺序（待办→在做→已完成），
+ * 顺序乱了之后，想看"还有多少没做完"就得从头扫一遍 ——
+ * 而用户会以为是自己把状态配错了顺序。
+ */
+t('审查：自定义流程下按状态分组按流程顺序排', (() => {
+  const tasks = [
+    normalizeTask({ id: 'a', status: 's3' }),
+    normalizeTask({ id: 'b', status: 's1' }),
+    normalizeTask({ id: 'c', status: 's2' }),
+  ];
+  const g = groupTasksBy(tasks, ['status'], FLOW4);
+  return g.map((x) => x.key).join(',') === 's1,s2,s3';
+})());
+
+/* 默认流程行为不变 */
+t('审查：默认流程下按状态分组顺序不变', (() => {
+  const tasks = [
+    normalizeTask({ id: 'a', status: 'done' }),
+    normalizeTask({ id: 'b', status: 'todo' }),
+    normalizeTask({ id: 'c', status: 'doing' }),
+  ];
+  return groupTasksBy(tasks, ['status'], null).map((x) => x.key).join(',') === 'todo,doing,done';
+})());
+
+/* 调用点要把 flow 传下去（且进依赖） */
+t('审查：调用点传了 flow 且在依赖里', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('groupTasksBy(listRows.map((r) => r.task), groupKeys, flow)') >= 0
+    && app.indexOf('[listRows, groupKeys, flow]') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
