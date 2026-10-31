@@ -2329,6 +2329,36 @@ t('审查：tagDefs 贯通到看板与分组视图（含递归节点）', (() =>
     && app.indexOf('<GroupNodeView\n              key={c.key}\n              node={c}\n              tagDefs={tagDefs}') >= 0;
 })());
 
+
+/* ============================================================ 审查：统计的"陈旧"判据（本轮） */
+
+/*
+ * **没有 updatedAt 的任务被算成"超 7 天未动"**：
+ * `now - 0` 是个巨大的数，于是所有**没时间戳**的未完成任务
+ * 会全部涌进那个面板 —— 而它们可能刚建、正在做。
+ *
+ * 那不是"很久没动"，是"不知道什么时候动的"；
+ * 把它算进陈旧是假数据，而且会淹没真正需要处理的那几条。
+ * （列上的时间区间筛选是同样判据：时间为 0 不参与。）
+ */
+t('审查：没有更新时间的任务不算"陈旧"', (() => {
+  const now = Date.now();
+  const old = normalizeTask({ id: 'old', status: 'todo', updatedAt: now - 30 * 24 * 3600 * 1000 });
+  const fresh = normalizeTask({ id: 'fresh', status: 'todo', updatedAt: now });
+  const noTime = normalizeTask({ id: 'notime', status: 'todo' });   // updatedAt = 0
+  const st = statsOf({ tasks: [old, fresh, noTime], flow: null }, now);
+  const ids = st.stale.map((t) => t.id);
+  return ids.indexOf('old') >= 0 && ids.indexOf('fresh') < 0 && ids.indexOf('notime') < 0;
+})());
+
+/* 已完成的不算陈旧（与时间无关） */
+t('审查：已完成的任务不算陈旧', (() => {
+  const now = Date.now();
+  const doneOld = normalizeTask({ id: 'd', status: 'done', updatedAt: now - 90 * 24 * 3600 * 1000 });
+  const st = statsOf({ tasks: [doneOld], flow: null }, now);
+  return st.stale.length === 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

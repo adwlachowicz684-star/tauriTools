@@ -1396,11 +1396,21 @@ export function statsOf(store, now = Date.now()) {
     const who = t.assignee || UNASSIGNED;
     const ae = byAssignee.get(who) || { id: who, count: 0, est: 0 };
     ae.count += 1;
-    /* 组不计 —— 组的工作量是子任务的和，算进来会双份 */
-    if (t.kind !== 'group') ae.est = Math.round((ae.est + (Number(t.estimate) || 0)) * 100) / 100;
+    ae.est = Math.round((ae.est + (Number(t.estimate) || 0)) * 100) / 100;
     byAssignee.set(who, ae);
     for (const tag of t.tags) tagCnt.set(tag, (tagCnt.get(tag) || 0) + 1);
-    if (!statusDone(store.flow, t.status) && (now - (t.updatedAt || 0)) > STALE_MS) stale.push(t);
+    /*
+      ⛔ 没有 updatedAt（老数据 / AI 直接写进 JSON 的）**不算"陈旧"**：
+      `now - 0` 是个巨大的数，于是所有没时间戳的未完成任务
+      会全部涌进"超 7 天未动"面板 —— 而它们可能刚建、正在做。
+      那不是"很久没动"，是"不知道什么时候动的"，把它算进陈旧是假数据。
+      （列上的时间区间筛选是同样判据：时间为 0 不参与。）
+    */
+    if (
+      !statusDone(store.flow, t.status)
+      && (t.updatedAt || 0) > 0
+      && (now - t.updatedAt) > STALE_MS
+    ) stale.push(t);
   }
   const assignees = [...byAssignee.entries()]
     .sort((a, b) => {
