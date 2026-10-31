@@ -1851,7 +1851,7 @@ t('分组：行内能就地编辑（case group 要在 cellFor 里）', (() => {
  * 本环境没有 Rust 工具链编译不了，所以至少用源码扫描钉住"该出现的都出现了"。
  */
 t('分组：Rust 新建/改字段/MCP 都要贯通（AI 通道不能漏）', (() => {
-  const rp = path.join(dir, '../../../src-tauri/src/task_board.rs');
+  const rp = path.join(dir, '../../src-tauri/src/task_board.rs');
   if (!fs.existsSync(rp)) return true;   // 环境缺源码目录时跳过，不算失败
   const rus = fs.readFileSync(rp, 'utf8');
   return rus.indexOf('"group".to_string()') >= 0        // create + patch 写入
@@ -2559,8 +2559,19 @@ t('审查：恢复的隐藏列有上限（不会只剩一列）', (() => {
 
 /* ============================================================ 审查：AI 通道改不了任务说明（本轮） */
 
-const RS = path.join(dir, '../../../src-tauri/src/task_board.rs');
+/*
+ * ⛔ 路径拼错时 rsSrc 是空串，而下面每条判据都以 `!rsSrc ||` 开头
+ * （本意是「环境缺 Rust 源码就跳过」）—— 于是**整节空转还报绿**，
+ * 其实一条都没跑。
+ *
+ * 实测踩到：原来拼的是 '../../../src-tauri'（少退一级就解析到仓库根，
+ * 那里没有这个目录），这一节十几条审查断言一直显示「通过」，
+ * 修了路径它们才真正开始检查（且全部通过）。
+ * 所以先钉一条可达性：拼错要报红，不能静默跳过。
+ */
+const RS = path.join(dir, '../../src-tauri/src/task_board.rs');
 const rsSrc = fs.existsSync(RS) ? fs.readFileSync(RS, 'utf8') : '';
+t('（前置）Rust 源码可达：拼错会让整节静默空转', rsSrc.length > 0, `RS=${RS}`);
 /* 环境缺 Rust 源码目录时这几条跳过（不算失败），原因同上方那条分组的 */
 const rsHas = (needle) => !rsSrc || rsSrc.indexOf(needle) >= 0;
 const rsSeg = (anchor, len) => {
