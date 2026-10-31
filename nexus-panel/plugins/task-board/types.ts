@@ -192,6 +192,17 @@ export interface TbConfig {
   autoStart: boolean;
   /** 任务提交审查时 POST 通知的目标（如 agent-flow webhook） */
   notifyUrl: string;
+  /**
+   * 流转到**哪个状态**时发通知。默认 'review'。
+   *
+   * ⛔ 原来这个判据写死在代码里（`to === 'review'`），
+   * 自定义流程里"审查"那一步可能叫别的（'待审'、's4'…），
+   * 于是配了 notifyUrl 却**永远收不到通知**，而且没有任何提示 ——
+   * 用户只会在对端排查，想不到是这边压根没发。
+   *
+   * 做成配置而不是猜状态名：猜（匹配"审查"字样）对"复核""验收"就失效了。
+   */
+  notifyStatus: string;
 }
 
 export const DEFAULT_CONFIG: TbConfig = {
@@ -203,6 +214,7 @@ export const DEFAULT_CONFIG: TbConfig = {
   token: '',
   autoStart: false,
   notifyUrl: '',
+  notifyStatus: 'review',
 };
 
 /** 一次状态流转的展示信息 */

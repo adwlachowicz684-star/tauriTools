@@ -1607,6 +1607,11 @@ export function normalizeConfig(raw) {
     token: typeof c.token === 'string' ? c.token : '',
     autoStart: c.autoStart === true,
     notifyUrl: typeof c.notifyUrl === 'string' ? c.notifyUrl : '',
+    /*
+      触发通知的状态。缺省 'review'（老配置的语义不变）。
+      自定义流程里"审查"那一步可能叫别的，写死就永远收不到通知。
+    */
+    notifyStatus: typeof c.notifyStatus === 'string' && c.notifyStatus ? c.notifyStatus : 'review',
   };
 }
 

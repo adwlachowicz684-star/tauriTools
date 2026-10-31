@@ -745,7 +745,12 @@ export default function App() {
       if (!cfg) return;
       const task = await S.transitionTask(ctx, cfg.dataDir, me, id, to, note);
       await refresh();
-      if (to === 'review') await S.notifyWebhook(cfg, task);
+      /*
+        通知的触发状态由配置决定，不写死 'review'：
+        自定义流程里"审查"那一步可能叫别的，
+        写死的话配了 notifyUrl 也**永远收不到通知**，而且没有提示。
+      */
+      if (to === (cfg.notifyStatus || 'review')) await S.notifyWebhook(cfg, task);
       /*
         ⛔ 状态名不能查写死的 STATUS_LABEL：
         那是**默认那五个**的名字表，自定义流程的 id（s2、'完工'…）在里面查不到，
