@@ -26,18 +26,14 @@ import {
   actionsForIn,
   ancestorChain,
   canTransitionIn,
-  createGroup,
   currentProject,
   needsDocsDir,
   normalizeStore,
   normalizeTypeDefs,
   DEFAULT_FLOW,
-  dissolveGroup,
   flattenTasks,
-  mergeIntoGroup,
+  flattenAllGroups,
   fmtTime,
-  groupEstimate,
-  groupStatus,
   groupTasksBy,
   indexTasks,
   fmtEstimate,
@@ -49,7 +45,6 @@ import {
   relTime,
   sortRowsBy,
   sortTasksBy,
-  splitTask,
   statsOf,
   typeColor,
   typeName,
@@ -80,7 +75,7 @@ type TbView = 'board' | 'list' | 'group' | 'stats';
 const VIEWS: { key: TbView; label: string; title: string }[] = [
   { key: 'board', label: '看板', title: '看板：按状态分五列' },
   { key: 'list', label: '列表', title: '列表：平铺排序，表头可点' },
-  { key: 'group', label: '分组', title: '分组：按一个字段聚合' },
+  { key: 'group', label: '分组', title: '分组：选一列（或几列）做分组依据，只改显示不改数据' },
   { key: 'stats', label: '统计', title: '统计：分布 / 负载 / 最近动态' },
 ];
 
@@ -105,7 +100,7 @@ type FlowLike = ReturnType<typeof normalizeFlow> & {
 };
 
 const SORT_FIELDS: SortField[] = [
-  'priority', 'status', 'assignee', 'type', 'tags', 'groupPath', 'summary',
+  'priority', 'status', 'assignee', 'type', 'tags', 'summary',
   'estimate', 'updatedAt', 'createdAt', 'title', 'id',
 ];
 
@@ -123,7 +118,6 @@ const SORT_LABEL: Record<SortField, string> = {
   priority: '优先级',
   id: 'ID',
   title: '标题',
-  groupPath: '所属组',
   status: '状态',
   assignee: '认领人',
   tags: '标签',
@@ -168,7 +162,7 @@ export default function App() {
   /** 导入项目弹窗 */
   const [importOpen, setImportOpen] = useState(false);
   /** 新建/合并组的弹窗。null = 关着 */
-  const [groupDraft, setGroupDraft] = useState<{ mode: 'merge' | 'new' } | null>(null);
+
 
   const [q, setQ] = useState('');
   const [colFilters, setColFilters] = useState<Partial<Record<SortField, ColFilter>>>({});
@@ -198,8 +192,27 @@ export default function App() {
         const c = await S.loadConfig(ctx);
         if (!alive) return;
         setCfg(c);
-        const st = await S.readStore(ctx, c.dataDir);
+        let st = await S.readStore(ctx, c.dataDir);
         if (!alive) return;
+        /*
+          一次性迁移：组从"数据结构"改成"视图概念"之后，
+          文件里可能还留着以前手动建的 kind='group' 记录。
+          留着就是两套并存的层级（数据一套、视图一套），所以平铺掉。
+
+          只在真的有组时才写盘 —— 平铺完就没有组了，不会每开一次写一次。
+        */
+        if ((st.tasks || []).some((t) => t.kind === 'group')) {
+          const r = flattenAllGroups(st.tasks);
+          if (r.removed > 0) {
+            st = await S.mutate(ctx, c.dataDir, () => ({ ...st, tasks: r.tasks }));
+            ctx.toast(
+              `已把 ${r.removed} 个手动任务组展开为平级任务`
+              + (r.remapped > 0 ? `（${r.remapped} 条"依赖整个组"的已改指到具体任务）` : '')
+              + '。以后分组请选一列作为依据',
+              'ok',
+            );
+          }
+        }
         setStore(st);
         /* 视图偏好：读不到/格式坏了都静默回默认 —— 丢的只是「上次看到哪」，
            不该让看板起不来。存储桥接最坏 15s 超时，故整体 try 兜住。 */
@@ -506,39 +519,6 @@ export default function App() {
       ctx.toast(`${id} 已由 ${me} 认领`, 'ok');
     })();
 
-  const doMergeGroup = (ids: string[], title: string) =>
-    withErr(async () => {
-      if (!cfg || ids.length === 0) return;
-      await S.mutate(ctx, cfg.dataDir, (st) => {
-        const r = mergeIntoGroup(st.tasks, ids, title || '新任务组');
-        return { ...st, tasks: r.tasks };
-      });
-      setChecked(new Set());
-      await refresh();
-      ctx.toast(`已把 ${ids.length} 条合并成「${title}」`, 'ok');
-    })();
-
-  const doNewGroup = (title: string) =>
-    withErr(async () => {
-      if (!cfg) return;
-      await S.mutate(ctx, cfg.dataDir, (st) => {
-        const r = createGroup(st.tasks, title || '新任务组');
-        return { ...st, tasks: r.tasks };
-      });
-      await refresh();
-      ctx.toast(`已新建组「${title}」`, 'ok');
-    })();
-
-  const doDissolveGroup = (groupId: string) =>
-    withErr(async () => {
-      if (!cfg) return;
-      await S.mutate(ctx, cfg.dataDir, (st) => {
-        const r = dissolveGroup(st.tasks, groupId);
-        return { ...st, tasks: r.tasks };
-      });
-      await refresh();
-    })();
-
   /*
     存流程配置。整份覆盖（不像任务那样逐条合并）——
     配置是"当前应该是什么样"，不是"谁改了哪一条"，
@@ -634,27 +614,79 @@ ${dir}
       else ctx.toast('文档路径已设置', 'ok');
     })();
 
-  const doSplit = (id: string, titles: string[]) =>
+  /*
+    批量操作。勾选框原来只服务于"合并成组"，组改成视图概念之后
+    它就没了用途 —— 留着是个点了没反应的控件，所以换成批量改字段。
+
+    ⛔ 改状态**逐条走流转校验**，不是一把赋值：
+    自定义流程里从"待办"直接跳"已完成"可能是不允许的边。
+    一把赋值会把流程规则绕过，事后没人知道这些任务是"正常做完"还是"被改成做完"。
+    走不通的那几条跳过并报数，而不是整批失败 —— 报数才看得出是哪几条。
+  */
+  const doBatchStatus = (ids: string[], to: string) =>
     withErr(async () => {
-      if (!cfg || titles.length === 0) return;
-      /*
-        拆之前先看原任务估了多少 —— 子任务不会继承预估（那会让总工作量翻 N 倍），
-        所以原预估会在拆分后"消失"。不吭声的话，用户看着合计从 5 变成 0，
-        只会以为统计坏了，而不是"需要重新分配"。
-      */
-      const before = (store?.tasks || []).find((t) => t.id === id);
-      const had = Number(before?.estimate) || 0;
+      if (!cfg || ids.length === 0 || !to) return;
+      let done = 0;
+      const skipped: string[] = [];
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const r = splitTask(st.tasks, id, titles);
-        return { ...st, tasks: r.tasks };
+        const want = new Set(ids);
+        const tasks = st.tasks.map((t) => {
+          if (!want.has(t.id)) return t;
+          if (!canTransitionIn(st.flow, t.status, to)) { skipped.push(t.id); return t; }
+          const next = applyTransition(t, to, me);
+          if (!next) { skipped.push(t.id); return t; }
+          done += 1;
+          return next;
+        });
+        return done === 0 ? null : { ...st, tasks };
       });
+      setChecked(new Set());
       await refresh();
-      ctx.toast(
-        had > 0
-          ? `已拆成 ${titles.length} 条子任务；原预估 ${fmtEstimate(had)} 人日需重新分配到各条`
-          : `已拆成 ${titles.length} 条子任务`,
-        'ok',
-      );
+      if (done === 0) ctx.toast(`没有一条能从当前状态走到「${statusName(flow, to as TaskStatus)}」`, 'err');
+      else if (skipped.length > 0) ctx.toast(`已改 ${done} 条；${skipped.length} 条走不通被跳过（${skipped.slice(0, 3).join('、')}…）`, 'err');
+      else ctx.toast(`已把 ${done} 条改为「${statusName(flow, to as TaskStatus)}」`, 'ok');
+    })();
+
+  /** 批量改类型。类型没有流转规则，直接赋值即可 */
+  const doBatchType = (ids: string[], typeId: string) =>
+    withErr(async () => {
+      if (!cfg || ids.length === 0) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const want = new Set(ids);
+        return { ...st, tasks: st.tasks.map((t) => (want.has(t.id) ? { ...t, type: typeId } : t)) };
+      });
+      setChecked(new Set());
+      await refresh();
+      ctx.toast(`已把 ${ids.length} 条的类型改为「${typeId === NOTYPE ? '未分类' : typeName(typeDefs, typeId)}」`, 'ok');
+    })();
+
+  const doBatchPriority = (ids: string[], prio: string) =>
+    withErr(async () => {
+      if (!cfg || ids.length === 0 || !prio) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const want = new Set(ids);
+        return { ...st, tasks: st.tasks.map((t) => (want.has(t.id) ? { ...t, priority: prio as Priority } : t)) };
+      });
+      setChecked(new Set());
+      await refresh();
+      ctx.toast(`已把 ${ids.length} 条的优先级改为 ${prio}`, 'ok');
+    })();
+
+  /*
+    批量删除。删之前要说清条数 ——
+    批量操作里"勾多了自己没发现"是常见失误，而删除不可撤销。
+  */
+  const doBatchDelete = (ids: string[]) =>
+    withErr(async () => {
+      if (!cfg || ids.length === 0) return;
+      if (!window.confirm(`删除选中的 ${ids.length} 条任务？\n\n不可撤销。`)) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const want = new Set(ids);
+        return { ...st, tasks: st.tasks.filter((t) => !want.has(t.id)) };
+      });
+      setChecked(new Set());
+      await refresh();
+      ctx.toast(`已删除 ${ids.length} 条`, 'ok');
     })();
 
   /*
@@ -690,7 +722,7 @@ ${dir}
     })();
 
   /*
-    改字段（说明 / 所属组 / 前置）。
+    改字段（说明 / 前置）。
 
     与流转分开：流转走 applyTransition（有状态机校验、要写历史），
     这几个字段是纯编辑 —— 走状态机会把"改一句话说明"也记成一次状态变更，
@@ -1026,8 +1058,10 @@ ${dir}
             if (on) next.add(id); else next.delete(id);
             return next;
           })}
-          onNewGroup={() => setGroupDraft({ mode: 'new' })}
-          onMerge={() => setGroupDraft({ mode: 'merge' })}
+          onBatchStatus={doBatchStatus}
+          onBatchType={doBatchType}
+          onBatchPriority={doBatchPriority}
+          onBatchDelete={doBatchDelete}
           sort={sort}
           filters={colFilters}
           onSort={changeSort}
@@ -1037,7 +1071,11 @@ ${dir}
         />
       )}
 
-      {/* 分组：按一个字段聚合，组内沿用当前排序 */}
+      {/*
+        分组视图：选一列（或几列）作为分组依据，按那一列的值聚合显示。
+        数据本身不变 —— 没有父子层级，也没有 kind='group' 的记录。
+        想换种看法就换分组依据，不用去动数据。
+      */}
       {view === 'group' && (
         <GroupView
           groups={groups}
@@ -1125,20 +1163,6 @@ ${dir}
         />
       ) : null}
 
-      {groupDraft ? (
-        <GroupNameModal
-          mode={groupDraft.mode}
-          count={checked.size}
-          onClose={() => setGroupDraft(null)}
-          onOk={(title) => {
-            const mode = groupDraft.mode;
-            setGroupDraft(null);
-            if (mode === 'merge') doMergeGroup([...checked], title);
-            else doNewGroup(title);
-          }}
-        />
-      ) : null}
-
       {detail && (
         <DetailModal
           task={detail}
@@ -1154,11 +1178,6 @@ ${dir}
           onClaim={() => doClaim(detail.id)}
           onPatch={(patch) => doPatch(detail.id, patch)}
           onOpen={(id) => setDetailId(id)}
-          onDissolve={(id) => {
-            doDissolveGroup(id);
-            setDetailId(null);
-          }}
-          onSplit={(id, titles) => doSplit(id, titles)}
         />
       )}
 
@@ -2037,54 +2056,6 @@ function FlowSettingsModal({
   );
 }
 
-/**
- * 组名弹窗。新建组与合并成组共用 ——
- * 两件事的差别只是"要不要带上已勾选的任务"，界面完全一样。
- */
-function GroupNameModal({
-  mode, count, onClose, onOk,
-}: {
-  mode: 'merge' | 'new';
-  count: number;
-  onClose: () => void;
-  onOk: (title: string) => void;
-}) {
-  const [title, setTitle] = useState('');
-  return (
-    <Modal title={mode === 'merge' ? `合并 ${count} 条为一个任务组` : '新建任务组'} onClose={onClose}>
-      <div className="tb-mfield">
-        <span>组名</span>
-        <input
-          autoFocus
-          value={title}
-          placeholder="例如：账户体系"
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => {
-            /* 输入法守卫：中文输入时回车是上屏，不是提交 */
-            if (!isComposing(e.nativeEvent) && e.key === 'Enter' && title.trim()) onOk(title.trim());
-          }}
-        />
-      </div>
-      <div className="tb-macts">
-        <span className="tb-flex" />
-        <button className="tb-act sm" onClick={onClose}>取消</button>
-        <button
-          className="tb-act sm primary"
-          disabled={!title.trim()}
-          onClick={() => onOk(title.trim())}
-        >
-          {mode === 'merge' ? '合并' : '新建'}
-        </button>
-      </div>
-      {mode === 'merge' ? (
-        <p className="tb-hint">
-          组里还能再建组 —— 合并出来的这个组可以再挂到别的组下面。
-        </p>
-      ) : null}
-    </Modal>
-  );
-}
-
 /* ================================================================ 列表视图 */
 
 /**
@@ -2391,8 +2362,10 @@ function ListView({
   onTagColor,
   checked,
   onCheck,
-  onNewGroup,
-  onMerge,
+  onBatchStatus,
+  onBatchType,
+  onBatchPriority,
+  onBatchDelete,
   sort,
   filters,
   onSort,
@@ -2428,8 +2401,13 @@ function ListView({
   onTagColor: (id: string, color: string) => void;
   checked: Set<string>;
   onCheck: (id: string, on: boolean) => void;
-  onNewGroup: () => void;
-  onMerge: () => void;
+  /** 批量改状态（走流转规则，走不通的跳过并报数） */
+  onBatchStatus: (ids: string[], to: string) => void;
+  onBatchType: (ids: string[], typeId: string) => void;
+  onBatchPriority: (ids: string[], prio: string) => void;
+  /** 批量删除（调用方负责先 confirm） */
+  onBatchDelete: (ids: string[]) => void;
+
   sort: { field: SortField; dir: 'asc' | 'desc' };
   filters: Partial<Record<SortField, ColFilter>>;
   onSort: (field: SortField) => void;
@@ -2460,19 +2438,52 @@ function ListView({
   return (
     <div className="tb-list">
       {/*
-        组的两个入口。
-        「新建组」常驻（先建好再把任务指派进去，是常见路径）；
-        「合并为组」只在勾了东西时出现 —— 没勾还摆着，
-        点下去只会得到一个空组，那是个没用的按钮。
+        批量操作。整条工具栏只在勾了东西时出现 ——
+        没勾时摆着四个下拉，点下去全是无操作，比没有更让人困惑。
+
+        ⛔ 改状态/改类型/改优先级都是**选完就执行**（onChange 里直接跑），
+        不再配"应用"按钮：多一步确认在这种高频小操作上只会让人犹豫，
+        而且它改的是勾中的这几条，范围在界面上看得见。
+        删除例外 —— 不可撤销，所以走 confirm。
       */}
       <div className="tb-ltools">
-        <button type="button" className="tb-act sm" onClick={onNewGroup}>
-          ＋ 新建组
-        </button>
         {picked.length > 0 ? (
           <>
-            <button type="button" className="tb-act sm primary" onClick={onMerge}>
-              合并 {picked.length} 条为组
+            <span className="tb-ltools-hint">已选 {picked.length} 条</span>
+            <select
+              className="tb-lbatch"
+              value=""
+              title="把选中的任务改到这个状态（走流转规则，走不通的会跳过）"
+              onChange={(e) => { if (e.target.value) onBatchStatus(picked, e.target.value); }}
+            >
+              <option value="">改状态…</option>
+              {flow.statuses.map((sd) => (
+                <option key={sd.id} value={sd.id}>{sd.name}</option>
+              ))}
+            </select>
+            <select
+              className="tb-lbatch"
+              value=""
+              onChange={(e) => { if (e.target.value) onBatchType(picked, e.target.value); }}
+            >
+              <option value="">改类型…</option>
+              {(typeDefs || []).map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+              <option value={NOTYPE}>未分类</option>
+            </select>
+            <select
+              className="tb-lbatch"
+              value=""
+              onChange={(e) => { if (e.target.value) onBatchPriority(picked, e.target.value); }}
+            >
+              <option value="">改优先级…</option>
+              {PRIORITY_ORDER.map((pr) => (
+                <option key={pr} value={pr}>{pr} {PRIORITY_LABEL[pr]}</option>
+              ))}
+            </select>
+            <button type="button" className="tb-act sm warn" onClick={() => onBatchDelete(picked)}>
+              删除
             </button>
             <button
               type="button"
@@ -2483,7 +2494,7 @@ function ListView({
             </button>
           </>
         ) : (
-          <span className="tb-ltools-hint">勾选几条后可合并为一个任务组</span>
+          <span className="tb-ltools-hint">勾选几条后可批量改状态 / 类型 / 优先级，或删除</span>
         )}
       </div>
       <div className="tb-list-head tb-lgrid">
@@ -2572,13 +2583,6 @@ function ListView({
                     <TagChip key={tag} id={tag} defs={tagDefs} />
                   ))}
                 </span>
-              )}
-            </span>
-            <span className="tb-lc c-groupPath" title={row.groupPath}>
-              {row.groupPath ? (
-                <span style={{ paddingInlineStart: row.depth * 8 }}>{row.groupPath}</span>
-              ) : (
-                <span className="tb-ldim">—</span>
               )}
             </span>
             <span className="tb-lc c-status">
@@ -3017,12 +3021,10 @@ function DetailModal({
   onClaim,
   onPatch,
   onOpen,
-  onDissolve,
-  onSplit,
 }: {
   task: Task;
   me: string;
-  /** 全量任务：算所属组路径与前置锁定要用 */
+  /** 全量任务：算前置锁定要用 */
   tasks: Task[];
   tagDefs: TagDef[];
   /** 类型定义表（详情里可改这条的类型） */
@@ -3034,25 +3036,17 @@ function DetailModal({
   onDelete: () => void;
   onAction: (to: TaskStatus, needNote?: boolean) => void;
   onClaim: () => void;
-  /** 打开另一条（点所属组名跳过去） */
+  /** 打开另一条（点前置任务名跳过去） */
   onOpen: (id: string) => void;
-  /** 拆散这个组：组删掉，下面的任务上提一层 */
-  onDissolve: (groupId: string) => void;
-  /** 拆成子任务：原任务变成组，子任务挂在它下面 */
-  onSplit: (id: string, titles: string[]) => void;
-  /** 改字段（说明 / 所属组 / 前置） */
+    /** 改字段（说明 / 前置） */
   onPatch: (patch: Partial<Task>) => void;
 }) {
   const [note, setNote] = useState('');
   const [confirmDel, setConfirmDel] = useState(false);
-  /** 拆分输入框。null = 收起 */
-  const [splitText, setSplitText] = useState<string | null>(null);
   const acts = actionsFor(task.status);
   const hist = [...task.history].reverse();
 
-  const { byId, parentOf } = indexTasks(tasks);
-  const chain = ancestorChain(task.id, parentOf);
-  const groupPath = chain.map((id) => byId[id]?.title || id).join(' › ');
+  const { byId } = indexTasks(tasks);
   const lock = lockOf(task, tasks);
   /* 可选的前置：排除自己、排除已成环的（选了就永远解锁不了） */
   const depChoices = tasks.filter((t) => t.id !== task.id && t.id !== task.parent);
@@ -3070,83 +3064,6 @@ function DetailModal({
           <TagChip key={tag} id={tag} defs={tagDefs} />
         ))}
       </div>
-
-      {task.kind === 'group' ? (
-        <div className="tb-dgroup">
-          <span className="tb-dtag">
-            组内有 {tasks.filter((t) => t.parent === task.id).length} 条直接成员
-          </span>
-          <span className="tb-dhint">
-            状态由下面的任务推导：
-            {/*
-              flow 必须传进去：用户自定义流程时终态可以叫任何 id，
-              不传的话组永远显示"待办"，而下面每条其实都已完成。
-            */}
-            {groupStatus(task.id, tasks, flow)
-              ? statusName(flow, groupStatus(task.id, tasks, flow) as string)
-              : '（空组，没有状态）'}
-          </span>
-          <button
-            type="button"
-            className="tb-act sm warn"
-            onClick={() => onDissolve(task.id)}
-            title="删掉这个组，下面的任务上提一层（不会删任务）"
-          >
-            拆散组
-          </button>
-        </div>
-      ) : (
-        <div className="tb-dgroup">
-          {splitText === null ? (
-            <button
-              type="button"
-              className="tb-act sm"
-              onClick={() => setSplitText('')}
-              title="原任务变成组，下面挂你写的这几条子任务"
-            >
-              拆为子任务…
-            </button>
-          ) : (
-            <>
-              <input
-                autoFocus
-                className="tb-dinput"
-                value={splitText}
-                placeholder="子任务名，逗号分隔（如：表单,校验,跳转）"
-                onChange={(e) => setSplitText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (isComposing(e.nativeEvent)) return;
-                  if (e.key === 'Escape') { setSplitText(null); return; }
-                  if (e.key !== 'Enter') return;
-                  const names = splitText.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
-                  if (names.length === 0) return;
-                  onSplit(task.id, names);
-                  setSplitText(null);
-                }}
-              />
-              <button
-                type="button"
-                className="tb-act sm primary"
-                disabled={splitText.split(/[,，]/).map((x) => x.trim()).filter(Boolean).length === 0}
-                onClick={() => {
-                  const names = splitText.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
-                  if (names.length === 0) return;
-                  onSplit(task.id, names);
-                  setSplitText(null);
-                }}
-              >
-                拆分
-              </button>
-              <button type="button" className="tb-act sm" onClick={() => setSplitText(null)}>
-                取消
-              </button>
-            </>
-          )}
-          <span className="tb-dhint">
-            拆完这条变成组，组的状态由子任务推导。子任务还能再拆。
-          </span>
-        </div>
-      )}
 
       {/*
         任务说明与备注分开两栏：
@@ -3180,32 +3097,6 @@ function DetailModal({
       </div>
 
       <div className="tb-dfield">
-        <span className="tb-dlabel">所属组</span>
-        <select
-          className="tb-dinput"
-          value={task.parent || ''}
-          onChange={(e) => onPatch({ parent: e.target.value || null })}
-        >
-          <option value="">（不在任何组里）</option>
-          {tasks.filter((t) => t.kind === 'group' && t.id !== task.id).map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.title}
-            </option>
-          ))}
-        </select>
-        {task.parent ? (
-          <button
-            type="button"
-            className="tb-act sm"
-            onClick={() => onOpen(task.parent as string)}
-          >
-            打开「{byId[task.parent]?.title || task.parent}」
-          </button>
-        ) : null}
-        {groupPath ? <span className="tb-dhint">路径：{groupPath}</span> : null}
-      </div>
-
-      <div className="tb-dfield">
         <span className="tb-dlabel">前置任务</span>
         <div className="tb-ddep-wrap">
           {(task.deps || []).map((d) => (
@@ -3235,7 +3126,7 @@ function DetailModal({
             <option value="">＋ 添加前置…</option>
             {depChoices.map((t) => (
               <option key={t.id} value={t.id}>
-                {(t.kind === 'group' ? '［组］' : '') + t.title}
+                {t.title}
               </option>
             ))}
           </select>

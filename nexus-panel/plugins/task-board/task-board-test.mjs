@@ -37,13 +37,8 @@ import {
   indexTasks,
   ancestorChain,
   flattenTasks,
-  groupStatus,
+  flattenAllGroups,
   lockOf,
-  mergeIntoGroup,
-  createGroup,
-  dissolveGroup,
-  isAncestor,
-  splitTask,
   DEFAULT_FLOW,
   normalizeFlow,
   canTransitionIn,
@@ -51,7 +46,6 @@ import {
   statusName,
   statusDone,
   initialStatus,
-  groupEstimate,
   totalEstimate,
   fmtEstimate,
   numOrNull,
@@ -252,7 +246,7 @@ const TB_TASKS = [
   normalizeTask({ id: 'tb-0003', title: '新手引导', detail: '引导流程', status: 'doing', priority: 'P1', tags: ['ui', 'db'], assignee: 'w2', createdAt: Date.parse('2026-10-08T10:00:00'), updatedAt: Date.parse('2026-10-22T10:00:00') }),
 ];
 
-const TB_ROWS = TB_TASKS.map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+const TB_ROWS = TB_TASKS.map((t) => ({ task: t, depth: 0, path: [] }));
 
 /** 造一份只有某列生效的筛选 */
 function onlyFilter(field, patch) {
@@ -263,13 +257,13 @@ function onlyFilter(field, patch) {
 
 const COL = (k) => ({ field: 'priority', label: '', kind: k });
 
-t('列定义：十二列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
-  LIST_COLUMNS.length === 12
+t('列定义：十一列，每列都有 kind（新加列不能有"看着能点却没反应"的）',
+  LIST_COLUMNS.length === 11
   && LIST_COLUMNS.every((c) => ['enum', 'text', 'time', 'num'].indexOf(c.kind) >= 0));
 
-t('列定义：覆盖优先级/ID/标题/所属组/状态/认领人/类型/标签/说明/预估/创建/更新', (() => {
+t('列定义：覆盖优先级/ID/标题/状态/认领人/类型/标签/说明/预估/创建/更新', (() => {
   const fields = LIST_COLUMNS.map((c) => c.field);
-  return ['priority', 'id', 'title', 'groupPath', 'status', 'assignee', 'type',
+  return ['priority', 'id', 'title', 'status', 'assignee', 'type',
           'tags', 'summary', 'estimate', 'createdAt', 'updatedAt']
     .every((f) => fields.indexOf(f) >= 0);
 })());
@@ -319,7 +313,7 @@ t('时间列：区间筛选，上界含当天',
 
 t('时间列：没有时间戳的不参与区间筛选（不该被带出来）', (() => {
   const noTime = [normalizeTask({ id: 'tb-0009', title: 'x', status: 'todo', priority: 'P2', tags: [], assignee: null, createdAt: 0, updatedAt: 0 })];
-  return filterTasksByColumns(noTime.map((t) => ({ task: t, depth: 0, path: [], groupPath: '' })), onlyFilter('createdAt', { min: '2026-10-01' }), '').length === 0;
+  return filterTasksByColumns(noTime.map((t) => ({ task: t, depth: 0, path: [] })), onlyFilter('createdAt', { min: '2026-10-01' }), '').length === 0;
 })());
 
 t('组合筛选是"且"（收窄而不是变宽）', (() => {
@@ -386,202 +380,9 @@ t('祖先链是环也不会死循环（AI 拼 JSON 不校验全局唯一）', ((
   return ancestorChain('a', parentOf).length < 8;
 })());
 
-t('摊平：组不占行，任务带上所属组路径', (() => {
-  const rows = flattenTasks(NEST);
-  const r3 = rows.find((r) => r.task.id === 'tb-0003');
-  return rows.length === 3 && r3 && r3.groupPath === '账户 › 安全' && r3.depth === 2;
-})());
-
-t('摊平：不在任何组里的任务 path 为空', (() => {
-  const rows = flattenTasks(NEST);
-  const r1 = rows.find((r) => r.task.id === 'tb-0001');
-  return r1.groupPath === '' && r1.depth === 0;
-})());
-
-t('组的状态由下面推导：全部完成才是 done', (() => {
-  const all = [normalizeTask({ id: 'x', parent: 'g1', status: 'done' }),
-               normalizeTask({ id: 'y', parent: 'g1', status: 'done' }), G1];
-  return groupStatus('g1', all) === 'done';
-})());
-
-t('组的状态：有一个在做就是 doing', (() => {
-  const all = [normalizeTask({ id: 'x', parent: 'g1', status: 'done' }),
-               normalizeTask({ id: 'y', parent: 'g1', status: 'doing' }), G1];
-  return groupStatus('g1', all) === 'doing';
-})());
-
-t('组的状态：嵌套组把下面所有层的任务都算进来', (() => {
-  const all = [normalizeTask({ id: 'x', parent: 'g1', status: 'done' }),
-               normalizeTask({ id: 'y', parent: 'g2', status: 'doing' }), G1, G2];
-  return groupStatus('g1', all) === 'doing';
-})());
-
-t('空组没有状态（不能凭空说它是待办）', groupStatus('g1', [G1]) === null);
-
-t('前置未完成 → 锁定', (() => {
-  const t = normalizeTask({ id: 'z', deps: ['tb-0003'], status: 'todo' });   // tb-0003 是 doing
-  const l = lockOf(t, NEST);
-  return l.locked === true && l.pending.length === 1 && l.pending[0] === 'tb-0003';
-})());
-
-t('前置已完成 → 不锁定', (() => {
-  const t = normalizeTask({ id: 'z', deps: ['tb-0001'], status: 'todo' });
-  return lockOf(t, NEST).locked === false;
-})());
-
-t('前置不存在 → 锁定且单列 missing（不能静默当完成）', (() => {
-  const t = normalizeTask({ id: 'z', deps: ['不存在'], status: 'todo' });
-  const l = lockOf(t, NEST);
-  return l.locked === true && l.missing.length === 1 && l.missing[0] === '不存在';
-})());
-
-t('依赖成环 → 报 cyclic（否则永远等不到解锁）', (() => {
-  const a = normalizeTask({ id: 'a', deps: ['b'] });
-  const b = normalizeTask({ id: 'b', deps: ['a'] });
-  return lockOf(a, [a, b]).cyclic === true;
-})());
-
-t('没有前置的任务不成环，也不白跑检测', (() => {
-  const a = normalizeTask({ id: 'a', deps: [] });
-  return lockOf(a, [a]).cyclic === false;
-})());
-
-t('依赖组 = 等组里全部完成', (() => {
-  const g = normalizeTask({ id: 'gg', kind: 'group', title: '组' });
-  const x = normalizeTask({ id: 'x', parent: 'gg', status: 'done' });
-  const y = normalizeTask({ id: 'y', parent: 'gg', status: 'todo' });
-  const t = normalizeTask({ id: 'z', deps: ['gg'] });
-  const l = lockOf(t, [g, x, y, t]);
-  return l.locked === true && l.pending.indexOf('gg') >= 0;
-})());
-
-
 /* ============================================================ 合并 / 拆组 */
 
-const MA = normalizeTask({ id: 'a', title: 'A' });
-const MB = normalizeTask({ id: 'b', title: 'B' });
-const MC = normalizeTask({ id: 'c', title: 'C' });
-
-t('合并成组：被合并的任务改挂到新组下', (() => {
-  const r = mergeIntoGroup([MA, MB, MC], ['a', 'b'], '账户');
-  const a = r.tasks.find((t) => t.id === 'a');
-  return a.parent === r.groupId && r.tasks.filter((t) => t.kind === 'group').length === 1;
-})());
-
-t('合并成组：组可以建在另一个组下（于是能一层层套）', (() => {
-  const g0 = normalizeTask({ id: 'g0', title: '外层', kind: 'group' });
-  const r = mergeIntoGroup([MA, MB, g0], ['a'], '内层', 'g0');
-  const grp = r.tasks.find((t) => t.id === r.groupId);
-  return grp.parent === 'g0';
-})());
-
-t('合并成组：不把组塞进组（那是另一种语义）', (() => {
-  const g0 = normalizeTask({ id: 'g0', title: 'G', kind: 'group' });
-  const r = mergeIntoGroup([MA, g0], ['a', 'g0'], 'X');
-  const still = r.tasks.find((t) => t.id === 'g0');
-  return still.parent === null;
-})());
-
-t('合并成组：跳过会成环的组合（不能让自己当自己的祖先）', (() => {
-  const g0 = normalizeTask({ id: 'g0', title: 'G', kind: 'group' });
-  const kid = normalizeTask({ id: 'k', title: 'K', parent: 'g0' });
-  // 把 g0 并进一个新建在 g0 下面的组 —— 实际发生不了，但逻辑要挡
-  const r = mergeIntoGroup([g0, kid], ['k'], '内', 'g0');
-  return r.tasks.find((t) => t.id === 'k').parent === r.groupId;
-})());
-
-t('isAncestor：识别祖先关系', (() => {
-  const g1 = normalizeTask({ id: 'g1', kind: 'group' });
-  const g2 = normalizeTask({ id: 'g2', kind: 'group', parent: 'g1' });
-  const x = normalizeTask({ id: 'x', parent: 'g2' });
-  const { parentOf, byId } = indexTasks([g1, g2, x]);
-  return isAncestor('g1', 'x', parentOf, byId) === true
-    && isAncestor('x', 'g1', parentOf, byId) === false;
-})());
-
-t('新建组：空组也要能建（先建好再把任务放进去）', (() => {
-  const r = createGroup([MA], '账户');
-  return r.tasks.length === 2 && r.tasks[1].kind === 'group';
-})());
-
-t('新建组：不能建在自己下面（当场成环）', (() => {
-  const r = createGroup([], 'X', 'self');
-  return r.tasks[0].parent === 'self';   // groupId 是新生成的，不会等于传入值
-})());
-
-t('拆组：组没了，任务上提一层（不是连任务一起删）', (() => {
-  const r = mergeIntoGroup([MA, MB], ['a', 'b'], '账户');
-  const d = dissolveGroup(r.tasks, r.groupId);
-  const a = d.tasks.find((t) => t.id === 'a');
-  return d.tasks.length === 2 && a.parent === null;
-})());
-
-t('拆组：嵌套组拆掉后，任务挂到**它上一层**（不是回到顶层）', (() => {
-  const g0 = normalizeTask({ id: 'g0', title: '外', kind: 'group' });
-  const g1 = normalizeTask({ id: 'g1', title: '内', kind: 'group', parent: 'g0' });
-  const x = normalizeTask({ id: 'x', parent: 'g1' });
-  const d = dissolveGroup([g0, g1, x], 'g1');
-  const xx = d.tasks.find((t) => t.id === 'x');
-  return xx.parent === 'g0';
-})());
-
-t('拆组：拆的不是组就原样返回', (() => {
-  const d = dissolveGroup([MA, MB], 'a');
-  return d.tasks.length === 2;
-})());
-
-
 /* ============================================================ 拆分 */
-
-t('拆分：原任务变成组，子任务挂在它下面', (() => {
-  const src = normalizeTask({ id: 'a', title: '登录', status: 'doing', priority: 'P1', tags: ['ui'] });
-  const r = splitTask([src], 'a', ['表单', '校验', '跳转']);
-  const g = r.tasks.find((t) => t.id === 'a');
-  return g.kind === 'group' && r.childIds.length === 3
-    && r.tasks.filter((t) => t.parent === 'a').length === 3;
-})());
-
-t('拆分：保留原 id（依赖它、引用它的地方不用改）', (() => {
-  const src = normalizeTask({ id: 'a', title: '登录' });
-  const r = splitTask([src], 'a', ['x', 'y']);
-  return r.groupId === 'a';
-})());
-
-t('拆分：子任务继承标签与优先级（上下文要带过去）', (() => {
-  const src = normalizeTask({ id: 'a', title: '登录', priority: 'P1', tags: ['ui'] });
-  const r = splitTask([src], 'a', ['x']);
-  const kid = r.tasks.find((t) => t.parent === 'a');
-  return kid.priority === 'P1' && kid.tags.indexOf('ui') >= 0;
-})());
-
-t('拆分：子任务不继承状态（否则一出生就是已完成）', (() => {
-  const src = normalizeTask({ id: 'a', title: '登录', status: 'doing' });
-  const r = splitTask([src], 'a', ['x']);
-  const kid = r.tasks.find((t) => t.parent === 'a');
-  return kid.status === 'todo';
-})());
-
-t('拆分：子任务不继承前置（否则全卡在同一处）', (() => {
-  const src = normalizeTask({ id: 'a', title: '登录', deps: ['b'] });
-  const r = splitTask([src], 'a', ['x']);
-  const kid = r.tasks.find((t) => t.parent === 'a');
-  return kid.deps.length === 0;
-})());
-
-t('拆分后可以再拆（子任务也能变成组）', (() => {
-  const src = normalizeTask({ id: 'a', title: '登录' });
-  const r1 = splitTask([src], 'a', ['x', 'y']);
-  const kid = r1.tasks.find((t) => t.parent === 'a');
-  const r2 = splitTask(r1.tasks, kid.id, ['x1', 'x2']);
-  return r2.tasks.filter((t) => t.parent === kid.id).length === 2;
-})());
-
-t('拆分：没给子任务名就不动（不能把一条任务变成空组）', (() => {
-  const src = normalizeTask({ id: 'a', title: '登录' });
-  const r = splitTask([src], 'a', []);
-  return r.tasks.length === 1 && r.tasks[0].kind === 'task';
-})());
-
 
 /* ============================================================ 自定义流程 */
 
@@ -694,27 +495,6 @@ t('fmtEstimate：去掉浮点尾巴（0.1+0.2 不该显示 0.30000000000000004�
 
 t('fmtEstimate：0 显示为空（没估 ≠ 0 人日）', fmtEstimate(0) === '');
 
-t('groupEstimate：累加直接子任务', (() => {
-  const g = normalizeTask({ id: 'ge', kind: 'group', title: '组' });
-  const a = normalizeTask({ id: 'a', parent: 'ge', estimate: 2 });
-  const b = normalizeTask({ id: 'b', parent: 'ge', estimate: 3 });
-  return groupEstimate('ge', [g, a, b]) === 5;
-})());
-
-t('groupEstimate：嵌套的也要算进来（只看一层会漏掉下面几层）', (() => {
-  const g1 = normalizeTask({ id: 'g1', kind: 'group' });
-  const g2 = normalizeTask({ id: 'g2', kind: 'group', parent: 'g1' });
-  const x = normalizeTask({ id: 'x', parent: 'g1', estimate: 1 });
-  const y = normalizeTask({ id: 'y', parent: 'g2', estimate: 2 });
-  return groupEstimate('g1', [g1, g2, x, y]) === 3;
-})());
-
-t('groupEstimate：组自己不重复计入（否则双份）', (() => {
-  const g = normalizeTask({ id: 'ge', kind: 'group', estimate: 99 });
-  const a = normalizeTask({ id: 'a', parent: 'ge', estimate: 2 });
-  return groupEstimate('ge', [g, a]) === 2;
-})());
-
 t('totalEstimate：只算叶子任务', (() => {
   const g = normalizeTask({ id: 'ge', kind: 'group', estimate: 99 });
   const a = normalizeTask({ id: 'a', parent: 'ge', estimate: 2 });
@@ -722,26 +502,26 @@ t('totalEstimate：只算叶子任务', (() => {
 })());
 
 t('按预筛选：区间命中', (() => {
-  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [] }));
   const f = { ...emptyColFilter(), min: '2', max: '3' };
   const hit = filterTasksByColumns(rows, { estimate: f }, '');
   return hit.length === 1 && hit[0].task.id === 'e1';
 })());
 
 t('按预筛选：没估的不当 0 混进区间结果', (() => {
-  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [] }));
   const hit = filterTasksByColumns(rows, { estimate: { ...emptyColFilter(), max: '100' } }, '');
   return hit.every((r) => r.task.id !== 'e3');
 })());
 
 t('按预筛选：能专门筛出"没估的"（排期前最常用的查询）', (() => {
-  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [] }));
   const hit = filterTasksByColumns(rows, { estimate: { ...emptyColFilter(), values: ['__none__'] } }, '');
   return hit.length === 1 && hit[0].task.id === 'e3';
 })());
 
 t('按预筛选：只填一边也行', (() => {
-  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [] }));
   const hit = filterTasksByColumns(rows, { estimate: { ...emptyColFilter(), min: '1' } }, '');
   return hit.length === 1 && hit[0].task.id === 'e1';
 })());
@@ -749,7 +529,7 @@ t('按预筛选：只填一边也行', (() => {
 t('numOrNull：空串不算数（那是"没填"）', numOrNull('') === null && numOrNull('2.5') === 2.5);
 
 t('预估列可排序（按数值而不是字典序）', (() => {
-  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [], groupPath: '' }));
+  const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [] }));
   const asc = sortRowsBy(rows, 'estimate', 'asc');
   return asc[asc.length - 1].task.id === 'e1';
 })());
@@ -1072,7 +852,7 @@ t('自查：类型列能筛到具体类型（上轮勾任何值都是空）', ((
   const rows = [
     normalizeTask({ id: 'a', type: 'dev' }),
     normalizeTask({ id: 'b', type: 'bug' }),
-  ].map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  ].map((t) => ({ task: t, depth: 0, path: [] }));
   const f = emptyColFilter();
   f.values = ['dev'];
   return filterTasksByColumns(rows, { type: f }, '').length === 1;
@@ -1082,7 +862,7 @@ t('自查：类型列能筛到"未分类"（没归类是常态，找出来补上
   const rows = [
     normalizeTask({ id: 'a', type: 'dev' }),
     normalizeTask({ id: 'b' }),
-  ].map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  ].map((t) => ({ task: t, depth: 0, path: [] }));
   const f = emptyColFilter();
   f.values = [NOTYPE];
   return filterTasksByColumns(rows, { type: f }, '').length === 1;
@@ -1093,7 +873,7 @@ t('自查：类型列排序按默认清单顺序，不按字典序', (() => {
     normalizeTask({ id: 'a', type: 'research' }),
     normalizeTask({ id: 'b', type: 'bug' }),
     normalizeTask({ id: 'c', type: 'dev' }),
-  ].map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  ].map((t) => ({ task: t, depth: 0, path: [] }));
   const out = sortRowsBy(rows, 'type', 'asc').map((r) => r.task.type);
   // dev(0) < bug(1) < research(4)；按字典序会排成 bug,dev,research
   return out.join(',') === 'dev,bug,research';
@@ -1103,7 +883,7 @@ t('自查：类型列排序时未分类恒排最后', (() => {
   const rows = [
     normalizeTask({ id: 'a' }),
     normalizeTask({ id: 'b', type: 'dev' }),
-  ].map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  ].map((t) => ({ task: t, depth: 0, path: [] }));
   const out = sortRowsBy(rows, 'type', 'asc').map((r) => r.task.type || 'x');
   return out[out.length - 1] === 'x';
 })());
@@ -1169,7 +949,7 @@ t('端到端：自定义类型 → 挂载 → 筛选 → 排序 → 分组 全�
     normalizeTask({ id: 'b', title: '乙', type: 'dev', status: 'todo' }),
     normalizeTask({ id: 'c', title: '丙', status: 'todo' }),   // 未分类
   ];
-  const rows = tasks.map((t) => ({ task: t, groupPath: '', depth: 0 }));
+  const rows = tasks.map((t) => ({ task: t, depth: 0, path: [] }));
 
   // ③ 候选值里要有这个自定义类型（否则等于建不出来）
   const opts = colFilterValues('type', rows, [], defs.map((d) => d.id));
@@ -1287,101 +1067,6 @@ t('自查：标签分组是多值并集（一条带两个标签会同时进两�
 
 /* ============================================================ 自查补测（第 9 轮） */
 
-/*
- * **拆分任务会让总工作量翻 N 倍**（自查发现）：
- * 子任务用 `...src` 继承了父任务的全部字段，其中就包括 estimate。
- * 父任务 5 人日拆成 3 条 → 三条各带 5 → 合计从 5 变成 15。
- *
- * 这个错特别坏：数字是"变多了"而不是"变没了"，
- * 排期时按 15 人日排，实际只有 5 —— 而且没人会怀疑统计。
- *
- * 修法：子任务预估留空（拆分时没人知道那 5 人日该在三块之间怎么分），
- * 父任务变组后预估也清零（组的预估由子任务累加，留着会双计）。
- */
-t('自查：拆分后子任务不继承预估（否则总工作量翻 N 倍）', (() => {
-  const src = [normalizeTask({ id: 'p1', title: '父', estimate: 5 })];
-  const r = splitTask(src, 'p1', ['A', 'B', 'C']);
-  const kids = r.tasks.filter((t) => t.id.indexOf('sub_') === 0);
-  return kids.length === 3 && kids.every((k) => k.estimate === 0);
-})());
-
-t('自查：拆分后父任务（变组）的预估也清零（组的预估由子累加）', (() => {
-  const src = [normalizeTask({ id: 'p1', title: '父', estimate: 5 })];
-  const r = splitTask(src, 'p1', ['A', 'B']);
-  return r.tasks.find((t) => t.id === 'p1').estimate === 0;
-})());
-
-t('自查：拆分后合计不会超过拆分前（5 → 0，而不是 15）', (() => {
-  const before = statsOf({ tasks: [normalizeTask({ id: 'p1', estimate: 5 })], flow: null });
-  const r = splitTask([normalizeTask({ id: 'p1', estimate: 5 })], 'p1', ['A', 'B', 'C']);
-  const after = statsOf({ tasks: r.tasks, flow: null });
-  return before.estimateTotal === 5 && after.estimateTotal <= before.estimateTotal;
-})());
-
-t('自查：给子任务重新估完之后合计正确（各 2 → 6）', (() => {
-  const r = splitTask([normalizeTask({ id: 'p1', estimate: 5 })], 'p1', ['A', 'B', 'C']);
-  const re = r.tasks.map((t) => (t.id.indexOf('sub_') === 0 ? { ...t, estimate: 2 } : t));
-  return statsOf({ tasks: re, flow: null }).estimateTotal === 6;
-})());
-
-
-/* ============================================================ 自查补测（第 10 轮） */
-
-/*
- * **自定义流程下，组永远显示"待办"**（自查发现）：
- * groupStatus 硬编码判断 `status === 'done'`，不认用户改过的终态 id。
- * 用户把终态叫 's2' / '完工' / '已交付' 之后，
- * 下面每条都已完成，组却还是"待办"。
- *
- * 这个错只在**改过流程**的项目里出现 —— 用默认流程看不出来，
- * 所以特别容易漏。
- */
-t('自查：自定义流程下组的状态能推导出来（不硬编码 done）', (() => {
-  const flow = {
-    statuses: [
-      { id: 's1', name: '待办', color: '#78716c', enter: '', done: false },
-      { id: 's2', name: '完工', color: '#22c55e', enter: '', done: true },
-    ],
-  };
-  const tasks = [
-    normalizeTask({ id: 'g', kind: 'group' }),
-    normalizeTask({ id: 'a', parent: 'g', status: 's2' }),
-    normalizeTask({ id: 'b', parent: 'g', status: 's2' }),
-  ];
-  return groupStatus('g', tasks, flow) === 's2';
-})());
-
-t('自查：自定义流程下组未完成时落到初始态，不谎报进度', (() => {
-  const flow = {
-    statuses: [
-      { id: 's1', name: '待办', color: '#78716c', enter: '', done: false },
-      { id: 's2', name: '完工', color: '#22c55e', enter: '', done: true },
-    ],
-  };
-  const tasks = [
-    normalizeTask({ id: 'g', kind: 'group' }),
-    normalizeTask({ id: 'a', parent: 'g', status: 's2' }),
-    normalizeTask({ id: 'b', parent: 'g', status: 's1' }),
-  ];
-  return groupStatus('g', tasks, flow) === 's1';
-})());
-
-t('自查：默认流程不受影响（全完成 = done）', (() => {
-  const tasks = [
-    normalizeTask({ id: 'g', kind: 'group' }),
-    normalizeTask({ id: 'a', parent: 'g', status: 'done' }),
-  ];
-  return groupStatus('g', tasks, null) === 'done';
-})());
-
-t('自查：合并成组不双计工作量（组自身为 0，合计仍 5）', (() => {
-  const tasks = [normalizeTask({ id: 'a', estimate: 2 }), normalizeTask({ id: 'b', estimate: 3 })];
-  const r = mergeIntoGroup(tasks, ['a', 'b'], '组');
-  const g = r.tasks.find((t) => t.id === r.groupId);
-  return g.estimate === 0 && statsOf({ tasks: r.tasks, flow: null }).estimateTotal === 5;
-})());
-
-
 /* ============================================================ 自查补测（第 11 轮） */
 
 /*
@@ -1425,6 +1110,151 @@ t('自查：自定义流程下"未完成"认的是算完成，不是 id 叫 done
   ];
   const st = statsOf({ tasks, flow });
   return st.done === 1 && st.open === 1;
+})());
+
+
+/* ============================================================ 前置任务 */
+
+t('前置未完成 → 锁定', (() => {
+  const t = normalizeTask({ id: 'z', deps: ['tb-0003'], status: 'todo' });
+  const l = lockOf(t, NEST);
+  return l.locked === true && l.pending.length === 1 && l.pending[0] === 'tb-0003';
+})());
+
+t('前置已完成 → 不锁定', (() => {
+  const t = normalizeTask({ id: 'z', deps: ['tb-0001'], status: 'todo' });
+  return lockOf(t, NEST).locked === false;
+})());
+
+t('前置不存在 → 锁定且单列 missing（不能静默当完成）', (() => {
+  const t = normalizeTask({ id: 'z', deps: ['不存在'], status: 'todo' });
+  const l = lockOf(t, NEST);
+  return l.locked === true && l.missing.length === 1 && l.missing[0] === '不存在';
+})());
+
+t('依赖成环 → 报 cyclic（否则永远等不到解锁）', (() => {
+  const a = normalizeTask({ id: 'a', deps: ['b'] });
+  const b = normalizeTask({ id: 'b', deps: ['a'] });
+  return lockOf(a, [a, b]).cyclic === true;
+})());
+
+t('没有前置的任务不成环，也不白跑检测', (() => {
+  const a = normalizeTask({ id: 'a', deps: [] });
+  return lockOf(a, [a]).cyclic === false;
+})());
+
+t('摊平：不在任何组里的任务 path 为空', (() => {
+  const rows = flattenTasks(NEST);
+  const r1 = rows.find((r) => r.task.id === 'tb-0001');
+  return r1.path.length === 0 && r1.depth === 0;
+})());
+
+/* ============================================================ 组改为视图概念（本轮） */
+
+/*
+ * 组从"手动建的数据结构"改成"选一列做分组显示"。
+ * 老文件里可能还留着以前手动建的 kind='group' 记录，要一次性平铺掉 ——
+ * 留着就是两套并存的层级（数据一套、视图一套），两边迟早对不上。
+ */
+t('平铺：组记录删掉，任务上提到顶层', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g1', title: '组1', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g1' }),
+    normalizeTask({ id: 'b', parent: 'g1' }),
+  ];
+  const r = flattenAllGroups(tasks);
+  return r.removed === 1 && r.tasks.length === 2
+    && r.tasks.every((t) => t.kind !== 'group' && !t.parent);
+})());
+
+t('平铺：多层嵌套也能铺平（孙级直接回到顶层）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g1', kind: 'group' }),
+    normalizeTask({ id: 'g2', kind: 'group', parent: 'g1' }),
+    normalizeTask({ id: 'b', parent: 'g2' }),
+  ];
+  const r = flattenAllGroups(tasks);
+  return r.removed === 2 && r.tasks.length === 1 && r.tasks[0].id === 'b' && !r.tasks[0].parent;
+})());
+
+/*
+ * ⛔ 这条最关键：依赖"整个组"的不能简单丢掉。
+ * 组删了之后那条依赖会指向一个不存在的 id，
+ * 界面显示成"前置已被删除"，任务**永远解锁不了** ——
+ * 而不报任何错，只是那条任务一直卡着。
+ */
+t('平铺：依赖整个组的改指到组内具体任务（否则永远解锁不了）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g1', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g1' }),
+    normalizeTask({ id: 'b', parent: 'g1' }),
+    normalizeTask({ id: 'c', deps: ['g1'] }),
+  ];
+  const r = flattenAllGroups(tasks);
+  const c = r.tasks.find((t) => t.id === 'c');
+  return r.remapped === 1 && c.deps.indexOf('a') >= 0 && c.deps.indexOf('b') >= 0
+    && c.deps.indexOf('g1') < 0;
+})());
+
+t('平铺：展开后的依赖语义等价（等全部完成才解锁）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g1', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g1' }),
+    normalizeTask({ id: 'b', parent: 'g1' }),
+    normalizeTask({ id: 'c', deps: ['g1'] }),
+  ];
+  const flat = flattenAllGroups(tasks).tasks;
+  const onlyA = flat.map((t) => (t.id === 'a' ? { ...t, status: 'done' } : t));
+  const both = flat.map((t) => (t.id === 'a' || t.id === 'b' ? { ...t, status: 'done' } : t));
+  return lockOf(onlyA.find((t) => t.id === 'c'), onlyA).locked === true
+    && lockOf(both.find((t) => t.id === 'c'), both).locked === false;
+})());
+
+t('平铺：不产生自我依赖（依赖展开时排除自己）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g1', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g1', deps: ['g1'] }),   // a 依赖自己所在的组
+  ];
+  const r = flattenAllGroups(tasks);
+  const a = r.tasks.find((t) => t.id === 'a');
+  return a.deps.indexOf('a') < 0 && a.deps.length === 0;
+})());
+
+t('平铺：幂等（铺完再铺一次不动任何东西）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g1', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g1' }),
+  ];
+  const r1 = flattenAllGroups(tasks);
+  const r2 = flattenAllGroups(r1.tasks);
+  return r2.removed === 0 && r2.remapped === 0 && r2.tasks.length === r1.tasks.length;
+})());
+
+t('平铺：没有组时不改动数据（不会每开一次写一次盘）', (() => {
+  const tasks = [normalizeTask({ id: 'a' }), normalizeTask({ id: 'b' })];
+  const r = flattenAllGroups(tasks);
+  return r.removed === 0 && r.tasks === tasks;
+})());
+
+/* 分组只是显示：数据不变，多列分组仍可用 */
+t('分组显示：选一列分组不改变数据', (() => {
+  const tasks = [
+    normalizeTask({ id: 'a', type: 'dev' }),
+    normalizeTask({ id: 'b', type: 'bug' }),
+  ];
+  groupTasksBy(tasks, 'type');
+  return tasks[0].type === 'dev' && tasks[1].type === 'bug' && tasks.length === 2;
+})());
+
+t('分组显示：多列分组仍然可用（层级顺序 = 数组顺序）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'a', type: 'dev', status: 'todo' }),
+    normalizeTask({ id: 'b', type: 'dev', status: 'done' }),
+  ];
+  const g = groupTasksBy(tasks, ['type', 'status']);
+  return g.length === 1 && g[0].key === 'dev'
+    && g[0].children.length === 2
+    && g[0].tasks.length === 0;   // 中间层不装任务
 })());
 
 /* ---------------- 汇总 ---------------- */

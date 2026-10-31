@@ -27,14 +27,26 @@ export interface FlatRow {
   task: Task;
   depth: number;
   path: string[];
-  groupPath: string;
 }
 
 /** 摊平成表格行：组不占行，层级显示在 path 上 */
 export declare function flattenTasks(tasks: Task[]): FlatRow[];
 
-/** 组的状态由下面推导；空组返回 null */
-export declare function groupStatus(groupId: string, tasks: Task[], flow?: FlowLike | null): TaskStatus | null;
+/*
+  一次性平铺迁移：删掉所有 kind='group' 记录，任务上提到顶层，
+  依赖"整个组"的改成依赖组内的具体任务（语义等价，否则会永远解锁不了）。
+*/
+export declare function flattenAllGroups(tasks: Task[]): {
+  tasks: Task[];
+  removed: number;
+  remapped: number;
+};
+
+export declare function isAncestor(
+  a: string, b: string,
+  parentOf: Record<string, string | undefined>,
+  byId: Record<string, Task>,
+): boolean;
 
 /* ---------------------------------------------------- 前置任务 */
 
@@ -44,30 +56,6 @@ export interface LockInfo {
   missing: string[];
   cyclic: boolean;
 }
-
-/* ---------------------------------------------------- 合并 / 拆组 */
-
-export declare function mergeIntoGroup(
-  tasks: Task[], ids: string[], title: string, parentId?: string | null,
-): { tasks: Task[]; groupId: string };
-
-export declare function createGroup(
-  tasks: Task[], title: string, parentId?: string | null,
-): { tasks: Task[]; groupId: string };
-
-/** 拆成一个组 + 若干子任务。原任务变成组（保留原 id） */
-export declare function splitTask(
-  tasks: Task[], id: string, titles: string[],
-): { tasks: Task[]; groupId: string; childIds: string[] };
-
-/** 拆组：组删掉，下面的任务上提一层（不是连任务一起删） */
-export declare function dissolveGroup(tasks: Task[], groupId: string): { tasks: Task[] };
-
-export declare function isAncestor(
-  a: string, b: string,
-  parentOf: Record<string, string | undefined>,
-  byId: Record<string, Task>,
-): boolean;
 
 /** 锁定状态是算出来的，不存字段 */
 export declare function lockOf(task: Task, tasks: Task[]): LockInfo;
@@ -221,7 +209,7 @@ export interface TaskGroup<K extends string = string> {
 export declare function groupTasks(tasks: Task[], key: GroupKey): GroupNode[];
 
 export type SortField =
-  | 'priority' | 'status' | 'assignee' | 'type' | 'tags' | 'groupPath' | 'summary' | 'estimate'
+  | 'priority' | 'status' | 'assignee' | 'type' | 'tags' | 'summary' | 'estimate'
   | 'updatedAt' | 'createdAt' | 'title' | 'id';
 
 /** 多字段排序；assignee 未认领恒排最后；同级按 updatedAt 倒序兜底 */
