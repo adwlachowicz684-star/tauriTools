@@ -1119,8 +1119,18 @@ const isPumlNodeLine = (line) => /^[*+-]/.test(String(line ?? '').trim());
  *
  * ⓘ 这个正则和 `isPumlNodeLine` 的判据必须一致 —— 两处口径不同就会
  *   一头认、另一头不认（BUG 130 的教训）。
+ *
+ * ⓘ 前缀与文字之间**只吃一个空格**，不能写 `\s*`（BUG 178）。
+ *
+ *   `* ` 后面那个空格是**分隔符**，再往后的空白是节点文字的一部分。
+ *   `\s*` 会把它们一起吃掉，于是 `  会议  ` 导出成 `*   会议  `、导回来
+ *   只剩「会议」—— 首尾空白被静默改掉，且不报错。
+ *
+ *   这与 Mermaid 那条（BUG 173）是**同一条规矩的两个格式**：那边已经把
+ *   `kmToRows` 的取值换成 `inlineTextKeepEdges`、`rowsToKm` 不再 trim，
+ *   这边漏掉就还是「只修一半」—— 同一份内容换个格式就是两种结果。
  */
-const PUML_LINE = /^(\*+|\++|-+)(_?)\s*(.*)$/;
+const PUML_LINE = /^(\*+|\++|-+)(_?)[ \t]?(.*)$/;
 
 /**
  * `[#…]` 里是不是一个**像颜色**的值（BUG 130）。
@@ -1143,7 +1153,19 @@ export function fromPlantUml(text) {
   //   标记吃掉 —— 节点消失 + 子树抬层，与 Mermaid 的 `mindmap` 头行同一个毛病。
   const anyMarker = src.some((l) => !isPumlNodeLine(l) && /@startmindmap/i.test(l));
   for (const raw of src) {
-    const line = raw.trim();
+    /*
+     * ⓘ **行尾不能 trim**（BUG 178）。
+     *
+     * 早先这里是 `raw.trim()`，于是节点文字**尾部**的空白在正则之前就被削掉了
+     * —— 与 Mermaid 那条（BUG 173）同一个毛病，只是发生在 PlantUML 这一侧：
+     * 写侧 `toPlantUml` 走 `kmToRows`（BUG 173 起保留首尾空白），读侧却把
+     * 它们削掉，于是本工具自己导出再导入就把文字改了，且不报错。
+     *
+     * 只削**行首**：那是缩进，形态 ②（Markdown 缩进式）要按它算层级。
+     * 缩进仍从 `raw` 上取（见下面 `indent`），所以削掉它不影响层级判定。
+     * 行尾的 `\r` 要去掉（CRLF 文件里 `split(/\r?\n/)` 漏掉的最后一行）。
+     */
+    const line = raw.replace(/\r+$/, '').replace(/^[ \t]+/, '');
     // 同上：节点行永不参与标记判定
     if (!isPumlNodeLine(line)) {
       if (/@startmindmap/i.test(line)) { inBlock = true; continue; }
@@ -1163,7 +1185,14 @@ export function fromPlantUml(text) {
      */
     const m = line.match(PUML_LINE);
     if (!m) continue;
-    let t = m[3].trim();
+    /*
+     * ⓘ **不 trim**（BUG 178）：首尾空白是节点文字的一部分。
+     *
+     * `PUML_LINE` 已经只吃前缀后的**一个**分隔符空格，剩下的就是文字本身。
+     * 早先这里再 `.trim()` 一次，把 BUG 173 在写侧保下来的东西又削没了 ——
+     * 与 `rowsToKm` 里那条「不 trim」注记同一条规矩，这边漏了就是只修一半。
+     */
+    let t = m[3];
     /*
      * **inline color `*[#Orange] …`**（BUG 130）。
      * PlantUML 官方的「节点颜色」写法，颜色标记不进标签，不剥就整串留在
