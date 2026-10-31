@@ -2359,6 +2359,41 @@ t('审查：已完成的任务不算陈旧', (() => {
   return st.stale.length === 0;
 })());
 
+
+/* ============================================================ 审查：流程设置（本轮） */
+
+/*
+ * **新建状态的取色按"已有数量取模"**（与新建类型/标签的判据不一致）：
+ * 取模恰好落在已被占用的那一档 —— 新建的状态和某个已有状态同色，
+ * 而配色的唯一作用就是一眼区分。
+ *
+ * 三个入口（类型 / 标签 / 状态）必须同一判据，
+ * 否则同一个"新建"动作在不同地方得到不同颜色，看着像三条互不相干的规则。
+ */
+t('审查：新建状态取未被占用的颜色（不按数量取模）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const addStatus = () => {');
+  const seg = app.slice(i, app.indexOf('const removeStatus', i));
+  return seg.indexOf('TAG_COLORS.find((c) => !used.has(c))') >= 0
+    && seg.indexOf('color: TAG_COLORS[d.statuses.length % TAG_COLORS.length]') < 0;
+})());
+
+/*
+ * **新建的状态是个孤岛**：它出现在下拉里、也占一列看板，
+ * 但没有任何路径能走到它 —— 所有任务都点不到它。
+ * 用户在流转矩阵里不一定反应得过来要去勾哪几格
+ * （列表里点状态会看到它置灰 + tooltip，但那是**用**的时候才发现）。
+ *
+ * 建的时候就顺手接一条边（从原末尾状态过来，符合"流程加一步"的直觉）。
+ */
+t('审查：新建状态会顺手接一条边（否则是孤岛，走不进去）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const addStatus = () => {');
+  const seg = app.slice(i, app.indexOf('const removeStatus', i));
+  return seg.indexOf('const prevId =') >= 0
+    && seg.indexOf('[prevId]: [...(d.transitions[prevId] || []), id]') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
