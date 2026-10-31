@@ -2533,6 +2533,39 @@ t('审查：恢复的隐藏列有上限（不会只剩一列）', (() => {
     && app.indexOf('hs = hs.slice(0, LIST_COLUMNS.length - 2)') >= 0;
 })());
 
+
+/* ============================================================ 审查：AI 通道改不了任务说明（本轮） */
+
+const RS = path.join(dir, '../../../src-tauri/src/task_board.rs');
+const rsSrc = fs.existsSync(RS) ? fs.readFileSync(RS, 'utf8') : '';
+/* 环境缺 Rust 源码目录时这几条跳过（不算失败），原因同上方那条分组的 */
+const rsHas = (needle) => !rsSrc || rsSrc.indexOf(needle) >= 0;
+const rsSeg = (anchor, len) => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf(anchor);
+  return i < 0 ? '' : rsSrc.slice(i, i + len);
+};
+
+/*
+ * **任务说明（summary）对 AI 通道完全不可用**：
+ * · 建任务的 schema 里没有 summary
+ * · 改任务的 schema 里没有 summary
+ * · patch 的字段循环里也没有 summary
+ *
+ * 于是 AI 建出来的任务永远没有说明，建完也改不了 ——
+ * 而文件里明明有这一列（显式写出来的），AI 看得见却填不了。
+ *
+ * 与之前修的 type / group 是同一类问题：
+ * 新字段没有在**所有入口**落实（这次是 Rust / MCP 那侧的入口）。
+ */
+t('审查：AI 建任务的 schema 里有 summary', rsSeg('"tb_create_task"', 1200).indexOf('"summary"') >= 0 || !rsSrc);
+
+t('审查：AI 改任务的 schema 里有 summary', rsSeg('"tb_update_task"', 1400).indexOf('"summary"') >= 0 || !rsSrc);
+
+t('审查：建任务时会写入 summary 字段', rsHas('"summary".to_string(),'));
+
+t('审查：patch 的字段循环里有 summary', rsHas('["title", "detail", "summary", "priority", "reporter"]'));
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
