@@ -1430,15 +1430,20 @@ export function statsOf(store, now = Date.now()) {
   const tagCnt = new Map();
   const stale = [];
   for (const t of tasks) {
+    /*
+      ⛔ 组**不计入**总数与各类分布。
+      组是容器，不是活。把它算进 total，界面上会出现
+      "总任务 3"而列表里只有 2 条 —— 数字和眼前的东西对不上，
+      比没有数字更可疑。（byStatus / byType / byPriority 同理。）
+    */
+    if (t.kind === 'group') continue;
     byStatus[t.status] = (byStatus[t.status] || 0) + 1;
-    if (t.kind !== 'group') {
-      estimateByStatus[t.status] = Math.round(
-        ((estimateByStatus[t.status] || 0) + (Number(t.estimate) || 0)) * 100,
-      ) / 100;
-      /* 类型分布：未分类也单独计 —— 那是"还没归类的工作量"，排期时要看得见 */
-      const tk = t.type || NOTYPE;
-      byType[tk] = (byType[tk] || 0) + 1;
-    }
+    estimateByStatus[t.status] = Math.round(
+      ((estimateByStatus[t.status] || 0) + (Number(t.estimate) || 0)) * 100,
+    ) / 100;
+    /* 类型分布：未分类也单独计 —— 那是"还没归类的工作量"，排期时要看得见 */
+    const tk = t.type || NOTYPE;
+    byType[tk] = (byType[tk] || 0) + 1;
     byPriority[t.priority] = (byPriority[t.priority] || 0) + 1;
     const who = t.assignee || UNASSIGNED;
     const ae = byAssignee.get(who) || { id: who, count: 0, est: 0 };
@@ -1466,11 +1471,17 @@ export function statsOf(store, now = Date.now()) {
   }
   recent.sort((a, b) => (b.at || 0) - (a.at || 0));
   stale.sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+  /*
+    统计口径统一为**叶子任务**：组是容器，不是活。
+    把组算进来会出现"总任务 3"而列表只有 2 条 ——
+    数字和眼前的东西对不上，比没有数字更可疑。
+  */
+  const leaves = tasks.filter((t) => t.kind !== 'group');
   return {
-    total: tasks.length,
-    open: tasks.filter((t) => t.status !== 'done').length,
-    active: tasks.filter((t) => t.status === 'doing' || t.status === 'review').length,
-    done: byStatus.done,
+    total: leaves.length,
+    open: leaves.filter((t) => !statusDone(store.flow, t.status)).length,
+    active: leaves.filter((t) => t.status === 'doing' || t.status === 'review').length,
+    done: leaves.filter((t) => statusDone(store.flow, t.status)).length,
     byStatus,
     estimateByStatus,
     byType,

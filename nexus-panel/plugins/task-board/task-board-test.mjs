@@ -1381,6 +1381,52 @@ t('自查：合并成组不双计工作量（组自身为 0，合计仍 5）', (
   return g.estimate === 0 && statsOf({ tasks: r.tasks, flow: null }).estimateTotal === 5;
 })());
 
+
+/* ============================================================ 自查补测（第 11 轮） */
+
+/*
+ * **统计把组算成了任务**（自查发现）：
+ * 一条组 + 两条子任务 → "总任务 3"，而列表里只有 2 条。
+ *
+ * 组是容器不是活。数字和眼前的东西对不上，比没有数字更可疑 ——
+ * 用户会先怀疑列表漏了，而不是统计多算了。
+ */
+t('自查：统计口径不含组（总任务数 = 叶子任务数）', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g', kind: 'group' }),
+    normalizeTask({ id: 'a', parent: 'g' }),
+    normalizeTask({ id: 'b', parent: 'g', status: 'done' }),
+  ];
+  const st = statsOf({ tasks, flow: null });
+  return st.total === 2 && st.done === 1 && st.open === 1;
+})());
+
+t('自查：状态分布与类型分布也不含组', (() => {
+  const tasks = [
+    normalizeTask({ id: 'g', kind: 'group', type: 'dev' }),
+    normalizeTask({ id: 'a', parent: 'g', type: 'dev' }),
+    normalizeTask({ id: 'b', parent: 'g', type: 'bug' }),
+  ];
+  const st = statsOf({ tasks, flow: null });
+  return Object.values(st.byStatus).reduce((n, x) => n + x, 0) === 2
+    && Object.values(st.byType).reduce((n, x) => n + x, 0) === 2;
+})());
+
+t('自查：自定义流程下"未完成"认的是算完成，不是 id 叫 done', (() => {
+  const flow = {
+    statuses: [
+      { id: 's1', name: '待办', color: '#78716c', enter: '', done: false },
+      { id: 's2', name: '完工', color: '#22c55e', enter: '', done: true },
+    ],
+  };
+  const tasks = [
+    normalizeTask({ id: 'a', status: 's1' }),
+    normalizeTask({ id: 'b', status: 's2' }),
+  ];
+  const st = statsOf({ tasks, flow });
+  return st.done === 1 && st.open === 1;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
