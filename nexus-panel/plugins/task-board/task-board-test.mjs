@@ -2656,6 +2656,35 @@ t('审查：分组依据为空仍只得到一组且不抛错', (() => {
   return g.length === 1 && g[0].count === 2;
 })());
 
+
+/* ============================================================ 审查：状态名查写死的默认表（本轮） */
+
+/*
+ * 三处查的是 STATUS_LABEL（**默认那五个**的名字表），
+ * 自定义流程的 id（s2、'完工'…）在里面查不到 → 显示原始 id。
+ * 而同一条任务在别处显示的是"开发中" —— 同一个东西两处说法不一样。
+ */
+t('审查：流转后的 toast 用 statusName（不查写死的 STATUS_LABEL）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const doTransition =');
+  const seg = app.slice(i, i + 900);
+  return seg.indexOf('${statusName(flow, to)}') >= 0
+    && seg.indexOf('${STATUS_LABEL[to]}') < 0;
+})());
+
+t('审查：筛选项的状态名走 statusName(flow, …)', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function optionLabel(');
+  const seg = app.slice(i, i + 700);
+  return seg.indexOf("return statusName(flow, v as TaskStatus)") >= 0;
+})());
+
+t('审查：flow 贯通到筛选面板与摘要', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow)') >= 0
+    && app.indexOf('flow={flow}') >= 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
