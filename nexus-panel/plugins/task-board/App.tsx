@@ -390,7 +390,18 @@ export default function App() {
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const defs = st.typeDefs || [];
         const id = newDefId('t', defs.map((d) => d.id));
-        return { ...st, typeDefs: [...defs, { id, name, color }] };
+        /*
+          传进来的色为空、或已被占用时，取**第一个还没人用的颜色**。
+          连着建几个类型却拿到同一个颜色的话，颜色就失去了"一眼区分"的作用 ——
+          而那正是给它配色的唯一原因。
+          （按"已有数量取模"是不行的：默认六个里第 7 个色已被占用，
+            取模恰好又落在它身上，第一个新建的类型会和"开发"同色。）
+        */
+        const used = new Set(defs.map((d) => d.color));
+        const want = (color && !used.has(color))
+          ? color
+          : (TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[defs.length % TAG_COLORS.length]);
+        return { ...st, typeDefs: [...defs, { id, name, color: want }] };
       });
     })();
 
@@ -986,7 +997,12 @@ ${dir}
           typeIds={typeIds}
           onToggleType={toggleType}
           onRenameType={(id, name) => setTypeDef(id, { name })}
-          onCreateType={(name) => createType(name, '#78716c')}
+          /*
+            默认色与列头筛选面板里的新建保持一致（都取调色板的第 7 个）。
+            两处不同的话，同一个"新建类型"动作在不同入口得到不同颜色，
+            看着像两条互不相干的规则。
+          */
+          onCreateType={(name) => createType(name, TAG_COLORS[6])}
           onTypeColor={(id, color) => setTypeDef(id, { color })}
           onRemoveType={removeType}
           tagDefs={store.tagDefs}
