@@ -246,25 +246,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/*
-  「未配置」角标：有任务处于这个状态，但流程配置里没有它
-  （状态被删掉了，或由 AI 经 API 直接写入）。
-
-  ⛔ 没有这份样式的话，它渲染成列头里一段裸文字 ——
-  和状态名、数量挤在一起，也看不出它是"需要注意"而不是"又一个状态名"。
-  用 warn 色而不是灰：它要传达的是"这里有个对不上的地方"。
-*/
-.tb-col-ghost {
-  flex-shrink: 0;
-  padding: 0 var(--sp-1);
-  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
-  border-radius: var(--r-sm);
-  color: var(--warn);
-  font-size: var(--fs-micro);
-  font-weight: var(--fw-mid, 500);
-  line-height: 1.6;
-}
-
 .tb-col-body {
   display: flex;
   flex-direction: column;
@@ -1833,6 +1814,28 @@ body.tb-col-resizing {
   它就是让用户挑颜色的，跟着主题变就没法挑了。
   这属于"结构色"：与节点色板同类，不是文字/底板。
 */
+/*
+  取色器入口（"＋"）。
+  固定调色板只有那几个色，要一个板子里没有的（比如跟某个品牌色对齐）
+  只能调起主面板的取色器 —— 所以它和调色板并排，不是替换掉调色板。
+
+  用虚线边框而不是实心块：实心块会被当成"又一个可选的颜色"，
+  而它是"打开另一个面板"，长得像色块会让人以为点了就直接应用。
+*/
+.tb-swatch-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nx-fg-dim, #9ca3af);
+  border: 1px dashed var(--nx-bd-strong, #9ca3af);
+  font-size: 10px;
+  line-height: 1;
+}
+.tb-swatch-more:hover {
+  color: var(--nx-fg, #e5e7eb);
+  border-color: var(--nx-fg-dim, #9ca3af);
+}
+
 .tb-swatch {
   width: 13px;
   height: 13px;
@@ -2086,17 +2089,6 @@ body.tb-col-resizing {
   align-items: center;
   gap: var(--sp-2);
   color: var(--text-mute);
-}
-
-/*
-  分组列：里面是 InlineText（点一下就地改分组名），
-  所以要像 c-title 那样撑开 —— 没有这份样式时列宽会被内容挤变形，
-  且"留空=不分组"那个占位（tb-ldim）会贴到边框上。
-*/
-.tb-lc.c-group {
-  display: flex;
-  align-items: center;
-  min-width: 0;
 }
 
 .tb-lc.c-assignee {
