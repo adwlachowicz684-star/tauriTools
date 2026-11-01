@@ -1862,8 +1862,15 @@ t('分组：排序字段里也要有（存过的排序不会被判成非法）',
 
 t('分组：行内能就地编辑（case group 要在 cellFor 里）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  /*
+    判据改成"用统一单选组件 + 从候选里挑"：
+    分组原来是用 InlineText **手打**的（没有候选），
+    手打必然打出「登录」/「登陆」两种写法、分成两组还看不出原因。
+    现在与类型 / 认领人同构：点开 → 从候选里挑一个。
+  */
   return app.indexOf("case 'group':") >= 0
-    && app.indexOf('onPatchField(t.id, { group: v })') >= 0;
+    && /case 'group':[\s\S]{0,2600}?<SinglePick/.test(app)
+    && app.indexOf('options={groupOpts}') >= 0;
 })());
 
 /*
@@ -4365,6 +4372,146 @@ t('归一化要清掉指向自己的依赖', (() => {
   const lk = lockOf(a, st.tasks, st);
   /* 清掉自依赖之后不该再判定成环（等 b 是另一回事，那是对的） */
   return lk.cyclic === false;
+})());
+
+
+/* ============================================================ 深度审查：五列单选型统一（本轮） */
+
+/*
+ * **优先级 / 状态 / 任务类型 / 分组 / 认领人 五列都是"这一行取一个值"，
+ * 操作方式就该一致。**
+ *
+ * ⛔ 以前是五套做法：
+ *   · 优先级 / 状态 → InlinePick（下拉，没有管理能力）
+ *   · 任务类型     → TypePicker（另一套类名；能改名+新建，不能改色+删除）
+ *   · 分组 / 认领人 → InlineText（**自由文本，压根没有候选**）
+ *
+ * 后果不只是观感不一致：
+ *   · 分组和认领人没有候选 → 手打必然打出「登录」/「登陆」两种写法，
+ *     分成两组还看不出原因；而"这一列到底有哪些值"根本看不到
+ *   · 类型在单元格里能改名却不能改色/删除，而列头筛选面板三样都有
+ *     —— 同一个动作在两个地方能不能做不一样
+ *   · 加一个能力要在五处各写一遍，漏一处就是"别处能用这儿不能"
+ *     （这正是前几轮反复出现的"新判据没在所有入口落实"）
+ *
+ * 现在统一走 SinglePick：组件一套，能力由各列声明（传了哪个回调就有哪个按钮）。
+ */
+const FIVE = ['priority', 'status', 'type', 'group', 'assignee'];
+
+t('守卫：五列单选型都走同一个组件（SinglePick）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const bad = [];
+  for (const f of FIVE) {
+    const i = app.indexOf("case '" + f + "':");
+    if (i < 0) { bad.push(f + '(缺 case)'); continue; }
+    /*
+      切片到下一个 case 之前 —— 用整段搜会命中别处的 <SinglePick，
+      那就分不清"这一列用了"还是"别处用了"，注入缺陷也照样全绿。
+    */
+    const j = app.indexOf("\n      case '", i + 10);
+    const seg = app.slice(i, j < 0 ? i + 2600 : j);
+    if (seg.indexOf('<SinglePick') < 0) bad.push(f);
+  }
+  if (bad.length) console.log('    未用 SinglePick:', bad.join(' , '));
+  return bad.length === 0;
+})());
+
+t('守卫：五列单选型不再各写各的（InlinePick / TypePicker 已删）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  return !/function InlinePick\(/.test(app)
+    && !/function TypePicker\(/.test(app)
+    && app.indexOf('<InlinePick') < 0
+    && app.indexOf('<TypePicker') < 0;
+})());
+
+/*
+ * **清空类型不能传 NOTYPE 哨兵。**
+ *
+ * toggleType 的语义是「点当前值 = 摘掉」：`type: t.type === typeId ? '' : typeId`。
+ * 传 NOTYPE 时两边不等 → **把哨兵值写进任务数据**。
+ * 后果：typeName 查不到定义 → 界面上这一列显示成一串 '__notype__'，
+ * 而不是"未分类" —— 那正是前几轮反复修的"显示原始哨兵"类 bug。
+ *
+ * 实测：修前清空后落盘 type='__notype__'；修后为 ''。
+ */
+t('守卫：清空类型传空串（不能把 NOTYPE 写进任务）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf("clearLabel={t.type ? '清成「未分类」' : undefined}");
+  if (i < 0) return false;
+  return app.slice(i, i + 900).indexOf("onToggleType(t.id, '')") >= 0
+    && !/onToggleType\(t\.id, NOTYPE\)/.test(app);
+})());
+
+/* 归一化兜底：老数据里已经存了哨兵的，读进来要清成空串 */
+t('守卫：归一化要把任务上的类型哨兵清成空串', (() => {
+  const st = normalizeStore({
+    v: 1, nextId: 9,
+    tasks: [{ id: 'a', title: 'a', status: 'todo', priority: 'P2', tags: [], deps: [], history: [], type: '__notype__' }],
+  });
+  return st.tasks[0].type === '';
+})());
+
+/*
+ * **新建要"建完即挂"，五列结果一致。**
+ *
+ * 认领人没有定义表，新建 = 直接填名字 → 立刻生效；
+ * 而类型/分组原来只建定义、不挂当前行 → 用户还得再点一次选它。
+ * 明明是在这一行点的新建，却要操作两次 —— 这就是"不统一"的实际代价。
+ *
+ * 实测：修前新建分组后本行 group 仍是旧值；修后为新建的那个。
+ */
+t('守卫：新建类型/分组后立刻挂到当前行', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('kindName="类型"');
+  if (i < 0) return false;
+  const segT = app.slice(i, i + 900);
+  const j = app.indexOf('kindName="分组"');
+  const segG = app.slice(j, j + 900);
+  /* 类型：await 拿到新 id 再挂；分组：建完直接 patch 名字（分组 id 就是名字） */
+  return /await onCreateType\(name\)/.test(segT)
+    && /onToggleType\(t\.id, id\)/.test(segT)
+    && /await onCreateGroup\(name, ''\)/.test(segG)
+    && /onPatchField\(t\.id, \{ group: name \}\)/.test(segG);
+})());
+
+/* createType 要返回新 id —— 不返回的话调用方没法接着挂 */
+t('守卫：createType 返回新建的 id（供调用方挂到当前行）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const createType = (name: string, color: string) =>');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 1600);
+  return /let newId = '';/.test(seg) && /newId = id;/.test(seg) && /return newId;/.test(seg);
+})());
+
+/*
+ * **详情面板要有五列单选型对应的字段。**
+ *
+ * 以前详情里没有"认领人"和"优先级"两个字段 —— 上方元信息里
+ * 只**只读**显示一个"认领人：张三"。于是改认领人只能在列表那一列点，
+ * 而详情是"把这条所有字段看一遍"的地方：在这儿看到却改不了，
+ * 会以为这条压根没有这个属性。
+ *
+ * 实测（jsdom 单独挂载 DetailPanel）：
+ *   认领人 select 选项 = 未认领 | 张三 | 李四，当前值正确带出
+ *   优先级 select 选项 = P0 紧急 | P1 高 | P2 中 | P3 低
+ *   触发 change → onPatch 收到 {priority:'P0'} / {assignee:'李四'}
+ */
+t('守卫：详情面板有认领人和优先级字段（都能改，不是只读）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('function DetailPanel(');
+  if (i < 0) return false;
+  /*
+    ⛔ 判据要用**完整标签**（'>认领人<'），不能只搜 '认领人'：
+    注入成"认领人X"时 indexOf 照样命中 → 守卫不报红 →
+    真正的删除反而抓不到。这跟前面几次"判据太宽"是同一个毛病。
+  */
+  const j = app.indexOf('tb-dlabel">认领人<', i);
+  const k = app.indexOf('tb-dlabel">优先级<', i);
+  if (j < 0 || k < 0) return false;
+  const segA = app.slice(j, j + 700);
+  const segP = app.slice(k, k + 700);
+  return /<select/.test(segA) && /onPatch\(\{ assignee: e\.target\.value \}\)/.test(segA)
+    && /<select/.test(segP) && /onPatch\(\{ priority: e\.target\.value as Priority \}\)/.test(segP);
 })());
 
 /* ---------------- 汇总 ---------------- */

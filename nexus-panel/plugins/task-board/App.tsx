@@ -732,12 +732,22 @@ export default function App() {
       await refresh();
     })();
 
+  /*
+    返回**新建定义的 id**。
+
+    单元格里"新建"这个动作的意图是"给这一行用一个还不存在的类型"，
+    所以建完要能接着把它挂上去 —— 拿不到 id 就只能让用户建完再点一次，
+    而认领人那列（它没有定义表，新建 = 直接填名字）是**立刻生效**的，
+    于是同一个"新建"动作在两列结果不一样。五列要统一，就得都能立刻挂。
+  */
   const createType = (name: string, color: string) =>
     withErr(async () => {
-      if (!cfg) return;
+      if (!cfg) return '';
+      let newId = '';
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const defs = st.typeDefs || [];
         const id = newDefId('t', defs.map((d) => d.id));
+        newId = id;
         /*
           传进来的色为空、或已被占用时，取**第一个还没人用的颜色**。
           连着建几个类型却拿到同一个颜色的话，颜色就失去了"一眼区分"的作用 ——
@@ -756,6 +766,7 @@ export default function App() {
         而这两秒里用户已经按了回车却什么都没看到，会以为没建成。
       */
       await refresh();
+      return newId;
     })();
 
   /*
@@ -848,13 +859,21 @@ export default function App() {
 
   /* 带参转发（...args）：新建任务那类「带草稿入参」的回调也要能走同一份
      报错判据，否则它就得自己写一份 try/catch，两边会各改各的。 */
-  const withErr = (fn: (...args: any[]) => Promise<void>) => async (...args: any[]) => {
+  /*
+    包一层错误处理：出错时既显示错误条、也弹 toast。
+
+    返回值**透传**：有些动作要给出结果（比如"新建类型"要返回新 id，
+    好让调用方接着把它挂到当前行），吞掉的话调用方拿不到，
+    就只能"建完再让用户自己点一次"。
+  */
+  const withErr = <T,>(fn: (...args: any[]) => Promise<T>) => async (...args: any[]): Promise<T | undefined> => {
     try {
       setErr('');
-      await fn(...args);
+      return await fn(...args);
     } catch (e: any) {
       setErr(String(e?.message || e));
       ctx.toast(String(e?.message || e), 'err');
+      return undefined;
     }
   };
 
@@ -1422,7 +1441,7 @@ ${dir}
 
   const addGroup = (name: string, color: string) =>
     withErr(async () => {
-      if (!cfg || !name.trim()) return;
+      if (!cfg || !name.trim()) return '';
       const nm = name.trim();
       let made = false;
       await S.mutate(ctx, cfg.dataDir, (st) => {
@@ -1441,6 +1460,8 @@ ${dir}
       await refresh();
       if (!made) ctx.toast(`已经有同名分组「${nm}」了`, 'err');
       else ctx.toast(`已添加分组「${nm}」`, 'ok');
+      /* 分组的 id 就是名字 —— 返回它，好让调用方接着挂到当前行 */
+      return made ? nm : '';
     })();
 
   const setGroupColor = (id: string, color: string) =>
@@ -1573,6 +1594,97 @@ ${dir}
       });
       await refresh();
       ctx.toast(`已删分组「${id}」${n > 0 ? `，${n} 条任务变成未分组` : ''}`, 'ok');
+    })();
+
+  /*
+    认领人的**改名 / 移除** —— 与分组、类型同构，同一套判据。
+
+    认领人没有定义表（人不需要配色），但这两件事跟分组是一样的：
+      · 改名：'张三' → '张三丰'，所有他认领的任务一起变。
+        不同步的话界面上会同时出现两个名字，看着像两个人，
+        而"归到一个人名下"正是认领这一列唯一的作用。
+      · 移除：人不再参与了，把他从所有任务上摘掉。
+        只从候选里删、不摘任务的话，任务上还留着名字，
+        而"这个人"在下拉里已经选不到了 —— 想改只能逐条手打。
+
+    五列（状态 / 优先级 / 类型 / 分组 / 认领人）都是单选型，
+    所以它们的操作方式统一由 SinglePick 提供：
+    点开 → 挑一个 → ✓；能改定义的列顺手改名/改色/增删。
+  */
+  const renameAssignee = (oldName: string, newName: string) =>
+    withErr(async () => {
+      if (!cfg || !oldName || !newName.trim()) return;
+      const nm = newName.trim();
+      if (nm === oldName) return;
+      /*
+        三种结果要说清楚：
+          · taken —— 新名已经是另一个人的名字。不同步会把两个人并成一个。
+          · ok    —— 真改名。
+      */
+      const res: { state: 'ok' | 'taken' } = { state: 'ok' };
+      let n = 0;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const taken = (st.tasks || []).some((t) => (t.assignee || '').trim() === nm);
+        if (taken) { res.state = 'taken'; return null; }
+        let cnt = 0;
+        const tasks = (st.tasks || []).map((t) => {
+          if ((t.assignee || '').trim() !== oldName) return t;
+          cnt += 1;
+          return { ...t, assignee: nm, updatedAt: Date.now() };
+        });
+        n = cnt;
+        if (cnt === 0) return null;
+        return { ...st, tasks };
+      });
+      await refresh();
+      if (res.state === 'taken') ctx.toast(`已经有叫「${nm}」的人了，换个名字`, 'err');
+      else if (n === 0) ctx.toast(`没有找到由「${oldName}」认领的任务`, 'err');
+      else ctx.toast(`「${oldName}」已改名为「${nm}」（${n} 条任务同步更新）`, 'ok');
+    })();
+
+  const removeAssignee = (name: string) =>
+    withErr(async () => {
+      if (!cfg || !name) return;
+      /*
+        删之前先说清影响面：这个人可能认领着好几条，
+        摘掉之后那些任务变成未认领 —— 而"未认领"是个需要有人接手的状态。
+        静默摘掉的话，用户下次看统计会觉得"活变多了"，查不出是谁干的。
+      */
+      const holding = (store ? store.tasks : []).filter((t) => (t.assignee || '').trim() === name);
+      if (holding.length > 0) {
+        const ok = window.confirm(
+          `「${name}」还认领着 ${holding.length} 条任务：\n`
+            + holding.slice(0, 5).map((t) => `· ${t.id} ${t.title}`).join('\n')
+            + (holding.length > 5 ? `\n…等 ${holding.length} 条` : '')
+            + '\n\n移除后这些任务会变成「未认领」，需要重新分配。确定移除吗？',
+        );
+        if (!ok) return;
+      }
+      let n = 0;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        let cnt = 0;
+        const tasks = (st.tasks || []).map((t) => {
+          if ((t.assignee || '').trim() !== name) return t;
+          cnt += 1;
+          return { ...t, assignee: '', updatedAt: Date.now() };
+        });
+        n = cnt;
+        return cnt === 0 ? null : { ...st, tasks };
+      });
+      /* 与删分组/删类型同判据：正在筛这个人的筛选要清掉，否则筛一个已不存在的人 */
+      setColFilters((prev) => {
+        const f = prev.assignee;
+        if (!f || f.values.indexOf(name) < 0) return prev;
+        const values = f.values.filter((x) => x !== name);
+        if (values.length === 0) {
+          const next: Partial<Record<SortField, ColFilter>> = { ...prev };
+          delete next.assignee;
+          return next;
+        }
+        return { ...prev, assignee: { ...f, values } };
+      });
+      await refresh();
+      ctx.toast(`已移除「${name}」${n > 0 ? `，${n} 条任务变成未认领` : ''}`, 'ok');
     })();
 
   /*
@@ -2018,6 +2130,8 @@ ${dir}
             onGroupColor={setGroupColor}
             onRenameGroup={renameGroup}
             onRemoveGroup={removeGroup}
+            onRenameAssignee={renameAssignee}
+            onRemoveAssignee={removeAssignee}
             onPickColor={pickColor}
             checked={checked}
             onCheck={(id, on) => setChecked((prev) => {
@@ -2407,135 +2521,6 @@ function lockTitle(lock: { pending: string[]; missing: string[]; cyclic: boolean
  * 改名**就地编辑**而不是弹窗 —— 归类是顺手的事，
  * 弹个窗再确认一次，二十条任务就变成二十次开关。
  */
-function TypePicker({
-  value, defs, onPick, onRename, onCreate,
-}: {
-  value: string;
-  defs: { id: string; name: string; color: string }[];
-  onPick: (id: string) => void;
-  onRename: (id: string, name: string) => void;
-  /**
-   * 就地新建类型。
-   * 只在列头筛选面板里建是不够的 —— 那时要"先去列头建、再回来点这一行"，
-   * 而"需要一个新分类"这个念头恰恰是在看某一行时才冒出来的。
-   */
-  onCreate?: (name: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState('');
-  const [draft, setDraft] = useState('');
-  const ref = useRef<HTMLSpanElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setEditing('');
-      }
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
-
-  const cur = defs.find((d) => d.id === value);
-
-  return (
-    <span className="tb-typepick" ref={ref}>
-      <button
-        type="button"
-        className={'tb-typechip' + (cur ? '' : ' empty')}
-        style={cur ? { background: cur.color + '22', color: cur.color, borderColor: cur.color + '55' } : undefined}
-        /*
-          ⛔ 必须 stopPropagation：整行 onClick 是"打开详情"，
-          不拦的话点类型会顺带弹出详情窗 —— 改个字段弹出一个窗，
-          等于行内编辑白做了。
-        */
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        title={cur ? cur.name : '未分类（点击设置）'}
-      >
-        {cur ? cur.name : '—'}
-      </button>
-      {open ? (
-        <span className="tb-typepop">
-          {defs.map((d) => (
-            <span key={d.id} className="tb-typerow">
-              <button
-                type="button"
-                className={'tb-typeopt' + (value === d.id ? ' on' : '')}
-                style={{ color: d.color }}
-                onClick={() => {
-                  onPick(d.id);
-                  setOpen(false);
-                }}
-              >
-                {value === d.id ? '● ' : '○ '}{d.name}
-              </button>
-              {editing === d.id ? (
-                <input
-                  className="tb-typerename"
-                  autoFocus
-                  defaultValue={d.name}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v && v !== d.name) onRename(d.id, v);
-                    setEditing('');
-                  }}
-                  onKeyDown={(e) => {
-                    if (isComposing(e.nativeEvent)) return;
-                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                    if (e.key === 'Escape') setEditing('');
-                  }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="tb-act sm ghost"
-                  title="改名"
-                  onClick={() => setEditing(d.id)}
-                >
-                  ✎
-                </button>
-              )}
-            </span>
-          ))}
-          {value ? (
-            <button
-              type="button"
-              className="tb-typeopt"
-              onClick={() => {
-                onPick(value);   // 再点一次当前值 = 摘掉
-                setOpen(false);
-              }}
-            >
-              清成「未分类」
-            </button>
-          ) : null}
-          {onCreate ? (
-            <span className="tb-typerow">
-              <input
-                className="tb-typerename"
-                value={draft}
-                placeholder="＋ 新类型…"
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (isComposing(e.nativeEvent)) return;
-                  if (e.key !== 'Enter') return;
-                  const nm = draft.trim();
-                  if (nm) {
-                    onCreate(nm);
-                    setDraft('');
-                  }
-                }}
-              />
-            </span>
-          ) : null}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
 /* ================================================================ 导入项目 */
 
 /**
@@ -3187,19 +3172,53 @@ function FlowSettingsModal({
  */
 
 /** 单选型（状态 / 优先级 / 认领人这类） */
-function InlinePick({
+/**
+ * **单选型列的单元格** —— 优先级 / 状态 / 任务类型 / 分组 / 认领人 五列共用。
+ *
+ * 它们在数据上是同一件事：**这一行取一个值**。所以操作方式就该一致：
+ * 点开 → 从候选里挑一个 → 当前项带 ✓。（能改定义的列，顺手改名/改色/增删。）
+ *
+ * ⛔ 以前五列是**五套做法**：
+ *   · 优先级 / 状态 → InlinePick（下拉，没有管理能力）
+ *   · 任务类型     → TypePicker（另一套类名，能改名+新建，不能改色+删除）
+ *   · 分组 / 认领人 → InlineText（**自由文本，压根没有候选**）
+ *
+ * 后果不只是观感不一致：
+ *   · 分组和认领人没有候选 → 手打必然打出「登录」/「登陆」两种写法，
+ *     分成两组还看不出原因；而"这一列到底有哪些值"根本看不到
+ *     —— 分组恰恰最需要"从已有项里挑一个"
+ *   · 类型在单元格里能改名却不能改色/删除，而列头筛选面板三样都有
+ *     —— 同一个动作在两个地方能不能做不一样，用户记不住哪个能
+ *   · 加一个能力要在五处各写一遍，漏一处就是"别处能用这儿不能"
+ *     （这正是前几轮反复出现的"新判据没在所有入口落实"）
+ *
+ * 现在**能力由各列声明**（传了哪个回调就有哪个按钮），组件和交互是同一套：
+ *   · 状态     —— 只有候选（走不通的置灰并说明原因）+ 流程里管定义，不传管理能力
+ *   · 优先级   —— 固定枚举，不传管理能力
+ *   · 类型/分组 —— 候选 + 新建/改名/改色/删除 全开
+ *   · 认领人   —— 候选 + 新建/改名/删除（人不需要配色，不传 onColor）
+ */
+function SinglePick({
   cur,
   options,
   onPick,
   title,
   dot,
+  clearLabel,
+  onClear,
+  onCreate,
+  onRename,
+  onColor,
+  onRemove,
+  onPickColor,
+  kindName,
 }: {
-  /** 当前显示的内容 */
+  /** 当前显示的内容（优先级传徽章组件，其它传名字） */
   cur: React.ReactNode;
   options: {
     id: string;
     label: string;
-    /** 圆点颜色（状态 / 类型这类有色字段） */
+    /** 圆点颜色（状态 / 类型 / 分组这类有色字段） */
     color?: string;
     /** 当前值 */
     on?: boolean;
@@ -3210,23 +3229,49 @@ function InlinePick({
   onPick: (id: string) => void;
   title?: string;
   dot?: string;
+  /** 传了才显示"清空"项。状态 / 优先级必填，不传 */
+  clearLabel?: string;
+  onClear?: () => void;
+  /** 传了才能新建。状态在流程里配、优先级是固定枚举，都不传 */
+  onCreate?: (name: string) => void;
+  onRename?: (id: string, name: string) => void;
+  onColor?: (id: string, color: string) => void;
+  onRemove?: (id: string) => void;
+  onPickColor?: (initial: string) => Promise<string>;
+  /** 这一列的名词（'类型' / '分组' / '认领人'），只用于按钮提示文案 */
+  kindName?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState('');
+  const [colorFor, setColorFor] = useState('');
+  const [draft, setDraft] = useState('');
   const ref = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setEditing('');
+        setColorFor('');
+      }
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
+  const colorOf = (id: string) => (options.find((o) => o.id === id) || {}).color || '';
+  const nameOf = (id: string) => (options.find((o) => o.id === id) || {}).label || id;
+
   return (
     <span
       className={'tb-ic' + (open ? ' open' : '')}
       ref={ref}
+      /*
+        ⛔ 必须 stopPropagation：整行 onClick 是"打开详情"，
+        不拦的话改个字段顺带弹出详情窗 —— 改一个内容弹一次窗，
+        等于行内编辑白做了。
+      */
       onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
       title={title}
     >
@@ -3235,25 +3280,156 @@ function InlinePick({
       {open ? (
         <span className="tb-ic-pop" onClick={(e) => e.stopPropagation()}>
           {options.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className={'tb-ic-opt' + (o.on ? ' on' : '')}
-              disabled={o.disabled}
-              title={o.disabled ? o.why : o.label}
-              onClick={() => {
-                if (o.disabled) return;
-                onPick(o.id);
-                setOpen(false);
-              }}
-            >
-              {o.color ? (
-                <span className="tb-col-dot" style={{ background: o.color }} />
+            <span key={o.id} className="tb-ic-row">
+              <button
+                type="button"
+                className={'tb-ic-opt' + (o.on ? ' on' : '')}
+                disabled={o.disabled}
+                title={o.disabled ? o.why : o.label}
+                onClick={() => {
+                  if (o.disabled) return;
+                  onPick(o.id);
+                  setOpen(false);
+                }}
+              >
+                {o.color ? (
+                  <span className="tb-col-dot" style={{ background: o.color }} />
+                ) : null}
+                <span className="tb-ic-txt">{o.label}</span>
+                {o.on ? <span className="tb-ic-ck">✓</span> : null}
+              </button>
+              {editing === o.id ? (
+                <input
+                  className="tb-ic-rename"
+                  autoFocus
+                  defaultValue={o.label}
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v && v !== o.label && onRename) onRename(o.id, v);
+                    setEditing('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (isComposing(e.nativeEvent)) return;
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                    if (e.key === 'Escape') setEditing('');
+                  }}
+                />
+              ) : onRename ? (
+                <button
+                  type="button"
+                  className="tb-act sm ghost"
+                  title={`改${kindName || ''}名（所有${kindName || ''}是这个的行一起变）`}
+                  onClick={(e) => { e.stopPropagation(); setEditing(o.id); }}
+                >
+                  ✎
+                </button>
               ) : null}
-              <span className="tb-ic-txt">{o.label}</span>
-              {o.on ? <span className="tb-ic-ck">✓</span> : null}
-            </button>
+              {/*
+                色点 = 改色入口。**默认折叠成一个点**，点它才展开色板。
+
+                ⛔ 不能一行摆开 12 个色点：12 × 13px（含 gap）约 204px，
+                在选项行里必然换行，把名字和按钮全淹掉 ——
+                这正是"筛选面板被色板淹没"那个 bug，别在单元格里重犯。
+              */}
+              {onColor ? (
+                colorFor === o.id ? null : (
+                  <button
+                    type="button"
+                    className="tb-ic-dot"
+                    style={{ background: colorOf(o.id) || '#78716c' }}
+                    title={`给${kindName || ''}「${o.label}」改颜色`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      /* 再点一次收起（toggle），否则想取消只能去点别的地方 */
+                      setColorFor(colorFor === o.id ? '' : o.id);
+                    }}
+                  />
+                )
+              ) : null}
+              {onRemove ? (
+                <button
+                  type="button"
+                  className="tb-act sm ghost"
+                  title={`删掉这个${kindName || ''}`}
+                  onClick={(e) => { e.stopPropagation(); onRemove(o.id); setOpen(false); }}
+                >
+                  ✕
+                </button>
+              ) : null}
+            </span>
           ))}
+          {/*
+            色板**独占一整行**，不塞在选项行里 —— 理由见上面那个色点。
+          */}
+          {colorFor && onColor ? (
+            <span className="tb-ic-colors">
+              {TAG_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={'tb-swatch' + (colorOf(colorFor) === c ? ' on' : '')}
+                  style={{ background: c }}
+                  title={`把${kindName || ''}「${nameOf(colorFor)}」改成这个颜色`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onColor(colorFor, c);
+                    /* 改完就收起：色板占一整行，不收起来一直挡着下一项 */
+                    setColorFor('');
+                  }}
+                />
+              ))}
+              {/*
+                取色器入口：固定调色板只有那几个色，要一个板子里没有的
+                （比如跟公司色号对齐）只能靠它。拿到空串 = 用户取消，不改。
+
+                ⛔ 它必须在**展开态**里：折叠态也渲染的话，
+                每个候选行都挂一个"＋"，既没意义又把行挤得更窄。
+              */}
+              {onPickColor ? (
+                <button
+                  type="button"
+                  className="tb-swatch tb-swatch-more"
+                  title="用取色器选一个其他颜色"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const hex = await onPickColor(colorOf(colorFor));
+                    if (hex) onColor(colorFor, hex);
+                    setColorFor('');
+                  }}
+                >
+                  ＋
+                </button>
+              ) : null}
+            </span>
+          ) : null}
+          {clearLabel && onClear ? (
+            <button
+              type="button"
+              className="tb-ic-opt"
+              onClick={() => { onClear(); setOpen(false); }}
+            >
+              {clearLabel}
+            </button>
+          ) : null}
+          {onCreate ? (
+            <input
+              className="tb-ic-rename"
+              value={draft}
+              placeholder={`＋ 新建${kindName || ''}…`}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (isComposing(e.nativeEvent)) return;
+                if (e.key !== 'Enter') return;
+                const nm = draft.trim();
+                if (nm) {
+                  onCreate(nm);
+                  setDraft('');
+                }
+              }}
+            />
+          ) : null}
         </span>
       ) : null}
     </span>
@@ -3573,7 +3749,7 @@ function ColFilterPop({
   onRemoveTag?: (id: string) => void;
   /** 类型定义。只任务类型列用得到 —— 与标签同构，同样可增删改色 */
   typeDefs?: TagDef[];
-  onCreateType?: (name: string, color: string) => void;
+  onCreateType: (name: string, color: string) => Promise<string | undefined>;
   onTypeColor?: (id: string, color: string) => void;
   /** 删类型。调用方负责先把挂着的任务清空，这里只管问一句 */
   onRemoveType?: (id: string) => void;
@@ -3585,6 +3761,10 @@ function ColFilterPop({
   onGroupColor?: (id: string, color: string) => void;
   onRenameGroup?: (id: string, name: string) => void;
   onRemoveGroup?: (id: string) => void;
+  /** 认领人改名（同步所有他认领的任务）。与分组改名同判据 */
+  onRenameAssignee?: (oldName: string, newName: string) => void;
+  /** 移除认领人（把他从所有任务上摘掉） */
+  onRemoveAssignee?: (name: string) => void;
   /** 调起主面板取色器；返回空串表示取消 */
   onPickColor?: (initial: string) => Promise<string>;
   /** 流程配置（状态名认自定义流程，不能查写死的默认表） */
@@ -4044,6 +4224,7 @@ function ListView({
   onRemoveTag,
   groupDefs,
   onCreateGroup, onGroupColor, onRenameGroup, onRemoveGroup, onPickColor,
+  onRenameAssignee, onRemoveAssignee,
   checked,
   onCheck,
   onBatchStatus,
@@ -4085,7 +4266,7 @@ function ListView({
   /** 改某个类型的显示名 */
   onRenameType: (id: string, name: string) => void;
   /** 就地新建类型（只要名字，颜色用默认灰） */
-  onCreateType: (name: string) => void;
+  onCreateType: (name: string) => Promise<string | undefined>;
   /** 改某个类型的颜色 */
   onTypeColor: (id: string, color: string) => void;
   /** 删某个类型（调用方负责先把任务清成未分类） */
@@ -4100,10 +4281,14 @@ function ListView({
   onRemoveTag: (id: string) => void;
   /** 分组定义（id 就是名字） */
   groupDefs: TagDef[];
-  onCreateGroup: (name: string, color: string) => void;
+  onCreateGroup: (name: string, color: string) => Promise<string | undefined>;
   onGroupColor: (id: string, color: string) => void;
   /** 分组改名：定义与任务都要改（任务上存的就是名字） */
   onRenameGroup: (id: string, name: string) => void;
+  /** 认领人改名（同步所有他认领的任务）。与分组改名同判据 */
+  onRenameAssignee?: (oldName: string, newName: string) => void;
+  /** 移除认领人（把他从所有任务上摘掉） */
+  onRemoveAssignee?: (name: string) => void;
   /** 删分组：连带把任务清成未分组 */
   onRemoveGroup: (id: string) => void;
   /** 调起主面板取色器；返回 '' 表示取消 */
@@ -4248,13 +4433,51 @@ function ListView({
     document.body.classList.add('tb-col-resizing');
   };
 
+  /*
+    五列单选型（优先级 / 状态 / 任务类型 / 分组 / 认领人）的**候选值**。
+
+    判据统一为「**定义表 ∪ 数据**」，两头都不能省：
+      · 只取定义表 → 任务上可能是 AI 手写进 JSON 的裸值（没有定义），
+        那些任务在这一列显示成空白，而且选不到
+      · 只从数据去重 → 刚新建、还没挂到任何任务上的值在下拉里选不到，
+        那个值等于建不出来
+
+    ⛔ 以前这五列的候选是五套算法（有的只有定义表、有的干脆没有候选），
+    于是"同样的操作在不同列能不能做"全靠运气。现在一处算、五列共用。
+  */
+  const unionOpts = (
+    defs: { id: string; name: string; color?: string }[],
+    fromTask: (t: Task) => string,
+    withColor: boolean,
+  ) => {
+    const seen = new Set<string>();
+    const out: { id: string; label: string; color?: string }[] = [];
+    for (const d of defs || []) {
+      if (seen.has(d.id)) continue;
+      seen.add(d.id);
+      out.push({ id: d.id, label: d.name || d.id, color: withColor ? d.color : undefined });
+    }
+    for (const r of allRows || []) {
+      const v = (fromTask(r.task) || '').trim();
+      if (!v || seen.has(v)) continue;
+      seen.add(v);
+      /* 数据里有、定义表里没有的：原样显示（认不出来比认错好） */
+      out.push({ id: v, label: v, color: undefined });
+    }
+    return out;
+  };
+  const typeOpts = unionOpts(typeDefs || [], (t) => t.type || '', true);
+  const groupOpts = unionOpts(groupDefs || [], (t) => t.group || '', true);
+  /* 认领人没有定义表（人不配色），候选就是数据里出现过的人名 */
+  const assigneeOpts = unionOpts([], (t) => t.assignee || '', false);
+
   /** 行内单元格：按 field 分发，新增列只改这一处 */
   const cellFor = (field: SortField, t: Task) => {
     switch (field) {
       case 'priority':
         return (
           <span className="tb-lc c-priority" key={field}>
-            <InlinePick
+            <SinglePick
               cur={<PriorityBadge p={t.priority} />}
               title="点击改优先级"
               options={PRIORITY_ORDER.map((pr) => ({
@@ -4289,12 +4512,28 @@ function ListView({
                 style={{ background: groupColor(groupDefs, t.group) }}
               />
             ) : null}
-            <InlineText
-              value={t.group || ''}
-              display={t.group || <span className="tb-ldim">—</span>}
-              placeholder="分组名（留空=不分组）"
+            <SinglePick
+              cur={t.group || <span className="tb-ldim">—</span>}
               title={t.group || '点击设置分组'}
-              onCommit={(v) => onPatchField(t.id, { group: v })}
+              options={groupOpts}
+              onPick={(id) => onPatchField(t.id, { group: id })}
+              clearLabel={t.group ? '不分组（清掉）' : undefined}
+              onClear={t.group ? () => onPatchField(t.id, { group: '' }) : undefined}
+              kindName="分组"
+              /*
+                不指定颜色（传空串），让 addGroup 去取**第一个还没人用的**。
+                与 onCreateType 同一判据：两个新建入口得到同一套颜色，
+                不会出现"在这儿建是蓝的、在那儿建也是蓝的、和已有分组撞色"。
+              */
+              onCreate={async (name) => {
+                await onCreateGroup(name, '');
+                /* 分组的 id 就是名字，建完直接挂（与类型列同样"建完即挂"） */
+                onPatchField(t.id, { group: name });
+              }}
+              onRename={onRenameGroup}
+              onColor={onGroupColor}
+              onRemove={onRemoveGroup}
+              onPickColor={onPickColor}
             />
           </span>
         );
@@ -4341,7 +4580,7 @@ function ListView({
         });
         return (
           <span className="tb-lc c-status" key={field}>
-            <InlinePick
+            <SinglePick
               cur={statusName(flow, t.status)}
               dot={statusColor(flow, t.status)}
               title="点击改状态"
@@ -4371,12 +4610,22 @@ function ListView({
       case 'assignee':
         return (
           <span className="tb-lc c-assignee" key={field}>
-            <InlineText
-              value={t.assignee || ''}
-              display={t.assignee ? '@' + t.assignee : <span className="tb-ldim">未认领</span>}
-              placeholder="认领人（留空 = 未认领）"
+            <SinglePick
+              cur={t.assignee ? '@' + t.assignee : <span className="tb-ldim">未认领</span>}
               title="点击改认领人"
-              onCommit={(v) => onPatchField(t.id, { assignee: v })}
+              options={assigneeOpts}
+              onPick={(id) => onPatchField(t.id, { assignee: id })}
+              clearLabel={t.assignee ? '取消认领' : undefined}
+              onClear={t.assignee ? () => onPatchField(t.id, { assignee: '' }) : undefined}
+              kindName="认领人"
+              /*
+                新建 = 直接填个新名字（它出现在数据里就自动成为候选）。
+                认领人没有定义表，不需要"先建一条定义再挂上去"这一步。
+              */
+              onCreate={(name) => onPatchField(t.id, { assignee: name })}
+              onRename={onRenameAssignee}
+              /* 人不配色：给每个人配个颜色没有意义，所以不传 onColor */
+              onRemove={onRemoveAssignee}
             />
           </span>
         );
@@ -4388,12 +4637,50 @@ function ListView({
         */
         return (
           <span className="tb-lc c-type" key={field}>
-            <TypePicker
-              value={t.type}
-              defs={typeDefs}
+            <SinglePick
+              cur={typeName(typeDefs, t.type) || <span className="tb-ldim">—</span>}
+              dot={t.type ? typeColor(typeDefs, t.type) : undefined}
+              title="点击改任务类型"
+              /*
+                候选 = **定义表 ∪ 数据**。两头都不能省：
+                  · 只取定义表 → 任务上可能是 AI 手写进 JSON 的裸 id，
+                    没有定义，那些任务在这一列显示成空白
+                  · 只从数据去重 → 刚新建、还没挂到任何任务上的类型选不到
+              */
+              options={typeOpts}
               onPick={(id) => onToggleType(t.id, id)}
-              onRename={(id, name) => onRenameType(id, name)}
-              onCreate={onCreateType}
+              clearLabel={t.type ? '清成「未分类」' : undefined}
+              /*
+                ⛔ 清空传**空串**，不能传 NOTYPE（'__notype__'）。
+
+                toggleType 的语义是「点当前值 = 摘掉」：
+                `type: t.type === typeId ? '' : typeId`。
+                传 NOTYPE 时两边不等 → 直接把 **哨兵值写进任务数据**。
+
+                后果：typeName 查不到定义 → 界面上这一列显示成一串
+                '__notype__'，而不是"未分类"。那正是前几轮反复修的
+                "显示原始哨兵"类 bug，这次是统一改造时自己引进来的。
+
+                传 '' 才对：不等 → 赋值为 ''（真正的未分类）。
+              */
+              onClear={t.type ? () => onToggleType(t.id, '') : undefined}
+              kindName="类型"
+              /*
+                新建后**立刻挂到这一行**。
+
+                ⛔ 不挂的话，同一个"新建"动作在五列里结果不一样：
+                认领人那列没有定义表，新建 = 直接填名字 → 立刻生效；
+                而这里建完只在候选里多一项，用户还得再点一次选它 ——
+                明明是在这一行点的新建，却要操作两次。
+              */
+              onCreate={async (name) => {
+                const id = await onCreateType(name);
+                if (id) onToggleType(t.id, id);
+              }}
+              onRename={onRenameType}
+              onColor={onTypeColor}
+              onRemove={onRemoveType}
+              onPickColor={onPickColor}
             />
           </span>
         );
@@ -5280,6 +5567,23 @@ function DetailPanel({
   */
   const acts = actionsForIn(flow, task.status);
   const hist = [...task.history].reverse();
+  /*
+    认领人候选：从已有任务里汇总。
+    任务上没有"人员表"这种东西，出现过谁就是谁 ——
+    这与列表那一列用的是**同一套判据**（数据里汇总），
+    不会出现"详情里能选的人"和"列表里能选的人"不一致。
+  */
+  const assigneeOpts = (() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const x of tasks || []) {
+      const a = (x.assignee || '').trim();
+      if (!a || seen.has(a)) continue;
+      seen.add(a);
+      out.push(a);
+    }
+    return out;
+  })();
 
   /*
     Escape 关闭面板。
@@ -5366,6 +5670,42 @@ function DetailPanel({
         说明是"要做什么"（原始要求），备注是"过程中记的"。
         混一起的话做完没人清理说明，下次分不清哪些是原始要求。
       */}
+      {/*
+        认领人 / 优先级：以前详情里**根本没有这两个字段**
+        （只在上方的元信息里只读显示一个"认领人：张三"）。
+
+        于是"改认领人"只能在列表那一列点，
+        而详情是"把这条所有字段看一遍"的地方 ——
+        在这儿看到却改不了，会以为这条压根没有这个属性。
+
+        控件形态与任务类型对齐（都是原生 select）：
+        详情是竖排表单、宽度够，不需要列表那种就地下拉。
+      */}
+      <div className="tb-dfield">
+        <span className="tb-dlabel">认领人</span>
+        <select
+          className="tb-dinput tb-dsel"
+          value={task.assignee || ''}
+          onChange={(e) => onPatch({ assignee: e.target.value })}
+        >
+          <option value="">未认领</option>
+          {assigneeOpts.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      </div>
+      <div className="tb-dfield">
+        <span className="tb-dlabel">优先级</span>
+        <select
+          className="tb-dinput tb-dsel"
+          value={task.priority}
+          onChange={(e) => onPatch({ priority: e.target.value as Priority })}
+        >
+          {PRIORITY_ORDER.map((pr) => (
+            <option key={pr} value={pr}>{pr} {PRIORITY_LABEL[pr]}</option>
+          ))}
+        </select>
+      </div>
       <div className="tb-dfield">
         <span className="tb-dlabel">任务类型</span>
         <select
