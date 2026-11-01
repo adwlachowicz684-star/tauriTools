@@ -19,8 +19,58 @@ const ROOT = join(HERE, '..');
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 const all = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
 
-const missing = Object.keys(all).filter(
-  (k) => !existsSync(join(ROOT, 'node_modules', k)));
+/**
+ * 一个包「在位」= 它的 package.json 真的读得到。
+ *
+ * ⛔ 不能只判 `existsSync(node_modules/<pkg>)`：
+ * 实测（2026-11-02）npm 在慢盘上被中断时会留下**空目录** ——
+ * `node_modules/react` 存在、里面一个文件都没有。
+ * 于是脚本永远报「依赖齐备」，npm 也认为已装、不会再补，
+ * 结果是**永远装不上而没有任何报错**。
+ * 而真正暴露它的只有后面 readFileSync(package.json) 那一行的 ENOENT ——
+ * 本脚本第一版正是崩在那里，连「仍缺失」都没打印出来。
+ */
+const pkgJson = (k) => join(ROOT, 'node_modules', k, 'package.json');
+const inPlace = (k) => existsSync(pkgJson(k));
+
+/**
+ * 清掉空包目录 —— 它们会让下一轮 install 也认为「已装」而跳过。
+ * 判空不只看空目录：只有 .package-lock.json 之类残骸的同样算。
+ */
+function pruneEmptyPkgDirs() {
+  const nm = join(ROOT, 'node_modules');
+  if (!existsSync(nm)) return;
+  const roots = readdirSync(nm).filter((n) => !n.startsWith('.'));
+  const dead = [];
+  for (const name of roots) {
+    const dirs = name.startsWith('@')
+      ? readdirSync(join(nm, name)).map((s) => join(name, s))
+      : [name];
+    for (const d of dirs) {
+      if (!existsSync(join(nm, d, 'package.json'))) dead.push(join(nm, d));
+    }
+  }
+  for (const dir of dead) {
+    console.log(`清掉空包目录 ${dir.replace(ROOT + '/', '')}（会让 npm 误判已装）`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * ⛔ npm 调用必须带 `--global=false` —— 这是「环境反复被清」的真正根因。
+ *
+ * 实测（2026-11-02）：`/root/.npmrc` 里有 `global=true`，于是**任何**
+ * `npm install` 都以全局模式运行 → 装到 `/usr/local/lib/node_modules`
+ * （`npm prefix` 实测 = `/usr/local`，`npm root` = `/usr/local/lib/node_modules`）。
+ * 后果有两层：
+ *   1. 项目自己的 `node_modules` **永远是空的**（装多少轮都不进项目）
+ *   2. `/usr/local/lib` 在容器盘上，502 重启即被清 → 依赖反复消失
+ * `npm install` 只打印 notice、不报缺失，所以两层都看不出来。
+ */
+const NPM_FLAGS = ['--global=false', '--no-audit', '--no-fund'];
+
+const missing = Object.keys(all).filter((k) => !inPlace(k));
+pruneEmptyPkgDirs();
 function cleanNestedReact() {
   /*
    * ⛔ 光"装齐"不够：还要清掉 npm 顺手装出来的**嵌套 react 副本**。
@@ -63,22 +113,27 @@ if (process.argv.includes('--check')) process.exit(1);
 // ⛔ 必须**一次性**装：分批会互相剪掉（npm 会把前一批当多余依赖移除）
 const specs = missing.map((k) => `${k}@${all[k]}`);
 console.log('一次性安装中…');
-execFileSync('npm', ['install', '--no-audit', '--no-fund', '--no-save', ...specs],
+execFileSync('npm', ['install', ...NPM_FLAGS, '--no-save', ...specs],
   { cwd: ROOT, stdio: 'inherit' });
 
 // 回钉 react：npm 会按 ^ 顶到最新大版本，而项目锁的是 18
 // （版本漂移守卫会点名，这里先发制人）
 for (const [p, want] of Object.entries({ react: pkg.dependencies?.react, 'react-dom': pkg.dependencies?.['react-dom'] })) {
   if (!want) continue;
-  const got = JSON.parse(readFileSync(join(ROOT, 'node_modules', p, 'package.json'), 'utf8')).version;
+  // ⛔ 装完仍可能不在（npm 静默跳过 / 留下空目录）；这时报出来，别崩在 readFileSync
+  if (!existsSync(pkgJson(p))) {
+    console.log(`⚠️ ${p} 安装后仍不在位，跳过回钉（版本号读不到）`);
+    continue;
+  }
+  const got = JSON.parse(readFileSync(pkgJson(p), 'utf8')).version;
   const major = want.replace(/[^\d.]/g, '').split('.')[0];
   if (got.split('.')[0] !== major) {
     console.log(`${p} 被顶到 ${got}，按声明 ${want} 回钉…`);
-    execFileSync('npm', ['install', '--no-audit', '--no-fund', '--no-save', `${p}@${want}`],
+    execFileSync('npm', ['install', ...NPM_FLAGS, '--no-save', `${p}@${want}`],
       { cwd: ROOT, stdio: 'inherit' });
   }
 }
-const still = Object.keys(all).filter((k) => !existsSync(join(ROOT, 'node_modules', k)));
+const still = Object.keys(all).filter((k) => !inPlace(k));
 
 // ⛔ 必须放在安装**之后**：npm 装完会顺手在 react-markdown 下再放一份 react，
 //    那份副本混进来 md 三套必崩（两份 react 的元素符号不同族）。
