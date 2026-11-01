@@ -488,6 +488,8 @@ export function normalizeStore(raw) {
     tagDefs: normalizeTagDefs(s.tagDefs),
     typeDefs: normalizeTypeDefs(s.typeDefs),
     groupDefs: normalizeGroupDefs(s.groupDefs),
+    /* 认领人定义表。与分组同构（id 就是名字） */
+    assigneeDefs: normalizeGroupDefs(s.assigneeDefs),
     /*
       流程配置（自定义状态与流转）。
       没配过 → normalizeFlow 给默认那套，行为与以前完全一致 ——
