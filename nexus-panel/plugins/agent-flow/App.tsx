@@ -256,9 +256,26 @@ function readThemeMode(): ThemeMode {
   } catch { return 'follow'; }
 }
 
-function applyThemeMode(mode: ThemeMode) {
+/**
+ * 应用外观模式，**并返回有没有记下来**。
+ *
+ * ⚠️ 旧的写法是 `try { setItem(...) } catch { /* 忽略 *\/ }` ——
+ *    写不进去（配额满、隐私模式、设置页是隔离 iframe 拿不到存储）时
+ *    异常被吞，而 `dataset.afMode` **已经改了**：下拉框显示「原生」、
+ *    画布当场就变，于是这一笔看着存下了，重启后悄悄回到「跟随面板」。
+ *
+ *    它属于整个插件的偏好，不是画布级设置 —— 重启后变回去，
+ *    用户只会以为这个功能不记事儿，然后一遍遍重选。
+ *    所以这里如实回答，由界面决定要不要说。
+ */
+function applyThemeMode(mode: ThemeMode): boolean {
   document.documentElement.dataset.afMode = mode;
-  try { localStorage.setItem(THEME_MODE_KEY, mode); } catch { /* 忽略 */ }
+  try {
+    localStorage.setItem(THEME_MODE_KEY, mode);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 
@@ -812,7 +829,14 @@ export default function App() {
   const [webhookSupported] = useState(() => canWebhook());
   // 外观：跟随面板主题 / 固定 Agent Flow 原生样式
   const [themeMode, setThemeMode] = useState<ThemeMode>(readThemeMode);
-  useEffect(() => applyThemeMode(themeMode), [themeMode]);
+  /*
+   * ⚠️ 不能写成 `useEffect(() => applyThemeMode(themeMode), [themeMode])`。
+   *    applyThemeMode 现在返回布尔值，而 useEffect 的返回值被 React 当成
+   *    **清理函数** —— 返回非 undefined 且非函数的值会触发警告，语义也走样。
+   *    所以这里必须用块体，把返回值收进 state。
+   */
+  const [themePersistOk, setThemePersistOk] = useState(true);
+  useEffect(() => { setThemePersistOk(applyThemeMode(themeMode)); }, [themeMode]);
 
   const seq = useRef(0);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -4000,6 +4024,7 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
                     activeCanvasId={activeId ?? undefined}
                     themeMode={themeMode}
                     onThemeModeChange={setThemeMode}
+                    themePersistFailed={!themePersistOk}
                   />
                 </fieldset>
               </div>

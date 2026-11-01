@@ -43,6 +43,8 @@ type Props = {
    */
   themeMode?: 'native' | 'follow';
   onThemeModeChange?: (mode: 'native' | 'follow') => void;
+  /** 这一项没能写入存储 —— 不说的话用户只会以为它不记事儿 */
+  themePersistFailed?: boolean;
   /* ---- MCP ---- */
   /**
    * 连接管理器里的 MCP 服务库。
@@ -73,7 +75,7 @@ function newServer(): McpServer {
 function CanvasConfigPanel({
   config, onChange, onExport, onNote,
   exportDir, onChangeExportDir, onBrowseExportDir, canExportToFile,
-  themeMode, onThemeModeChange,
+  themeMode, onThemeModeChange, themePersistFailed,
   mcpLibrary, onOpenMcpLibrary,
 }: Props) {
   const lib = mcpLibrary ?? [];
@@ -528,7 +530,11 @@ function CanvasConfigPanel({
         <button type="button" className="cfg-title" onClick={() => setOpenTheme(!openTheme)}>
           <span>{openTheme ? '▾' : '▸'}</span>
           外观
-          <em>{themeMode === 'follow' ? '跟随面板' : '原生'}</em>
+          <em>
+            {themeMode === 'follow' ? '跟随面板' : '原生'}
+            {/* 折叠时也要看得见 —— 下面那段提示收起后就没人读到了 */}
+            {themePersistFailed ? ' ⚠ 未记住' : ''}
+          </em>
         </button>
 
         {openTheme && (
@@ -545,6 +551,18 @@ function CanvasConfigPanel({
                 <option value="native">原生样式（固定深色）</option>
               </select>
             </div>
+            {/*
+              存不下时**必须**当场说清楚。
+
+              下拉框已经切过去了、画布也当场变了，界面上没有任何"没存下"的线索 ——
+              用户只会在重启后发现它变回去了，然后归因成"这功能不记事儿"，一遍遍重选。
+
+              措辞用「没能记住」而不是「切换失败」：切换**确实生效了**，
+              说失败会让人以为刚才那一下没起作用，于是再点一次 —— 而再点一次同样存不下。
+            */}
+            {themePersistFailed ? (
+              <p className="cfg-hint">⚠ 没能记住 —— 重启后会回到「跟随面板」。</p>
+            ) : null}
             {/*
               这两句是"这个功能是不是废了"的答案，必须写在当场。
 

@@ -65,6 +65,8 @@ type Props = {
   /* ---- 外观（插件级偏好，只在"没选中节点"的设置页里出现） ---- */
   themeMode?: 'native' | 'follow';
   onThemeModeChange?: (mode: 'native' | 'follow') => void;
+  /** 外观那一项没能记下来（写存储失败）—— 界面要据此说明，不能只显示已切换 */
+  themePersistFailed?: boolean;
   /* ---- MCP：连接管理器里的服务库 ---- */
   /**
    * 服务库（全局）。画布设置里挑「这张画布用哪几个」时用它做下拉选项。
@@ -90,7 +92,7 @@ export default function Inspector({
   canvasConfig, onCanvasConfigChange, onExportFlow,
   exportDir = '', onChangeExportDir, onBrowseExportDir, canExportToFile = false,
   canvases, activeCanvasId,
-  themeMode, onThemeModeChange,
+  themeMode, onThemeModeChange, themePersistFailed,
   mcpLibrary, onOpenMcpLibrary,
   nodes,
 }: Props) {
@@ -115,6 +117,7 @@ export default function Inspector({
             canExportToFile={canExportToFile}
             themeMode={themeMode}
             onThemeModeChange={onThemeModeChange}
+            themePersistFailed={themePersistFailed}
             /*
              * 这两个必须透传 ——
              * 画布设置页若拿不到服务库，MCP 那一节就只剩手填框，
