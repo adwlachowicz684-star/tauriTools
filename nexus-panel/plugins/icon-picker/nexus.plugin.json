@@ -1,0 +1,9 @@
+{
+  "id": "icon-picker",
+  "name": "图标选择",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "service",
+  "icon": "🖼",
+  "description": "内置 122 个预设图标的浏览与选择"
+}
