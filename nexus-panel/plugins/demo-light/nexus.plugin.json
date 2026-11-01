@@ -1,0 +1,9 @@
+{
+  "id": "demo-light",
+  "name": "示例·订单面板",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "app",
+  "icon": "☀",
+  "description": "第三方面板风格的数据页，配色走外壳主题变量"
+}
