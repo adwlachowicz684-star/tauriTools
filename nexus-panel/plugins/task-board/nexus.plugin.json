@@ -1,0 +1,9 @@
+{
+  "id": "task-board",
+  "name": "任务管理器",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "app",
+  "icon": "▦",
+  "description": "多窗口协作任务看板（AI / 人工 / agent-flow 共用一份 tasks.json）"
+}
