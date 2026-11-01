@@ -1,0 +1,9 @@
+{
+  "id": "md-editor",
+  "name": "Markdown 编辑",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "service",
+  "icon": "📝",
+  "description": "左编辑右预览的 md 编辑器，返回编辑后的文本"
+}
