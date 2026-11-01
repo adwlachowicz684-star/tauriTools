@@ -25,6 +25,18 @@ export const SECRET_PATHS = ['token', 'llm.apiKey', 'config.token'] as const;
 export const SECRET_NAME_HINTS = [
   'token', 'secret', 'password', 'passwd', 'apikey', 'api_key', 'accesskey',
   /*
+   * privatekey / passphrase：SSH 私钥与它的解锁口令。
+   * 名字里既没有 token 也没有 key 的完整词（'key' 见下面为什么不能加），
+   * 漏了就是一把能直接登录机器的私钥以明文躺进存档。
+   * 用**完整词**而不是 'key'：'keyword' / 'keyColor' / 'keyboard' 都是普通字段。
+   *
+   * ⛔ 为什么不加 'auth'：github 节点里有真实的 `author` 字段（提交/PR 作者），
+   *    'auth' 会把它剥掉 —— 那是"用户白填一次"且看不出为什么。
+   *    真叫 authorization 的字段目前没有；等有了再说，别提前误伤。
+   * ⛔ 为什么不加 'credential'：会剥掉 credentialId（引用凭据的 id，不是密钥）。
+   */
+  'privatekey', 'passphrase',
+  /*
    * cookie：B站的 biliCookie 是**整条会话凭据**（用来绕过风控），
    * 含金量不低于一个 token。而它的名字里不带 token / key 字样 ——
    * 不加这一条，检测更新节点的 Cookie 就明文进存档、进导出的画布文件。
@@ -76,6 +88,24 @@ export function blankSecretNamed(data: unknown): unknown {
     if (typeof v === 'string' && v !== '' && looksLikeSecretName(k)) {
       if (!out) out = { ...src };
       out[k] = '';
+      continue;
+    }
+    /*
+     * 名字像密钥的**数组**：里面每个字符串元素都是密钥本身。
+     *
+     * 为什么必须单独一支：下面的对象递归对数组走 Object.entries，
+     * 拿到的 key 是 '0' / '1' 这种下标 —— 下标当然不像密钥名，
+     * 于是 `tokens: ['sk-a', 'sk-b']` 会被整份留下，
+     * 而函数头那句注释还写着「嵌套对象与数组都进」—— 注释是假的。
+     * （entries[].config.token 那种是**对象**数组，靠递归兜住了；
+     *   裸字符串数组兜不住。）
+     */
+    if (Array.isArray(v) && looksLikeSecretName(k)) {
+      const arr = v.map((x) => (typeof x === 'string' && x !== '' ? '' : x));
+      if (arr.some((x, i) => x !== v[i])) {
+        if (!out) out = { ...src };
+        out[k] = arr;
+      }
       continue;
     }
     if (v && typeof v === 'object') {

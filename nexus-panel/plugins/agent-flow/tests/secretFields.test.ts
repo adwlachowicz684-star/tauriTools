@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   SECRET_PATHS, stripSecrets, hadInlineSecret,
   redactHeadersText, headersHaveSecret, looksLikeSecretHeader, isTemplateOnlyHeaderValue,
+  blankSecretNamed, looksLikeSecretName,
 } from '../engine/sanitize';
 import { parseHeaders } from '../engine/headers';
 import { redactNodes } from '../engine/canvasStore';
@@ -468,5 +469,113 @@ test('源码守卫: 请求头 hint 是独立一份，不并进参数名判据', 
   const nameBody = src.slice(atName, atName + 900);
   for (const bad of ["'session'", "'credential'", "'signature'"]) {
     assert.ok(!nameBody.includes(bad), `SECRET_NAME_HINTS 里出现了 ${bad} —— 会剥掉普通参数字段`);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* 穷举：真实字段里有没有漏认的凭据                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ⛔ 为什么穷举 types.ts 而不是喂固定样例：
+ * 样例只能证明"喂进去的那几个是对的"。而真正会漏的是**将来新增**的字段 ——
+ * 新增一个 `sshKey`，样例里没有它，于是没人发现它的值明文进了存档。
+ *
+ * 所以这份守卫从**真实字段声明**里抓名字，宽判一遍候选，
+ * 凡是像凭据却判不出来的就红。豁免必须显式列出并写清理由，
+ * 这样新增字段要么被认出（它是真密钥），要么被显式豁免（并说明为什么不是）。
+ */
+test('穷举: types.ts 里像凭据的字段必须被认出来（或显式豁免）', () => {
+  const src = readSrc('types.ts');
+  const names = new Set<string>();
+  for (const m of src.matchAll(/^\s{2,4}([a-zA-Z_$][a-zA-Z0-9_]*)\??\s*:\s*(?:string|number|boolean|any|unknown)\b/gm)) {
+    names.add(m[1]);
+  }
+  assert.ok(names.size > 50, `只抓到 ${names.size} 个字段名 —— 正则或 AF_SRC 不对`);
+
+  /* 宽判：宁可多抓一个候选让人来判，也不要漏 */
+  const CAND = /pass|phrase|secret|cred|private|ssh|auth|bearer|sign|cert|token|key|cookie|pat|pwd|perm|access|session|licen|salt|hash|nonce|otp/;
+  /*
+   * 显式豁免 —— 每个都必须写清为什么它不是密钥。
+   * 加豁免比加 hint 危险得多：豁免写错了就是明文泄露，所以理由要站得住。
+   */
+  const EXEMPT: Record<string, string> = {
+    chatKeywords: '聊天匹配关键词，是"要匹配什么"，不是凭据',
+    manualPaths: '手填的文件路径清单',
+    path: '路径',
+    pattern: '匹配模式（正则/通配符）',
+    relaySession: '中转会话名，不是会话凭据本身',
+    credentialId: '凭据库里的**引用 id**，不是密钥（值是个 id 字符串）',
+  };
+  const missed: string[] = [];
+  for (const n of [...names].sort()) {
+    if (!CAND.test(n.toLowerCase())) continue;
+    if (looksLikeSecretName(n)) continue;
+    if (Object.prototype.hasOwnProperty.call(EXEMPT, n)) continue;
+    missed.push(n);
+  }
+  assert.deepEqual(missed, [],
+    `这些字段像凭据却判不出来 —— 它们的值会明文进存档：${missed.join(', ')}`);
+
+  /* 豁免必须仍然有效：写进豁免的字段不能哪天被误加进 hint */
+  for (const n of Object.keys(EXEMPT)) {
+    assert.equal(looksLikeSecretName(n), false,
+      `豁免项 ${n} 现在会被判成密钥 —— 要么它不是密钥（改判据），要么它本来就是（删豁免）`);
+  }
+});
+
+/*
+ * 反例：豁免清单不能靠"加宽判据"糊过去。
+ * 只盯"漏认要红"的话，往 hints 里塞一个裸 'key' / 'auth' 就能全绿，
+ * 而下面这些**真实存在**的普通字段会被一起剥掉。
+ */
+test('穷举: 真实存在的普通字段不能被误剥（反例）', () => {
+  const plain: Array<[string, string]> = [
+    ['author', 'github 节点里的提交/PR 作者名 —— 加裸 auth 就没了'],
+    ['keyword', '关键词 —— 加裸 key 就没了'],
+    ['credentialId', '引用 id —— 加 credential 就没了'],
+    ['sessionId', '会话 id —— 加 session 就没了'],
+    ['path', '路径'],
+    ['pattern', '匹配模式'],
+  ];
+  for (const [n, why] of plain) {
+    assert.equal(looksLikeSecretName(n), false, `${n} 被误判成密钥：${why}`);
+  }
+  /* 数字字段即便名字含 token 也不动（blankSecretNamed 只认字符串叶子） */
+  assert.equal(blankSecretNamed({ maxTokens: 4096 }).maxTokens, 4096, 'maxTokens 是数字，不能剥');
+  assert.equal(blankSecretNamed({ tokenCount: 3 }).tokenCount, 3, 'tokenCount 是数字，不能剥');
+});
+
+/* ------------------------------------------------------------------ */
+/* 裸字符串数组 —— 函数头注释宣称"数组都进"，实测兜不住                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ⛔ `tokens: ['sk-a', 'sk-b']`：数组元素没有字段名，
+ * 而递归走 Object.entries 拿到的 key 是 '0' / '1' —— 下标当然不像密钥名。
+ * 于是整份留下，而 blankSecretNamed 的注释写着「嵌套对象与数组都进」。
+ * （entries[].config.token 那种是对象数组，靠递归兜住了；裸字符串数组兜不住。）
+ */
+test('数组: 名字像密钥的数组，元素必须挖空', () => {
+  const out = blankSecretNamed({ tokens: ['sk-a', 'sk-b'] }) as Record<string, unknown>;
+  assert.deepEqual(out.tokens, ['', ''], 'tokens 数组里的明文令牌必须挖空');
+  const out2 = blankSecretNamed({ secrets: ['a', 'b'] }) as Record<string, unknown>;
+  assert.deepEqual(out2.secrets, ['', ''], 'secrets 数组同理');
+});
+
+/* 反例：普通数组不能被剥 —— 只盯"密钥数组要挖"的话，无差别清空也能通过 */
+test('数组: 普通数组不能被剥（反例）', () => {
+  const d = { tags: ['a', 'b'], paths: ['/x', '/y'], ids: [1, 2, 3] };
+  assert.deepEqual(blankSecretNamed(d), d, '普通数组不该被动');
+});
+
+/* 私钥与口令：名字里没有 token / key 的完整词 */
+test('hint: privateKey / passphrase 必须认得（名字里没有 token/key）', () => {
+  for (const n of ['privateKey', 'private_key', 'PRIVATE-KEY', 'passphrase', 'passPhrase', 'secretKey', 'accessKeyId']) {
+    assert.equal(looksLikeSecretName(n), true, `${n} 是凭据，漏了就是明文进存档`);
+  }
+  /* 用完整词，所以这些带 key 的普通字段安全 */
+  for (const n of ['keyword', 'keyColor', 'keyboard', 'donkey', 'monkey']) {
+    assert.equal(looksLikeSecretName(n), false, `${n} 是普通字段`);
   }
 });
