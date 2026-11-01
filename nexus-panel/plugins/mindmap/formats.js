@@ -251,7 +251,18 @@ export function skipYamlFrontmatter(lines) {
  * ⓘ 什么时候必须用这个：导出节点文字时首尾是用户真正写进去的内容
  * （粘贴带入、刻意对齐），trim 掉就是静默改内容（BUG 173）。
  */
-export const inlineTextKeepEdges = (v) => String(v ?? '').replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ');
+/*
+ * BUG 191：换行类字符的判据抽成一份常量。
+ *
+ * 写侧用下面这个替换把换行并成空格（这些是**单行格式**——OPML 的 `text`
+ * 属性、FreeMind 的 `TEXT`、Markdown 的 `#` 标题、Mermaid / PlantUML 的
+ * 一行一个节点，都装不下真换行）。而**交换格式的丢失统计要数"有几个节点
+ * 的文字里含换行"**，用的是同一批字符 —— 各写一份正则必然对不上（本项目
+ * 反复撞的模式），所以这里和 LINE_BREAK_ONLY 是同一处定义。
+ */
+export const LINE_BREAK_ONLY = /[\r\n\u2028\u2029]/;
+export const inlineTextKeepEdges = (v) => String(v ?? '')
+  .replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ');
 
 /**
  * 节点文字规范化：换行类字符及其前后空白 → 单个空格，并 trim。
@@ -2159,6 +2170,8 @@ export function exchangeLoss(content, kind, sheet) {
     boundary: 0, markers: 0, relationships: 0, nodes: 0,
     // BUG 152：概要 / 标注（BUG 141 / 143 才收的 XMind 数据）
     summary: 0, callout: 0,
+    // BUG 191：节点文字里的换行（写侧一律并成空格，见 nodeText / inlineText）
+    newline: 0,
     // BUG 181：画布自己的主题与布局（画布级，不计进 nodes，见函数末尾）
     theme: 0, layout: 0 };
   const km = parseKm(content);
@@ -2171,6 +2184,32 @@ export function exchangeLoss(content, kind, sheet) {
   };
   walkKm(km.root, (n) => {
     const d = n?.data || {};
+    /*
+     * BUG 191：节点文字里的**换行**同样是一概装不下的。
+     *
+     * 写侧（nodeText / inlineText 那条路）把 `\r` `\n` `U+2028` `U+2029`
+     * 连同两侧空白并成一个空格 —— 单行格式装不下真换行，这是对的。
+     * 但**丢的时候一句都不说**：实测 `第一行\n第二行` 导出 .opml / .mm /
+     * .md / .mmd / .puml，五种产物里全是「第一行 第二行」，而 exchangeLoss
+     * 五份全报 0、`hasExchangeLoss` 为 false → 提示整段不出现，界面只说
+     * 「已保存」。
+     *
+     * 而 XMind 那边**保得住**（实测 writeXMind → readXMind 往返文字仍是
+     * `第一行\n第二行`），所以这不是"格式固有、谁都没办法"，是这五种格式
+     * 独有的损失 —— 与 BUG 116（Markdown 装不下备注）/ BUG 119（图片）
+     * 同一类：数据收进来了，丢失统计没同步。
+     *
+     * 触发很常见：从 Excel / 网页粘贴一段多行文字进节点，或在节点里用
+     * Shift+Enter 换行；导出 .opml / .md 当备份 —— 导入是整体替换且不可
+     * 撤销，等导回来发现换行没了已经晚了。
+     *
+     * ⓘ 判据与写侧同一批字符（LINE_BREAK_ONLY），不另写一份正则。
+     * ⓘ 只有文字本身的换行才算；`data.text` 里的 `<br>` 是 XMind 之外的
+     *   另一套写法，交换格式原样带得走，不算丢。
+     * ⓘ 空文字不算：它本来就回落成占位文案，与换行无关。
+     */
+    const rawText = String(d.text ?? '');
+    if (rawText.trim() && LINE_BREAK_ONLY.test(rawText)) bump(n, 'newline');
     if (!keep.note && String(d.note || '').trim()) bump(n, 'note');
     if (!keep.hyperlink && String(d.hyperlink || '').trim()) bump(n, 'hyperlink');
     const pri = Number(d.priority);
@@ -2268,6 +2307,8 @@ const LOSS_KEYS = ['note', 'hyperlink', 'priority', 'progress', 'labels',
   'collapsed', 'style', 'image', 'attachment', 'boundary', 'markers',
   // BUG 152：概要 / 标注也要跨画布累加（不然 Markdown 那句提示数不到）
   'relationships', 'nodes', 'summary', 'callout',
+  // BUG 191：文字里的换行是节点级，同样要跨画布累加
+  'newline',
   // BUG 181：主题 / 布局是**画布级**，多画布导出时逐张相加 = 有几张非默认
   'theme', 'layout'];
 

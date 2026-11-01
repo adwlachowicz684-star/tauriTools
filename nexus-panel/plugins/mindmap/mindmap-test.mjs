@@ -18683,7 +18683,11 @@ group('BUG 122 · XMind 关系线必须保留并写回');
     // 锚在 `const warns =` 上也顺带避开函数定义里的同名串。
     const wi = isrc.indexOf('const warns =');
     const wblock = wi < 0 ? '' : isrc.slice(wi, wi + 300);
-    ok(/unsupportedRelationshipsTip\(sheets\)/.test(wblock),
+    // ⓘ 早先这里钉的是 `unsupportedRelationshipsTip(sheets)` 直接出现在
+    //   warns 数组里。BUG 190 把五元数组抽成 `unsupportedTips()` 聚合入口后
+    //   那个字面量没了 —— 想守的事没变（关系线提示必须接进导入回执），
+    //   改的是写法，所以改成钉**聚合入口**而不是放宽成两种都认。
+    ok(/unsupportedTips\(/.test(wblock),
       '★ 关系线提示必须接进导入提示（否则用户只会看到"关系线没了"）', wblock.slice(0, 120));
   }
 }
@@ -19220,7 +19224,7 @@ group('BUG 127 · FreeMind 的 <font> / <icon> / <cloud> 双向');
       .filter((l) => !/^\s*function unsupportedFmExtrasTip\b/.test(l)).join('\n');
     const uses = (body.match(/unsupportedFmExtrasTip\(/g) || []).length;
     eq(uses, 1, '★ 导入回执里真的调用了它（不是只定义）—— 实测 ' + uses + ' 处');
-    ok(/warnForeignAssets\(sheets\)[\s\S]{0,240}unsupportedFmExtrasTip\(sheets\)/.test(code),
+    ok(/warnForeignAssets\(sheets\)[\s\S]{0,240}unsupportedTips\(sheets\)/.test(code),
       '★ 提示接进了 warns（自己 status 会把「已导入」那句盖掉）');
     ok(/导出 \.mm 时会写回/.test(code), '★ 措辞里写回的是 .mm，不是 .xmind');
   }
@@ -23900,6 +23904,107 @@ group('BUG 184 · 画布主题 / 布局丢失必须让提示真的出现');
     const { res } = await zenRt(d, BYTE);
     eq(res.length, 3, '（已知取舍）被挤掉的附件字节仍会打进包 —— 锁住当前行为',
       JSON.stringify(res));
+  }
+}
+
+/* ============================================================
+   BUG 191：节点文字里的换行，交换格式静默并成空格、且不提示
+
+   写侧（nodeText / inlineText 那条路）把 \r \n U+2028 U+2029 连同两侧
+   空白并成一个空格 —— 单行格式装不下真换行，这是对的。但**丢了不说话**：
+   实测 `第一行\n第二行` 导出 .opml / .mm / .md / .mmd / .puml，五种产物
+   全是「第一行 第二行」，而 exchangeLoss 五份全报 0、hasExchangeLoss 为
+   false → 提示整段不出现，界面只说「已保存」。
+
+   而 XMind **保得住**（往返后文字仍是 `第一行\n第二行`）—— 所以这不是
+   「格式固有、谁都没办法」，是这五种格式独有的损失。与 BUG 116（Markdown
+   装不下备注）/ BUG 119（图片）同一类：数据收进来了，丢失统计没同步。
+
+   触发很常见：从 Excel / 网页粘贴一段多行文字进节点，或在节点里用
+   Shift+Enter 换行；导出 .opml / .md 当备份 —— 导入是整体替换且不可撤销。
+   ============================================================ */
+group('BUG 191 · 节点文字里的换行：交换格式丢了必须说');
+{
+  const fmt2 = await import('./formats.js');
+  const wb2 = await import('./workbook.js');
+  const mk = (text) => JSON.stringify({ root: { data: { id: 'r', text },
+    children: [{ data: { id: 'c1', text: '子' } }] } });
+  const NL = '第一行\n第二行';
+  const KINDS = ['freemind', 'opml', 'mermaid', 'plantuml', 'markdown'];
+
+  // ① 修复前的事实：五种格式都丢，而统计全报 0
+  {
+    for (const k of KINDS) {
+      const l = fmt2.exchangeLoss(mk(NL), k, null);
+      eq(l.newline, 1, `★ ${k}：文字里的换行被数到了`);
+      ok(l.nodes > 0, `★ ${k}：进 nodes（提示才会出现）`);
+      eq(fmt2.hasExchangeLoss(l), true, `★ ${k}：hasExchangeLoss 为真`);
+    }
+  }
+
+  // ② 五种格式**真的**并成空格 —— 这是统计要报的那个事实，不是猜的
+  {
+    const back = {
+      opml: JSON.parse(fmt2.fromOpml(fmt2.toOpml(mk(NL), '脑图'))).root.data.text,
+      freemind: JSON.parse(fmt2.parseFreemind(fmt2.toFreemind(mk(NL))).content).root.data.text,
+      mermaid: JSON.parse(fmt2.fromMermaid(fmt2.toMermaid(mk(NL)))).root.data.text,
+      plantuml: JSON.parse(fmt2.fromPlantUml(fmt2.toPlantUml(mk(NL)))).root.data.text,
+      markdown: JSON.parse(wb2.markdownToSheet(wb2.sheetToMarkdown(mk(NL)))).root.data.text,
+    };
+    for (const [k, t] of Object.entries(back)) {
+      eq(t, '第一行 第二行', `★ ${k} 导回后换行真的没了`);
+    }
+  }
+
+  // ③ XMind 保得住 —— 所以这不是「格式固有」，是这五种独有的损失
+  {
+    const X9 = await import('./xmind.js');
+    const blob = await X9.writeXMind([{ id: 's1', title: '甲', theme: null, layout: null,
+      content: mk(NL) }], 's1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const r9 = await X9.readXMind(buf);
+    eq(JSON.parse(r9.sheets[0].content).root.data.text, NL,
+      '★ XMind 往返保住换行（所以交换格式丢了必须提示）');
+  }
+
+  // ④ 反向边界：干净文字一律不报 —— 否则每次导出都冒一句没意义的提示
+  {
+    eq(fmt2.exchangeLoss(mk('普通文字'), 'opml', null).newline, 0, '★ 无换行不报');
+    eq(fmt2.exchangeLoss(mk(''), 'opml', null).newline, 0, '★ 空文字不报');
+    eq(fmt2.exchangeLoss(mk('   \n  '), 'opml', null).newline, 0,
+      '★ 全空白（含换行）不报 —— 它本来就是占位，与换行无关');
+    eq(fmt2.exchangeLoss(mk('第一行<br>第二行'), 'opml', null).newline, 0,
+      '★ `<br>` 不算换行（交换格式原样带得走，不是丢）');
+  }
+
+  // ⑤ 四种换行类字符都要认（写侧并的是同一批）
+  {
+    for (const br of ['\r', '\n', '\u2028', '\u2029', '\r\n']) {
+      eq(fmt2.exchangeLoss(mk(`甲${br}乙`), 'opml', null).newline, 1,
+        `★ ${JSON.stringify(br)} 也算换行丢失`);
+    }
+  }
+
+  // ⑥ 跨画布累加（Markdown 导出的是整本工作簿）
+  {
+    eq(fmt2.exchangeLossAll([{ id: 's1', content: mk(NL) },
+      { id: 's2', content: mk(NL) }], 'markdown').newline, 2,
+      '★ 两张各一处 → 合计 2（LOSS_KEYS 带 newline）');
+  }
+
+  // ⑦ 源码契约：两处提示表都要有这一项，判据只有一份
+  {
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const at = [];
+    for (let k = code.indexOf('const NAME = {'); k >= 0;
+      k = code.indexOf('const NAME = {', k + 1)) at.push(k);
+    ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
+    at.forEach((p, i) => ok(/newline: '节点文字内的换行'/.test(code.slice(p, p + 500)),
+      `★ 第 ${i + 1} 张提示表带上换行这一项`, code.slice(p, p + 90)));
+    const f2 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/LINE_BREAK_ONLY/.test(f2), '★ 判据抽成常量（写侧与统计同一批字符）');
+    ok(/newline: 0/.test(f2), '★ exchangeLoss 的 out 里有 newline 这一项');
+    ok(/'newline',/.test(f2), '★ LOSS_KEYS 带 newline（跨画布累加）');
   }
 }
 
