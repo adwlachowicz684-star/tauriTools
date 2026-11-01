@@ -1,0 +1,9 @@
+{
+  "id": "demo-service",
+  "name": "示例·取色服务",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "service",
+  "icon": "🎨",
+  "description": "示例服务插件：不进侧边栏，由其它插件通过 ctx.services.call 调用"
+}
