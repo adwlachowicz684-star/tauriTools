@@ -25,6 +25,13 @@ import { createModuleContext, BRIDGE_CHANNEL } from './plugin-sdk.js';
 import { loadModuleEntry } from './plugin-entries.js';
 import { getPluginConfig } from './plugin-config.js';
 import * as pluginConfig from './plugin-config.js';
+/* 插件存储键：与 js/plugin-sdk.js 那份**必须是同一套**。
+   两种挂载模式落到同一份 localStorage，键名岔开就是"这边存那边读不到"，
+   且不报错 —— 详见该文件头部。 */
+import { storeKey, storePrefix, pluginCfgKey } from './plugin-store.js';
+/* 快捷键匹配：与插件侧共用一份判据（此前宿主这份不认 F5/esc/space/'?'，
+   插件声明了这些键会注册成功却永不触发）。详见该文件头部。 */
+import { accelMatches } from './accel.js';
 import * as extPolicy from './external-policy.js';
 import {
   initTheme, exportVars, exportVarsFor, findTheme,
@@ -1455,17 +1462,17 @@ export function createHost(opts = {}) {
         case 'listen':
           return reply(false, null, 'iframe 模式不支持 listenTauri，请使用 ctx.on / ctx.emit');
         case 'store.get': {
-          const raw = localStorage.getItem(`nexus:${manifest.id}:${payload.k}`);
+          const raw = localStorage.getItem(storeKey(manifest.id, payload.k));
           if (raw == null) return reply(true, payload.def);
           // 存储可能被外部改写、或跨版本格式变了。单个键读不出就退默认值，
           // 不该让一次读取把插件整体带崩。
           try { return reply(true, JSON.parse(raw)); } catch { return reply(true, payload.def); }
         }
         case 'store.set':
-          localStorage.setItem(`nexus:${manifest.id}:${payload.k}`, JSON.stringify(payload.v));
+          localStorage.setItem(storeKey(manifest.id, payload.k), JSON.stringify(payload.v));
           return reply(true, true);
         case 'store.del':
-          localStorage.removeItem(`nexus:${manifest.id}:${payload.k}`);
+          localStorage.removeItem(storeKey(manifest.id, payload.k));
           return reply(true, true);
         /* 服务调用：沙箱插件 → 宿主 → 服务 iframe。
            宿主居中转发是必要的：服务跑在自己的沙箱里，调用方拿不到它的
@@ -1496,7 +1503,7 @@ export function createHost(opts = {}) {
         case 'fs.release':
           return reply(true, releasePath(manifest.id, payload.path));
         case 'store.all': {
-          const out = {}, pre = `nexus:${manifest.id}:`;
+          const out = {}, pre = storePrefix(manifest.id);
           // 逐键 try：一个键坏掉不该让整份配置拿不到（此前会整体抛错）
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
@@ -1574,32 +1581,15 @@ export function createHost(opts = {}) {
   /** key: keyOf(pluginId, accel) */
   const appShortcuts = new Map();
 
-  function accelMatches(e, accel) {
-    // accel 形如 'Ctrl+Shift+1' / 'Alt+K' / 'Cmd+K'
-    const parts = String(accel).toLowerCase().split('+').map((x) => x.trim());
-    const key = parts.pop();
-    const need = { ctrl: false, shift: false, alt: false, meta: false };
-    for (const p of parts) {
-      if (p === 'ctrl' || p === 'control') need.ctrl = true;
-      else if (p === 'shift') need.shift = true;
-      else if (p === 'alt' || p === 'option') need.alt = true;
-      else if (p === 'meta' || p === 'cmd' || p === 'command' || p === 'mod') need.meta = true;
-    }
-    // 'mod' 在 macOS 映射 ⌘，其它平台映射 Ctrl
-    if (parts.includes('mod')) {
-      const mac = /mac|iphone|ipad/i.test(navigator.userAgent || '');
-      need.meta = mac; need.ctrl = !mac;
-    }
-    if (need.ctrl !== e.ctrlKey) return false;
-    if (need.shift !== e.shiftKey) return false;
-    if (need.alt !== e.altKey) return false;
-    if (need.meta !== e.metaKey) return false;
-    // 数字键：同时兼容主键盘与数字小键盘
-    const k = (e.key || '').toLowerCase();
-    if (/^[0-9]$/.test(key)) return k === key || e.code === `Digit${key}` || e.code === `Numpad${key}`;
-    return k === key;
-  }
-
+  /*
+   * accelMatches 现在来自 js/accel.js（与插件侧同一份）。
+   *
+   * 此前这里有一份独立的：认小键盘数字，但不认 F5 / esc / space / '?'。
+   * 于是插件声明 Ctrl+F5 这种键时**注册成功、永不触发、不报错** ——
+   * 用户会以为自己按错了，不会想到是宿主这份解析器不认这个键名。
+   *
+   * 反过来插件侧那份不认 Numpad，所以两份都不能单独留下。
+   */
   function registerAppShortcut(pluginId, accel, event, label = '') {
     const k = keyOf(pluginId, accel);
     if (appShortcuts.has(k)) window.removeEventListener('keydown', appShortcuts.get(k).fn);
@@ -1943,8 +1933,8 @@ function purgePluginStorage(id) {
   const pid = String(id || '').trim();
   if (!pid) return;
   try {
-    const storePre = `nexus:${pid}:`;
-    const cfgKey = `nexus:plugin-cfg:${pid}`;
+    const storePre = storePrefix(pid);
+    const cfgKey = pluginCfgKey(pid);
     const doomed = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const k = localStorage.key(i);
