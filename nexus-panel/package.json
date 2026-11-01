@@ -110,6 +110,7 @@
     "test:pg-backup-report-truth": "node plugins/project-group/backup-report-truth-test.mjs",
     "test:plugin-admit": "node plugin-admit-test.mjs",
     "test:plugin-config-save": "node plugin-config-save-test.mjs",
+    "test:plugin-data-policy": "node plugin-data-policy-test.mjs",
     "test:plugin-installer": "node plugin-installer-test.mjs",
     "test:plugin-identity": "node plugin-identity-test.mjs",
     "test:plugin-panel-actions": "node plugin-panel-actions-test.mjs",
