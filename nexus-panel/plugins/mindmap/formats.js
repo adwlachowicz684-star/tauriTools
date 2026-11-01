@@ -1928,15 +1928,46 @@ export function baseTitle(name, fallback = '导入的脑图') {
 
 /** 各格式的显示名与扩展名，供 UI 与提示复用 */
 /**
- * 节点自定义样式的 data 键 —— 与 xmind.js 的 `StyleMap` 对齐，另加内核用的
- * 三个字重/字形键。交换格式（.mm / .opml / .mmd / .puml）**一律不带样式**，
- * 这里只用来数「有多少节点设了样式」，好让导出时说清楚丢了什么。
+ * 节点 data 键的**单一能力矩阵**（BUG 187）。
+ *
+ * 早先是 xmind.js 手写一份 `StyleMap`、formats.js 再手写一份 `NODE_STYLE_KEYS`、
+ * buildStyle / applyStyle 对粗体 / 斜体 / 删除线 / 下划线再手写三段 —— 四处各
+ * 写一遍，新增一个样式键要改四处，漏一处就是「数据收进来了、某条路没带上」
+ * 的静默丢失（这个洞重演了 8 次：BUG 123 / 127 / 135 / 152 / 180 / 181 /
+ * 182 / 186）。现在这里是唯一来源，其余全部派生。
+ *
+ * 字段含义：
+ *   bucket    'style' = 自定义样式键（`NODE_STYLE_KEYS` 就是这一类）
+ *   xmind     该键在 XMind 里的属性名；**不给**表示不走简单的一对一映射，
+ *             由 buildStyle / applyStyle 专门处理（见下）
+ *   px        true = XMind 里这个值带 px 单位（其余原样，font-size 走 pt）
+ *   xmindBold / xmindItalic / xmindDeco
+ *             字重 / 斜体 / 删除线+下划线：它们不是一对一映射 —— 字重要归一化，
+ *             删除线与下划线还挤在同一个 `fo:text-decoration` 里，只能专门处理。
  */
-const NODE_STYLE_KEYS = [
-  'background', 'node-stroke', 'node-stroke-width', 'node-radius',
-  'node-line-stroke', 'node-line-width', 'color', 'font-size',
-  'font-family', 'text-align', 'vertical-align',
-  'font-weight', 'font-style', 'font-strikethrough',
+export const NODE_DATA_KEYS = {
+  background: { bucket: 'style', xmind: 'svg:fill' },
+  'node-stroke': { bucket: 'style', xmind: 'svg:stroke' },
+  'node-stroke-width': { bucket: 'style', xmind: 'svg:stroke-width', px: true },
+  'node-radius': { bucket: 'style', xmind: 'svg:corner-radius', px: true },
+  'node-line-stroke': { bucket: 'style', xmind: 'line-color' },
+  'node-line-width': { bucket: 'style', xmind: 'line-width', px: true },
+  color: { bucket: 'style', xmind: 'fo:color' },
+  'font-size': { bucket: 'style', xmind: 'fo:font-size' },
+  'font-family': { bucket: 'style', xmind: 'fo:font-family' },
+  'text-align': { bucket: 'style', xmind: 'fo:text-align' },
+
+  /*
+   * 垂直对齐 XMind **没有**对应的标准属性（它的节点文字固定居中）。
+   * 走私有键保住本工具的往返，避免「设了垂直：下 → 导出再导入 → 变回居中」。
+   * 私有键只在真的设了值时才写，别的软件忽略未知键，无害。
+   */
+  'vertical-align': { bucket: 'style', xmind: 'nexusValign' },
+
+  'font-weight': { bucket: 'style', xmindBold: true },
+  'font-style': { bucket: 'style', xmindItalic: true },
+  'font-strikethrough': { bucket: 'style', xmindDeco: true },
+
   /*
    * BUG 180：下划线（`data.underline`）。
    *
@@ -1946,12 +1977,21 @@ const NODE_STYLE_KEYS = [
    * NAME/SIZE/BOLD/ITALIC，OPML 只有 text/_note，Mermaid / PlantUML /
    * Markdown 更没有。实测产物里连 "underline" 字样都没有。
    *
-   * 而它不在这个数组里 → `exchangeLoss` 报 style:0 / nodes:0 → 导出时
-   * 那句「装不下…」**整句不出现**，界面只说「已保存」。与 BUG 123 / 127 /
-   * 152 是同一个洞：数据收进来了，丢失统计没同步。
+   * 而它不在 `NODE_STYLE_KEYS` 里 → `exchangeLoss` 报 style:0 / nodes:0 →
+   * 导出时那句「装不下…」**整句不出现**，界面只说「已保存」。与 BUG 123 /
+   * 127 / 152 是同一个洞：数据收进来了，丢失统计没同步。
    */
-  'underline',
-];
+  underline: { bucket: 'style', xmindDeco: true },
+};
+
+/**
+ * 节点自定义样式的 data 键 —— 从上面的矩阵派生（`bucket === 'style'`）。
+ * 交换格式（.mm / .opml / .mmd / .puml）**一律不带样式**，这里只用来数
+ * 「有多少节点设了样式」，好让导出时说清楚丢了什么。
+ */
+export const NODE_STYLE_KEYS = Object.entries(NODE_DATA_KEYS)
+  .filter(([, def]) => def.bucket === 'style')
+  .map(([k]) => k);
 
 /**
  * 各交换格式**实际带得走**的字段（其余一概装不下）。

@@ -2934,7 +2934,8 @@ async function gcOrphanAssets(quiet = false) {
        */
       const lost = wanted - packed;
       const loss = xmind.xmindLossCount(workbook.sheets)
-        || { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0, theme: 0, layout: 0 };
+        || { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0,
+          theme: 0, layout: 0, valign: 0 };
       /*
        * BUG 135：FreeMind 的标记图标 / 外框（data.fmIcons / data.fmCloud，
        * BUG 127 起从别人的 .mm 收进来）在 XMind 里**没有对应字段** ——
@@ -2945,8 +2946,15 @@ async function gcOrphanAssets(quiet = false) {
        *   · 附件 / 图片  → XMind 每个节点只能挂 1 个
        *   · 图标 / 外框  → XMind 根本没有这两个概念（只有 .mm 带得走）
        */
+      /*
+       * BUG 186：垂直对齐（私有键 nexusValign）也要进总数 ——
+       * 少了它，一张「只设了对齐、没挂附件」的画布 lossTotal 是 0，
+       * 整段提示都不出现，界面只说「XMind 已导出」。
+       * ⓘ 用 `|| 0` 兜底：老快照里 xmindLossCount 可能不返回 valign，
+       *   直接相加会让 lossTotal 变成 NaN，提示照样不出现。
+       */
       const lossTotal = loss.blocked + loss.unlinked + loss.images
-        + loss.fmIcons + loss.fmCloud + loss.theme + loss.layout;
+        + loss.fmIcons + loss.fmCloud + loss.theme + loss.layout + (loss.valign || 0);
       if (lost > 0 || lossTotal > 0) {
         const seg = [];
         if (lost > 0) seg.push(`${lost} 个附件未能打包`);
@@ -2957,6 +2965,12 @@ async function gcOrphanAssets(quiet = false) {
         if (loss.fmCloud > 0) seg.push(`${loss.fmCloud} 个外框未能写入`);
         if (loss.theme > 0) seg.push(`${loss.theme} 张画布的主题未能写入`);
         if (loss.layout > 0) seg.push(`${loss.layout} 张画布的布局未能写入`);
+        /*
+         * BUG 186：垂直对齐走的是本工具的私有键 nexusValign（XMind 没有对应
+         * 的标准属性，节点文字在标准里固定居中）。别的 XMind 软件打开时那个
+         * 键被忽略 → 文字回居中，用户设的「靠上 / 靠下」看不见。
+         */
+        if (loss.valign > 0) seg.push(`${loss.valign} 个节点的垂直对齐未能写入`);
         const why = [];
         if (lost + loss.blocked + loss.unlinked + loss.images > 0) {
           why.push('XMind 每个节点只能挂 1 个附件、1 张图片');
@@ -2971,6 +2985,12 @@ async function gcOrphanAssets(quiet = false) {
          */
         if (loss.theme > 0) why.push('XMind 的主题是另一套体系，画布主题只有本工具认得');
         if (loss.layout > 0) why.push('该布局没有对应的 XMind 结构类，会回退成思维导图');
+        /*
+         * 原因必须自成一档：它是"私有键别人不认"，不是"节点数据丢了"，
+         * 也不是"别的软件打开时画布外观回退"。混进上面任何一句，用户都会
+         * 以为节点内容被改坏了 —— 实际内容一字未动，只是对齐回居中。
+         */
+        if (loss.valign > 0) why.push('垂直对齐是本工具的私有属性，别的 XMind 软件打开会回居中');
         status(`XMind 已导出，但有 ${seg.join('、')}（${why.join('；')}）`, true);
       } else if (packed > 0) status(`XMind 已导出（含 ${packed} 个附件）`);
     } catch (e) {
