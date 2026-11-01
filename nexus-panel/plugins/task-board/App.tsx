@@ -221,7 +221,6 @@ export default function App() {
   const [importOpen, setImportOpen] = useState(false);
   /** 新建/合并组的弹窗。null = 关着 */
 
-
   const [q, setQ] = useState('');
   const [colFilters, setColFilters] = useState<Partial<Record<SortField, ColFilter>>>({});
   const [newOpen, setNewOpen] = useState(false);
@@ -484,6 +483,13 @@ export default function App() {
     任务上存的是 id、界面显示的是名字，按 id 排出来的顺序看着像随机。
   */
   const tagDefs = store ? store.tagDefs : [];
+  /*
+    认领人定义表。与分组同构（id 就是名字），颜色在这里配。
+
+    五列单选型里它原本是唯一没有定义表、也没有色点的那个
+    —— 而"记哪些列有例外"正是统一要消灭的东西。
+  */
+  const assigneeDefs = store ? (store.assigneeDefs || []) : [];
   /*
     已有分组名（去重、排序）。新建弹窗的分组下拉用它做候选 ——
     分组是自由文本，但"复用已有分组"比"再敲一遍"常见得多，
@@ -1617,15 +1623,37 @@ ${dir}
       const nm = newName.trim();
       if (nm === oldName) return;
       /*
-        三种结果要说清楚：
+        四种结果要说清楚：
           · taken —— 新名已经是另一个人的名字。不同步会把两个人并成一个。
-          · ok    —— 真改名。
+          · def   —— 定义表改了，但没有任务在用这个名字（人已不认领任何活）。
+          · ok    —— 定义与任务都改了。
+          · none  —— 既没定义也没任务（这个人不在这条数据里）。
       */
-      const res: { state: 'ok' | 'taken' } = { state: 'ok' };
+      const res: { state: 'ok' | 'taken' | 'def' | 'none' } = { state: 'ok' };
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const taken = (st.tasks || []).some((t) => (t.assignee || '').trim() === nm);
+        const taken = (st.tasks || []).some((t) => (t.assignee || '').trim() === nm)
+          || (Array.isArray(st.assigneeDefs) ? st.assigneeDefs : []).some((d) => d.id === nm && d.id !== oldName);
         if (taken) { res.state = 'taken'; return null; }
+        /*
+          ⛔ 定义表要跟着改，而且 **id 和 name 一起改成新名**（id 就是名字）。
+
+          只 push `{ id: oldName, name: nm }` 的话，
+          这条定义的 id 和任务上的值对不上 —— 下拉里显示新名，
+          点它筛的却是旧名 → 0 条。这与分组改名是同一个坑。
+
+          ⛔ 定义表里**没有**也要补一条，不能只在 di>=0 时改：
+          老数据里"张三"只出现在任务上、定义表里没有他
+          （认领人定义表是这轮才加的），不补的话改名改不动任务之外的东西，
+          而这个人的颜色配置也就永远无处可落。
+        */
+        const defs = Array.isArray(st.assigneeDefs) ? [...st.assigneeDefs] : [];
+        const di = defs.findIndex((d) => d.id === oldName);
+        if (di >= 0) defs[di] = { ...defs[di], id: nm, name: nm };
+        else {
+          const used = new Set(defs.map((d) => d.color));
+          defs.push({ id: nm, name: nm, color: TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0] });
+        }
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
           if ((t.assignee || '').trim() !== oldName) return t;
@@ -1633,13 +1661,72 @@ ${dir}
           return { ...t, assignee: nm, updatedAt: Date.now() };
         });
         n = cnt;
-        if (cnt === 0) return null;
-        return { ...st, tasks };
+        /*
+          ⛔ 判据不能是 `cnt === 0 && di < 0` 才返回 null：
+          cnt===0 但定义表里**有**这个人时，上面已经把定义改了，
+          这里若因为 di>=0 就照样写盘，结果是「定义改了、任务没改」；
+          而下面 toast 却报"没有找到…任务" —— 用户以为什么都没发生，
+          实际上定义已经被改掉了（下次新建旧名时会发现它变成了新名）。
+
+          定义与任务是两件事，各自的"有没有改动"要分开判断、一起写。
+        */
+        if (cnt === 0 && di < 0) { res.state = 'none'; return null; }
+        if (cnt === 0) res.state = 'def';
+        return { ...st, tasks, assigneeDefs: defs };
       });
       await refresh();
       if (res.state === 'taken') ctx.toast(`已经有叫「${nm}」的人了，换个名字`, 'err');
-      else if (n === 0) ctx.toast(`没有找到由「${oldName}」认领的任务`, 'err');
+      else if (res.state === 'none') ctx.toast(`没有找到「${oldName}」`, 'err');
+      else if (res.state === 'def') ctx.toast(`「${oldName}」已改名为「${nm}」（当前没有他认领的任务）`, 'ok');
       else ctx.toast(`「${oldName}」已改名为「${nm}」（${n} 条任务同步更新）`, 'ok');
+    })();
+
+  /*
+    认领人改色 —— 与分组同构（setGroupColor 的同一判据）：
+    **没建过定义就补一条**，否则改色无处可落。
+
+    这里必须补：认领人是从任务数据里汇总出来的（历史上没有定义表），
+    老数据里"张三"出现在任务上但 assigneeDefs 里没有他，
+    不补的话点色点改色 → 什么都没发生，而界面上色点明明在那儿。
+  */
+  const setAssigneeColor = (id: string, color: string) =>
+    withErr(async () => {
+      if (!cfg || !id) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = Array.isArray(st.assigneeDefs) ? [...st.assigneeDefs] : [];
+        const idx = defs.findIndex((d) => d.id === id);
+        if (idx < 0) defs.push({ id, name: id, color });
+        else defs[idx] = { ...defs[idx], color };
+        return { ...st, assigneeDefs: defs };
+      });
+      await refresh();
+    })();
+
+  /*
+    新建认领人 = 建一条定义 + 挂到当前行。
+
+    与分组同构：id 就是名字，所以新建时直接把名字当 id。
+    不指定颜色（传空串）→ 取第一个还没人用的，和 createType / addGroup
+    同一判据，不会出现"新建的人撞了已有的色"。
+  */
+  const addAssignee = (name: string) =>
+    withErr(async () => {
+      if (!cfg || !name.trim()) return '';
+      const nm = name.trim();
+      let made = false;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = Array.isArray(st.assigneeDefs) ? [...st.assigneeDefs] : [];
+        made = false;
+        if (defs.some((d) => d.id === nm)) return null;
+        const used = new Set(defs.map((d) => d.color));
+        defs.push({ id: nm, name: nm, color: TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0] });
+        made = true;
+        return { ...st, assigneeDefs: defs };
+      });
+      await refresh();
+      if (!made) ctx.toast(`已经有叫「${nm}」的人了`, 'err');
+      else ctx.toast(`已添加认领人「${nm}」`, 'ok');
+      return made ? nm : '';
     })();
 
   const removeAssignee = (name: string) =>
@@ -1662,6 +1749,12 @@ ${dir}
       }
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
+        /*
+          ⛔ 定义也要删，而且**不能反过来**（先删定义再摘任务）：
+          先删定义的话，任务上还留着名字，而这个名字在下拉里已经选不到了
+          —— 想改只能逐条手打。这与删分组 / 删类型是同一判据。
+        */
+        const defs = (Array.isArray(st.assigneeDefs) ? st.assigneeDefs : []).filter((d) => d.id !== name);
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
           if ((t.assignee || '').trim() !== name) return t;
@@ -1669,7 +1762,7 @@ ${dir}
           return { ...t, assignee: '', updatedAt: Date.now() };
         });
         n = cnt;
-        return cnt === 0 ? null : { ...st, tasks };
+        return cnt === 0 ? null : { ...st, tasks, assigneeDefs: defs };
       });
       /* 与删分组/删类型同判据：正在筛这个人的筛选要清掉，否则筛一个已不存在的人 */
       setColFilters((prev) => {
@@ -2130,6 +2223,9 @@ ${dir}
             onGroupColor={setGroupColor}
             onRenameGroup={renameGroup}
             onRemoveGroup={removeGroup}
+            assigneeDefs={assigneeDefs}
+            onCreateAssignee={addAssignee}
+            onAssigneeColor={setAssigneeColor}
             onRenameAssignee={renameAssignee}
             onRemoveAssignee={removeAssignee}
             onPickColor={pickColor}
@@ -3722,6 +3818,9 @@ function ColFilterPop({
   /** 分组定义。分组列用 —— 与标签/类型同构，同样可增删改色 */
   groupDefs,
   onCreateGroup, onGroupColor, onRenameGroup, onRemoveGroup,
+  /** 认领人定义。认领人列用 —— 与标签/类型/分组同构，同样可增删改色 */
+  assigneeDefs,
+  onCreateAssignee, onAssigneeColor, onRenameAssignee, onRemoveAssignee,
   /**
     调起主面板的取色器选任意颜色。
     固定调色板是快捷项，取色器是"要一个板子里没有的颜色"的入口 —— 两者并存。
@@ -3761,9 +3860,12 @@ function ColFilterPop({
   onGroupColor?: (id: string, color: string) => void;
   onRenameGroup?: (id: string, name: string) => void;
   onRemoveGroup?: (id: string) => void;
-  /** 认领人改名（同步所有他认领的任务）。与分组改名同判据 */
+  /** 认领人定义（id 就是名字） */
+  assigneeDefs?: TagDef[];
+  /** 新建认领人（返回名字；分组/认领人的 id 就是名字，建完可直接用） */
+  onCreateAssignee?: (name: string) => Promise<string | undefined>;
+  onAssigneeColor?: (id: string, color: string) => void;
   onRenameAssignee?: (oldName: string, newName: string) => void;
-  /** 移除认领人（把他从所有任务上摘掉） */
   onRemoveAssignee?: (name: string) => void;
   /** 调起主面板取色器；返回空串表示取消 */
   onPickColor?: (initial: string) => Promise<string>;
@@ -3778,14 +3880,15 @@ function ColFilterPop({
   const isTag = col.field === 'tags';
   const isType = col.field === 'type';
   const isGroup = col.field === 'group';
+  const isAssignee = col.field === 'assignee';
   /*
     三种"定义表驱动"的列（标签 / 类型 / 分组）共用同一套交互：
     增、删、改名、改色。以前只有前两种，分组因为是自由文本
     只能敲关键词 —— 于是"这一列有哪些分组"根本看不到，
     而分组恰恰最需要"从已有项里挑一个"（手打必然打出 '登录'/'登陆'）。
   */
-  const defCol = isType ? 'type' : isGroup ? 'group' : isTag ? 'tag' : '';
-  const defs = isType ? (typeDefs || []) : isGroup ? (groupDefs || []) : (tagDefs || []);
+  const defCol = isType ? 'type' : isGroup ? 'group' : isAssignee ? 'assignee' : isTag ? 'tag' : '';
+  const defs = isType ? (typeDefs || []) : isGroup ? (groupDefs || []) : isAssignee ? (assigneeDefs || []) : (tagDefs || []);
 
   /*
     默认色**不能写死某一档**（原来是 TAG_COLORS[6] = '#3b82f6'）。
@@ -3809,11 +3912,11 @@ function ColFilterPop({
     if (free) setNewColor(free);
   }, [defs, newColor]);
   const colorOf = (id: string) => defs.find((d) => d.id === id)?.color || '';
-  const onCreate = isType ? onCreateType : isGroup ? onCreateGroup : onCreateTag;
-  const onColor = isType ? onTypeColor : isGroup ? onGroupColor : onTagColor;
-  const onRename = isType ? onRenameType : isGroup ? onRenameGroup : onRenameTag;
-  const onRemove = isType ? onRemoveType : isGroup ? onRemoveGroup : onRemoveTag;
-  const kindName = isType ? '类型' : isGroup ? '分组' : '标签';
+  const onCreate = isType ? onCreateType : isGroup ? onCreateGroup : isAssignee ? onCreateAssignee : onCreateTag;
+  const onColor = isType ? onTypeColor : isGroup ? onGroupColor : isAssignee ? onAssigneeColor : onTagColor;
+  const onRename = isType ? onRenameType : isGroup ? onRenameGroup : isAssignee ? onRenameAssignee : onRenameTag;
+  const onRemove = isType ? onRemoveType : isGroup ? onRemoveGroup : isAssignee ? onRemoveAssignee : onRemoveTag;
+  const kindName = isType ? '类型' : isGroup ? '分组' : isAssignee ? '认领人' : '标签';
   /* 正在改名的那一条（'' = 没在改）。标签与类型共用同一套输入 */
   const [editing, setEditing] = useState('');
   /*
@@ -4224,7 +4327,7 @@ function ListView({
   onRemoveTag,
   groupDefs,
   onCreateGroup, onGroupColor, onRenameGroup, onRemoveGroup, onPickColor,
-  onRenameAssignee, onRemoveAssignee,
+  assigneeDefs, onCreateAssignee, onAssigneeColor, onRenameAssignee, onRemoveAssignee,
   checked,
   onCheck,
   onBatchStatus,
@@ -4282,11 +4385,17 @@ function ListView({
   /** 分组定义（id 就是名字） */
   groupDefs: TagDef[];
   onCreateGroup: (name: string, color: string) => Promise<string | undefined>;
+  /** 认领人定义表。与分组同构（id 就是名字），颜色在这里配 */
+  assigneeDefs?: TagDef[];
+  /** 新建认领人（建定义 + 返回名字，供调用方挂到当前行） */
+  onCreateAssignee?: (name: string) => Promise<string | undefined>;
+  /** 改某个认领人的颜色 */
+  onAssigneeColor?: (id: string, color: string) => void;
+  /** 认领人改名（同步所有他认领的任务）。与分组改名同判据 */
+  onRenameAssignee?: (oldName: string, newName: string) => void;
   onGroupColor: (id: string, color: string) => void;
   /** 分组改名：定义与任务都要改（任务上存的就是名字） */
   onRenameGroup: (id: string, name: string) => void;
-  /** 认领人改名（同步所有他认领的任务）。与分组改名同判据 */
-  onRenameAssignee?: (oldName: string, newName: string) => void;
   /** 移除认领人（把他从所有任务上摘掉） */
   onRemoveAssignee?: (name: string) => void;
   /** 删分组：连带把任务清成未分组 */
@@ -4468,8 +4577,15 @@ function ListView({
   };
   const typeOpts = unionOpts(typeDefs || [], (t) => t.type || '', true);
   const groupOpts = unionOpts(groupDefs || [], (t) => t.group || '', true);
-  /* 认领人没有定义表（人不配色），候选就是数据里出现过的人名 */
-  const assigneeOpts = unionOpts([], (t) => t.assignee || '', false);
+  /*
+    认领人现在**也有定义表**了（与分组同构，id 就是名字）。
+
+    ⛔ 以前这里传的是空定义表 + withColor=false，于是认领人列是五列里
+    唯一没有色点的。用户提得对：五列都一致，凭什么这列没有？
+    颜色的用途不是"给人分类"，而是**一眼看出这一批是谁的活** ——
+    几十条任务时扫色点比逐行读名字快得多。
+  */
+  const assigneeOpts = unionOpts(assigneeDefs || [], (t) => t.assignee || '', true);
 
   /** 行内单元格：按 field 分发，新增列只改这一处 */
   const cellFor = (field: SortField, t: Task) => {
@@ -4612,6 +4728,7 @@ function ListView({
           <span className="tb-lc c-assignee" key={field}>
             <SinglePick
               cur={t.assignee ? '@' + t.assignee : <span className="tb-ldim">未认领</span>}
+              dot={t.assignee ? (assigneeDefs || []).find((d) => d.id === t.assignee)?.color || undefined : undefined}
               title="点击改认领人"
               options={assigneeOpts}
               onPick={(id) => onPatchField(t.id, { assignee: id })}
@@ -4619,13 +4736,17 @@ function ListView({
               onClear={t.assignee ? () => onPatchField(t.id, { assignee: '' }) : undefined}
               kindName="认领人"
               /*
-                新建 = 直接填个新名字（它出现在数据里就自动成为候选）。
-                认领人没有定义表，不需要"先建一条定义再挂上去"这一步。
+                新建 = 建一条定义（带颜色）+ 挂到当前行。
+                与类型/分组同判据"建完即挂"，三列结果一致。
               */
-              onCreate={(name) => onPatchField(t.id, { assignee: name })}
+              onCreate={async (name) => {
+                const nm = onCreateAssignee ? await onCreateAssignee(name) : name;
+                if (nm) onPatchField(t.id, { assignee: nm });
+              }}
               onRename={onRenameAssignee}
-              /* 人不配色：给每个人配个颜色没有意义，所以不传 onColor */
+              onColor={onAssigneeColor}
               onRemove={onRemoveAssignee}
+              onPickColor={onPickColor}
             />
           </span>
         );
@@ -4898,6 +5019,11 @@ function ListView({
                   onGroupColor={onGroupColor}
                   onRenameGroup={onRenameGroup}
                   onRemoveGroup={onRemoveGroup}
+                  assigneeDefs={assigneeDefs}
+                  onCreateAssignee={onCreateAssignee}
+                  onAssigneeColor={onAssigneeColor}
+                  onRenameAssignee={onRenameAssignee}
+                  onRemoveAssignee={onRemoveAssignee}
                   onPickColor={onPickColor}
                 />
               ) : null}

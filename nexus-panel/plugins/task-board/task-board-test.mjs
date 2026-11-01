@@ -4514,6 +4514,92 @@ t('守卫：详情面板有认领人和优先级字段（都能改，不是只�
     && /<select/.test(segP) && /onPatch\(\{ priority: e\.target\.value as Priority \}\)/.test(segP);
 })());
 
+
+/* ============================================================ 认领人定义表（五列真正一致） */
+
+/*
+ * **认领人也要有定义表和色点。**
+ *
+ * 上一版我让认领人"不配色"—— 理由是"给人分类没意义"。
+ * 这个理由站不住：五列都一致，凭空让其中一列没有色点，
+ * 用户就得记"这列是例外"，而**记哪些列有例外**正是统一要消灭的东西。
+ *
+ * 颜色的用途也不是"给人分个类"，而是**一眼看出这一批是谁的活**：
+ * 几十条任务时扫色点比逐行读名字快得多。颜色由用户自己配（腾讯文档同款）。
+ */
+t('守卫：认领人有定义表（与分组同构，id 就是名字）', (() => {
+  const ts = fs.readFileSync(path.join(dir, 'types.ts'), 'utf8');
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  return ts.indexOf('assigneeDefs: TagDef[];') >= 0
+    && /assigneeDefs: normalizeGroupDefs\(s\.assigneeDefs\)/.test(mjs);
+})());
+
+t('守卫：认领人单元格与类型/分组一样带色点（dot）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf("case 'assignee':");
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 2600);
+  return /dot=\{/.test(seg) && /onColor=\{onAssigneeColor\}/.test(seg)
+    && /onPickColor=\{onPickColor\}/.test(seg);
+})());
+
+/*
+ * **认领人改名：定义表与任务必须一起改。**
+ *
+ * ⛔ 修前的判据是 `if (cnt === 0 && di < 0) return null;` ——
+ * 于是"定义表里有这个人、但没有任务用他"时会走到写盘：
+ * **定义改了、任务没改**，而 toast 却报"没有找到…认领的任务"，
+ * 用户以为什么都没发生，实际上定义已经被改掉了
+ * （下次新建旧名时会发现它变成了新名）。
+ *
+ * 已改成：定义表里有就改、没有就补；任务一律同步；
+ * 四种结果（taken / def / ok / none）分别说清。
+ *
+ * 实测：改名后 assigneeDefs=[张三,王五丰]、本行 assignee=王五丰 —— 一致。
+ */
+t('守卫：认领人改名时定义表与任务都改（不只是任务）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const renameAssignee = (oldName: string, newName: string) =>');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 2600);
+  /* 定义表：有就改 id+name，没有就补一条（不能只在 di>=0 时改） */
+  const defOk = /if \(di >= 0\) defs\[di\] = \{ \.\.\.defs\[di\], id: nm, name: nm \};/.test(seg)
+    && /defs\.push\(\{ id: nm, name: nm, color:/.test(seg);
+  /* 判据不能再是"只在两者都没变时才返回 null" */
+  const noBad = !/if \(cnt === 0 && di < 0\) \{ res\.state = 'none'; return null; \}\s*\n\s*if \(cnt === 0\)/.test(seg)
+    || /if \(cnt === 0\) res\.state = 'def';/.test(seg);
+  return defOk && noBad && /res\.state = 'def'/.test(seg);
+})());
+
+/* 删认领人：定义也要删（与删分组/删类型同判据） */
+t('守卫：删认领人时连定义一起删', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const removeAssignee = (name: string) =>');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 2200);
+  return /assigneeDefs: defs/.test(seg) && /filter\(\(d\) => d\.id !== name\)/.test(seg);
+})());
+
+/* 筛选面板里认领人也能增删改色（第四种定义表驱动的列） */
+t('守卫：筛选面板的认领人列与类型/分组同构', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf("const isGroup = col.field === 'group';");
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 1400);
+  /*
+    ⛔ 必须钉住**声明行本身**（isAssignee = col.field === 'assignee'），
+    不能只搜 'isAssignee' 出现没出现：
+    删掉声明行之后，下面的 defCol / defs / kindName 里照样有 isAssignee
+    字样 → 守卫全绿 → 真正的回退抓不到。
+    （删了声明行会是 ReferenceError，但源码扫描看不到运行时。）
+    这已经是第 13 个"判据太宽、靠反向验证才发现"了。
+  */
+  return /const isAssignee = col\.field === 'assignee';/.test(seg)
+    && /isAssignee \? \(assigneeDefs \|\| \[\]\)/.test(seg)
+    && /isAssignee \? '认领人'/.test(seg)
+    && /isAssignee \? onAssigneeColor/.test(seg);
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
