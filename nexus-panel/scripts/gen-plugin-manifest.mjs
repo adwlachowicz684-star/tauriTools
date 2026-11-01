@@ -57,42 +57,85 @@ function derive(p) {
   };
 }
 
+/** 按固定顺序拼文本：派生字段在前，手工字段在后（便于 diff） */
+function buildText(keep, want) {
+  const next = {};
+  for (const k of DERIVED_KEYS) next[k] = k === 'version' && keep.version ? keep.version : want[k];
+  for (const k of HAND_KEYS) if (keep[k] !== undefined) next[k] = keep[k];
+  return JSON.stringify(next, null, 2) + '\n';
+}
+
+/**
+ * 单个 manifest 的写盘决策（纯函数，不碰文件系统，便于测试）
+ *
+ * ⛔ 存在但解析失败 → 一律不写盘
+ * ------------------------------------------------------------
+ * 手工字段（repo / ref / author / license / minHost / permissions）
+ * **只存在于 manifest 文件里** —— registry 里根本没有，重算不出来。
+ * 解析失败时 keep 为空，按模板重写就等于把拆仓库时填好的 repo
+ * 一次性抹掉，而脚本只打印「✅ 已生成 12 份」，一句提示都没有。
+ * 这正是文件头那句「脚本保留已有的值」承诺不了的情况。
+ *
+ * 所以：坏文件不写、报出来、退出码非 0，让人先修好 JSON。
+ *
+ * @param {string|null} existingText  现有文件内容；null 表示文件不存在
+ * @param {object} want              由 registry 派生的字段
+ * @returns {{write:boolean, fatal:string|null, text:string|null}}
+ */
+function planWrite(existingText, want) {
+  if (existingText === null) {
+    return { write: true, fatal: null, text: buildText({}, want) };
+  }
+  let cur;
+  try {
+    cur = JSON.parse(existingText);
+  } catch {
+    return {
+      write: false,
+      fatal: '现有 manifest 解析失败，已跳过（手工字段不可重建，拒绝覆盖）',
+      text: null,
+    };
+  }
+  const keep = {};
+  for (const k of HAND_KEYS) if (cur[k] !== undefined) keep[k] = cur[k];
+  return { write: true, fatal: null, text: buildText(keep, want) };
+}
+
 const targets = registry.plugins.filter((p) => p.type === 'iframe');
 const check = process.argv.includes('--check');
 
 const diffs = [];
+const fatals = [];
+const notes = [];
 for (const p of targets) {
   const dir = join(PLUGINS, p.id);
   const file = join(dir, 'nexus.plugin.json');
   const want = derive(p);
 
-  let keep = {};
-  if (existsSync(file)) {
-    try {
-      const cur = JSON.parse(readFileSync(file, 'utf8'));
-      for (const k of HAND_KEYS) if (cur[k] !== undefined) keep[k] = cur[k];
-    } catch {
-      /* 文件坏了：--check 之外的情况直接按模板重写，并记一条差异 */
-      diffs.push(`${p.id}: 现有 manifest 解析失败，将被重写`);
-    }
-  } else {
-    diffs.push(`${p.id}: 缺少 manifest`);
-  }
-
-  const next = {};
-  for (const k of DERIVED_KEYS) next[k] = k === 'version' && keep.version ? keep.version : want[k];
-  for (const k of HAND_KEYS) if (keep[k] !== undefined) next[k] = keep[k];
-
-  const text = JSON.stringify(next, null, 2) + '\n';
+  const existingText = existsSync(file) ? readFileSync(file, 'utf8') : null;
 
   if (check) {
-    if (!existsSync(file)) continue;
-    const cur = readFileSync(file, 'utf8');
-    if (cur !== text) diffs.push(`${p.id}: 与 registry 派生结果不一致`);
+    if (existingText === null) {
+      diffs.push(`${p.id}: 缺少 manifest`);
+      continue;
+    }
+    const plan = planWrite(existingText, want);
+    if (plan.fatal) {
+      diffs.push(`${p.id}: ${plan.fatal}`);
+      continue;
+    }
+    if (existingText !== plan.text) diffs.push(`${p.id}: 与 registry 派生结果不一致`);
     continue;
   }
-  if (!existsSync(file) || readFileSync(file, 'utf8') !== text) {
-    writeFileSync(file, text);
+
+  const plan = planWrite(existingText, want);
+  if (plan.fatal) {
+    fatals.push(`${p.id}: ${plan.fatal}`);
+    continue;
+  }
+  if (existingText === null || existingText !== plan.text) {
+    writeFileSync(file, plan.text);
+    notes.push(`${p.id}: ${existingText === null ? '新建' : '刷新'}`);
   }
 }
 
@@ -102,5 +145,14 @@ if (check && diffs.length) {
   process.exit(1);
 }
 if (!check) {
+  /* ⛔ 坏文件必须报出来：静默重写会把手工字段一次性抹掉，
+   *    而那些字段只存在于 manifest 里，重算不出来。 */
+  if (fatals.length) {
+    console.error(`❌ 共 ${fatals.length} 份 manifest 未写出（手工字段不可重建，拒绝覆盖）：`);
+    for (const f of fatals) console.error('  · ' + f);
+    console.error('  修好 JSON 后重跑本脚本。');
+    process.exit(1);
+  }
   console.log(`✅ 已生成/刷新 ${targets.length} 份 manifest（${join('plugins', '<id>', 'nexus.plugin.json')}）`);
+  for (const n of notes) console.log('  · ' + n);
 }

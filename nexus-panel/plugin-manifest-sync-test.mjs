@@ -26,7 +26,9 @@
  * 因此第 5、6 节用构造样本反证：故意制造不一致，判据必须喊。
  */
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateManifest, MANIFEST_FILE } from './js/plugin-manifest.js';
@@ -152,6 +154,86 @@ t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问�
   t('元断言C：缺 id 必须被拒', !r.ok, '校验恒真 → 第 2 节假绿');
   const r2 = validateManifest({ id: 'x', name: 'x', version: '1.0.0', entry: '../escape.html' }, { dirName: 'x' });
   t('元断言D：entry 路径穿越必须被拒', !r2.ok, '校验恒真');
+}
+
+/* ------------------------------------------------------------------ *
+ * 7. 生成器：存在但解析失败的 manifest 不得被重写
+ * ------------------------------------------------------------------
+ *
+ * 守什么
+ * ------------------------------------------------------------------
+ * 手工字段（repo / ref / author / license / minHost / permissions）
+ * **只存在于 manifest 文件里** —— registry 里没有，重算不出来。
+ * 旧写法在 JSON 解析失败时 keep 为空、直接按模板重写，
+ * 于是拆仓库时填好的 repo 被一次生成抹掉，而脚本只打印
+ * 「✅ 已生成/刷新 12 份」、退出码 0 —— 静默且不可逆。
+ *
+ * 为什么用子进程跑真脚本
+ * ------------------------------------------------------------------
+ * 要验的是"到底有没有写盘"，不是"函数返回什么"。
+ * 所以造一棵 fixture 树（真脚本 + 桩 registry），实跑、比字节。
+ * ------------------------------------------------------------------ */
+{
+  const tmp = join(tmpdir(), 'genmanifest-' + process.pid);
+  rmSync(tmp, { recursive: true, force: true });
+  try {
+    mkdirSync(join(tmp, 'scripts'), { recursive: true });
+    mkdirSync(join(tmp, 'plugins', 'fx'), { recursive: true });
+    copyFileSync(join(HERE, 'scripts', 'gen-plugin-manifest.mjs'),
+      join(tmp, 'scripts', 'gen-plugin-manifest.mjs'));
+    /* 桩 registry：形状与真 registry 一致（entry 相对项目根） */
+    writeFileSync(join(tmp, 'plugins', 'registry.js'),
+      "export const plugins = [{ id: 'fx', name: 'FX', type: 'iframe', entry: './plugins/fx/index.html', icon: '◆', kind: 'app', description: 'fixture' }];\n");
+    writeFileSync(join(tmp, 'plugins', 'fx', 'index.html'), '<html></html>\n');
+    const mf = join(tmp, 'plugins', 'fx', MANIFEST_FILE);
+    const script = join(tmp, 'scripts', 'gen-plugin-manifest.mjs');
+
+    /* A：正常文件 —— 手工字段必须还在（基线：保留机制本身是好的） */
+    writeFileSync(mf, JSON.stringify({
+      id: 'fx', name: 'FX', version: '0.1.0', entry: 'index.html',
+      kind: 'app', icon: '◆', description: 'fixture',
+      repo: 'git@x/fx.git', author: 'me', license: 'MIT',
+    }, null, 2) + '\n');
+    execFileSync(process.execPath, [script], { stdio: 'pipe' });
+    const afterA = JSON.parse(readFileSync(mf, 'utf8'));
+    t('生成器：正常 manifest 的手工字段被保留',
+      afterA.repo === 'git@x/fx.git' && afterA.author === 'me' && afterA.license === 'MIT',
+      JSON.stringify(afterA));
+
+    /* B：坏文件 —— 不得写盘，且必须报出来 */
+    const BROKEN = '{ "id": "fx", "repo": 坏掉了\n';
+    writeFileSync(mf, BROKEN);
+    let code = 0;
+    let out = '';
+    try {
+      out = execFileSync(process.execPath, [script], { stdio: 'pipe', encoding: 'utf8' });
+    } catch (e) {
+      code = e.status === undefined ? -1 : e.status;
+      out = String((e.stdout || '') + (e.stderr || ''));
+    }
+    t('生成器：坏 manifest 退出码非 0', code !== 0, `实为 ${code}`);
+    t('生成器：坏 manifest 被报出来', out.includes('解析失败'), out.slice(0, 120));
+    t('生成器：坏 manifest 未被重写（字节原样）',
+      readFileSync(mf, 'utf8') === BROKEN, '被覆盖了 → 手工字段已丢失');
+
+    /* 元断言E：证明"按模板重写"真的会丢字段 —— 否则 B 的三条无从谈起 */
+    const asTemplate = JSON.stringify({
+      id: afterA.id, name: afterA.name, version: '0.1.0', entry: afterA.entry,
+      kind: afterA.kind, icon: afterA.icon, description: afterA.description,
+    }, null, 2) + '\n';
+    t('元断言E：旧写法（解析失败即按模板重写）确实会丢手工字段',
+      !asTemplate.includes('git@x') && String(afterA.repo).includes('git@x'),
+      '元断言空跑 → 第 7 节假绿');
+
+    /* C：缺文件 —— 仍要正常新建（别因为加了拒绝逻辑就建不出来了） */
+    rmSync(mf);
+    execFileSync(process.execPath, [script], { stdio: 'pipe' });
+    t('生成器：缺 manifest 时正常新建',
+      existsSync(mf) && JSON.parse(readFileSync(mf, 'utf8')).id === 'fx',
+      '新建失败 → 拒绝逻辑写宽了');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 /* ------------------------------------------------------------------ *
