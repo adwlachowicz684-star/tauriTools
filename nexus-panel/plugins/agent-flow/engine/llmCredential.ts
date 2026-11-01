@@ -184,6 +184,43 @@ export function resolveLlmFromCredential(
   };
 }
 
+/**
+ * 地址为什么是空的 —— 用来决定**该说什么**。
+ *
+ * ================= 为什么要分两种 =================
+ *
+ * 两种情形都表现为"地址是空的"，但用户的处境完全相反：
+ *
+ *   - `no-connection`：从没配过。该去连接管理器加一条。
+ *   - `connection-gone`：**配过，但那条连接没了**。
+ *
+ * 第二种只说"没配大模型"的话，用户会以为自己从来没配过，
+ * 于是去新建一条 —— 而他真正的问题是他选的那条被删了
+ * （或换设备后连接库没跟着过来）。新建解决不了"为什么没了"，
+ * 同一个坑下次还会踩。
+ *
+ * 判据只看"有没有填过 id"：填了又找不到，就是没了，没有别的可能。
+ */
+export function missingLlmReason(
+  credentialId: string | undefined,
+  cred: Credential | null | undefined,
+  cfg: ResolvedConfig,
+): 'no-connection' | 'connection-gone' | null {
+  if (cfg.url) return null;
+  const id = String(credentialId ?? '').trim();
+  if (id && !cred) return 'connection-gone';
+  return 'no-connection';
+}
+
+/** 上面两种情形各自该说的话（三个 runner 共用一份，免得各写各的） */
+export function missingLlmMessage(reason: 'no-connection' | 'connection-gone' | null): string {
+  if (reason === 'connection-gone') {
+    return '这个节点选的是一条已经不存在的连接（可能已被删除，或换设备后连接库没跟着过来）'
+      + '—— 请在节点（或它所属的任务窗格）上重新选一条';
+  }
+  return '没配大模型：请在连接管理器里加一条大模型凭据，并在节点（或它所属的任务窗格）上选一条';
+}
+
 /* ------------------------------------------------------------------ */
 /* 老节点迁移                                                          */
 /* ------------------------------------------------------------------ */

@@ -1,7 +1,7 @@
 import type { LlmChatNodeData, LlmUse } from '../../types';
 import { defaultOcrPrompt, LLM_USE_META } from '../../types';
 import { findCredential, resolveSecret } from '../credentials';
-import { resolveLlmFromCredential } from '../llmCredential';
+import { resolveLlmFromCredential, missingLlmReason, missingLlmMessage } from '../llmCredential';
 import {
   buildHeaders, parseResponse, isUsableImageUrl, buildTranslateSystem, TARGET_LANGS,
   type ChatMessage, type ContentPart,
@@ -73,11 +73,9 @@ export async function runLlmChat(ctx: RunContext): Promise<void> {
      * "解析响应失败"之类，跟"你没配连接"差了十万八千里 ——
      * 用户会去查响应格式，而不是回来补一条连接。
      */
-    if (!cfg.url) {
-      throw new NodeFailError(
-        '没配大模型：请在连接管理器里加一条大模型凭据，并在节点（或它所属的任务窗格）上选一条',
-        '', { text: '', chars: '0' },
-      );
+    const miss = missingLlmReason(eff.credentialId, findCredential(opts.credentials ?? [], eff.credentialId), cfg);
+    if (miss) {
+      throw new NodeFailError(missingLlmMessage(miss), '', { text: '', chars: '0' });
     }
 
     /*

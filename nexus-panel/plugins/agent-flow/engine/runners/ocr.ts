@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret, findCredential } from '../credentials';
-import { resolveLlmFromCredential } from '../llmCredential';
+import { resolveLlmFromCredential, missingLlmReason, missingLlmMessage } from '../llmCredential';
 
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
@@ -83,6 +83,16 @@ export async function runOcr(ctx: RunContext): Promise<void> {
   const cfg = resolveLlmFromCredential(
     findCredential(opts.credentials ?? [], d.credentialId), d.llm?.model, { fallback: d.llm },
   );
+  /*
+   * ⛔ 空地址**必须**在这里说出来。
+   *
+   * llmChat 一直有这道检查，而 OCR / 翻译没有 ——
+   * 于是同样的"连接没了"，一个节点报错、另两个拿着空地址就发请求。
+   * fetch('') 打的是当前页面（相对地址），返回一段 HTML，
+   * 报错指向"解析响应失败"，跟"你选的连接被删了"差了十万八千里。
+   */
+  const miss = missingLlmReason(d.credentialId, findCredential(opts.credentials ?? [], d.credentialId), cfg);
+  if (miss) failOcr(missingLlmMessage(miss));
   const parts: ContentPart[] = [
     { type: 'text', text: prompt },
     { type: 'image_url', image_url: { url: imageUrl, detail: d.detail } },

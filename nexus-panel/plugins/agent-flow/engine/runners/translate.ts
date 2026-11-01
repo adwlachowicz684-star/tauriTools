@@ -5,7 +5,7 @@ import type {
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
 import { resolveSecret, findCredential } from '../credentials';
-import { resolveLlmFromCredential } from '../llmCredential';
+import { resolveLlmFromCredential, missingLlmReason, missingLlmMessage } from '../llmCredential';
 
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
 import {
@@ -69,6 +69,9 @@ export async function runTranslate(ctx: RunContext): Promise<void> {
   const cfg = resolveLlmFromCredential(
     findCredential(opts.credentials ?? [], d.credentialId), d.llm?.model, { fallback: d.llm },
   );
+  /* 同 OCR：空地址要在这里说出来，不能拿着 '' 去发请求 */
+  const miss = missingLlmReason(d.credentialId, findCredential(opts.credentials ?? [], d.credentialId), cfg);
+  if (miss) failTranslate(missingLlmMessage(miss));
   const messages: ChatMessage[] = [
     { role: 'system', content: system },
     { role: 'user', content: src },

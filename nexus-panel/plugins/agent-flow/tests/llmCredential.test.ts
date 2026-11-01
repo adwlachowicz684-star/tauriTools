@@ -6,9 +6,9 @@ import {
   visionHintOf, knownVisionModel, resolveLlmFromCredential,
   canMigrateLlm, findReusableLlmCredential, llmMigrationPatch,
   modelsEndpointOf, mergeModels, extractModelIds,
-  migrateLlmToCredentials, type MigratableCanvas,
+  migrateLlmToCredentials, missingLlmReason, missingLlmMessage, type MigratableCanvas,
 } from '../engine/llmCredential';
-import { makeCredential } from '../engine/credentials';
+import { makeCredential, findCredential } from '../engine/credentials';
 import { readSrc } from './srcScan';
 
 /**
@@ -396,3 +396,63 @@ test('源码守卫: 迁移闸门要在跑完之后才关（抛异常不该永久
   assert.ok(callAt >= 0 && setAt >= 0, '调用与关闸门都要在');
   assert.ok(setAt > callAt, '闸门设在调用之前：一旦抛异常就永久关死，那些密钥再也不会被收进来');
 });
+
+/* ---------- 连接没了：该说什么 ---------- */
+
+/*
+ * ⛔ 关键在**方向**：
+ * 填过 id 却找不到连接（迁移过的节点 + 那条被删了），
+ * 得到的是空地址，但用户的处境和"从没配过"完全相反 ——
+ * 说"没配"他会去新建一条，而真正的问题是他选的那条没了。
+ */
+test('连接没了: 填过 id 却找不到 → 说"选的连接不存在"，不是"没配"', () => {
+  const cvs = [canvas('cv1', [{ id: 'n1', data: OLD_NODE('sk-a', '', 'm', 'openai') }])];
+  const cred = migrateLlmToCredentials(cvs, [], (p2) => makeCredential(p2)).credentials[0];
+  const patch = llmMigrationPatch(cred, { llm: cvs[0].nodes[0].data!.llm as never });
+  // 迁移过的节点：llm 已被清空，只留 credentialId
+  const cfg = resolveLlmFromCredential(findCredential([], cred.id), 'gpt-4o', { fallback: patch.llm as never });
+  assert.equal(cfg.url, '', '连接没了 → 地址是空的（fallback 也已被迁移清空）');
+  assert.equal(missingLlmReason(cred.id, findCredential([], cred.id), cfg), 'connection-gone');
+  assert.ok(/不存在/.test(missingLlmMessage('connection-gone')), '要说"那条没了"，不能说"没配"');
+});
+
+test('连接没了: 没填过 id → 说"没配"（别把没配的说成没了）', () => {
+  const cfg = resolveLlmFromCredential(undefined, 'm', { fallback: undefined });
+  assert.equal(cfg.url, '');
+  assert.equal(missingLlmReason(undefined, undefined, cfg), 'no-connection');
+  assert.ok(/加一条/.test(missingLlmMessage('no-connection')));
+});
+
+test('连接没了: 地址在就不报（反例——别误伤正常节点）', () => {
+  const c = makeCredential({
+    kind: 'llm', name: 'x', secret: 'sk',
+    meta: { [LLM_META.provider]: 'openai', [LLM_META.baseUrl]: '', [LLM_META.models]: 'gpt-4o' },
+    capabilities: ['llm:chat'],
+  });
+  const cfg = resolveLlmFromCredential(c, 'gpt-4o');
+  assert.ok(cfg.url, '地址在');
+  assert.equal(missingLlmReason(c.id, c, cfg), null, '地址在就不该报');
+});
+
+test('连接没了: 未迁移的老节点有兜底地址 → 不报（反例）', () => {
+  const cfg = resolveLlmFromCredential(findCredential([], 'gone'), 'gpt-4o', {
+    fallback: { provider: 'openai', baseUrl: 'https://proxy/v1/chat/completions', model: 'gpt-4o', apiKey: 'sk', timeoutSec: 60 } as never,
+  });
+  assert.equal(cfg.url, 'https://proxy/v1/chat/completions');
+  assert.equal(missingLlmReason('gone', findCredential([], 'gone'), cfg), null, '有地址就不报');
+});
+
+/* ---------- 源码守卫 ---------- */
+
+/*
+ * 三个 runner 都发大模型请求，空地址的检查**必须三个都有**。
+ * llmChat 一直有，OCR / 翻译没有过 —— 而测试跑的是 transpile-only，
+ * 不解析模块也不跑请求，所以那两个的静默没有任何信号。
+ */
+for (const f of ['engine/runners/llmChat.ts', 'engine/runners/ocr.ts', 'engine/runners/translate.ts']) {
+  test(`源码守卫: ${f.split('/').pop()} 必须拦空地址并走共用判据`, () => {
+    const src = readSrc(f);
+    assert.ok(/missingLlmReason\s*\(/.test(src), `${f} 没有拦空地址 —— 会拿着 '' 去发请求，报错指向"解析响应失败"`);
+    assert.ok(/missingLlmMessage\s*\(/.test(src), `${f} 用了判据却没说共用文案 —— 三个节点各写一份必然各改各的`);
+  });
+}
