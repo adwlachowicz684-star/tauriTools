@@ -553,7 +553,18 @@ function dayEnd(s) {
 
 /** 这一列的筛选是否生效。判空只写这一处，UI 与过滤共用 */
 /** 数值列里代表「没估」的那个选项。它是"缺失"，不是 0 */
-export const UNESTIMATED = '__none__';
+/*
+  ⛔ 不能再用 '__none__'：那和 UNASSIGNED（未认领）是**同一个值**。
+
+  两个不同的"空值"概念共用一个哨兵，现在是靠"它们分属不同的列"
+  才没出事 —— 而 groupLabel 这类地方是**按值判断**的：
+  `if (key === UNASSIGNED) return '未认领'` 在 by='estimate' 时
+  会把"没估"那组标成"未认领"。
+  目前 estimate 不在分组依据里所以还没触发，但这是个等着踩的坑。
+
+  筛选不持久化，改值不会影响存档。
+*/
+export const UNESTIMATED = '__noestimate__';
 
 /** 区间输入框里的东西是不是个数。空串**不算**数（那是"没填"） */
 export function numOrNull(v) {
@@ -710,7 +721,7 @@ function matchesCol(row, col, f) {
  * 全局搜索也刻意**不搜组标题**：那会让"找一条任务"变成
  * "找出一整个组下面所有东西"，与搜索的语义相反。
  */
-export function filterTasksByColumns(rows, filters, q, typeDefs) {
+export function filterTasksByColumns(rows, filters, q, typeDefs, tagDefs) {
   const active = LIST_COLUMNS.filter((c) => colFilterActive(c, filters[c.field]));
   const kw = (q || '').trim().toLowerCase();
   if (active.length === 0 && !kw) return rows;
@@ -745,7 +756,19 @@ export function filterTasksByColumns(rows, filters, q, typeDefs) {
       const typeLabel = typeDefs
         ? typeName(typeDefs, t.type || '')
         : (t.type || '');
-      const hay = `${t.id} ${t.title} ${t.detail} ${t.summary || ''} ${t.group || ''} ${t.assignee || ''} ${typeLabel}`
+      /*
+        标签名同样要进搜索串：任务上存的是 **id**（tg_xxxx），
+        而界面上显示的是名字。只搜 id 的话 ——
+        用户搜「重要」返回 0 条，而列表里明明有一排挂着「重要」的任务，
+        他会以为没有这类任务，而不是"搜索不搜标签"。
+
+        （这和上面 typeLabel 是完全同一个问题，
+          上一轮补了认领人和类型，**标签漏了**。）
+      */
+      const tagLabels = (t.tags || [])
+        .map((id) => (tagDefs ? (tagDefs.find((d) => d.id === id)?.name || id) : id))
+        .join(' ');
+      const hay = `${t.id} ${t.title} ${t.detail} ${t.summary || ''} ${t.group || ''} ${t.assignee || ''} ${typeLabel} ${tagLabels}`
         .toLowerCase();
       if (hay.indexOf(kw) < 0) return false;
     }

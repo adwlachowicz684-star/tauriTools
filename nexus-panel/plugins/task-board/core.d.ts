@@ -139,7 +139,7 @@ export declare function colFilterActive(col: ListColumn, f: ColFilter | undefine
 export declare function colRawValues(task: Task, field: SortField): string[];
 
 /** 按列筛选（作用在摊平行上）；q 是跨 id/标题/详情/说明的全局关键词 */
-export declare function filterTasksByColumns(rows: FlatRow[], filters: Record<string, ColFilter>, q: string, typeDefs?: { id: string; name: string }[] | null): FlatRow[];
+export declare function filterTasksByColumns(rows: FlatRow[], filters: Record<string, ColFilter>, q: string, typeDefs?: { id: string; name: string }[] | null, tagDefs?: { id: string; name: string }[] | null): FlatRow[];
 
 /** 生效的筛选列（按列序） */
 export declare function activeColFilters(filters: Partial<Record<SortField, ColFilter>>): ListColumn[];

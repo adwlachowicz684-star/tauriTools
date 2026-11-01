@@ -72,6 +72,7 @@ import {
   normalizeGroupDefs,
   newDefId,
   DEFAULT_TYPES,
+  UNESTIMATED,
 } from './core.mjs';
 
 let pass = 0;
@@ -545,7 +546,13 @@ t('按预筛选：没估的不当 0 混进区间结果', (() => {
 
 t('按预筛选：能专门筛出"没估的"（排期前最常用的查询）', (() => {
   const rows = [E1, E2, E3].map((t) => ({ task: t, depth: 0, path: [] }));
-  const hit = filterTasksByColumns(rows, { estimate: { ...emptyColFilter(), values: ['__none__'] } }, '');
+  /*
+    ⛔ 用导出的常量，不要写字面量 '__none__'：
+    哨兵的值本来就该只定义一处，测试里再抄一份就等于第二份真相 ——
+    改了 core.mjs 的常量而这里没跟上，测试会红得莫名其妙
+    （这次正是这么踩到的）。
+  */
+  const hit = filterTasksByColumns(rows, { estimate: { ...emptyColFilter(), values: [UNESTIMATED] } }, '');
   return hit.length === 1 && hit[0].task.id === 'e3';
 })());
 
@@ -2592,6 +2599,11 @@ const RS = path.join(dir, '../../src-tauri/src/task_board.rs');
 const rsSrc = fs.existsSync(RS) ? fs.readFileSync(RS, 'utf8') : '';
 t('（前置）Rust 源码可达：拼错会让整节静默空转', rsSrc.length > 0, `RS=${RS}`);
 /* 环境缺 Rust 源码目录时这几条跳过（不算失败），原因同上方那条分组的 */
+/** 剥离块注释与行注释 —— 源码扫描类判据都要先过一遍，避免被注释里的引文误伤 */
+function STRIP(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
 const rsHas = (needle) => !rsSrc || rsSrc.indexOf(needle) >= 0;
 const rsSeg = (anchor, len) => {
   if (!rsSrc) return '';
@@ -2976,8 +2988,8 @@ t('审查：搜索仍能匹配标题（未破坏）', filterTasksByColumns(SROWS
 /* 调用点要把 typeDefs 传下去，且依赖里要带上 */
 t('审查：调用点传了 typeDefs 且在依赖里', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs)') >= 0
-    && app.indexOf('[flatRows, colFilters, q, typeDefs]') >= 0;
+  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs, store ? store.tagDefs : [])') >= 0
+    && app.indexOf('[flatRows, colFilters, q, typeDefs, store ? store.tagDefs : []]') >= 0;
 })());
 
 
@@ -3838,6 +3850,136 @@ t('守卫：用到的 tb-* 类名都在 styles.css 里有定义', (() => {
   }
   if (missing.size) console.log('    未定义:', [...missing].join(', '));
   return missing.size === 0;
+})());
+
+
+/*
+ * 五个哨兵**必须互不相同**。
+ *
+ * UNESTIMATED 原来是 '__none__'，和 UNASSIGNED 撞了 ——
+ * 靠"它们分属不同的列"才没暴露，而 groupLabel 是按值判断的：
+ * by='estimate' 时"没估"那组会被标成"未认领"。
+ */
+t('守卫：五个「空值」哨兵互不相同', (() => {
+  const m = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  const grab = (n) => {
+    const mm = m.match(new RegExp('export const ' + n + " = '([^']+)'"));
+    return mm ? mm[1] : null;
+  };
+  const vals = ['UNESTIMATED', 'UNASSIGNED', 'NOTAG', 'NOTYPE', 'NOGROUP'].map(grab);
+  if (vals.some((v) => !v)) return false;
+  return new Set(vals).size === vals.length;
+})());
+
+
+/* ============================================================ 深度审查：配置里没有的值（本轮） */
+
+/*
+ * **状态筛选候选只取流程配置** → 配置里没有的状态筛不到。
+ *
+ * 任务的状态可能是配置里没有的（状态被删掉，或 AI 经 API 写入）。
+ * 那些任务在列表里看得见，却**筛不到** ——
+ * 想把它们找出来改掉只能一条条翻。
+ *
+ * 看板（ghostStatuses 多一列标「未配置」）和统计（多一段标「未配置」）
+ * 早都处理了，列表的筛选候选这里漏了同一件事。
+ */
+t('守卫：状态筛选候选 = 流程配置 + 数据里实际在用的', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const statusIds = ');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 900);
+  /*
+    ⛔ 只查"有没有那两行"是不够的 —— 反向验证时注入一个**提前 return**
+    （`if (1) return flow.statuses.map(...)`）照样全绿，因为那两行还在，
+    只是永远执行不到。所以还要钉住"没有提前 return"这个结构。
+  */
+  return /const statusIds = \(\(\) => \{\s*\n\s*const out = flow\.statuses\.map/.test(seg)
+    && seg.indexOf('known.has(t.status)') >= 0
+    && seg.indexOf('out.push(t.status)') >= 0;
+})());
+
+/*
+ * **改完流程不清筛选** → 列表空着，chip 上是个已经不存在的值。
+ *
+ * 实测（jsdom）：筛着「挂起」，把「挂起」从流程里删掉 →
+ *   落盘状态里已经没有 hold
+ *   列表行数 **0**，chip 还写着「状态：挂起」
+ * 而那个状态已经从下拉里消失了 —— 用户看着空列表，
+ * chip 上却是个选不到的东西，只会以为"任务没了"。
+ *
+ * 删分组 / 删类型 / 删标签三处早都清了筛选，流程这里漏了。
+ */
+t('守卫：保存流程时清掉指向已删状态的筛选', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const doSaveFlow');
+  const seg = app.slice(i, i + 2200);
+  /*
+    ⛔ 不能用 `indexOf('setColFilters')`：反向验证时把调用改名为
+    `setColFilters_stub` 照样命中（子串匹配），于是守卫形同虚设。
+    必须匹配**真正的调用** `setColFilters((`。
+  */
+  return /setColFilters\(\(/.test(seg)
+    && (/values\.filter\(\(v\) => kept\.has\(v\)\)/.test(seg));
+})());
+
+/* ============================================================ 深度审查：搜索范围（本轮） */
+
+/*
+ * **搜不到标签名**。
+ *
+ * 任务上存的是标签 **id**（tg_xxxx），界面显示的是名字。
+ * 只搜 id 的话：用户搜「重要」返回 0 条，而列表里明明挂着一排「重要」，
+ * 他会以为没有这类任务，而不是"搜索不搜标签"。
+ *
+ * 上一轮补了认领人和类型名，**标签漏了** —— 完全是同一处。
+ */
+t('守卫：全局搜索含标签显示名（任务上存的是 id）', (() => {
+  const core = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  const i = core.indexOf('const hay = ');
+  if (i < 0) return false;
+  /* 标签名要先算出来，再拼进 hay */
+  const before = core.slice(Math.max(0, i - 700), i);
+  return before.indexOf('tagLabels') >= 0 && core.slice(i, i + 200).indexOf('tagLabels') >= 0;
+})());
+
+/* 调用点必须把 tagDefs 传进去，且要在 useMemo 依赖里（改了标签名结果要变） */
+t('守卫：搜索调用点传了 tagDefs 且在依赖里', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs, store ? store.tagDefs : [])') >= 0
+    && app.indexOf('[flatRows, colFilters, q, typeDefs, store ? store.tagDefs : []]') >= 0;
+})());
+
+/*
+ * 搜索框的 placeholder 还写着"搜索标题 / 详情 / id" ——
+ * 实际能搜的远不止这三样。
+ * 用户**照着提示判断**：写在提示里的他会去搜，没写的他不会试。
+ * 于是"搜标签名"这种支持的操作，用户永远发现不了。
+ */
+t('守卫：搜索框提示与实际范围一致（不能还写"标题 / 详情 / id"）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  /*
+    ⛔ 必须先剥离注释再匹配：说明"为什么不能用旧文案"的注释里
+    **必然要引用那句旧文案**，不剥离的话守卫恒红 ——
+    而恒红的守卫和没有守卫一样，真正的回归反而看不出来。
+  */
+  return app.indexOf('搜索标题 / 详情 / id') < 0;
+})());
+
+/* ============================================================ 深度审查：行内编辑被轮询冲掉（本轮） */
+
+/*
+ * InlineText 把 value 放进 useEffect 依赖里持续监听 ——
+ * 正在编辑时 value 一变（2s 轮询读到别人的改动）就把人打的字冲掉。
+
+ * DraftInput（详情面板那边）早就是这个判据（`if (!editing)`），
+ * **这里漏了** —— 两个组件做的是同一件事，判据必须一致。
+ */
+t('守卫：InlineText 只在打开时带入当前值（value 不在依赖里）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function InlineText({');
+  const seg = app.slice(i, i + 1500);
+  return seg.indexOf('}, [open]);') >= 0 && seg.indexOf('}, [open, value]);') < 0;
 })());
 
 /* ---------------- 汇总 ---------------- */
