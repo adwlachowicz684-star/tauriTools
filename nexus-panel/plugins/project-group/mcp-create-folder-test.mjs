@@ -17,7 +17,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeT } from './testkit.mjs';
-import { stripComments as strip } from '../../test-scan-utils.mjs';
+/*
+  用**带行注释**的那一版（stripCommentsJs），不是只剥块注释的 stripComments：
+  被扫的是 Rust 源码，`//` 行注释里一样会写着 `as_i64`、`snap.links.len()`
+  这类词 —— 只剥块注释的话，注释里出现某个词会被当成代码里用了它。
+
+  ⛔ 为什么不能就地手写一份"裸的行注释正则"（匹配两个斜杠直到行尾）：
+  那种判据会把 `https://`、`file://`、路径 `a//b` 从斜杠处起**整行后半截吞掉**。
+  本文件第 6 节的判据是 `!/as_i64/.test(...)` 这种"不该出现"型 ——
+  只要 `as_i64` 恰好落在某个 `//` 之后，它就被剥没了，断言**假绿**：
+  代码里明明还在用 as_i64（负数会被收下），守卫却永远通过。
+  共用模块的行注释判据是 `(^|\s)//`，只认行首/缩进后/行尾这三种真注释形态。
+*/
+import { stripCommentsJs as strip } from '../../test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '../../src-tauri/src/fpx/mcp.rs');
@@ -113,11 +125,21 @@ console.log('\n=== 6. add_card 行为未变 ===');
   t('add_card 仍要求 path 必填', /if path\.is_empty\(\)/.test(addCard));
   /* 先剥注释再看代码：add_card 的注释里就写着"as_i64 会收下负数"，
      不剥注释的话这条永远判失败 —— 注释里出现某个词不等于代码里用了它 */
-  const addCardCode = addCard.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const addCardCode = strip(addCard);
   /* 取法统一走 u()：u 内部用 as_u64（挡掉负数），且传了却解析不出要报错。
      钉"走 u()"而不是钉 as_u64 字面量 —— 后者换个等价实现就误报 */
   t('add_card 仍用非负整数取法取 tab_index（挡掉负数）',
     /u\("tab_index"\)\?/.test(addCardCode) && !/as_i64/.test(addCardCode));
+  /* 反面证据：本节的 `!/as_i64/` 是"不该出现"型断言，剥注释判据一旦
+     把 as_i64 连代码一起剥掉，这条就**假绿**（代码里还在用，守卫却通过）。
+     下面确认两种判据确实有区别：裸 `//` 会吞掉后半截，共用模块不会。 */
+  {
+    const sample = 'let p = "a//b"; if as_i64 { }';
+    const naive = sample.replace(/[/][/][^\n]*/g, '');
+    t('剥注释判据自检：裸 // 会吞掉代码（故必须用共用模块）',
+      !/as_i64/.test(naive) && /as_i64/.test(strip(sample)),
+      `裸判据后: ${naive}`);
+  }
   {
     const ui = rs.indexOf('let u = |k: &str|');
     const ublk = ui === -1 ? '' : rs.slice(ui, rs.indexOf('};', ui));
@@ -146,7 +168,7 @@ console.log('\n=== 6b. 回包的链接条数必须是「这个项目的」，不
    * 注：前端 useFpx 的 createLink / syncLinks 已按归一化键找行，
    * 这里必须跟上 —— 两条通道给出互相矛盾的数字就谁都信不过了。
    */
-  const code = strip(rs).replace(/\/\/[^\n]*/g, '');
+  const code = strip(rs);
   t('有 link_names_of 这个按项目取条数的辅助', /fn link_names_of\(/.test(code));
 
   const fnBody = code.slice(code.indexOf('fn link_names_of('), code.indexOf('fn call_tool('));
