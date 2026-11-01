@@ -4,7 +4,8 @@ export declare const STATUSES: string[];
 export declare const PRIORITIES: string[];
 
 export declare function canTransition(from: string, to: string): boolean;
-export declare function actionsFor(status: string): { to: string; label: string; needNote?: boolean }[];
+/** 应用一次流转。**必须传 flow**：校验认用户的流程配置 */
+export declare function applyTransitionIn(flow: TaskFlow | null | undefined, task: Task, to: string, by?: string, note?: string, at?: number): Task | null;
 export declare function normalizeTask(raw: any): Task;
 export declare function groupName(defs: {
     id: string;
@@ -164,6 +165,9 @@ export declare const COLOR_OK: string[];
 export declare type ColMeta = Record<string, { multi: boolean; color: boolean }>;
 export declare const DEFAULT_COL_META: ColMeta;
 export declare function normalizeColMeta(raw: unknown): ColMeta;
+export declare function sortKey(task: Task | null | undefined, field: string, nameOf?: ((id: string) => string) | null): string;
+export declare function hasVal(task: Task | null | undefined, field: string, id: string | null): boolean;
+export declare function replaceVal(task: Task | null | undefined, field: string, oldId: string | null, newId: string | null, multi: boolean): string | string[];
 export declare function toggleFieldVal(task: Task | null | undefined, field: string, id: string, multi: boolean): string | string[];
 export declare function fieldVals(task: Task | null | undefined, field: string): string[];
 export declare function colMulti(meta: ColMeta | null | undefined, field: string): boolean;

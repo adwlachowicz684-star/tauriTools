@@ -18,7 +18,6 @@ import {
   duplicateDataDirs,
   STATUSES,
   canTransition,
-  actionsFor,
   normalizeTask,
   normalizeStore,
   sortTasks,
@@ -53,6 +52,7 @@ import {
   normalizeFlow,
   canTransitionIn,
   actionsForIn,
+  applyTransitionIn,
   statusName,
   statusDone,
   initialStatus,
@@ -104,9 +104,14 @@ t('done 不能回 doing（只能走 review）', !canTransition('done', 'doing'))
 t('非法状态拒绝', !canTransition('todo', 'nope'));
 t('自流转允许', canTransition('doing', 'doing'));
 
-t('todo 操作含认领+开始', actionsFor('todo').map((a) => a.to).join() === 'claimed,doing');
-t('review 的打回必须写备注', actionsFor('review').find((a) => a.to === 'doing').needNote === true);
-t('done 只有重开', actionsFor('done').length === 1 && actionsFor('done')[0].to === 'review');
+/*
+  旧的 actionsFor(status)（写死的 switch）已删 —— 它与按配置推导的结果
+  **不一致**（它只给 2 个按钮，配置推导给 4 个），是两个函数说同一件事。
+  统一用 actionsForIn(DEFAULT_FLOW, …)：默认流程也只是"一份配置"。
+*/
+t('todo 操作含认领+开始', actionsForIn(DEFAULT_FLOW, 'todo').map((a) => a.to).join() === 'claimed,doing,hold,cancelled');
+t('review 的打回必须写备注', actionsForIn(DEFAULT_FLOW, 'review').find((a) => a.to === 'doing').needNote === true);
+t('done 只有重开', actionsForIn(DEFAULT_FLOW, 'done').length === 1 && actionsForIn(DEFAULT_FLOW, 'done')[0].to === 'review');
 
 /* ---------------- 归一化 ---------------- */
 const nt = normalizeTask({ id: 'x', title: 't' });
@@ -2218,8 +2223,13 @@ t('审查：新建任务会写出 group 字段（AI 在文件里要看得见）'
  */
 t('审查：详情面板里有分组字段', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('onCommit={(v) => onPatch({ group: v })}') >= 0
-    && app.indexOf('placeholder="分组名（留空 = 不分组）"') >= 0;
+  /*
+    锚点随"分组可多选"改了：现在提交时要把「、」分隔拆成数组。
+    ⛔ 钉旧的 `onCommit={(v) => onPatch({ group: v })}` 会因锚点失效而恒红，
+    恒红的守卫等于没有守卫。
+  */
+  return /onPatch\(\{ group: parts\.length > 1 \? parts : \(parts\[0\] \|\| ''\) \}\)/.test(app)
+    && app.indexOf('分组名（留空 = 不分组；多个用「、」分隔）') >= 0;
 })());
 
 
@@ -2303,7 +2313,7 @@ t('审查：详情的自由文本是草稿提交，不是每键写盘', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   return app.indexOf('function DraftInput({') >= 0
     && app.indexOf('onCommit={(v) => onPatch({ summary: v })}') >= 0
-    && app.indexOf('onCommit={(v) => onPatch({ group: v })}') >= 0;
+    && /onPatch\(\{ group: parts\.length > 1 \? parts : \(parts\[0\] \|\| ''\) \}\)/.test(app);
 })());
 
 t('审查：草稿提交带输入法守卫（拼音中间态不会写进文件）', (() => {
@@ -2781,7 +2791,12 @@ const FLOW2 = {
  * 而且漏掉用户新加的状态：详情里看不到"标为完工"这类按钮，
  * 于是自定义的状态只能从列表那一列里点，详情这儿像是坏了。
  */
-t('审查：自定义流程下 actionsFor 是空的（所以详情必须用 actionsForIn）', actionsFor('s1').length === 0);
+/*
+  这条原来断言"actionsFor('s1') 是空的"来证明必须用 actionsForIn。
+  actionsFor 已删（写死的 switch），所以改成钉**真正要防的事**：
+  写盘的校验也必须认 flow —— 见下面 applyTransitionIn 那条。
+*/
+t('审查：自定义流程下默认流程推导不出按钮（必须用 flow）', actionsForIn(DEFAULT_FLOW, 's1').length === 0);
 
 t('审查：actionsForIn 认自定义流程', (() => {
   const a = actionsForIn(FLOW2, 's1');
@@ -2794,10 +2809,18 @@ t('审查：actionsForIn 认自定义流程', (() => {
 */
 t('审查：详情面板用 actionsForIn(flow, …)', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  const i = app.indexOf('function DetailPanel({');
+  /*
+    锚点随"操作区合并到 TaskActions"改了：详情面板不再自己算 acts，
+    它由 <TaskActions> 统一算。钉在 DetailPanel 内部会恒红。
+    现在钉的是：共用组件用 actionsForIn + 详情确实挂了这个组件。
+  */
+  const i = app.indexOf('function TaskActions({');
   const seg = app.slice(i, i + 1500);
+  const di = app.indexOf('function DetailPanel({');
+  const dseg = app.slice(di, app.indexOf('\nfunction ', di + 10));
   return seg.indexOf('const acts = actionsForIn(flow, task.status);') >= 0
-    && seg.indexOf('const acts = actionsFor(task.status);') < 0;
+    && /<TaskActions/.test(dseg)
+    && !/actionsFor\(task\.status\)/.test(app);
 })());
 
 /*
@@ -4053,19 +4076,31 @@ t('守卫：config 事件换目录时清掉筛选（与切项目同一判据）'
  */
 t('守卫：详情面板没有可走的流转时给出说明（区分两种原因）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  const i = app.indexOf('function DetailPanel({');
+  /*
+    锚点随"操作区合并到 TaskActions"改了：提示现在在共用组件里，
+    DetailPanel 只是 `<TaskActions …>`。
+    钉在 DetailPanel 内部会因为代码已搬走而恒红 —— 恒红的守卫等于没有守卫。
+  */
+  const i = app.indexOf('function TaskActions({');
   const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
   return /acts\.length === 0 \? \(/.test(seg)
     && /不在流程配置里/.test(seg)
-    && /没配/.test(seg);
+    && /没配/.test(seg)
+    /* 详情走的是完整文案那条分支 */
+    && /tb-dhint warn/.test(seg);
 })());
 
 /* 看板卡片同样要标明（空间小，短文字 + title） */
 t('守卫：看板卡片没有可走的流转时标明', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  const i = app.indexOf('function TaskCard({');
+  /* 同上：锚点改到共用组件，并确认卡片走的是 compact 短文字那条分支 */
+  const i = app.indexOf('function TaskActions({');
   const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
-  return /acts\.length === 0 \? \(/.test(seg) && /tb-task-noflow/.test(seg);
+  return /acts\.length === 0 \? \(/.test(seg)
+    && /tb-task-noflow/.test(seg)
+    && /compact \? '认领'/.test(seg)
+    /* 两个调用点都真的在用这个组件 */
+    && (app.match(/<TaskActions/g) || []).length >= 2;
 })());
 
 
@@ -4240,7 +4275,14 @@ t('守卫：认领必须更新时间戳（两条路径都要）', (() => {
   const i = app.indexOf('const doClaim');
   if (i < 0) return false;
   const seg = app.slice(i, i + 2200);
-  return /next\.assignee = me;/.test(seg) && /next\.updatedAt = Date\.now\(\);/.test(seg);
+  /*
+    锚点随"认领支持共同认领"改了：署名不再是简单的 `next.assignee = me`
+    （多值列要把我加进去而不是挤掉别人）。
+    钉旧的锚点会恒红 → 守卫等于失效。
+  */
+  return /next\.assignee = Array\.isArray\(cur\.assignee\)/.test(seg)
+    && /hasVal\(next, 'assignee', me\)/.test(seg)
+    && /next\.updatedAt = Date\.now\(\);/.test(seg);
 })());
 
 /*
@@ -4714,6 +4756,186 @@ t('守卫：标签列也走统一组件（InlineTags 已删）', (() => {
   const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
   return !/function InlineTags\(/.test(app)
     && app.indexOf('<InlineTags') < 0;
+})());
+
+
+/* ============================================================ 深度审查：多值列（本轮） */
+
+/*
+ * **「多选」勾上之后，值变成数组；所有按单值写的地方都会失效或崩。**
+ *
+ * 这是"新特性没在所有入口落实"的又一轮 —— 上一轮加了多选，
+ * 但排序、分组、看板、详情、管理操作（改名/删定义）都还按单值处理。
+ */
+t('守卫：排序不能对多值字段直接 .localeCompare（会崩）', (() => {
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const i = mjs.indexOf('function cmpTask(');
+  if (i < 0) return false;
+  const seg = mjs.slice(i, i + 2400);
+  /*
+    ⛔ 实测：5 条任务里多值那条排在第 1/2/4 位时，
+    `a.assignee.localeCompare(...)` → TypeError → 列表白屏。
+    所以这里不允许再出现 `a.<字段>.localeCompare`。
+  */
+  return !/a\.assignee\.localeCompare/.test(seg)
+    && !/a\.group\.localeCompare/.test(seg)
+    && /sortKey\(a, 'assignee'\)/.test(seg)
+    && /sortKey\(a, 'group'\)/.test(seg);
+})());
+
+/* type 排序要用 sortKey 取代表值，不能 TYPE_RANK[数组]（恒 99） */
+t('守卫：类型排序按代表值取排名（多值不恒排最后）', (() => {
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  return /TYPE_RANK\[sortKey\(a, 'type'\)\]/.test(mjs);
+})());
+
+/*
+ * **分组：多选列的一条任务要同时进多个组。**
+ *
+ * ⛔ 原来 groupValuesOf 一律返回单值 `[t.group]` ——
+ * 多值时"组名"就是个数组：groupName 拿数组查定义表查不到 →
+ * 组头显示成一串逗号连接的原始值，而且这条任务**只出现在其中一个组**。
+ * 多选的语义本来就是"同时属于多个"。
+ */
+t('守卫：分组时多值任务进多个组（不是只进第一个）', (() => {
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const i = mjs.indexOf('export function groupValuesOf');
+  if (i < 0) return false;
+  const seg = mjs.slice(i, i + 1400);
+  return /if \(Array\.isArray\(v\)\) return v\.length > 0 \? v : \[UNASSIGNED\];/.test(seg)
+    && /if \(Array\.isArray\(v\)\) return v\.length > 0 \? v : \[NOTYPE\];/.test(seg)
+    && /if \(Array\.isArray\(v\)\) return v\.length > 0 \? v : \[NOGROUP\];/.test(seg);
+})());
+
+/*
+ * **管理操作（改名 / 删定义 / 统计影响条数）不能用 `===` 匹配多值。**
+ *
+ * ⛔ `t.type === id` 在多值任务上永远不成立：
+ *   · 删类型：影响条数报 0，而且任务上残留那个 id（删了又复活）
+ *   · 改名：多值任务不同步，界面上显示一个已经不存在的值
+ * 匹配一律走 hasVal / replaceVal。
+ */
+t('守卫：删除/改名定义时用 hasVal 匹配（多值任务不漏）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  /* 删类型的统计与摘除 */
+  /*
+    ⛔ 必须**计数**（>= 2），不能只 indexOf 一次：
+    删类型有两处匹配（统计影响条数 + 摘掉），
+    只钉一处的话注入"统计处退化成 ==="照样全绿 —— 实际已回退却报绿。
+  */
+  const cnt = (app.match(/hasVal\(t, 'type', id\)/g) || []).length;
+  return cnt >= 2
+    && /replaceVal\(t, 'type', id, null, multiOfTask\(t, 'type'\)\)/.test(app)
+    /* 认领人的改名/删除同理 */
+    && /hasVal\(t, 'assignee', oldName\)/.test(app)
+    && /hasVal\(t, 'assignee', name\)/.test(app)
+    /* 不再出现旧的 trim 比较（数组没有 .trim，会 TypeError） */
+    && !/\(t\.assignee \|\| ''\)\.trim\(\)/.test(app);
+})());
+
+/* 类型切换（筛选面板里点已选值）不能写 === */
+t('守卫：toggleType 用 hasVal 判断（多值时点已选能取消）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  return /type: hasVal\(t, 'type', typeId\)/.test(app)
+    && !/\? \{ \.\.\.t, type: t\.type === typeId \? '' : typeId/.test(app);
+})());
+
+/* 认领：多值列是共同认领，把我加进去而不是挤掉别人 */
+t('守卫：认领支持共同认领（多值列是加上我，不是替换）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const doClaim');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 2600);
+  return /hasVal\(next, 'assignee', me\)/.test(seg)
+    && /Array\.isArray\(cur\.assignee\)/.test(seg)
+    && /\[\.\.\.cur\.assignee, me\]/.test(seg);
+})());
+
+/* 看板卡片：多值要逐个渲染（不能出一个 "dev,bug" 的怪 chip） */
+t('守卫：看板卡片逐个渲染多值（类型与分组）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  return /Array\.isArray\(task\.type\) \? task\.type : \(task\.type \? \[task\.type\] : \[\]\)/.test(app)
+    && /Array\.isArray\(task\.group\) \? task\.group : \(task\.group \? \[task\.group\] : \[\]\)/.test(app);
+})());
+
+/* 详情面板：分组可多值（用「、」分隔，提交时拆分） */
+t('守卫：详情面板的分组支持多值（逗号分隔提交）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('onPatch({ group: parts.length > 1 ? parts');
+  if (i < 0) return false;
+  const seg = app.slice(i - 700, i + 300);
+  return /Array\.isArray\(task\.group\) \? task\.group\.join/.test(seg)
+    && /split\(\/\[、,，\]\/\)/.test(seg);
+})());
+
+/* types.ts 要把这三个字段声明成可多值（TS 才能帮我们找出漏网） */
+t('守卫：Task 类型声明这三个字段可多值（MultiVal）', (() => {
+  const ts = fs.readFileSync(path.join(dir, 'types.ts'), 'utf8');
+  return /export type MultiVal = string \| string\[\];/.test(ts)
+    && /type: MultiVal;/.test(ts)
+    && /group: MultiVal;/.test(ts)
+    && /assignee: MultiVal \| null;/.test(ts);
+})());
+
+
+/* ============================================================ 流转校验必须认 flow（本轮） */
+
+/*
+ * **最严重的一个：自定义流程下，每一次状态流转都失败。**
+ *
+ * 链路：点按钮 → doTransition → store.transitionTask → applyTransition
+ *      → canTransition（**只认默认那七个状态**）→ false → 抛「流转失败」
+ *
+ * 而界面按钮是用 actionsForIn(flow, …) 算的 —— 按钮显示得出来、点得动，
+ * 但真正写盘时校验失败。**报错文案还把人往"任务不存在"上引**。
+ *
+ * 修法：加 applyTransitionIn(flow, …)，校验走 canTransitionIn；
+ * 三处调用点（store.transitionTask / doClaim / 批量改状态）都要传 flow。
+ */
+t('守卫：applyTransitionIn 认自定义流程（默认流程推不出来）', (() => {
+  const flow = { statuses: [{ id: 's1' }, { id: 's2' }], transitions: { s1: ['s2'], s2: [] }, edges: {} };
+  const t = { id: 'a', status: 's1', history: [] };
+  const ok = applyTransitionIn(flow, t, 's2', 'me');
+  const bad = applyTransitionIn(flow, t, 's1', 'me');   // s1→s1 自环允许
+  return ok !== null && ok.status === 's2'
+    /* 不传 flow 时走默认流程，自定义 id 应该失败（证明真的在认 flow） */
+    && applyTransitionIn(undefined, t, 's2', 'me') === null
+    && bad !== null;
+})());
+
+/* store.transitionTask 必须把 store.flow 传进去 */
+t('守卫：transitionTask 用 applyTransitionIn(store.flow, …)', (() => {
+  const src = STRIP(fs.readFileSync(path.join(dir, 'lib/store.ts'), 'utf8'));
+  return /applyTransitionIn\(store\.flow, store\.tasks\[idx\], to, me, note\)/.test(src)
+    && !/applyTransition\(store\.tasks\[idx\]/.test(src);
+})());
+
+/* doClaim 与批量改状态同样要传 flow */
+t('守卫：认领与批量改状态都传 flow', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  return /applyTransitionIn\(st\.flow, cur, acts\[0\]\.to, me\)/.test(app)
+    && /applyTransitionIn\(st\.flow, t, to, me\)/.test(app)
+    /* 不再有不带 flow 的调用 */
+    && !/applyTransition\(cur,/.test(app)
+    && !/applyTransition\(t, to, me\)/.test(app);
+})());
+
+/* canTransition 不再自己抄一份流转表（两份真相） */
+t('守卫：canTransition 委托给 canTransitionIn（不另抄表）', (() => {
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const i = mjs.indexOf('export function canTransition(from, to)');
+  if (i < 0) return false;
+  const seg = mjs.slice(i, i + 260);
+  return /canTransitionIn\(DEFAULT_FLOW, from, to\)/.test(seg)
+    /* 那个写死的 allowed 字面量表必须没了 */
+    && !/const allowed = \{/.test(seg);
+})());
+
+/* 写死的 actionsFor（switch 版）必须已删 */
+t('守卫：写死的 actionsFor 已删（统一到 actionsForIn）', (() => {
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  return !/export function actionsFor\(status\)/.test(mjs)
+    && !/case 'todo':\s*\n\s*return \[/m.test(mjs);
 })());
 
 /* ---------------- 汇总 ---------------- */

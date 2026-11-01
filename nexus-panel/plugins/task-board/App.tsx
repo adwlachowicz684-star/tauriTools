@@ -21,11 +21,12 @@ import {
   COLOR_OK,
   toggleFieldVal,
   fieldVals,
+  hasVal,
+  replaceVal,
   colMulti,
   colColorOn,
-  actionsFor,
   activeColFilters,
-  applyTransition,
+  applyTransitionIn,
   colFilterActive,
   colFilterValues,
   emptyColFilter,
@@ -60,6 +61,7 @@ import {
   statsOf,
   typeColor,
   typeName,
+  groupName,
   UNESTIMATED,
   statusColor,
   statusName,
@@ -509,6 +511,8 @@ export default function App() {
     五列单选型里它原本是唯一没有定义表、也没有色点的那个
     —— 而"记哪些列有例外"正是统一要消灭的东西。
   */
+  /** 分组定义表（App 主体也要有：看板卡片要查名字） */
+  const groupDefs = store ? (store.groupDefs || []) : [];
   const assigneeDefs = store ? (store.assigneeDefs || []) : [];
   /*
     已有分组名（去重、排序）。新建弹窗的分组下拉用它做候选 ——
@@ -518,8 +522,13 @@ export default function App() {
   const allGroupNames = useMemo(() => {
     const set = new Set<string>();
     for (const t of store ? store.tasks : []) {
-      const g = (t.group || '').trim();
-      if (g) set.add(g);
+      /*
+        ⛔ 分组可以是多值的（勾了多选），`(t.group || '').trim()` 在数组上
+        直接 TypeError —— 数组没有 .trim。汇总已有分组名时要把每个值都收进来。
+      */
+      const gv = t.group;
+      if (Array.isArray(gv)) { for (const x of gv) { const q = String(x || '').trim(); if (q) set.add(q); } }
+      else { const q = String(gv || '').trim(); if (q) set.add(q); }
     }
     return [...set].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
   }, [store]);
@@ -809,7 +818,7 @@ export default function App() {
       */
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        n = (st.tasks || []).filter((t) => t.type === id).length;
+        n = (st.tasks || []).filter((t) => hasVal(t, 'type', id)).length;
         return {
           ...st,
           /*
@@ -817,7 +826,13 @@ export default function App() {
             不推进的话"更新"列不动，看着像这几条没被改过。
           */
           tasks: (st.tasks || []).map((t) => (
-            t.type === id ? { ...t, type: '', updatedAt: Date.now() } : t
+            hasVal(t, 'type', id)
+              /*
+                摘掉这个类型。多值列要**只摘这一个、留下其它**，
+                不能整列清空 —— 用户删的是"类型A"，不是"把这条的所有类型清空"。
+              */
+              ? { ...t, type: replaceVal(t, 'type', id, null, multiOfTask(t, 'type')), updatedAt: Date.now() }
+              : t
           )),
           typeDefs: (st.typeDefs || []).filter((d) => d.id !== id),
         };
@@ -862,7 +877,15 @@ export default function App() {
         ...st,
         tasks: (st.tasks || []).map((t) => (
           t.id === taskId
-            ? { ...t, type: t.type === typeId ? '' : typeId, updatedAt: Date.now() }
+            /*
+              ⛔ 不能写 `t.type === typeId`：多值列上两边永远不等
+              → 点当前值不是"摘掉"而是"再加一个"，且清不掉
+              （筛选面板里点已选的类型想取消，结果越点越多）。
+            */
+            ? { ...t, type: hasVal(t, 'type', typeId)
+                ? replaceVal(t, 'type', typeId, null, multiOfTask(t, 'type'))
+                : (multiOfTask(t, 'type') ? [...(t.type as string[]), typeId] : typeId),
+                updatedAt: Date.now() }
             : t
         )),
       }));
@@ -874,6 +897,16 @@ export default function App() {
     （一条任务不能同时属于多个"类型"，除非它是多选列）。
     所以必须先把影响面说出来再改 —— 静默丢数据是最难查的一类问题。
   */
+  /*
+    这一列**在这条任务上**是不是多值形态。
+
+    ⛔ 以**数据本身**为准，不查 colMeta：
+    用户关掉"多选"但数据还没压缩完（或压缩失败、或被别的端写回来）时，
+    值仍然是数组 —— 按单值处理就会漏摘，任务上残留一个已删除的 id。
+  */
+  const multiOfTask = (t: Task, field: string) =>
+    Array.isArray((t as unknown as Record<string, unknown>)[field]);
+
   const setColMetaFlag = (field: string, key: 'multi' | 'color', on: boolean) => {
     const cur = colMeta[field] || { multi: false, color: false };
     if (cur[key] === on) return;
@@ -996,12 +1029,24 @@ export default function App() {
         let next = null;
         if (cur.status === init) {
           const acts = actionsForIn(flow, cur.status);
-          if (acts.length > 0) next = applyTransition(cur, acts[0].to, me);
+          /* 同样要传 flow：认的是用户配的流程，不是默认那七个状态 */
+          if (acts.length > 0) next = applyTransitionIn(st.flow, cur, acts[0].to, me);
         }
         /* 流程里没有可走的边（终态、或只配了一个状态）：只署名 */
         if (!next) next = { ...cur };
-        if (next.assignee === me && next.status === cur.status) return null;
-        next.assignee = me;               // 认领必须署名
+        /*
+          ⛔ 不能写 `next.assignee === me`：多值列上（共同认领）这个判据
+          永远不成立 → 已经认领过的任务还能再认领一次（重复弹「已认领」）。
+        */
+        if (hasVal(next, 'assignee', me) && next.status === cur.status) return null;
+        /*
+          署名：多值列是**共同认领**，把我加进去而不是把别人挤掉 ——
+          挤掉的话"两个人一起负责这条"就变成了"只有我负责"，
+          而另一个人完全不知情。单值列仍是替换（这条只能有一个负责人）。
+        */
+        next.assignee = Array.isArray(cur.assignee)
+          ? (hasVal(cur, 'assignee', me) ? cur.assignee : [...cur.assignee, me])
+          : me;
         /*
           ⛔ 署名后**必须更新时间戳**，不能只在 applyTransition 那条路径上更新。
 
@@ -1230,7 +1275,7 @@ ${dir}
           */
           if (t.status === to) { al += 1; return t; }
           if (!canTransitionIn(st.flow, t.status, to)) { skip.push(t.id); return t; }
-          const next = applyTransition(t, to, me);
+          const next = applyTransitionIn(st.flow, t, to, me);
           if (!next) { skip.push(t.id); return t; }
           ok += 1;
           return next;
@@ -1709,7 +1754,7 @@ ${dir}
       const res: { state: 'ok' | 'taken' | 'def' | 'none' } = { state: 'ok' };
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const taken = (st.tasks || []).some((t) => (t.assignee || '').trim() === nm)
+        const taken = (st.tasks || []).some((t) => hasVal(t, 'assignee', nm))
           || (Array.isArray(st.assigneeDefs) ? st.assigneeDefs : []).some((d) => d.id === nm && d.id !== oldName);
         if (taken) { res.state = 'taken'; return null; }
         /*
@@ -1733,9 +1778,13 @@ ${dir}
         }
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
-          if ((t.assignee || '').trim() !== oldName) return t;
+          if (!hasVal(t, 'assignee', oldName)) return t;
           cnt += 1;
-          return { ...t, assignee: nm, updatedAt: Date.now() };
+          /*
+            多值时**只换这一个名字**，留下其它 ——
+            用户改的是"张三"的名字，不是"把这条任务上的所有人换成一个人"。
+          */
+          return { ...t, assignee: replaceVal(t, 'assignee', oldName, nm, multiOfTask(t, 'assignee')), updatedAt: Date.now() };
         });
         n = cnt;
         /*
@@ -1814,7 +1863,7 @@ ${dir}
         摘掉之后那些任务变成未认领 —— 而"未认领"是个需要有人接手的状态。
         静默摘掉的话，用户下次看统计会觉得"活变多了"，查不出是谁干的。
       */
-      const holding = (store ? store.tasks : []).filter((t) => (t.assignee || '').trim() === name);
+      const holding = (store ? store.tasks : []).filter((t) => hasVal(t, 'assignee', name));
       if (holding.length > 0) {
         const ok = window.confirm(
           `「${name}」还认领着 ${holding.length} 条任务：\n`
@@ -1834,9 +1883,10 @@ ${dir}
         const defs = (Array.isArray(st.assigneeDefs) ? st.assigneeDefs : []).filter((d) => d.id !== name);
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
-          if ((t.assignee || '').trim() !== name) return t;
+          if (!hasVal(t, 'assignee', name)) return t;
           cnt += 1;
-          return { ...t, assignee: '', updatedAt: Date.now() };
+          /* 多值时只摘这个人，留下其它共同认领的人 */
+          return { ...t, assignee: replaceVal(t, 'assignee', name, null, multiOfTask(t, 'assignee')), updatedAt: Date.now() };
         });
         n = cnt;
         return cnt === 0 ? null : { ...st, tasks, assigneeDefs: defs };
@@ -2196,6 +2246,7 @@ ${dir}
                     me={me}
                     flow={flow}
                     tagDefs={tagDefs}
+                    groupDefs={groupDefs}
                     onOpen={() => setDetailId(t.id)}
                     onAction={(to, needNote) => (needNote ? setRejectFor({ id: t.id, to }) : doTransition(t.id, to))}
                     onClaim={() => doClaim(t.id)}
@@ -2367,6 +2418,7 @@ ${dir}
           flow={flow}
           me={me}
           tagDefs={tagDefs}
+          groupDefs={groupDefs}
           onOpen={(id) => setDetailId(id)}
           onAction={(id, to, needNote) => (needNote ? setRejectFor({ id, to }) : doTransition(id, to))}
           onClaim={(id) => doClaim(id)}
@@ -2510,6 +2562,7 @@ function TaskCard({
   me,
   flow,
   tagDefs,
+  groupDefs,
   onOpen,
   onAction,
   onClaim,
@@ -2519,7 +2572,9 @@ function TaskCard({
   flow: FlowLike;
   /** 标签定义：卡片上的标签要显示名字而不是 id */
   tagDefs: TagDef[];
-    /*
+  /** 分组定义：同上，卡片上的分组要显示名字而不是 id */
+  groupDefs: TagDef[];
+  /*
     打开详情（右侧面板）。
     ⛔ 现在**没有点击触发** —— 卡片上的 onClick 已经去掉了，
     详情要等右键菜单里的「显示详情」主动叫它。
@@ -2529,7 +2584,6 @@ function TaskCard({
   onAction: (to: TaskStatus, needNote?: boolean) => void;
   onClaim: () => void;
 }) {
-  const acts = actionsForIn(flow, task.status);
   return (
     <article className="tb-task">
       <div className="tb-task-top">
@@ -2546,32 +2600,66 @@ function TaskCard({
         看板卡片上也显示类型：看板是主视图之一，
         列表有类型列而看板看不到，会让人以为"这条没归类"。
       */}
-      {typeName(flow.typeDefs, task.type) ? (
-        <div className="tb-task-tags">
-          <span
-            className="tb-tag"
-            style={{
-              background: typeColor(flow.typeDefs, task.type) + '22',
-              color: typeColor(flow.typeDefs, task.type),
-              borderColor: typeColor(flow.typeDefs, task.type) + '55',
-            }}
-          >
-            {typeName(flow.typeDefs, task.type)}
-          </span>
-        </div>
-      ) : null}
+      {/*
+        ⛔ 类型可以是多值的（勾了多选），必须逐个渲染。
+
+        原来只渲染一个：typeName(数组) 查不到定义 → 返回原始值，
+        typeColor 同理返回默认色 —— 卡片上会出现一个"dev,bug"的怪 chip。
+      */}
+      {(() => {
+        const tv = Array.isArray(task.type) ? task.type : (task.type ? [task.type] : []);
+        const shown = tv.filter((x) => x && typeName(flow.typeDefs, x));
+        if (shown.length === 0) return null;
+        return (
+          <div className="tb-task-tags">
+            {shown.map((x) => (
+              <span
+                key={x}
+                className="tb-tag"
+                style={{
+                  background: typeColor(flow.typeDefs, x) + '22',
+                  color: typeColor(flow.typeDefs, x),
+                  borderColor: typeColor(flow.typeDefs, x) + '55',
+                }}
+              >
+                {typeName(flow.typeDefs, x)}
+              </span>
+            ))}
+          </div>
+        );
+      })()}
       {/*
         分组。判据与上面的类型**一样**：看板是主视图之一，
         列表里有分组列而看板看不到，会让人以为"这条没分组"
         （尤其是刚在列表里给一批任务填上分组、切到看板发现什么都没变）。
       */}
-      {task.group ? (
+      {(() => {
+        const gvv = Array.isArray(task.group) ? task.group : (task.group ? [task.group] : []);
+        const gs = gvv.filter((x) => x);
+        if (gs.length === 0) return null;
+        return (
         <div className="tb-task-tags">
-          <span className="tb-tag tb-tag-group" title={`分组：${task.group}`}>
-            {task.group}
-          </span>
+          {gs.map((x) => (
+            /*
+              ⛔ 要查定义表显示**名字**，不能渲染原始 id：
+              列表那一列显示的是"登录"，卡片上却是"g1"，
+              同一个分组两处说法不一样，看着像两个不同的组。
+            */
+            <span
+              key={x}
+              className="tb-tag tb-tag-group"
+              style={(() => {
+                const c = groupColor(groupDefs || [], x);
+                return c ? { background: c + '22', color: c, borderColor: c + '55' } : undefined;
+              })()}
+              title={`分组：${groupName(groupDefs || [], x)}`}
+            >
+              {groupName(groupDefs || [], x)}
+            </span>
+          ))}
         </div>
-      ) : null}
+        );
+      })()}
       {task.tags.length > 0 && (
         <div className="tb-task-tags">
           {/*
@@ -2594,53 +2682,14 @@ function TaskCard({
           <span className="tb-who none">未认领</span>
         )}
         <div className="tb-task-acts">
-          {/* 同详情面板：认领按钮的判据是**初始态**，不写死 'todo' */}
-          {task.status === initialStatus(flow) && (
-            <button className="tb-act sm" onClick={onClaim} title={`以 ${me} 身份认领`}>
-              认领
-            </button>
-          )}
-          {/*
-            同上：一个按钮都算不出来时要说明。
-            看板这里空间小，摆一行短文字 + title 带完整说明，
-            不然整张卡片的操作区是空的，看着像"这条没有操作"。
-          */}
-          {acts.length === 0 ? (
-            <span
-              className="tb-task-noflow"
-              title={flow.statuses.some((sd) => sd.id === task.status)
-                ? `流程里没配「${statusName(flow, task.status)}」能走到哪里 —— 到「流程设置」勾上出边`
-                : `这条的状态「${task.status}」不在流程配置里 —— 到「流程设置」补上这个状态`}
-            >
-              {flow.statuses.some((sd) => sd.id === task.status) ? '未配流转' : '状态未配置'}
-            </span>
-          ) : null}
-          {acts
-            /*
-            过滤：从初始态直接"认领"这一步单独有按钮（上面那个），
-            这里不再重复摆一次。
-
-            ⛔ 不能写死 'todo' / 'claimed'：自定义流程里初始态可能叫别的，
-            认领那一步也可能叫别的。用流程里的**初始态**判，
-            而"认领"这一步的特征是"从初始态出发的第一步"，
-            保留原语义即可（重复按钮只是看着乱，不阻断操作）。
-          */
-          .filter((a) => !(task.status === initialStatus(flow) && a.to === (flow.statuses[1] || {}).id))
-            .map((a) => (
-              <button
-                key={a.to}
-                /*
-                主按钮（高亮）的判据是"这条边通向完成态"，
-                ⓘ 不能写死 'done'：自定义流程下完成态可能叫 's3'、'完工'…
-                写死的话**没有一个按钮会高亮**，
-                而高亮正是用来暗示"这一步是往前推进"的。
-              */
-              className={'tb-act sm' + (statusDone(flow, a.to) ? ' primary' : '') + (a.needNote ? ' warn' : '')}
-                onClick={() => onAction(a.to as TaskStatus, a.needNote)}
-              >
-                {a.label}
-              </button>
-            ))}
+          <TaskActions
+            task={task}
+            flow={flow}
+            me={me}
+            compact
+            onClaim={onClaim}
+            onAction={onAction}
+          />
         </div>
       </div>
     </article>
@@ -2648,6 +2697,102 @@ function TaskCard({
 }
 
 /* ================================================================ 展示件 */
+
+/**
+ * 一条任务的**操作区**：认领按钮 + 流转按钮 + "算不出按钮"的说明。
+ *
+ * 看板卡片和详情面板**共用这一处**。
+ *
+ * ⛔ 以前两处各写了一遍（约 40 行 ×2，连同那几段"为什么"注释一起重复）：
+ * 于是"认领按钮的判据改成初始态"这类修正，改了一处另一处就悄悄落后 ——
+ * 正是前几轮反复出现的"新判据没在所有入口落实"。
+ * 合到一处之后，改一次两边都对。
+ */
+function TaskActions({
+  task,
+  flow,
+  me,
+  onClaim,
+  onAction,
+  /** 看板卡片空间小：提示只留短文字 + title 带完整说明 */
+  compact,
+}: {
+  task: Task;
+  flow: FlowLike;
+  me: string;
+  onClaim: () => void;
+  onAction: (to: TaskStatus, needNote?: boolean) => void;
+  compact?: boolean;
+}) {
+  const acts = actionsForIn(flow, task.status);
+  /*
+    从初始态出发的"认领"那一步**单独有按钮**（就在旁边），这里不再重复摆一次。
+
+    ⛔ 不能写死 'todo' / 'claimed'：自定义流程里初始态可能叫别的，
+    认领那一步也可能叫别的。用流程里的**初始态** + "第二个状态"来判。
+  */
+  const claimTo = (flow.statuses[1] || {}).id;
+  const visible = acts.filter(
+    (a) => !(task.status === initialStatus(flow) && a.to === claimTo),
+  );
+  /*
+    ⛔ 一个按钮都算不出来时必须**说出来**。
+
+    实测：任务处于"配置里没有的状态"（状态被删掉、或 AI 经 API 写入）时
+    actionsForIn 返回**空数组** —— 于是操作区一片空白，完全不说为什么。
+
+    这比"孤岛状态"更糟：孤岛是没人能进去，而这是**已有的任务被困在
+    一个不存在的状态里，永远出不来**，用户还不知道该去哪里修。
+
+    两种情况分开说，因为**该做的事不一样**：
+      · 状态不在配置里 → 到流程设置补上这个状态
+      · 状态在配置里但没配出边 → 到流程设置勾上出边
+    混成一句"没有可执行的操作"，用户不知道是哪种、也就不知道怎么修。
+  */
+  const inFlow = flow.statuses.some((sd) => sd.id === task.status);
+  const hint = inFlow
+    ? `流程里没配「${statusName(flow, task.status)}」能走到哪里 —— 到「流程设置」勾上出边`
+    : `这条的状态「${task.status}」不在流程配置里 —— 到「流程设置」补上这个状态`;
+  return (
+    <>
+      {/* 认领按钮只在**初始态**出现。判据不写死 'todo'：自定义流程的初始态可能叫别的 */}
+      {task.status === initialStatus(flow) ? (
+        <button
+          className="tb-act sm"
+          onClick={onClaim}
+          title={compact ? `以 ${me} 身份认领` : undefined}
+        >
+          {compact ? '认领' : `认领（${me}）`}
+        </button>
+      ) : null}
+      {visible.map((a) => (
+        <button
+          key={a.to}
+          /*
+            主按钮（高亮）的判据是"这条边通向完成态"。
+            ⛔ 不能写死 'done'：自定义流程下完成态可能叫 's3'、'完工'…
+            写死的话**没有一个按钮会高亮**，
+            而高亮正是用来暗示"这一步是往前推进"的。
+          */
+          className={'tb-act sm' + (statusDone(flow, a.to) ? ' primary' : '') + (a.needNote ? ' warn' : '')}
+          onClick={() => onAction(a.to as TaskStatus, a.needNote)}
+        >
+          {a.label}
+        </button>
+      ))}
+      {acts.length === 0 ? (
+        compact ? (
+          <span className="tb-task-noflow" title={hint}>
+            {inFlow ? '未配流转' : '状态未配置'}
+          </span>
+        ) : (
+          <span className="tb-dhint warn">{hint}</span>
+        )
+      ) : null}
+    </>
+  );
+}
+
 
 /** 由同一个色相算出浅底/深字/描边 —— 不另存一套浅色版 */
 function tintOf(hex: string): { bg: string; fg: string; bd: string } {
@@ -4684,8 +4829,14 @@ function ListView({
     }
     return out;
   };
-  const typeOpts = unionOpts(typeDefs || [], (t) => t.type || '', true);
-  const groupOpts = unionOpts(groupDefs || [], (t) => t.group || '', true);
+  /*
+    ⛔ 多值列要用 \u0000 分隔（unionOpts 的约定），不能 `String(数组)`：
+    数组转字符串是逗号连接，而逗号是值里可能出现的正常字符，
+    遇到含逗号的值就会拆错。\u0000 在正常文本里不会出现。
+  */
+  const flat = (v: unknown) => (Array.isArray(v) ? v.join('\u0000') : String(v || ''));
+  const typeOpts = unionOpts(typeDefs || [], (t) => flat(t.type), true);
+  const groupOpts = unionOpts(groupDefs || [], (t) => flat(t.group), true);
   /*
     认领人现在**也有定义表**了（与分组同构，id 就是名字）。
 
@@ -4694,7 +4845,7 @@ function ListView({
     颜色的用途不是"给人分类"，而是**一眼看出这一批是谁的活** ——
     几十条任务时扫色点比逐行读名字快得多。
   */
-  const assigneeOpts = unionOpts(assigneeDefs || [], (t) => t.assignee || '', true);
+  const assigneeOpts = unionOpts(assigneeDefs || [], (t) => flat(t.assignee), true);
   /* 标签候选：定义表 ∪ 数据（与类型/分组同一判据） */
   const tagOpts = unionOpts(tagDefs || [], (t) => (t.tags || []).join('\u0000'), true);
 
@@ -4736,10 +4887,15 @@ function ListView({
               改一处定义、所有行的分组一起变 —— 这正是"一眼看出这批属于哪一组"。
               没定义时没有色，不硬塞一个假的（假色比没色更容易误导）。
             */}
-            {t.group && groupColor(groupDefs, t.group) ? (
+            {/*
+              ⛔ 多值时按**第一个值**取色（与 sortKey 同一判据）：
+              groupColor(数组) 查不到定义 → 返回默认色，
+              于是"有两个分组"的任务都显示成同一个灰点。
+            */}
+            {gVals.length > 0 && gColor && groupColor(groupDefs || [], gVals[0]) ? (
               <span
                 className="tb-col-dot"
-                style={{ background: groupColor(groupDefs, t.group) }}
+                style={{ background: groupColor(groupDefs || [], gVals[0]) }}
               />
             ) : null}
             <SinglePick
@@ -5273,6 +5429,7 @@ function GroupView({
   groupKeys,
   me,
   tagDefs,
+  groupDefs,
   onOpen,
   onAction,
   onClaim,
@@ -5282,6 +5439,8 @@ function GroupView({
   groupKeys: GroupKey[];
   me: string;
   tagDefs: TagDef[];
+  /** 分组定义：叶子卡片上的分组要显示名字而不是 id */
+  groupDefs: TagDef[];
   onOpen: (id: string) => void;
   onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
   onClaim: (id: string) => void;
@@ -5297,6 +5456,7 @@ function GroupView({
           flow={flow}
           me={me}
           tagDefs={tagDefs}
+              groupDefs={groupDefs}
           onOpen={onOpen}
           onAction={onAction}
           onClaim={onClaim}
@@ -5307,13 +5467,16 @@ function GroupView({
 }
 
 function GroupNodeView({
-  node, flow, groupKeys, me, tagDefs, onOpen, onAction, onClaim,
+  node, flow, groupKeys, me, tagDefs,
+  groupDefs, onOpen, onAction, onClaim,
 }: {
   node: GroupNode;
   flow: FlowLike;
   groupKeys: GroupKey[];
   me: string;
   tagDefs: TagDef[];
+  /** 分组定义：叶子卡片上的分组要显示名字而不是 id */
+  groupDefs: TagDef[];
   onOpen: (id: string) => void;
   onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
   onClaim: (id: string) => void;
@@ -5347,6 +5510,7 @@ function GroupNodeView({
               me={me}
               flow={flow}
               tagDefs={tagDefs}
+              groupDefs={groupDefs}
               onOpen={() => onOpen(t.id)}
               onAction={(to, needNote) => onAction(t.id, to, needNote)}
               onClaim={() => onClaim(t.id)}
@@ -5358,6 +5522,7 @@ function GroupNodeView({
               key={c.key}
               node={c}
               tagDefs={tagDefs}
+              groupDefs={groupDefs}
               groupKeys={groupKeys}
               flow={flow}
               me={me}
@@ -5866,7 +6031,6 @@ function DetailPanel({
     而且漏掉用户新加的状态：详情里看不到"标为完工"这种按钮，
     于是自定义的状态只能从列表那一列里点，详情这儿像是坏了。
   */
-  const acts = actionsForIn(flow, task.status);
   const hist = [...task.history].reverse();
   /*
     认领人候选：从已有任务里汇总。
@@ -5878,10 +6042,15 @@ function DetailPanel({
     const seen = new Set<string>();
     const out: string[] = [];
     for (const x of tasks || []) {
-      const a = (x.assignee || '').trim();
-      if (!a || seen.has(a)) continue;
-      seen.add(a);
-      out.push(a);
+      /* 认领人可以是多值的：每个值都要成为候选，且不能用 .trim（数组没有） */
+      const av = x.assignee;
+      const arr = Array.isArray(av) ? av : (av ? [av] : []);
+      for (const one of arr) {
+        const a = String(one || '').trim();
+        if (!a || seen.has(a)) continue;
+        seen.add(a);
+        out.push(a);
+      }
     }
     return out;
   })();
@@ -6041,10 +6210,19 @@ function DetailPanel({
           下拉里选不到就只能先去某条任务上填，绕一圈。
         */}
         <span className="tb-dlabel">分组</span>
+        {/*
+          ⛔ 分组可以是多值的（用户在列设置里勾了多选）。
+          多值时用一个输入框表示，值之间用逗号分隔 ——
+          而不是只显示第一个、让用户以为其它值丢了。
+          提交时按逗号拆开：多个就存数组，一个就存字符串（保持单值形态）。
+        */}
         <DraftInput
-          value={task.group || ''}
-          placeholder="分组名（留空 = 不分组）"
-          onCommit={(v) => onPatch({ group: v })}
+          value={Array.isArray(task.group) ? task.group.join('、') : (task.group || '')}
+          placeholder="分组名（留空 = 不分组；多个用「、」分隔）"
+          onCommit={(v) => {
+            const parts = v.split(/[、,，]/).map((x) => x.trim()).filter(Boolean);
+            onPatch({ group: parts.length > 1 ? parts : (parts[0] || '') });
+          }}
         />
 
         {/*
@@ -6107,52 +6285,13 @@ function DetailPanel({
       {task.detail && <div className="tb-ddetail">{task.detail}</div>}
 
       <div className="tb-dacts">
-        {/*
-          认领按钮只在**初始态**出现。
-          ⛔ 判据不能写死 'todo'：自定义流程的初始态可能叫别的
-          （'待办'/'新建'/'s1'…），写死的话自定义流程下
-          这个按钮**永远不出现**，而"认领"是详情里最常用的动作 ——
-          详情这儿像是少了功能。
-        */}
-        {task.status === initialStatus(flow) && (
-          <button className="tb-act sm" onClick={onClaim}>
-            认领（{me}）
-          </button>
-        )}
-        {acts
-          .filter((a) => !(task.status === initialStatus(flow) && a.to === (flow.statuses[1] || {}).id))
-          .map((a) => (
-            <button
-              key={a.to}
-              className={'tb-act sm' + (statusDone(flow, a.to) ? ' primary' : '') + (a.needNote ? ' warn' : '')}
-              onClick={() => onAction(a.to as TaskStatus, a.needNote)}
-            >
-              {a.label}
-            </button>
-          ))}
-        {/*
-          ⛔ 一个按钮都算不出来时必须**说出来**。
-
-          实测：任务处于"配置里没有的状态"（状态被删掉、或 AI 经 API 写入）
-          时 actionsForIn 返回**空数组** —— 于是详情里一个按钮都没有，
-          而界面上只显示一条空白的操作区，完全不说为什么。
-
-          这比"孤岛状态"更糟：孤岛是没人能进去，
-          而这是**已有的任务被困在一个不存在的状态里，永远出不来**，
-          用户还不知道该去哪里修。
-
-          两种情况分开说，因为**该做的事不一样**：
-            · 状态不在配置里 → 去流程设置补上这个状态
-            · 状态在配置里但没配出边 → 去流程设置勾上出边
-          混成一句"没有可执行的操作"，用户不知道是哪种、也就不知道怎么修。
-        */}
-        {acts.length === 0 ? (
-          <span className="tb-dhint warn">
-            {flow.statuses.some((sd) => sd.id === task.status)
-              ? `流程里没配「${statusName(flow, task.status)}」能走到哪里 —— 到「流程设置」勾上出边`
-              : `这条的状态「${task.status}」不在流程配置里 —— 到「流程设置」补上这个状态`}
-          </span>
-        ) : null}
+        <TaskActions
+          task={task}
+          flow={flow}
+          me={me}
+          onClaim={onClaim}
+          onAction={onAction}
+        />
         <span className="tb-flex" />
         {confirmDel ? (
           <>
