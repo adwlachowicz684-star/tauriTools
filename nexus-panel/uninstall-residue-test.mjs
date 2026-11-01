@@ -112,20 +112,66 @@ console.log('\n=== 2. revokePluginHosts（外链信任撤销）===');
 console.log('\n=== 3. 清理目标的前缀与写入方一致 ===');
 {
   const hostSrc = fs.readFileSync(path.join(HERE, 'js/host.js'), 'utf8');
-  const sdkSrc = fs.readFileSync(path.join(HERE, 'js/plugin-sdk.js'), 'utf8');
-  const cfgSrc = fs.readFileSync(path.join(HERE, 'js/plugin-config.js'), 'utf8');
   const fsSrc = fs.readFileSync(path.join(HERE, 'js/plugin-fs.js'), 'utf8');
 
-  /* purgePluginStorage 清的两个前缀 */
-  const purgeFn = hostSrc.match(/function purgePluginStorage[\s\S]*?\n}/)?.[0] || '';
-  t('purge 覆盖 store 写入方的前缀（nexus:<id>:）',
-    purgeFn.includes('nexus:${pid}:')
-    && sdkSrc.includes('`nexus:${manifest.id}:${payload.k}`')
-    && hostSrc.includes('`nexus:${manifest.id}:${payload.k}`'));
-  t('purge 覆盖每插件配置的前缀（nexus:plugin-cfg:<id>，与 plugin-config.js 的 KEY 同源）',
-    purgeFn.includes('nexus:plugin-cfg:${pid}') && cfgSrc.includes('`nexus:plugin-cfg:${id}`'));
-  t('purge 刻意不清 fs 账本（nexus:fsclaim: 前缀不同，文件不自动删，账本是手工清理的依据）',
-    !purgeFn.includes('fsclaim') && fsSrc.includes("'nexus:fsclaim:'"));
+  /*
+   * 判据盯**意图**：purge 扫的前缀必须与写入方产出的键同源。
+   *
+   * 此前盯的是形态——断言 sdkSrc 里存在 `nexus:${manifest.id}:${payload.k}`
+   * 那串字面量。键名收敛到 js/plugin-store.js 之后字面量没了，
+   * 断言立刻失明（**实现改对了、测试却变红**，正是"盯形态不盯意图"的代价）。
+   *
+   * 现在从 host.js 切出真实 purge 函数体、接上共享模块实跑：
+   * 无论将来是字面量还是函数调用，只要清理范围对就通过。
+   */
+  const ps = await import('./js/plugin-store.js');
+  const PROBE = 'probe-pid';
+  const sk = ps.storeKey(PROBE, 'k');
+  const sp = ps.storePrefix(PROBE);
+  const ck = ps.pluginCfgKey(PROBE);
+
+  const purgeSrc = hostSrc.match(/function purgePluginStorage\(id\)\s*\{[\s\S]*?\n\}/)?.[0] || '';
+  t('取得到 purgePluginStorage 的真实函数体（不是手抄）', purgeSrc.length > 0, `len=${purgeSrc.length}`);
+
+  t('storeKey 落在 storePrefix 下（否则卸载扫描扫不到）',
+    sk.startsWith(sp) && sp.endsWith(':'), `${sk} / ${sp}`);
+  t('每插件配置键与 store 键不在同一前缀下（分开存）', !ck.startsWith(sp), ck);
+
+  /* 可控的 localStorage 替身 */
+  const mkLs = () => {
+    const m = new Map();
+    return {
+      getItem: (k) => (m.has(k) ? m.get(k) : null),
+      setItem: (k, v) => m.set(k, String(v)),
+      removeItem: (k) => m.delete(k),
+      key: (i) => [...m.keys()][i],
+      get length() { return m.size; },
+    };
+  };
+  const ls = mkLs();
+  const neighbourK = ps.storeKey(`${PROBE}-2`, 'k'); // 另一个插件的键（id 前缀相邻）
+  ls.setItem(sk, '1');
+  ls.setItem(ck, '1');
+  ls.setItem(neighbourK, '1');
+  ls.setItem(`nexus:fsclaim:${PROBE}`, '1');
+  ls.setItem('nexus:other', '1');
+
+  const run = new Function('storePrefix', 'pluginCfgKey', 'localStorage', 'id',
+    `${purgeSrc}\nreturn purgePluginStorage(id);`);
+  run(ps.storePrefix, ps.pluginCfgKey, ls, PROBE);
+
+  t('purge 真清掉 store 键（nexus:<id>:k）', ls.getItem(sk) === null, `残留=${ls.getItem(sk)}`);
+  t('purge 真清掉每插件配置键（nexus:plugin-cfg:<id>）', ls.getItem(ck) === null, `残留=${ls.getItem(ck)}`);
+  t('purge 刻意不清 fs 账本（前缀不同，文件不自动删，账本是手工清理的依据）',
+    ls.getItem(`nexus:fsclaim:${PROBE}`) === '1' && fsSrc.includes("'nexus:fsclaim:'"));
+  t('purge 不动不属于该插件的键', ls.getItem('nexus:other') === '1');
+  /*
+   * 相邻 id 不误伤：前缀的**结尾冒号**是分隔符。
+   * 少了它，`nexus:probe-pid` 会把 `nexus:probe-pid-2:k`（另一个插件）一起清掉，
+   * 而"别人的配置没了"不会报任何错 —— 只会以为那个插件自己重置了。
+   * 这也是 js/plugin-store.js 里 storePrefix 那条注释点名的陷阱。
+   */
+  t('purge 不误伤 id 前缀相邻的另一个插件', ls.getItem(neighbourK) === '1', `残留=${ls.getItem(neighbourK)}`);
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

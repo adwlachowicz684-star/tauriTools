@@ -32,15 +32,18 @@
  * 不注销就每重跑一次多一个监听器。
  */
 
-/** 与 js/shell-shortcuts.js 同源的平台判断 */
-function isMac() {
-  try {
-    return /mac|iphone|ipad/i.test(
-      globalThis.navigator?.platform || globalThis.navigator?.userAgent || '');
-  } catch {
-    return false;
-  }
-}
+/*
+ * 平台判断**只有一份**：js/accel.js。
+ *
+ * 此前本文件抄了一份（与 accel.js 那份逐字相同）。逐字相同比语义分叉更隐蔽——
+ * 谁改了 accel.js 那份（换判据、加 iPad），这里不会跟着变，
+ * 于是**提示里写的键和实际触发的键是两回事**，且不报错：
+ * 用户看到「⌘+Shift+D」按下去没反应，不会想到是按钮提示读的是另一份。
+ *
+ * 这里 import 而不是抄：accel.js 是纯函数、无模块级状态，
+ * 打进本插件的独立 chunk 也不会出现 inspector.js 那种"两份单例"。
+ */
+import { isMac } from '../../js/accel.js';
 
 export const INSPECTOR_EVENT = 'nexus:inspector-toggle';
 
@@ -52,7 +55,7 @@ export default {
    * 安装时就算一次而不是写在 tip 里 —— 写死 'Ctrl+Shift+D' 的话，
    * Mac 用户看到的是错的键，按 ⌘ 能生效但提示说 Ctrl。
    *
-   * 与 js/shell-shortcuts.js 的 isMac 同源（同一个 navigator 判断）。
+   * 用的是 js/accel.js 那份（与宿主侧、SDK 侧同一份判断），不是本文件抄的。
    */
   get tip() {
     const mod = isMac() ? '⌘' : 'Ctrl';

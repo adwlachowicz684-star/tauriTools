@@ -23,8 +23,8 @@
  *   ② 钉住"合并后的语义是两边的并集"（行为级，防合并时丢行为）
  */
 
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 /* 保偏移剥注释：源码判据不能被注释里的说明文字骗过去
    （"这里不再有 X" 这句话本身含 X，不剥注释就会假绿）。 */
@@ -86,6 +86,50 @@ t('shell-shortcuts.js 引用共享模块', /from\s+'\.\/accel\.js'/.test(shellC)
   t('判据认得出内联实现（合成样本）', /function\s+accelMatches\s*\(/.test(stripCommentsJs(probe)));
   t('判据不误伤"调用"写法（不是见到名字就红）',
     !/function\s+accelMatches\s*\(/.test(stripCommentsJs('if (!accelMatches(e, accel)) return;')));
+}
+
+/*
+ * 全仓扫描：**plugins/ 也在范围内**。
+ *
+ * 上面五条只看了 host / sdk / shell 三处（收敛时改动的那三个文件），
+ * 于是 plugins/toolbar-inspector/module.js 里抄的第三份 isMac 一直没被发现——
+ * 它与 accel.js 那份**逐字相同**。
+ *
+ * 逐字相同比语义分叉更隐蔽：语义分叉至少现在就报错，逐字相同现在一切正常，
+ * 直到谁改了 accel.js 那份（换判据、加 iPad），这里不跟着变 —— 于是
+ * 「按钮提示里写的键」和「实际触发的键」成了两回事，且不报错：
+ * 用户看到「⌘+Shift+D」按下去没反应，不会想到提示读的是另一份。
+ *
+ * 只扫改动过的三个文件 = 只守住了收敛范围的一半。
+ */
+{
+  const SKIP = new Set(['.git', 'node_modules', 'dist', 'target', '__pycache__', '.vite', 'docs']);
+  const EXTS = new Set(['.js', '.mjs', '.ts', '.tsx', '.jsx']);
+  const files = [];
+  (function walk(d) {
+    for (const e of readdirSync(join(HERE, d), { withFileTypes: true })) {
+      if (SKIP.has(e.name)) continue;
+      const rel = d ? `${d}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(rel);
+      else if (EXTS.has(extname(e.name))) files.push(rel);
+    }
+  })('');
+  /* 生产代码：排除测试（里面有合成样本，是判据的自检素材）
+     与 .d.ts（类型声明不是实现，且 plugin-sdk.d.ts 刻意保留具名导出）。 */
+  const prod = files.filter((f) => !/-test\.mjs$/.test(f) && !/\.test\.[tj]sx?$/.test(f)
+    && !f.endsWith('.d.ts'));
+  const OWN = /(?:function\s+|const\s+)(?:isMac|accelMatches|parseCombo|matchCombo)\s*[=(]/;
+  const owners = prod.filter((f) => OWN.test(code(f)));
+
+  t('生产代码里只有 accel.js 一份快捷键实现（全仓扫，含 plugins/）',
+    owners.length === 1 && owners[0] === ACC, `命中=[${owners}]`);
+  /* 防"扫描范围为空"的恒绿：范围一旦空了，上面那条永远为真。 */
+  t('扫描范围非空（防恒绿）', prod.length > 100, `生产文件 ${prod.length} 个`);
+  t('扫描范围确实含 plugins/（否则等于没扫插件）',
+    prod.some((f) => f.startsWith('plugins/')), `plugins 下 ${prod.filter((f) => f.startsWith('plugins/')).length} 个`);
+  t('判据认得出内联实现（合成样本）', OWN.test(stripCommentsJs('function isMac() { return false; }')));
+  t('判据也认得出 const 箭头形态（合成样本）', OWN.test(stripCommentsJs('const isMac = () => false;')));
+  t('判据不误伤 import 写法', !OWN.test(stripCommentsJs("import { isMac } from '../../js/accel.js';")));
 }
 
 /* ================================================================
