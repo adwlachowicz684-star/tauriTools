@@ -52,13 +52,32 @@ export declare function flattenAllGroups(tasks: Task[]): {
   remapped: number;
 };
 
-export declare function isAncestor(
-  a: string, b: string,
-  parentOf: Record<string, string | undefined>,
-  byId: Record<string, Task>,
-): boolean;
+/*
+  ⛔ isAncestor 已随**手动组**一起删除（组改成"按列分组"的视图概念之后，
+  数据里不再有父子层级），core.mjs 里也没有实现了。
+
+  留着这条声明的坏处：它是**死声明** —— 读 .d.ts 的人会以为有这个函数，
+  照着去 import 才会发现不存在；而 TS 不会报错（声明本身是合法的），
+  只有运行到才炸。这比没有声明更糟。
+*/
 
 /* ---------------------------------------------------- 前置任务 */
+
+/*
+  判断一个前置有没有做完 —— **必须认流程配置**。
+
+  ⛔ 写死成默认那个 done 的 id 的后果（自定义流程下必现）：
+  没有一条前置会解锁，依赖它的任务永远卡在"等前置"，
+  而前置明明已经做完了。界面只说"被前置任务卡住"，
+  不说清是哪个、为什么 —— 用户只会以为是自己没把前置做完，
+  **查错方向完全反了**。
+*/
+export declare function isDone(
+  id: string,
+  tasks: Task[],
+  ctx: { byId: Record<string, Task>; parentOf?: Record<string, string | undefined> },
+  flow: TaskFlow,
+): boolean;
 
 export interface LockInfo {
   locked: boolean;
@@ -138,6 +157,12 @@ export declare function colFilterActive(col: ListColumn, f: ColFilter | undefine
 /** 该列用于筛选的原始值（标签是多值） */
 export declare function colRawValues(task: Task, field: SortField): string[];
 
+/*
+  取某一行的某个字段值（用于文本筛选 / 排序取原始值）。
+  groupPath 是**派生的**（分组路径，不在 task 上），所以单独取。
+*/
+export declare function rowValue(row: FlatRow, field: string): unknown;
+
 /** 按列筛选（作用在摊平行上）；q 是跨 id/标题/详情/说明的全局关键词 */
 export declare function filterTasksByColumns(rows: FlatRow[], filters: Record<string, ColFilter>, q: string, typeDefs?: { id: string; name: string }[] | null, tagDefs?: { id: string; name: string }[] | null): FlatRow[];
 
@@ -155,8 +180,13 @@ export declare function numOrNull(v: unknown): number | null;
 /** 人日显示：去掉浮点尾巴。0 → ''（没估 ≠ 0 人日） */
 export declare function fmtEstimate(n: number): string;
 
-/** 组的预估 = 下面所有层叶子任务的和（组自己不存预估） */
-export declare function groupEstimate(groupId: string, tasks: Task[]): number;
+/*
+  ⛔ groupEstimate（组的预估 = 下面所有层叶子任务的和）已随手动组删除 ——
+  "组"现在是按列分组的视图概念，数据里没有组记录，也就没有"组的预估"。
+  core.mjs 里同样没有实现了。
+
+  留着是死声明：读 .d.ts 的人会以为能调，TS 不报错，运行才炸。
+*/
 
 /** 全部叶子任务的工作量合计 */
 export declare function totalEstimate(tasks: Task[]): number;

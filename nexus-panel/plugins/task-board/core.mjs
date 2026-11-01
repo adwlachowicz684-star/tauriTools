@@ -309,12 +309,20 @@ export function normalizeTask(raw) {
     kind: t.kind === 'group' ? 'group' : 'task',
     parent: str(t.parent, '') || null,
     /*
-      ⛔ 空 id 与重复 id 都要去掉：
+      ⛔ 空 id、重复 id、**指向自己** 都要去掉：
       · 空 id 的依赖永远解锁不了（它指向 nothing）
       · 重复会让"有 N 条前置"的计数虚高
-      （"清理不存在的引用"是另一回事 —— 那要保留，见上方注释）
+      · **指向自己**：lockOf 会判定 pending=['自己'] + cyclic=true，
+        于是这条任务**永远解锁不了** —— 它等的是自己完成，
+        而"自己完成"的前提是它先解锁。这是个死局。
+
+        界面上的下拉挡得住（depChoices 排除了自己和传递依赖），
+        但 AI 经 HTTP / MCP 直接写 JSON 不受那层约束，
+        手改文件也能写出来 —— 所以归一化这里也要挡。
+
+      （"清理指向**不存在**任务的引用"是另一回事 —— 那要保留，见上方注释）
     */
-    deps: ids(t.deps),
+    deps: ids(t.deps).filter((d) => d !== (typeof t.id === 'string' ? t.id : '')),
     /*
       状态**不校验白名单**：自定义状态是用户自己起的 id，
       这里按固定清单过滤的话，用户新增的状态会被悄悄退回 todo。
