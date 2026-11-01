@@ -567,7 +567,15 @@ console.log('\n--- 13. 宿主必须在 concat 自定义插件**之前**注入内
   const codeOnly = stripCommentsFlatJs(s2);
 
   const iReg = codeOnly.indexOf('registerBuiltinIds(list.map');
-  const iConcat = codeOnly.indexOf("localStorage.getItem('nexus:custom-plugins')");
+  /*
+   * 定位标记必须钉**调用点的形态**，不能钉键名或光秃秃的函数名：
+   *   · KEY_CUSTOM_PLUGINS 的**定义**在文件顶部（约 80 行），
+   *     拿它当标记 → iConcat 恒小于 iReg → 断言恒真 → 失明；
+   *   · getCustomPlugins 的**函数定义**也在注入之后，
+   *     只搜名字同样会指到定义处而非读取处，同样是恒真。
+   * 所以钉「带赋值的调用」这一形态。
+   */
+  const iConcat = codeOnly.indexOf('const custom = getCustomPlugins()');
   t('host.js 里有注入调用', iReg > 0);
   t('注入发生在读取自定义插件之前', iReg > 0 && iConcat > 0 && iReg < iConcat,
     `注入@${iReg} concat@${iConcat}`);
