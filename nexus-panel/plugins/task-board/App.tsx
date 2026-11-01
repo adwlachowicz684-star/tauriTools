@@ -911,6 +911,22 @@ export default function App() {
         if (!next) next = { ...cur };
         if (next.assignee === me && next.status === cur.status) return null;
         next.assignee = me;               // 认领必须署名
+        /*
+          ⛔ 署名后**必须更新时间戳**，不能只在 applyTransition 那条路径上更新。
+
+          认领有两条路径：
+            · 初始态 → applyTransition 顺带推进状态（它自己会设 updatedAt）
+            · 非初始态 / 流程里没有可走的边 → 只改 assignee，**不经过** applyTransition
+
+          实测第二条路径：认领之后 updatedAt 还是旧值，于是
+            · 「更新」列纹丝不动 —— 看着像这一行没被改过
+            · 更糟的是它**仍停留在"超 7 天未动"的陈旧面板里** ——
+              你刚认领的活，界面却说它很久没人动了，
+              而陈旧面板的用途正是"找出该处理却没人处理的"。
+
+          这里显式设一次（applyTransition 那条路径设了也无妨，同一毫秒）。
+        */
+        next.updatedAt = Date.now();
         const tasks = [...st.tasks];
         tasks[idx] = next;
         claimed = true;                   // 整体赋值：mutate 冲突重试不会重复计数
@@ -1093,12 +1109,35 @@ ${dir}
       */
       let done = 0;
       let skipped: string[] = [];
+      let already = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
         let ok = 0;
+        let al = 0;
         const skip: string[] = [];
         const tasks = st.tasks.map((t) => {
           if (!want.has(t.id)) return t;
+          /*
+            ⛔ 已经是目标状态的**不能算进"已改"**。
+
+            实测（jsdom）：选 tb-0001(todo) + tb-0003(doing)，批量改「进行中」
+              → toast 说「已把 2 条改为「进行中」」
+              → 落盘只有 tb-0001 变了（tb-0003 本来就是 doing）
+
+            根因：canTransitionIn(x→x) 是 true（自环放行），
+            applyTransition 也照常返回任务 —— 于是它被计进 ok。
+
+            两个后果：
+              · 报数虚高：用户以为改了 2 条，实际只改了 1 条
+              · 污染历史：明明没变化，却往 history 塞一条「标为「进行中」」
+
+            单行流转不会撞上（actionsForIn 只返回 from≠to 的边），
+            只有批量下拉会 —— 因为它列的是**全部状态**。
+
+            ⚠️ 这段曾被并行提交（9af0d22b，它基于改动前的副本）整段删掉过一次，
+            是测试数从 434 掉回 433 才发现的。别再整块替换这个文件。
+          */
+          if (t.status === to) { al += 1; return t; }
           if (!canTransitionIn(st.flow, t.status, to)) { skip.push(t.id); return t; }
           const next = applyTransition(t, to, me);
           if (!next) { skip.push(t.id); return t; }
@@ -1106,14 +1145,25 @@ ${dir}
           return next;
         });
         done = ok;
+        already = al;
         skipped = skip;
         return ok === 0 ? null : { ...st, tasks };
       });
       setChecked(new Set());
       await refresh();
-      if (done === 0) ctx.toast(`没有一条能从当前状态走到「${statusName(flow, to as TaskStatus)}」`, 'err');
-      else if (skipped.length > 0) ctx.toast(`已改 ${done} 条；${skipped.length} 条走不通被跳过（${skipped.slice(0, 3).join('、')}…）`, 'err');
-      else ctx.toast(`已把 ${done} 条改为「${statusName(flow, to as TaskStatus)}」`, 'ok');
+      const nm = statusName(flow, to as TaskStatus);
+      if (done === 0 && already > 0 && skipped.length === 0) {
+        ctx.toast(`这 ${already} 条已经是「${nm}」了`, 'ok');
+      } else if (done === 0) {
+        ctx.toast(`没有一条能从当前状态走到「${nm}」`, 'err');
+      } else if (skipped.length > 0 || already > 0) {
+        const bits: string[] = [`已改 ${done} 条`];
+        if (already > 0) bits.push(`${already} 条本来就是`);
+        if (skipped.length > 0) bits.push(`${skipped.length} 条走不通被跳过（${skipped.slice(0, 3).join('、')}…）`);
+        ctx.toast(bits.join('；'), skipped.length > 0 ? 'err' : 'ok');
+      } else {
+        ctx.toast(`已把 ${done} 条改为「${nm}」`, 'ok');
+      }
     })();
 
   /** 批量改类型。类型没有流转规则，直接赋值即可 */
@@ -4297,6 +4347,20 @@ function ListView({
               title="点击改状态"
               options={opts}
               onPick={(id) => {
+                /*
+                  ⛔ 点**当前状态**必须是无操作。
+
+                  当前那一项在下拉里是"已选中"的样子（on: isCur），
+                  但 canTransitionIn(x→x) 是 true、applyTransition 照常返回，
+                  于是点它会走到 doTransition：
+                    · toast 说「tb-0001 → 进行中」，而它**本来就是** ——
+                      看着像发生了什么，实际什么都没变
+                    · history 里多一条没有变化的记录，翻记录时会被它骗到
+
+                  与批量改状态那处同一个根因（canTransitionIn 放行自环），
+                  单行这里在 UI 层挡掉。
+                */
+                if (id === t.status) return;
                 const a = acts.find((x) => x.to === id);
                 onSetStatus(t.id, id, a ? a.needNote === true : false);
               }}

@@ -4206,6 +4206,103 @@ t('守卫：新建项目后读不到任务库也要报出来（三条路径一�
     && app.indexOf('S.readStore(ctx, next.dataDir).catch(() => null)') < 0;
 })());
 
+
+/* ============================================================ 深度审查：认领不更新时间戳（本轮） */
+
+/*
+ * **认领之后 updatedAt 不更新。**
+ *
+ * 认领有两条路径：
+ *   · 初始态 → applyTransition 顺带推进状态（它自己会设 updatedAt）
+ *   · 非初始态 / 流程里没有可走的边 → 只改 assignee，**不经过** applyTransition
+ *
+ * 实测（jsdom，流程只配一个状态因而没有可走的边）：
+ *   认领后 updatedAt 仍是旧值
+ *
+ * 两个后果：
+ *   · 「更新」列纹丝不动 —— 看着像这一行没被改过
+ *   · 更糟：它**仍停留在"超 7 天未动"的陈旧面板里**。
+ *     你刚认领的活，界面却说它很久没人动了，
+ *     而陈旧面板的用途正是"找出该处理却没人处理的"。
+ */
+t('守卫：认领必须更新时间戳（两条路径都要）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const doClaim');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 2200);
+  return /next\.assignee = me;/.test(seg) && /next\.updatedAt = Date\.now\(\);/.test(seg);
+})());
+
+/*
+ * 全量版：**任何改任务的 mutate 回调都要更新时间戳**。
+ *
+ * 判据放宽：applyTransition / pushHistory 内部会设 updatedAt，
+ * 调用了它们也算（否则 transitionTask / commentTask 会误报）。
+ *
+ * ⚠️ 这条守卫曾被并行提交整段删掉过一次，连同它守护的修复一起。
+ */
+t('守卫：改任务的 mutate 回调都要更新时间戳', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const bad = [];
+  for (const m of app.matchAll(/S\.mutate\(ctx, [^,]+, \(st\) => \{/g)) {
+    let depth = 1; let i = m.index + m[0].length;
+    const start = i;
+    while (i < app.length && depth > 0) {
+      if (app[i] === '{') depth += 1;
+      else if (app[i] === '}') depth -= 1;
+      i += 1;
+    }
+    const body = app.slice(start, i);
+    /*
+      ⛔ 判据必须收紧到"**真的改了某条任务的内容**"。
+
+      第一版只看 body 里有没有 'st.tasks'，于是把两类误报进来：
+        · 只读的（删除确认前扫一遍谁把它列为前置 —— broken）
+        · 删除的（filter 掉一条，没有"被改的任务"这回事）
+      误报会让真正的漏网看不出来，跟没守卫一样 —— 又是同一个教训。
+
+      真正的判据是"把已有任务展开成新对象"：`{ ...t,` / `{ ...cur,` / `{ ...task,`。
+      删除（filter）和只读（some/find/filter）都不含这个模式。
+    */
+    if (!/\{ \.\.\.(t|cur|task|next)\b/.test(body)) continue;
+    if (/updatedAt/.test(body)) continue;
+    if (/applyTransition\(|pushHistory\(/.test(body)) continue;
+    const pre = app.slice(Math.max(0, m.index - 3000), m.index);
+    const names = [...pre.matchAll(/const (\w+) = \(/g)].map((x) => x[1]);
+    bad.push(names[names.length - 1] || '(匿名)');
+  }
+  if (bad.length) console.log('    未更新时间戳:', bad.join(' , '));
+  return bad.length === 0;
+})());
+
+/* ============================================================ 深度审查：自环状态（重新应用，见下） */
+
+/*
+ * ⚠️ 这两条守卫**曾被并行提交整段删掉过**（9af0d22b 基于改动前的副本，
+ * 删了 App.tsx 77 行 / 本文件 61 行，修复和守卫一起消失）。
+ * 是测试数从 434 掉回 433 才发现的。这里是重新应用。
+ *
+ * 如果它们又不见了，先去看是不是又有人整块替换了 App.tsx。
+ */
+
+t('守卫：批量改状态不计入"已经是目标状态"的任务', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const doBatchStatus');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 3000);
+  return /if \(t\.status === to\) \{ al \+= 1; return t; \}/.test(seg)
+    && /let already = 0;/.test(seg)
+    && /条本来就是/.test(seg);
+})());
+
+t('守卫：行内状态下拉点当前状态是无操作', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const acts = actionsForIn(flow, t.status);');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 1400);
+  return /if \(id === t\.status\) return;/.test(seg);
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
