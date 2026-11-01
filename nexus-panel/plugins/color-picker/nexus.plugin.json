@@ -1,0 +1,9 @@
+{
+  "id": "color-picker",
+  "name": "取色",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "service",
+  "icon": "🎨",
+  "description": "完整色盘：SV 面板 + 色相条 + RGB/HEX + 吸管待命；与内联色盘共用同一份组件实现"
+}
