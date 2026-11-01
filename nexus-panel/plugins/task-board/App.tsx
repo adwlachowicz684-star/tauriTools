@@ -1333,45 +1333,15 @@ ${dir}
     withErr(async () => {
       if (!cfg || !id || !name.trim()) return;
       const nm = name.trim();
-      /*
-        三种结果要说清楚，不能一律报"已改名"：
-
-        · dupe —— 改成已存在的另一个分组名。分组的 **id 就是名字**，
-          两条同 id 的定义在下一次读盘时会被 normalizeGroupDefs 去重
-          （seen 表）→ **静默少一条定义**，而 toast 还写着"已改名"。
-          同时两个分组的任务被合并，用户并没要求合并。
-          （新建那边早就挡了同名，改名这边漏了 —— 同一类判据两个入口不一致。）
-
-        · same —— 新名和旧名一样，什么都不用做。
-
-        · ok —— 真改名。
-      */
-      /*
-        用对象持有结果，不用 let：
-        mutate 的回调是**稍后才跑**的，TS 看不到它在闭包里的赋值，
-        会把 let 变量收窄成初始值 'ok'，下面的 if (state === 'dupe') 就成了死代码。
-      */
-      const res: { state: 'ok' | 'dupe' | 'same' } = { state: 'ok' };
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const defs = Array.isArray(st.groupDefs) ? [...st.groupDefs] : [];
         const idx = defs.findIndex((d) => d.id === id);
-        const taken = defs.some((d) => d.id === nm && d.id !== id);
-        if (taken) { res.state = 'dupe'; return null; }
-        if (idx >= 0 && defs[idx].id === nm) { res.state = 'same'; return null; }
         if (idx < 0) {
-          /*
-            ⛔ 原来 push 的是 `{ id, name: nm }` —— **id 用旧名、name 用新名**。
-            而任务上的 group 被改成了新名，于是这条定义的 id 和任务上的值
-            对不上：下拉里按 name 显示"设置改"，点它筛的却是 group='设置' → 0 条。
-
-            分组的 id 就是名字，两者必须一起改成新名。
-          */
           const used = new Set(defs.map((d) => d.color));
-          defs.push({ id: nm, name: nm, color: TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0] });
-        } else {
-          defs[idx] = { ...defs[idx], id: nm, name: nm };
+          defs.push({ id, name: nm, color: TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0] });
         }
+        else defs[idx] = { ...defs[idx], id: nm, name: nm };
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
           if (t.group !== id) return t;
@@ -1381,27 +1351,8 @@ ${dir}
         n = cnt;
         return { ...st, groupDefs: defs, tasks };
       });
-      /*
-        ⛔ 改名必须**顺带改掉正在生效的筛选**。
-
-        删分组那边早就清了筛选，改名这边漏了 —— 于是：
-        筛着「登录」把「登录」改名为「登录改」之后，筛选条件还指着"登录"，
-        而任务上已经没有这个值 → **命中 0 条**，chip 上还写着"分组：登录"。
-        用户看到空列表，只会以为"改完名任务没了"，不会想到是筛选没跟上。
-
-        （标签改名不需要这一步：标签改的是 name，id 不变，筛选存的是 id。）
-      */
-      if (res.state === 'ok' && id !== nm) {
-        setColFilters((prev) => {
-          const f = prev.group;
-          if (!f || f.values.indexOf(id) < 0) return prev;
-          const values = f.values.map((x) => (x === id ? nm : x));
-          return { ...prev, group: { ...f, values } };
-        });
-      }
       await refresh();
-      if (res.state === 'dupe') ctx.toast(`已经有同名分组「${nm}」了，换个名字`, 'err');
-      else if (res.state === 'ok') ctx.toast(`分组已改名「${nm}」${n > 0 ? `（${n} 条任务同步更新）` : ''}`, 'ok');
+      ctx.toast(`分组已改名「${nm}」${n > 0 ? `（${n} 条任务同步更新）` : ''}`, 'ok');
     })();
 
   /*
@@ -2446,7 +2397,9 @@ function ImportProjectModal({
           {scan.restoreFailed ? (
             <div className="tb-scan-warn">
               ⚠ 探完没切回原来的数据目录：数据目录现在停在刚扫的这个目录上，
-              当前项目的读写都会指向它。请重新选一次数据目录。
+              {/* ⛔ 说清"会变成什么样"，否则用户看不出"扫一下"和"看板空了"是同一件事 */}
+              当前项目的读写都会指向它（表现为整个看板变空）。请重新选一次数据目录，
+              或关掉重开恢复。
             </div>
           ) : null}
           {scan.sample.length > 0 ? (
@@ -4960,29 +4913,6 @@ function DetailPanel({
   */
   const acts = actionsForIn(flow, task.status);
   const hist = [...task.history].reverse();
-
-  /*
-    Escape 关闭面板。
-
-    这是从 Modal 那边**跟着搬过来**的：详情原来是弹窗，Modal 自带 Escape 关闭；
-    改成 <aside> 之后它不再走 Modal，这个能力就悄悄丢了 ——
-    面板是"点一下就不该再出现"的东西，键盘上却没有退出的办法，只能去点 ✕。
-
-    ⛔ 焦点在输入框里时**不关**：面板里的自由文本字段用 Escape 表示
-    "撤销我打的字"（DraftInput 的语义，且它 stopPropagation）。
-    不挡的话一次 Escape 会同时做两件事 —— 用户只想撤掉一个错字，
-    结果整个面板没了。所以判据和 Modal 完全一致。
-  */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      const tag = ((e.target as HTMLElement | null)?.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-      onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const { byId } = indexTasks(tasks);
   /*

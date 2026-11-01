@@ -48,6 +48,7 @@
     "test:dup-react": "node dup-react-test.mjs",
     "test:dialog": "node dialog-test.mjs",
     "test:disclosure": "node disclosure-test.mjs",
+    "test:missing-import": "node missing-import-test.mjs",
     "test:dv-rename-collision": "node plugins/dupview/rename-collision-test.mjs",
     "test:dv-rename-stale-path": "node plugins/dupview/rename-stale-path-test.mjs",
     "test:dv-cache-sweep": "node plugins/dupview/cache-sweep-test.mjs",

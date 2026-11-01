@@ -3783,12 +3783,19 @@ const globalTriggersRef = useRef<GlobalTrigger[]>([]);
              * 嵌合那套不作用在组合框上：框不是积木，
              * 让它去吸附只会把"框"变成串里的一环（见 engine/stack 里的说明）。
              */
-            onNodeDragStart={(e, n, ns) => { onNodeDragStart(e, n, ns); if (!isFrameNode(n)) onStackDragStart(e, n); }}
-            onNodeDragStop={(e, n, ns) => { onNodeDragStop(); if (!isFrameNode(n)) onStackDragStop(e, n); }}
-            onNodeDrag={(e, n) => { if (!isFrameNode(n)) onStackDrag(e, n); }}
+            /*
+             * ⛔ 三个回调的 node 参数**必须显式标注 FlowNode**。
+             * 靠推断的话 xyflow 只给到 `{ id: string }`，而
+             * onStackDrag / onStackDragStop 的形参要 `{ id, position }`
+             * —— 于是 TS2345，且这 6 条真类型错误会把 check-types 门禁
+             * 拦死，几千条测试一条都跑不到。标注后零行为变化。
+             */
+            onNodeDragStart={(e, n: FlowNode, ns) => { onNodeDragStart(e, n, ns); if (!isFrameNode(n)) onStackDragStart(e, n); }}
+            onNodeDragStop={(e, n: FlowNode, ns) => { onNodeDragStop(); if (!isFrameNode(n)) onStackDragStop(e, n); }}
+            onNodeDrag={(e, n: FlowNode) => { if (!isFrameNode(n)) onStackDrag(e, n); }}
             /* xyflow v12 的 onBeforeDelete 传的是节点/边对象（内部按 id 处理，需转换），
                且签名要求返回 Promise，所以要 async */
-            onBeforeDelete={async ({ nodes: dn, edges: de }) =>
+            onBeforeDelete={async ({ nodes: dn, edges: de }: { nodes: FlowNode[]; edges: FlowEdge[] }) =>
               beforeDelete({ nodeIds: dn.map((n) => n.id), edgeIds: de.map((e) => e.id) })}
             onNodesDelete={handleNodesDelete}
             deleteKeyCode={running ? null : ['Delete', 'Backspace']}

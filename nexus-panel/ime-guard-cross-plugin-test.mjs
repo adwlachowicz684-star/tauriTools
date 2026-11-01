@@ -103,7 +103,12 @@ const SITES = [
   ['plugins/agent-flow/components/CanvasLibrary.tsx', "if (ev.key === 'Enter') {", '库分组改名（写盘）'],
   ['plugins/agent-flow/components/DirPicker.tsx', "if (e.key === 'Enter') void load(cwd);", 'agent-flow 目录选择器'],
   ['plugins/agent-flow/components/CredentialPanel.tsx', "if (e.key === 'Enter' && unlockPass && onUnlock) onUnlock(unlockPass);", '凭据解锁'],
-  ['plugins/agent-flow/components/TaskBoardDetail.tsx', "if (e.key === 'Enter') commitTitle();", '任务板详情：标题改名（写盘）★'],
+  /*
+   * 站点原在 agent-flow/components/TaskBoardDetail.tsx。
+   * 上游把 agent-flow 的任务板整体撤到独立插件后，那两个组件成了死文件
+   * （import 已删的 ../engine/taskBoard），已删；这里改指新插件的同一处。
+   */
+  ['plugins/task-board/App.tsx', "if (e.key === 'Enter') (e.target as HTMLInputElement).blur();", '任务板：列标题改名（写盘）★'],
 ];
 
 /** 取包含该特征串的那个 keydown 块：往前找最近的三种写法之一 */
