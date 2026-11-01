@@ -1070,12 +1070,34 @@ ${dir}
       */
       let done = 0;
       let skipped: string[] = [];
+      let already = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
         let ok = 0;
+        let al = 0;
         const skip: string[] = [];
         const tasks = st.tasks.map((t) => {
           if (!want.has(t.id)) return t;
+          /*
+            ⛔ 已经是目标状态的**不能算进"已改"**。
+
+            实测（jsdom）：选了 tb-0001(todo) 和 tb-0003(doing)，批量改「进行中」
+              → toast 说「已把 2 条改为「进行中」」
+              → 落盘只有 tb-0001 变了（tb-0003 本来就是 doing）
+
+            根因：canTransitionIn(x→x) 是 true（自环放行），
+            applyTransition 也照常返回任务 —— 于是它被计进 ok。
+
+            两个后果：
+              · **报数虚高**：用户以为改了 2 条，实际只改了 1 条。
+                这类"报数撒谎"比不报更糟，因为没人会去核对。
+              · **污染历史**：明明没变化，却往 history 里塞一条
+                「标为「进行中」」，翻记录时会被这条骗到。
+
+            而单行流转不会撞上（actionsForIn 只返回 from≠to 的边），
+            只有批量下拉（它列的是全部状态）会遇到。
+          */
+          if (t.status === to) { al += 1; return t; }
           if (!canTransitionIn(st.flow, t.status, to)) { skip.push(t.id); return t; }
           const next = applyTransition(t, to, me);
           if (!next) { skip.push(t.id); return t; }
@@ -1083,14 +1105,25 @@ ${dir}
           return next;
         });
         done = ok;
+        already = al;
         skipped = skip;
         return ok === 0 ? null : { ...st, tasks };
       });
       setChecked(new Set());
       await refresh();
-      if (done === 0) ctx.toast(`没有一条能从当前状态走到「${statusName(flow, to as TaskStatus)}」`, 'err');
-      else if (skipped.length > 0) ctx.toast(`已改 ${done} 条；${skipped.length} 条走不通被跳过（${skipped.slice(0, 3).join('、')}…）`, 'err');
-      else ctx.toast(`已把 ${done} 条改为「${statusName(flow, to as TaskStatus)}」`, 'ok');
+      const nm = statusName(flow, to as TaskStatus);
+      if (done === 0 && already > 0 && skipped.length === 0) {
+        ctx.toast(`这 ${already} 条已经是「${nm}」了`, 'ok');
+      } else if (done === 0) {
+        ctx.toast(`没有一条能从当前状态走到「${nm}」`, 'err');
+      } else if (skipped.length > 0 || already > 0) {
+        const bits: string[] = [`已改 ${done} 条`];
+        if (already > 0) bits.push(`${already} 条本来就是`);
+        if (skipped.length > 0) bits.push(`${skipped.length} 条走不通被跳过（${skipped.slice(0, 3).join('、')}…）`);
+        ctx.toast(bits.join('；'), skipped.length > 0 ? 'err' : 'ok');
+      } else {
+        ctx.toast(`已把 ${done} 条改为「${nm}」`, 'ok');
+      }
     })();
 
   /** 批量改类型。类型没有流转规则，直接赋值即可 */
@@ -2072,10 +2105,34 @@ ${dir}
               const next = await S.addProject(ctx, cfg, name, dataDir, docsDir);
               setCfg(next);
               clearViewState();
-              const st = await S.readStore(ctx, next.dataDir).catch(() => null);
+              /*
+                ⛔ 不能用 .catch(() => null) 静默掉。
+
+                新建项目的目录"本来就没文件"走的是 readStore 的
+                `if (!text) return normalizeStore(null)` 分支 —— 它**不抛**，
+                所以能走到 catch 的都是真错误：目录没授权、路径写错、
+                里面已有 tasks.json 但损坏了。
+
+                静默掉的话 toast 说"已建项目「X」"，而面板是一片空白 ——
+                用户以为建成功了、只是还没任务，然后开始往里加东西；
+                而实际那些东西根本没写到他以为的地方。
+
+                与 doSwitchProject 那条同判据：读不到要明说。
+              */
+              let st: TaskStore | null = null;
+              let readErr = '';
+              try {
+                st = await S.readStore(ctx, next.dataDir);
+              } catch (e: any) {
+                readErr = String(e?.message || e);
+              }
               setStore(st || normalizeStore(null));
               await restartServiceIfOn(cfg, next);
-              ctx.toast(`已建项目「${currentProject(next).name}」，记得设文档路径`, 'ok');
+              if (readErr) {
+                ctx.toast(`已建项目「${currentProject(next).name}」，但读不到它的任务库：${readErr}`, 'err');
+              } else {
+                ctx.toast(`已建项目「${currentProject(next).name}」，记得设文档路径`, 'ok');
+              }
             })();
           }}
         />
@@ -4249,6 +4306,20 @@ function ListView({
               title="点击改状态"
               options={opts}
               onPick={(id) => {
+                /*
+                  ⛔ 点**当前状态**必须是无操作。
+
+                  当前那一项在下拉里是"已选中"的样子（on: isCur），
+                  但 canTransitionIn(x→x) 是 true、applyTransition 照常返回，
+                  于是点它会走到 doTransition：
+                    · toast 说「tb-0001 → 进行中」，而它**本来就是**进行中 ——
+                      看着像发生了什么，实际什么都没变
+                    · history 里多一条没有变化的记录，翻记录时会被它骗到
+
+                  与批量改状态那处同一个根因（canTransitionIn 放行自环），
+                  单行这里在 UI 层挡掉。
+                */
+                if (id === t.status) return;
                 const a = acts.find((x) => x.to === id);
                 onSetStatus(t.id, id, a ? a.needNote === true : false);
               }}
