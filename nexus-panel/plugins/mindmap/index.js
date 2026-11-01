@@ -2783,13 +2783,15 @@ async function gcOrphanAssets(quiet = false) {
      * 与上面的 deepNodeCount(workbook.sheets) 同一口径。
      */
     const loss = fmt.exchangeLossAll(workbook.sheets, 'markdown');
-    if (loss.nodes > 0 || loss.relationships > 0) {
+    if (fmt.hasExchangeLoss(loss)) {
       const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
         progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
         image: '图片与图标', attachment: '附件', boundary: '外框',
         markers: '标记图标',
         // BUG 152：概要 / 标注 —— 交换格式没有对应概念，会被写成普通分支
-        summary: '概要', callout: '标注' };
+        summary: '概要', callout: '标注',
+        // BUG 184：画布主题 / 布局 —— 导回一律回落默认（与交换格式那一路同口径）
+        theme: '画布主题', layout: '画布布局' };
       const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
         .map((k) => `${NAME[k]} ${loss[k]} 处`);
       // 关系线按「条」说。它挂在画布上，"共涉及 N 个节点"对它不成立
@@ -2874,7 +2876,7 @@ async function gcOrphanAssets(quiet = false) {
       notes.push(`仅当前画布；${meta.label} 是单画布格式，其余 `
         + `${workbook.sheets.length - 1} 张请用 .xmind 或 .json 导出`);
     }
-    if (loss.nodes > 0 || loss.relationships > 0) {
+    if (fmt.hasExchangeLoss(loss)) {
       notes.push(`${meta.label} 装不下 ${seg.join('、')}${scope}，`
         + '这些内容在导出的文件里不会保留 —— 需要完整备份请改用 .json 或 .xmind 导出');
     }
