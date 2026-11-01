@@ -515,3 +515,62 @@ for (const f of ['engine/runners/llmChat.ts', 'engine/runners/ocr.ts', 'engine/r
       `${f} 又在 buildHeaders 里取了一遍 —— 那一份是未 trim 的原值`);
   });
 }
+
+/* ---------- 地址有了、模型名没有 ---------- */
+
+/*
+ * ⛔ 这是"三缺一"的最后一缺：地址与密钥都已在上一轮/上上轮说了，
+ * 模型名空着时请求照样发得出去（body 里 model:""），
+ * 而自定义连接的预设模型本来就是空的 —— 猜不出来，只能由用户给。
+ */
+test('没选模型: 自定义连接 + 有地址 + 空清单 → 说"没指定模型"，不是"调用失败"', () => {
+  const c = makeCredential({
+    kind: 'llm', name: 'x', secret: 'sk',
+    meta: { [LLM_META.provider]: 'custom', [LLM_META.baseUrl]: 'https://my-ollama/v1/chat/completions', [LLM_META.models]: '' },
+    capabilities: ['llm:chat'],
+  });
+  const cfg = resolveLlmFromCredential(c, '');
+  assert.ok(cfg.url, '地址在 —— 所以空地址那道检查拦不住它');
+  assert.equal(cfg.model, '', '模型名是空的 —— 会带着 model:"" 发出去');
+  assert.equal(missingLlmReason(c.id, c, cfg), 'no-model');
+  assert.ok(/没指定模型/.test(missingLlmMessage('no-model')));
+  assert.ok(/拉取模型|填模型名/.test(missingLlmMessage('no-model')), '要指向能做的动作');
+});
+
+test('没选模型: 清单里有 → 取第一个（反例，别误伤）', () => {
+  const c = makeCredential({
+    kind: 'llm', name: 'x', secret: 'sk',
+    meta: { [LLM_META.provider]: 'custom', [LLM_META.baseUrl]: 'https://o/v1', [LLM_META.models]: 'qwen2.5:7b' },
+    capabilities: ['llm:chat'],
+  });
+  const cfg = resolveLlmFromCredential(c, '');
+  assert.equal(cfg.model, 'qwen2.5:7b');
+  assert.equal(missingLlmReason(c.id, c, cfg), null);
+});
+
+test('没选模型: 自定义但有预设可退（openai）→ 不报（反例）', () => {
+  const c = makeCredential({
+    kind: 'llm', name: 'x', secret: 'sk',
+    meta: { [LLM_META.provider]: 'openai', [LLM_META.baseUrl]: '', [LLM_META.models]: '' },
+    capabilities: ['llm:chat'],
+  });
+  const cfg = resolveLlmFromCredential(c, '');
+  assert.equal(cfg.model, 'gpt-4o-mini', '有预设兜底');
+  assert.equal(missingLlmReason(c.id, c, cfg), null);
+});
+
+/*
+ * 顺序反例：空地址时模型名通常也是空的。
+ * 谁先判模型，谁就会把"连接没了"报成"没选模型" —— 指到相反方向。
+ */
+test('没选模型: 地址也空时仍先说连接（顺序反例）', () => {
+  const c = makeCredential({
+    kind: 'llm', name: 'x', secret: 'sk',
+    meta: { [LLM_META.provider]: 'custom', [LLM_META.baseUrl]: '', [LLM_META.models]: '' },
+    capabilities: ['llm:chat'],
+  });
+  const cfg = resolveLlmFromCredential(c, '');
+  assert.equal(cfg.url, '');
+  assert.equal(cfg.model, '');
+  assert.equal(missingLlmReason(c.id, c, cfg), 'no-connection', '地址空 → 说连接，不能说模型');
+});

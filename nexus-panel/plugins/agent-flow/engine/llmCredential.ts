@@ -205,18 +205,39 @@ export function missingLlmReason(
   credentialId: string | undefined,
   cred: Credential | null | undefined,
   cfg: ResolvedConfig,
-): 'no-connection' | 'connection-gone' | null {
-  if (cfg.url) return null;
-  const id = String(credentialId ?? '').trim();
-  if (id && !cred) return 'connection-gone';
-  return 'no-connection';
+): 'no-connection' | 'connection-gone' | 'no-model' | null {
+  if (!cfg.url) {
+    const id = String(credentialId ?? '').trim();
+    if (id && !cred) return 'connection-gone';
+    return 'no-connection';
+  }
+  /*
+   * 地址有了、模型名没有。
+   *
+   * ⛔ 判据必须在上面那段**之后** —— 空地址时模型名必然也常常是空的，
+   * 先判模型会把"连接没了"说成"没选模型"，指到完全相反的方向。
+   *
+   * 为什么会有这种组合：选「自定义」时预设模型是空的（地址我们不知道，
+   * 模型名自然也猜不出来），模型名只能来自"拉到的清单"或"节点上手填"。
+   * 两者都没有时，请求会带着 model:"" 发到本机 Ollama / vLLM ——
+   * 那边报的是 400 里的一句英文，落到界面上成了"调用失败"，
+   * 跟"你还没选模型"差了十万八千里。
+   */
+  if (!cfg.model) return 'no-model';
+  return null;
 }
 
-/** 上面两种情形各自该说的话（三个 runner 共用一份，免得各写各的） */
-export function missingLlmMessage(reason: 'no-connection' | 'connection-gone' | null): string {
+/** 上面三种情形各自该说的话（三个 runner 共用一份，免得各写各的） */
+export function missingLlmMessage(
+  reason: 'no-connection' | 'connection-gone' | 'no-model' | null,
+): string {
   if (reason === 'connection-gone') {
     return '这个节点选的是一条已经不存在的连接（可能已被删除，或换设备后连接库没跟着过来）'
       + '—— 请在节点（或它所属的任务窗格）上重新选一条';
+  }
+  if (reason === 'no-model') {
+    return '没指定模型：这条「自定义」连接还没拉到模型清单。'
+      + '请在连接上点一次「拉取模型」，或直接在节点（或它所属的任务窗格）上填模型名';
   }
   return '没配大模型：请在连接管理器里加一条大模型凭据，并在节点（或它所属的任务窗格）上选一条';
 }
