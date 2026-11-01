@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readSrc } from './srcScan';
 import {
   expandCapability, satisfiesOne, missingCapabilities, satisfies, pickFor,
   needsOf, NODE_NEEDS, kindForNeed, detectGithubCapabilities, scopeHintFor,
   makeCredential, redactCredential, redactCredentials, findCredential,
-  resolveSecret, type Capability,
+  resolveSecret, danglingCredentialId, type Capability,
 } from '../engine/credentials';
 
 /* ---------- 能力蕴含 ---------- */
@@ -205,4 +206,60 @@ test('注册表: 每个登记的能力都是合法 Capability', () => {
       assert.ok(all.indexOf(c) >= 0, `${k} 登记了未知能力 ${c}`);
     }
   }
+});
+
+/* ---------- 密钥的 trim ---------- */
+
+/*
+ * ⛔ 密钥是复制粘贴来的，尾巴带换行太常见。
+ * 不 trim 会原样进 Authorization 头 —— 带换行的头让请求在网络层直接失败，
+ * 报错跟"多复制了一个换行"差了十万八千里。
+ */
+test('密钥: 带首尾空白要 trim（否则 Authorization 头里带换行）', () => {
+  const c = makeCredential({ name: 'x', secret: '  sk-real\n' });
+  assert.equal(resolveSecret([c], c.id, ''), 'sk-real');
+  assert.ok(!/[\r\n]/.test(resolveSecret([c], c.id, '')));
+});
+
+test('密钥: 全空白算"没填"（否则设出 `Bearer ` 加三个空格）', () => {
+  const c = makeCredential({ name: 'x', secret: '   ' });
+  assert.equal(resolveSecret([c], c.id, ''), '', '三个空格是 truthy —— 不 trim 会设出假 Authorization 头');
+});
+
+test('密钥: 内联值也要 trim（反例，别只 trim 连接那一份）', () => {
+  assert.equal(resolveSecret([], undefined, ' sk-old\n'), 'sk-old');
+});
+
+test('密钥: 悬空 id + 有内联 → 用内联（反例，别把兜底弄丢）', () => {
+  assert.equal(resolveSecret([], 'gone', 'sk-inline'), 'sk-inline');
+});
+
+/* ---------- 连接没了 ---------- */
+
+test('连接没了: 填了 id 却找不到 → 判为悬空', () => {
+  const c = makeCredential({ name: 'x', secret: 'sk' });
+  assert.equal(danglingCredentialId([], 'gone'), true);
+  assert.equal(danglingCredentialId([c], c.id), false, '找得到就不算');
+});
+
+/*
+ * 反例：压根没选连接是**合法**的 —— 公开接口不需要令牌。
+ * 把这种也算成悬空，会让所有公开接口节点跑不了。
+ */
+test('连接没了: 没选连接不算悬空（公开接口不需要令牌）', () => {
+  assert.equal(danglingCredentialId([], undefined), false);
+  assert.equal(danglingCredentialId([], ''), false);
+  assert.equal(danglingCredentialId([], '   '), false, '纯空白的 id 等于没填');
+});
+
+/* ---------- 源码守卫 ---------- */
+
+/*
+ * 通用 HTTP 节点的连接没了 → 令牌为空 → 请求不带凭据照发 → 401。
+ * 而 401 的排查方向是"令牌对不对"，跟"连接被删了"差了十万八千里。
+ */
+test('源码守卫: genericHttp 必须拦悬空连接', () => {
+  const src = readSrc('engine/runners/genericHttp.ts');
+  assert.ok(/danglingCredentialId\s*\(/.test(src),
+    'genericHttp 没拦悬空连接 —— 会不带凭据发请求，报 401');
 });

@@ -1,6 +1,6 @@
 import type { RunContext } from '../runContext';
 import { withNodeRun, NodeFailError } from '../runnerKit';
-import { resolveSecret } from '../credentials';
+import { resolveSecret, danglingCredentialId } from '../credentials';
 import type { HttpRequester } from '../runTypes';
 import type { GenericHttpNodeData } from '../../types';
 /** 请求头解析走 headers.ts —— 脱敏用的是同一份，各写一份必然漂移 */
@@ -40,6 +40,22 @@ export async function runGenericHttp(ctx: RunContext): Promise<void> {
       headers['Content-Type'] = 'application/json';
     }
 
+    /*
+     * ⛔ 选了连接却找不到，必须在这里说出来。
+     *
+     * 找不到 → 令牌为空 → `if (token && ...)` 不成立 →
+     * 请求不带任何凭据照样发出去 → 服务端回 401。
+     * 而 401 的排查方向是"令牌对不对 / 权限够不够"，
+     * 跟"你选的那条连接被删了（或换设备后连接库没跟着过来）"差了十万八千里。
+     *
+     * 反过来，压根没选连接是**合法**的（公开接口不需要令牌），不能拦。
+     */
+    if (danglingCredentialId(opts.credentials ?? [], d.credentialId)) {
+      throw new NodeFailError(
+        '这个节点选的是一条已经不存在的连接（可能已被删除，或换设备后连接库没跟着过来）'
+        + '—— 请重新选一条，或把令牌直接填在请求头里',
+      );
+    }
     // 连接优先于内联：走连接库的令牌不进画布数据，导出时不会带走
     const token = resolveSecret(opts.credentials ?? [], d.credentialId, '');
     if (token && !Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')) {

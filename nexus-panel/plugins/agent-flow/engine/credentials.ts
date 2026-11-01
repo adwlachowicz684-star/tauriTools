@@ -310,6 +310,41 @@ export function resolveSecret(
   inline: string | undefined,
 ): string {
   const c = findCredential(list, credentialId);
-  if (c && c.secret) return c.secret;
-  return inline || '';
+  /*
+   * ⛔ 必须 trim。
+   *
+   * 密钥是从别处复制粘贴进来的，尾巴上带个换行太常见了。
+   * 不 trim 的话它会原样进 Authorization 头 —— 而带换行的头会让
+   * 请求在网络层直接失败，报错跟"你多复制了一个换行"差了十万八千里。
+   *
+   * 全空白也要算"没填"：'   ' 是 truthy，会设出 `Bearer ` 加三个空格，
+   * 服务端照 401 回，界面上看不出令牌其实是空的。
+   *
+   * 改这里一处就够 —— 三个 runner 与 GitHub 节点都走这个函数，
+   * 各 trim 一遍必然有漏的那个。
+   */
+  if (c && c.secret) return c.secret.trim();
+  return (inline ?? '').trim();
+}
+
+/**
+ * 节点填了连接 id，但那条连接**找不到** —— 用户选的那条没了。
+ *
+ * ================= 为什么单拎出来 =================
+ *
+ * 找不到的直接后果是"令牌是空的"，于是请求不带任何凭据就发出去，
+ * 服务端回 401。而 401 的排查方向是"令牌对不对 / 权限够不够"，
+ * 跟"你选的那条连接被删了"差了十万八千里 ——
+ * 用户会去重新申请令牌，而不是回来重选一条连接。
+ *
+ * 返回 null 的两种情形都不算问题：
+ *   - 压根没填连接 id：这是公开接口，本来就不用令牌
+ *   - 填了且找到了：正常
+ */
+export function danglingCredentialId(
+  list: Credential[],
+  credentialId: string | undefined,
+): boolean {
+  const id = String(credentialId ?? '').trim();
+  return !!id && !findCredential(list, id);
 }
