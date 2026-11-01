@@ -2791,7 +2791,9 @@ async function gcOrphanAssets(quiet = false) {
         // BUG 152：概要 / 标注 —— 交换格式没有对应概念，会被写成普通分支
         summary: '概要', callout: '标注',
         // BUG 184：画布主题 / 布局 —— 导回一律回落默认（与交换格式那一路同口径）
-        theme: '画布主题', layout: '画布布局' };
+        theme: '画布主题', layout: '画布布局',
+        // BUG 191：节点文字里的换行 —— 写侧并成空格，导回就找不回来了
+        newline: '节点文字内的换行' };
       const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
         .map((k) => `${NAME[k]} ${loss[k]} 处`);
       // 关系线按「条」说。它挂在画布上，"共涉及 N 个节点"对它不成立
@@ -2860,7 +2862,9 @@ async function gcOrphanAssets(quiet = false) {
       // BUG 152：概要 / 标注 —— 交换格式没有对应概念，会被写成普通分支
       summary: '概要', callout: '标注',
       // BUG 181：画布主题 / 布局 —— 五种格式都没有画布级外观属性，导回一律回落默认
-      theme: '画布主题', layout: '画布布局' };
+      theme: '画布主题', layout: '画布布局',
+      // BUG 191：节点文字里的换行 —— 写侧并成空格，导回就找不回来了
+      newline: '节点文字内的换行' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);
     /*
@@ -3206,10 +3210,25 @@ async function gcOrphanAssets(quiet = false) {
         const lostTip = [];
         if (r.assetsFailed) lostTip.push(`${r.assetsFailed} 个附件未能存入本地库`);
         if (r.imagesFailed) lostTip.push(`${r.imagesFailed} 张图片在包里找不到`);
+        /*
+         * BUG 190：这四类「本工具不显示、但已原样保留」的数据必须说出来 ——
+         * 走 `unsupportedTips()`（与交换格式那条导入路径**同一份**，抄一份
+         * 就必然只修一处，本次漏的就是这个）。
+         *
+         * .xmind 恰恰是**最可能**带这些东西的格式：`xmarkers` /
+         * `xrelationships` / `xsummary` / `xcallout` 全是 XMind 的原生概念，
+         * 交换格式里反而不常见 —— 而 `unsupportedCalloutsTip` 的注释写的
+         * 正是「用户导入别人的 .xmind 看到多出一排分支会以为文件被改坏」。
+         *
+         * ⓘ **不加** `warnForeignAssets`：那是 .json 专属（只存引用、不带
+         *   字节），.xmind 会把附件打包进包里，不存在"本机找不到"的问题。
+         */
+        const warns = unsupportedTips(workbook.sheets);
         status(`已导入 ${workbook.sheets.length} 张画布（${srcTip}${r.attachments ? `，${r.attachments} 个附件` : ''}）`
           + (lostTip.length ? `；${lostTip.join('、')}` : '')
+          + (warns.length ? ` ⚠ ${warns.join('；')}` : '')
           + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容'),
-          lostTip.length > 0);
+          lostTip.length > 0 || warns.length > 0);
         ctx.toast(ok ? `已导入 ${workbook.sheets.length} 张画布` : '已导入，但保存失败', ok ? 'ok' : 'err');
       } catch (e) {
         status('XMind 导入失败：' + (e?.message || e), true);
@@ -3296,9 +3315,8 @@ async function gcOrphanAssets(quiet = false) {
     // 否则用户看到"标记没了"会以为文件被改坏。
     // BUG 122：关系线本工具不显示，但已原样保留、导出 .xmind 时会写回 ——
     // 不说的话用户看到"关系线没了"会以为文件被改坏。
-    const warns = [await warnForeignAssets(sheets), unsupportedMarkersTip(sheets),
-      unsupportedRelationshipsTip(sheets), unsupportedFmExtrasTip(sheets),
-      unsupportedCalloutsTip(sheets), unsupportedSummariesTip(sheets)].filter(Boolean);
+    const warns = [await warnForeignAssets(sheets),
+      ...unsupportedTips(sheets)].filter(Boolean);
     status(`已导入 ${sheets.length} 张画布（识别为：${formTip}）`
       + (ok ? '' : '；未能写入本地库，重载后会回到导入前的内容')
       + (warns.length ? ' ⚠ ' + warns.join('；') : ''), warns.length > 0);
@@ -3331,6 +3349,29 @@ async function gcOrphanAssets(quiet = false) {
     // 自己 status 会把它盖掉（见调用处的组合）。
     return `${missing} 个附件在本机找不到数据（JSON 只带引用、不带本体）。`
       + '如需跨机器迁移，请改用 .xmind 导出（会把附件一起打包）。';
+  }
+
+  /**
+   * BUG 190：**所有**「本工具不显示、但已原样保留」的提示串（聚合入口）。
+   *
+   * 两条导入路径（.xmind 一条、交换格式 / Markdown 一条）早先各写一份数组，
+   * .xmind 那份漏了 —— 于是导入别人的 .xmind（带红旗标记 / 关系线 / 概要 /
+   * 标注）界面只说「已导入 N 张画布」，用户看到"标记没了"会以为文件被改坏。
+   * 而这些概念**全是 XMind 原生**的，.xmind 恰恰是最可能带它们的格式。
+   *
+   * 抄一份就必然只修一处，所以抽出来共用：以后新增一类提示，两条路径
+   * 自动都覆盖。
+   *
+   * ⓘ `warnForeignAssets` **不在**这里 —— 那是 .json 专属（只存引用、不带
+   *   字节），.xmind 会把附件打包进包里，加了会在那条路上凭空喊。
+   *
+   * @param {Array} sheets 画布数组
+   * @returns {string[]} 非空提示串数组（可能为空数组）
+   */
+  function unsupportedTips(sheets) {
+    return [unsupportedMarkersTip(sheets), unsupportedRelationshipsTip(sheets),
+      unsupportedFmExtrasTip(sheets), unsupportedCalloutsTip(sheets),
+      unsupportedSummariesTip(sheets)].filter(Boolean);
   }
 
   /**
