@@ -66,8 +66,15 @@ function sliceFn(src, anchor) {
 const takeSrc = sliceFn(SRC.host, 'export function takeCustomPluginWriteError()');
 const msgSrc = sliceFn(SRC.host, 'export function customPluginWriteFailMsg(kind, name, err)');
 const saveSrc = sliceFn(SRC.host, 'export function saveCustomPlugins(list)');
+const getSrc = sliceFn(SRC.host, 'export function getCustomPlugins()');
+/*
+ * 键名常量从源码抽，不在这里抄一份：抄了就等于给"改键名"开了口子
+ * —— 实现改了、测试还认旧串，判据会静默失明。
+ */
+const KEY_CUSTOM_PLUGINS = (SRC.host.match(/export const KEY_CUSTOM_PLUGINS = '([^']+)'/) || [])[1];
 
-t('（前置）三个函数都切到了', takeSrc && msgSrc && saveSrc);
+t('（前置）四个函数都切到了', takeSrc && msgSrc && saveSrc && getSrc);
+t('（前置）键名常量抽到了', !!KEY_CUSTOM_PLUGINS, String(KEY_CUSTOM_PLUGINS));
 
 /** 造一个可切换"写入抛错"的存储桩。 */
 function makeLS(throwOnSet) {
@@ -82,13 +89,18 @@ function makeLS(throwOnSet) {
   };
 }
 
-const build = (ls) => new Function('localStorage', `
+const build = (ls) => new Function('localStorage', 'KEY_CUSTOM_PLUGINS', `
+  /* 这两个是 host.js 的模块级状态，切片里没有，必须显式补上。
+     名字与实现保持一致 —— 那边一改名，这里直接 ReferenceError，
+     不会像"抄一份常量"那样静默失明。 */
   let lastCustomPluginWriteError = null;
+  let lastCustomPluginReadError = null;
+  ${getSrc.replace(/^export function/m, 'function')}
   ${takeSrc.replace(/^export function/m, 'function')}
   ${msgSrc.replace(/^export function/m, 'function')}
   ${saveSrc.replace(/^export function/m, 'function')}
-  return { saveCustomPlugins, takeCustomPluginWriteError, customPluginWriteFailMsg };
-`)(ls);
+  return { getCustomPlugins, saveCustomPlugins, takeCustomPluginWriteError, customPluginWriteFailMsg };
+`)(ls, KEY_CUSTOM_PLUGINS);
 
 {
   const ls = makeLS(false);
@@ -252,6 +264,64 @@ const build = (ls) => new Function('localStorage', `
     /if \(!r\.ok\)/.test(c));
   t('React：MCP 网关结局说清（cleaned / failed 各有一条 toast）',
     /r\.mcp\?\.status === 'cleaned'/.test(c) && /r\.mcp\?\.status === 'failed'/.test(c));
+}
+
+/* ================================================================
+ * 第 5 节：读不出来时**不许**落盘
+ * ------------------------------------------------------------
+ * 三个调用点全是 read-modify-write（`getCustomPlugins()` 读出来 →
+ * 改一下 → `saveCustomPlugins()` 存回）。读失败返回 []，[] 一经
+ * 写回就把用户装过的插件**全清掉并落盘**，而界面照旧提示「已添加」。
+ * 这份清单**没有备份**，覆盖即不可恢复。
+ * ================================================================ */
+{
+  /* 损坏数据：存得进去，但 parse 不出来（真实成因：被别处写坏、
+     旧版本格式不兼容……） */
+  const ls = makeLS(false);
+  ls._store.set(KEY_CUSTOM_PLUGINS, '{oops');
+  const m = build(ls);
+
+  const got = m.getCustomPlugins();
+  t('读不出来 → 降级返回 []（读侧不能往外抛）', Array.isArray(got) && got.length === 0);
+  t('读不出来 → 落盘被拒（返回 false）', m.saveCustomPlugins([{ id: 'custom-new' }]) === false);
+  /* 这一条是本节的要害：**数据还在**。
+     被覆盖的话，用户装过的插件就永久没了。 */
+  t('读不出来 → 原数据**没被覆盖**',
+    ls._store.get(KEY_CUSTOM_PLUGINS) === '{oops',
+    `现在是 ${JSON.stringify(ls._store.get(KEY_CUSTOM_PLUGINS))}`);
+  t('拒绝时原因说得清（不是空原因）',
+    /读不出来/.test(m.takeCustomPluginWriteError() || ''));
+  t('（静态）saveCustomPlugins 里确有这道闸',
+    /if \(lastCustomPluginReadError\)/.test(saveSrc));
+}
+
+/* 反向：读**成功**时，空写入必须放行 ——
+   否则"移除最后一个插件"会被这道闸误伤，变成删不掉。 */
+{
+  const ls = makeLS(false);
+  ls._store.set(KEY_CUSTOM_PLUGINS, '[]');
+  const m = build(ls);
+  t('存的是空数组 → 属于读成功（不是读失败）', Array.isArray(m.getCustomPlugins()));
+  t('读成功 → 存回空数组放行（删最后一个插件不被误伤）',
+    m.saveCustomPlugins([]) === true);
+}
+
+/* 非数组同样算读不出来：'null' / '{}' 能 parse 成功，
+   但后面的 .filter / 展开会崩，且一样是"存的东西不对"。 */
+{
+  const ls = makeLS(false);
+  ls._store.set(KEY_CUSTOM_PLUGINS, '{"a":1}');
+  const m = build(ls);
+  m.getCustomPlugins();
+  t('存的是对象（不是数组）→ 也判读失败并拒写',
+    m.saveCustomPlugins([{ id: 'x' }]) === false);
+}
+
+/* 键名只认常量那一处。再写裸字面量，就是"两处各写一半"的开端：
+   改了一处另一处不跟着变，读写的就不是同一个键，且不报错。 */
+{
+  const litCount = (code('host').match(/'nexus:custom-plugins'/g) || []).length;
+  t('裸字面量只剩常量定义那一处（键名不许各写一份）', litCount === 1, `出现 ${litCount} 次`);
 }
 
 /* ================================================================
