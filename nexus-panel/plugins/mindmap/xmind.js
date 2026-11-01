@@ -66,6 +66,16 @@ async function deflateRaw(bytes) {
  * 对齐 mediainfo.js 的做法：那里对同等不可信的二进制输入也设了 guard++/depth 上限。
  */
 import { htmlToPlain, plainToHtml, elToPlain, isCollapsed, fontSizeNum } from './formats.js';
+/*
+ * 画布默认外观 —— **从 themes.js 取，不在这里抄第二份**（与 BUG 181 同一口径）。
+ *
+ * ⚠️ xmind.js 上方另有一处硬编码的 'fresh-blue'（parseZen 构造 content 时），
+ *    那是**写进 content JSON 的兼容值**；而 `sheet.theme` 的默认值同样是
+ *    'fresh-blue'（themes.js）。两者此刻恰好同名，但不能靠"名字像"去判 ——
+ *    判"非默认"必须显式取这里的常量，否则默认值会被判成"装不下"而每次虚报。
+ */
+import { DEFAULT_THEME as SHEET_THEME_DEFAULT,
+  DEFAULT_LAYOUT as SHEET_LAYOUT_DEFAULT } from './themes.js';
 
 export const MAX_INFLATE_BYTES = 64 * 1024 * 1024;
 
@@ -1887,10 +1897,24 @@ function applyXmlBoundaries(pairs, boundariesEl, counter = null) {
  *            fmIcons:number, fmCloud:number}} 0 = 没有损失
  */
 export function xmindLossCount(sheets) {
-  const out = { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0 };
+  const out = { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0, theme: 0, layout: 0 };
   for (const s of sheets || []) {
     const km = parseKm(s?.content);
     if (!km) continue;              // 坏内容不算 —— 它本来也导不出东西
+    /*
+     * BUG 185：画布外观同样是"内容"，与 BUG 135 的 fmIcons / fmCloud 同一语义 ——
+     * 本工具的无损快照认得，可**在别的 XMind 软件里打开**时没人认，于是静默回退：
+     *   · theme   XMind 的主题是另一套体系（manifest 指向独立 theme 文件），
+     *             我们的私有主题名**一个都写不进去** → 非默认即丢
+     *   · layout 只有 4 个能写成 rootTopic.structureClass（见 LayoutToStructure）；
+     *             「天盘图」等没有对应值 → 回退成「思维导图」
+     *             ⓘ 有映射的那 4 个**保得住**，所以这里不能一律计 layout，
+     *               否则每次导出都虚报一句"布局装不下"。
+     */
+    const th = String(s?.theme ?? '').trim();
+    if (th && th !== SHEET_THEME_DEFAULT) out.theme++;
+    const ly = String(s?.layout ?? '').trim();
+    if (ly && ly !== SHEET_LAYOUT_DEFAULT && !LayoutToStructure[ly]) out.layout++;
     walkKmNodes(km, (node) => {
       const d = node?.data;
       if (!d) return;
