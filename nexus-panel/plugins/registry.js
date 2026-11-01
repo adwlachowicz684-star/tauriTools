@@ -401,6 +401,35 @@ export const plugins = [
     description: '示例服务插件：不进侧边栏，由其它插件通过 ctx.services.call 调用',
   },
   {
+    /*
+     * 插件商店：**两种模式下都指向同一份入口**（module.js → index.js）。
+     *
+     * ⚠️ 此前的状态：这个插件是完整实现（index.html + index.js 258 行、
+     * import 的三个模块都在、还有专门的测试守着它的添加/移除行为），
+     * 但 registry 里**没有它** —— 于是用户永远看不到，而且不报错。
+     *
+     * 插件的唯一来源是本文件的 plugins 数组（js/host.js 是全仓唯一
+     * 加载点），少登记一处就等于磁盘上多一堆没人能打开的文件。
+     * 它的测试还在跑、还全绿，"有人守着"这个信号本身是假的。
+     * 由 plugin-identity-test.mjs 守着，防止再退回去。
+     *
+     * 为什么是 module 而不是 iframe：它要调 host.js 的
+     * saveCustomPlugins / getCustomPlugins（自定义插件清单的读写入口），
+     * 同页下这些就是普通函数调用；iframe 下要走桥接，
+     * 而"存没存下"这种事绕一层就多一处看不清的地方。
+     *
+     * index.html（iframe 入口）刻意保留：与 settings 同款，
+     * 删掉它就让"想用沙箱隔离商店面板"变成不可能。
+     */
+    id: 'store',
+    name: '插件商店',
+    icon: '⊞',
+    type: 'module',
+    entry: './plugins/store/module.js',
+    builtin: true,
+    description: '已安装插件列表、添加/移除自定义插件',
+  },
+  {
     id: 'settings',
     name: '设置',
     icon: '⚙',
