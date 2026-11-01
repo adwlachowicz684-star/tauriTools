@@ -4092,6 +4092,77 @@ t('守卫：styles.css 里同一个选择器不重复定义', (() => {
   return dup.length === 0;
 })());
 
+
+/* ============================================================ 筛选面板被色板淹没（用户报的 BUG） */
+
+/*
+ * **"按任务类型筛选"面板的主体变成了一片色块矩阵。**
+ *
+ * 每个候选行都渲染完整的 12 色调色板，而面板宽度只有 190px ——
+ * 12 × 13px + gap ≈ 204px，**溢出后 flex-wrap 换行**，
+ * 于是 7 个类型 × 每组十来个色点，把勾选框和候选名全淹没了。
+ * 用户看到的正是这个（截图：七组横向排列的彩色圆点）。
+ *
+ * 这是**筛选**面板，主职是"勾哪些值"，改色只是顺手提供的便利。
+ * 便利功能把主功能挤没了，等于没做。
+ *
+ * 修法：色板默认折叠成一个当前色的小圆点，点它才展开。
+ */
+t('守卫：筛选面板的色板默认折叠（不是每行都平铺 12 色）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function ColFilterPop');
+  const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
+  /*
+    ⛔ 不能只查"有没有 tb-lpop-dot"：反向验证时把折叠态改回平铺、
+    但保留 dot（比如两处都渲染）照样命中。
+    必须钉住"折叠态渲染 dot、展开态渲染色板"这个**分支结构**。
+  */
+  return /colorFor === v \? \(/.test(seg)
+    && /className="tb-lpop-dot"/.test(seg)
+    && /tb-lpop-colors' \+ \(colorFor === v \? ' open'/.test(seg);
+})());
+
+/* 展开态要换到整行（否则 190px 面板放不下 12 个色点，会把名字压成省略号） */
+t('守卫：色板展开时占整行', (() => {
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  return /\.tb-lpop-colors\.open\s*\{[^}]*flex:\s*1 1 100%/.test(css)
+    && /\.tb-lpop-item\.is-colors\s*\{[^}]*flex-wrap:\s*wrap/.test(css);
+})());
+
+/* 取色器"＋"必须在展开态里（折叠态也渲染的话每行都挂一个 ＋，把行挤得更窄） */
+t('守卫：取色器入口只在展开态渲染', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function ColFilterPop');
+  const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
+  const openStart = seg.indexOf('colorFor === v ? (');
+  const openEnd = seg.indexOf(') : (', openStart);
+  const openBlock = seg.slice(openStart, openEnd);
+  return openBlock.indexOf('tb-swatch-more') >= 0;
+})());
+
+/*
+ * **新建区的默认色写死某一档，会撞上已有类型。**
+ *
+ * 实测本项目：7 个类型已占用 #84cc16 #22c55e #f59e0b #ef4444
+ * #3b82f6 #a855f7 #ec4899，而原来的默认值 TAG_COLORS[6] 恰好是 #3b82f6
+ * —— **已被「调研」占用**，默认新建出来的类型和另一个同色。
+ *
+ * 配色的唯一作用就是一眼区分，同色等于白配。
+ * 改成取"第一个还没人用的"（与新建类型 / 标签 / 状态统一判据）。
+ */
+t('守卫：新建区的默认色取第一个未被占用的（不写死某一档）', (() => {
+  /*
+    ⛔ 必须**先剥离注释**：说明"为什么不能用 TAG_COLORS[6]"的注释里
+    必然要写出 TAG_COLORS[6] 这几个字 —— 不剥离的话守卫恒红，
+    而恒红的守卫跟没有一样，真正的回归反而看不出来。
+    （这是第 N 次踩这个坑，源码扫描类判据一律先过 STRIP。）
+  */
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  return app.indexOf('TAG_COLORS[6]') < 0
+    && /used\.has\(newColor\)/.test(app)
+    && /const free = TAG_COLORS\.find\(\(c\) => !used\.has\(c\)\)/.test(app);
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
