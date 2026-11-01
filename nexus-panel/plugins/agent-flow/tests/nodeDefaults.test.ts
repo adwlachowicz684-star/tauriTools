@@ -6,7 +6,7 @@ import {
   sanitizeForDefault, withDefault, matchPresetKey, NODE_DEFAULTS_KEY,
   isSecretField, setFieldsDefault, clearFieldsDefault, hasFieldDefault,
 } from '../engine/nodeDefaults';
-import { hadInlineSecret, VIEW_KEYS, DERIVED_KEYS, redactNodes } from '../engine/sanitize';
+import { hadInlineSecret, VIEW_KEYS, DERIVED_KEYS, redactNodes, stripSecrets } from '../engine/sanitize';
 
 /*
  * 刻意不写返回类型注解：strip-ts.py 处理不了 `KV & { map: ... }`
@@ -456,4 +456,95 @@ test('setFieldsDefault 的脱敏走 stripSecrets（不另写判据）', () => {
   const fn = end > 0 ? body.slice(0, end) : body;
   assert.ok(/stripSecrets\(/.test(fn), 'setFieldsDefault 要调 stripSecrets');
   assert.ok(/redacted/.test(fn), '要把被挖过的字段记下来给界面');
+});
+
+
+/* ================================================================== */
+/* 判"是不是密钥"的两套口径不能打架                                     */
+/* ================================================================== */
+
+/*
+ * isSecretField 决定**面板上那个按钮是否禁用**（并写那句提示），
+ * blankSecretNamed 决定**值到底会不会被挖**。
+ *
+ * 两边分叉的结果不是"多挡一点"，而是界面在说一件不存在的事：
+ * 按钮禁用了、提示写「密钥请改用连接管理器」，而那个字段的值
+ * 既不是密钥、连接管理器里也没有它 —— 用户只能以为功能坏了。
+ *
+ * 所以这里逐个字段比对两套口径，凡是打架就红。
+ */
+test('两套口径一致: 判成密钥的字段必须真的会被挖（反之亦然）', () => {
+  const cases: Array<[string, unknown]> = [
+    ['token', 'abc'],
+    ['apiKey', 'sk-x'],
+    ['biliCookie', 'x'],
+    ['maxTokens', 4096],
+    ['tokenCount', 3],
+    ['name', 'my node'],
+    ['port', 8080],
+  ];
+  for (const [k, v] of cases) {
+    const judged = isSecretField(k, v);
+    const reallyBlanked = stripSecrets({ [k]: v })[k] !== v;
+    assert.equal(judged, reallyBlanked,
+      `${k}=${JSON.stringify(v)}：判成密钥=${judged} 但实际会被挖=${reallyBlanked} —— 两套口径打架`);
+  }
+});
+
+/*
+ * 这一条是上面那条守住的**真实现象**：
+ * maxTokens 是 types.ts 里真实存在的数字字段，名字含 token。
+ * 改之前它永久禁用按钮 + 提示"请改用连接管理器"，
+ * 而 4096 既不是密钥、连接管理器里也没有它。
+ */
+test('maxTokens（数字）不该被当密钥 —— 改之前按钮是永久禁用的', () => {
+  assert.equal(isSecretField('maxTokens', 4096), false,
+    'maxTokens 是数字，不是密钥 —— 判成密钥会让"设为默认"按钮永久禁用');
+  /* 反例：字符串型的 token 必须照旧挡住，别把防线一起撤了 */
+  assert.equal(isSecretField('token', 'abc'), true, 'token 是字符串密钥，必须挡');
+  assert.equal(isSecretField('apiKey', 'sk-x'), true, 'apiKey 必须挡');
+  /* 没给值时退回保守判定（当密钥） */
+  assert.equal(isSecretField('token'), true, '拿不到值时按最坏情况处理');
+});
+
+/*
+ * headersText 是**唯一**一个"不是密钥字段、但值里躺着密钥"的字段。
+ * 它不能走 isSecretField（按钮要可用），而要走 redacted 那条路：
+ * 存下来、把值里的 Authorization 挖掉、并如实说"已挖掉"。
+ * 判成密钥的话用户连存都存不了；不判又不挖的话就是明文泄露。
+ */
+test('headersText 不算密钥字段，但值里的凭据要被挖掉并如实说', () => {
+  assert.equal(isSecretField('headersText', 'Authorization: Bearer abc'), false,
+    'headersText 不能被禁用 —— 它是合法的可存字段');
+  const kv = memKV();
+  const r = setFieldsDefault('generic-http', { headersText: 'Authorization: Bearer abc' }, kv);
+  assert.equal(r.ok, true, 'headersText 应该存得下');
+  assert.deepEqual(r.redacted, ['headersText'], '存下了但值里的凭据被挖掉 —— 必须记进 redacted');
+  const stored = String(getDefault('generic-http', kv).headersText ?? '');
+  assert.equal(stored.includes('abc'), false, '令牌不能落进明文默认值');
+});
+
+/*
+ * 刻意的口子，钉住防止将来有人"顺手修掉"：
+ * 纯数字密钥两边都不拦（会明文进默认值）。
+ *
+ * 反过来把数字也挖了代价更大 —— maxTokens 会被抹成 0，
+ * 节点直接跑不动，等于把"可能泄露"换成"必然坏掉"。
+ * 所以这里不是漏，是取舍，改之前先看这条注释。
+ */
+test('已知取舍: 纯数字密钥不拦（挖数字会把 maxTokens 抹成 0）', () => {
+  assert.equal(isSecretField('numericToken', 12345678901), false, '数字型不拦');
+  assert.equal(stripSecrets({ numericToken: 12345678901 }).numericToken, 12345678901, '数字型也不挖');
+  /* 但数字型字段本身不能把 maxTokens 牵连进去 */
+  assert.equal(stripSecrets({ maxTokens: 4096 }).maxTokens, 4096, 'maxTokens 必须原样留下');
+});
+
+/* 源码守卫: 两个调用点都必须把值传进去 —— 不传就退回保守判定，等于没修 */
+test('源码守卫: isSecretField 的两个调用点都传了值', () => {
+  const nd = readSrc('engine/nodeDefaults.ts');
+  assert.ok(/isSecretField\(k,\s*v\)/.test(nd),
+    'setFieldsDefault 里必须传值 —— 不传就是旧的保守判定');
+  const fx = readSrc('components/inspectors/fields.tsx');
+  assert.ok(/isSecretField\([^)]*value\)/.test(fx),
+    'fields.tsx 里必须传值 —— 否则按钮还是永久禁用');
 });

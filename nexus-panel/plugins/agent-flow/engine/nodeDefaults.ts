@@ -90,14 +90,40 @@ export function clearDefault(presetKey: string, kv: KV = defaultKV()): void {
  * 字段名等于首段（'llm'）也算命中，否则整个 llm 对象会被存进去
  * 而里面的 apiKey 一起泄露。
  */
-export function isSecretField(fieldKey: string): boolean {
+export function isSecretField(fieldKey: string, value?: unknown): boolean {
   const k = String(fieldKey ?? '');
   if (!k) return false;
   for (const path of SECRET_PATHS) {
     if (path === k) return true;
     if (path.split('.')[0] === k) return true;
   }
-  return looksLikeSecretName(k);
+  if (!looksLikeSecretName(k)) return false;
+  /*
+   * 名字命中 hint **还不够，还要看值的类型** ——
+   * 否则会和真正去挖的那份（blankSecretNamed）说不到一块去：
+   *
+   *   maxTokens = 4096
+   *     · 这里：名字含 token → 判成密钥 → 面板上"设为默认"按钮**永久禁用**
+   *       提示写「密钥不存进默认值，请改用连接管理器」
+   *     · 那边：blankSecretNamed 只挖字符串叶子，4096 原样留下
+   *
+   *   两边打架的结果是：4096 根本不是密钥、连接管理器里也没有它，
+   *   提示指向一个不存在的地方，而且用户永远没法把它存成默认。
+   *
+   * 所以名字命中 hint 时，只有**字符串 / 含字符串的数组**才当密钥，
+   * 数字与布尔一律不当 —— 与 blankSecretNamed 同一口径。
+   *
+   * ⚠️ 由此留下的口子（刻意的，别去"修"）：
+   * 纯数字密钥（如 numericToken = 12345678901）两边都不拦，会明文进默认值。
+   * 反过来把数字也挖掉代价更大 —— maxTokens 会被抹成 0，
+   * 节点直接跑不动，那是把"可能泄露"换成"必然坏掉"。
+   *
+   * value 不传时退回旧的保守判定（当密钥）：拿不到值就按最坏情况处理。
+   */
+  if (value === undefined) return true;
+  if (typeof value === 'string') return value !== '';
+  if (Array.isArray(value)) return value.some((x) => typeof x === 'string' && x !== '');
+  return false;
 }
 
 /**
@@ -137,7 +163,7 @@ export function setFieldsDefault(
   const redacted: string[] = [];
   for (const k of Object.keys(patch ?? {})) {
     const v = patch[k];
-    if (isSecretField(k)) { skipped.push(k); continue; }
+    if (isSecretField(k, v)) { skipped.push(k); continue; }
     // undefined 不存：分不清是"想设成空"还是"这个字段压根没值"
     if (v === undefined) { skipped.push(k); continue; }
     const cleaned = stripSecrets({ [k]: v })[k];

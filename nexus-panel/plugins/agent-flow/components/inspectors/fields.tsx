@@ -283,7 +283,8 @@ function FieldDefaultButton({
 }) {
   // 每次渲染都读一次：点了别的字段的按钮后，这里要跟着变
   const [tick, setTick] = useState(0);
-  const secret = isSecretField(fieldKey);
+  /* 带上 value：名字像密钥但值是数字时（maxTokens=4096）不该禁用按钮 */
+  const secret = isSecretField(fieldKey, value);
   const on = hasFieldDefault(presetKey, fieldKey);
   void tick;
 
