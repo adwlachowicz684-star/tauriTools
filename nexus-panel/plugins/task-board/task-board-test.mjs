@@ -3982,6 +3982,116 @@ t('守卫：InlineText 只在打开时带入当前值（value 不在依赖里）
   return seg.indexOf('}, [open]);') >= 0 && seg.indexOf('}, [open, value]);') < 0;
 })());
 
+
+/* ============================================================ 深度审查：删项目会切走当前项目（本轮） */
+
+/*
+ * **删掉一个不是当前项目的项目，会把当前项目换掉。**
+ *
+ * 实测（core 手算）：projects [甲,乙,丙]、当前在「丙」，删掉「甲」
+ *   → 当前项目变成「乙」，dataDir 跟着变
+ *
+ * 用户只是想清掉一个不用的项目，结果自己正在看的项目被换掉了：
+ * 不报错、不提示，界面上的任务突然变成另一批 ——
+ * 看着像"删错了"或者"界面抽风"，而实际数据在别的目录里好好的。
+ *
+ * 根因：`aimAt(..., projects[0].id)` 一律切到剩下第一个，
+ * 没判断删的是不是当前项目。
+ */
+t('守卫：删项目只在删的是当前项目时才切换', (() => {
+  const src = fs.readFileSync(path.join(dir, 'lib', 'store.ts'), 'utf8');
+  const i = src.indexOf('export async function removeProject');
+  if (i < 0) return false;
+  const seg = src.slice(i, i + 1200);
+  /* 必须是「条件选择 id」，不能一律 projects[0].id */
+  return /const nextId = cfg\.currentId === id \? projects\[0\]\.id : cfg\.currentId;/.test(seg)
+    && /aimAt\(\{ \.\.\.cfg, projects \}, nextId\)/.test(seg);
+})());
+
+/*
+ * config 事件（设置页那条路径）也要清筛选 —— 与 doSwitchProject 同一判据。
+ *
+ * 设置页里删掉当前项目会切到另一个项目，走的是 config 事件。
+ * 而上一个项目筛的是它自己的状态 id / 类型 id / 认领人，
+ * 切过来很可能一条都匹配不上 → 打开就是空看板。
+ * doSwitchProject 清了，这条路径原来漏了。
+ */
+t('守卫：config 事件换目录时清掉筛选（与切项目同一判据）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf("ctx.on('task-board:config'");
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 1400);
+  return /clearViewState\(\)/.test(seg);
+})());
+
+/* ============================================================ 深度审查：没有可走的流转时要说出来（本轮） */
+
+/*
+ * 任务处于"配置里没有的状态"（状态被删掉、或 AI 经 API 写入）时，
+ * actionsForIn 返回**空数组** → 详情面板一个按钮都没有。
+ *
+ * 实测：actionsForIn(flow, 'ghostX') === []
+ *
+ * 界面上只显示一条空白的操作区，完全不说为什么 ——
+ * 这比"孤岛状态"更糟：孤岛是没人能进去，
+ * 而这是**已有的任务被困在一个不存在的状态里，永远出不来**，
+ * 用户还不知道该去哪里修。
+ *
+ * 两种情况要分开说，因为**该做的事不一样**：
+ *   · 状态不在配置里 → 去流程设置补上这个状态
+ *   · 状态在配置里但没配出边 → 去流程设置勾上出边
+ */
+t('守卫：详情面板没有可走的流转时给出说明（区分两种原因）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function DetailPanel({');
+  const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
+  return /acts\.length === 0 \? \(/.test(seg)
+    && /不在流程配置里/.test(seg)
+    && /没配/.test(seg);
+})());
+
+/* 看板卡片同样要标明（空间小，短文字 + title） */
+t('守卫：看板卡片没有可走的流转时标明', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function TaskCard({');
+  const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
+  return /acts\.length === 0 \? \(/.test(seg) && /tb-task-noflow/.test(seg);
+})());
+
+
+/*
+ * **同一个选择器在 styles.css 里定义两次**。
+ *
+ * 实测踩到：给"没有可走的流转"加提示时另写了一份 `.tb-dhint.warn`，
+ * 而它早就被前置锁提示用着 —— 于是同一选择器出现两次，
+ * 后定义的覆盖前面的，**把前置锁提示的配色也改了**。
+ *
+ * 这类问题不报错、也不影响功能，只会让某处的样式悄悄变了；
+ * 而且只有去比对"我加之前它长什么样"才发现得了。
+ */
+t('守卫：styles.css 里同一个选择器不重复定义', (() => {
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  /*
+    只匹配**顶格**的选择器。
+
+    ⛔ 第一版用 `(^|\})` 做分隔符，把 `}` 之后到下个 `{` 之间
+    的内容都当成选择器 —— 于是 @media 里带缩进的 .tb-board 被误报重复
+    （它和顶格那条是同一个，但语义上是媒体查询内的覆盖，不算重复）。
+    守卫误报会让真正的重复看不出来，跟没有守卫一样。
+  */
+  const seen = new Set();
+  const dup = [];
+  for (const m of stripped.matchAll(/^([.#a-zA-Z:\[][^{}\n]*?)\s*\{/gm)) {
+    const sel = m[1].replace(/\s+/g, ' ').trim();
+    if (sel.startsWith('@')) continue;
+    if (seen.has(sel)) dup.push(sel);
+    else seen.add(sel);
+  }
+  if (dup.length) console.log('    重复:', [...new Set(dup)].slice(0, 6).join(' , '));
+  return dup.length === 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

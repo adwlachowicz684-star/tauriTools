@@ -79,6 +79,12 @@
 
 .tb-field select,
 .tb-search {
+  /*
+    同一个选择器原来在文件里定义了两次（这里一段、下面又一段 width/min-width）。
+    分两处写没有额外效果（CSS 本来就是层叠合并的），
+    但**很容易被后来者当成"这里只有这些属性"**，改的时候漏看另一处 ——
+    尤其是新加一条规则时，会以为自己加的是完整的。合并到一处。
+  */
   --ctl-h: 30px;
   height: var(--ctl-h);
   padding: 0 var(--sp-2);
@@ -96,10 +102,6 @@
   border-color: color-mix(in srgb, var(--accent) 45%, var(--divider));
 }
 
-.tb-search {
-  width: 200px;
-  min-width: 0;
-}
 
 /* 服务状态灯：在线 = accent 实心 + 辉光，离线 = 灰 */
 .tb-svc {
@@ -703,6 +705,23 @@
   font-size: var(--fs-micro);
 }
 
+/*
+  看板卡片上"没有可走的流转"的标记（空间小，只摆短文字，完整说明走 title）。
+
+  ⛔ 详情面板里那处**不新增样式**：那里复用了已有的 .tb-dhint.warn
+  （前置锁提示用的就是它）。我一开始另写了一份 .tb-dhint.warn，
+  结果同一个选择器在文件里出现两次 —— 后定义的覆盖前面的，
+  把前置锁提示的配色也给改了。选择器要先查有没有，别凭空新增。
+*/
+.tb-task-noflow {
+  padding: 0 var(--sp-1);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--r-sm);
+  color: var(--warn);
+  font-size: var(--fs-micro);
+  cursor: help;
+}
+
 /* ------------------------------------------------ 设置面板 */
 
 .tb-set-wrap {
@@ -883,6 +902,28 @@
 }
 
 /*
+  列表与右侧详情面板**并列**（不是弹窗盖在上面）。
+
+  面板是非模态的：它占右侧一条，列表照常滚、照常点，
+  不关也能继续操作 —— 这正是"详情不干扰操作"的关键。
+
+  ⛔⚠️ 这一段**被后来的提交整块覆盖掉过两次**（48533415、9c753ba3）：
+  那些提交只打算改别的小地方，但基于的是**改动之前的副本**，
+  于是 .tb-dpanel 整块样式被悄悄抹掉 —— 面板渲染成一坨没排版的内容，
+  而 App.tsx 里类名是对的，肉眼看不出来。
+
+  两次都是源码扫描守卫（"用到的 tb-* 类名必须有定义"）报出来的。
+  所以：**别再整块替换这个文件**，改之前先拉最新。
+  万一又被覆盖，那条守卫会立刻报红，按这里补回即可。
+*/
+.tb-viewarea {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/*
   ⛔ 列表作为 flex 子项必须 min-width: 0。
 
   flex 子项默认 min-width:auto，而里面 .tb-lgrid 有 min-width: 940px ——
@@ -891,6 +932,44 @@
 */
 .tb-viewarea > .tb-list {
   min-width: 0;
+}
+
+/* 右侧详情面板 */
+.tb-dpanel {
+  flex: none;
+  inline-size: 380px;
+  /* 窄窗口下不能把列表挤没：给它一个上限 */
+  max-inline-size: 45%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-inline-start: 1px solid var(--divider);
+  background: color-mix(in srgb, var(--bg) 92%, var(--accent));
+}
+
+.tb-dpanel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-block-end: 1px solid var(--divider);
+}
+
+.tb-dpanel-title {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.tb-dpanel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-3);
 }
 
 /* 表头与行共用同一套网格（抽成 .tb-lgrid：同一选择器只在一处定义，
@@ -1453,6 +1532,8 @@ body.tb-col-resizing {
 }
 .tb-flow-name,
 .tb-flow-enter {
+  /* 同上：原来 width 在下方另起一条单行规则，合并到一处 */
+  width: 8em;
   padding: var(--sp-1) var(--sp-2);
   border: 1px solid var(--divider);
   border-radius: var(--r-xs);
@@ -1461,7 +1542,6 @@ body.tb-col-resizing {
   font-size: var(--fs-micro);
 }
 .tb-flow-name { width: 7em; }
-.tb-flow-enter { width: 8em; }
 .tb-flow-done,
 .tb-flow-enote {
   display: inline-flex;
@@ -1781,6 +1861,12 @@ body.tb-col-resizing {
 }
 .tb-lpop-item {
   font-size: var(--fs-micro);
+  /* 列头面板里的勾选项：勾选区与调色区分开，
+     免得点色块时误触勾选（那个 checkbox 是控制筛选的，不是控制颜色的） */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
 }
 .tb-lpop-item span {
   overflow: hidden;
@@ -1810,14 +1896,6 @@ body.tb-col-resizing {
   background: var(--bg);
   color: var(--text);
   font-size: var(--fs-micro);
-}
-/* 列头面板里的勾选项：勾选区与调色区分开，
-   免得点色块时误触勾选（那个 checkbox 是控制筛选的，不是控制颜色的） */
-.tb-lpop-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-2);
 }
 .tb-lpop-pick {
   display: flex;
@@ -2043,7 +2121,13 @@ body.tb-col-resizing {
 /* 时间列：等宽数字（相对时间长度不一，不等宽会左右抖） */
 .tb-lc.c-createdAt,
 .tb-lc.c-updatedAt {
-  color: var(--text-dim);
+  /*
+    ⚠️ color 取 --text-mute：这个选择器原来定义了两次，
+    两处的 color 不一样（--text-dim / --text-mute），
+    按 CSS 层叠**后定义的生效**，也就是 --text-mute。
+    合并时必须保留后者的值，否则会把当前的实际配色改掉。
+  */
+  color: var(--text-mute);
   font-size: var(--fs-micro);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
@@ -2141,11 +2225,6 @@ body.tb-col-resizing {
   white-space: nowrap;
 }
 
-.tb-lc.c-updatedAt {
-  color: var(--text-mute);
-  font-size: var(--fs-micro);
-  font-variant-numeric: tabular-nums;
-}
 
 /* ------------------------------------------------ 分组视图 */
 

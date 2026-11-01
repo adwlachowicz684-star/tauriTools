@@ -387,6 +387,19 @@ export default function App() {
     setCfg(c);
     setDocsHintClosed(false);   // 换了项目/配置 → 提醒重新开始（那是另一件事）
     /*
+      ⛔ 筛选也必须清 —— 与 doSwitchProject 里那条是**同一个判据**，
+      两条路径必须一致。
+
+      设置页里删掉当前项目会导致切到另一个项目（走 config 事件这条路径），
+      而上一个项目筛的是它自己的状态 id / 类型 id / 认领人 ——
+      切过来很可能一条都匹配不上，打开就是个空看板，
+      界面上只显示"0 / 12"，看不出是没任务还是被筛掉了。
+
+      原来只有 doSwitchProject 清了，这条路径漏了 ——
+      于是"删个项目"比"切个项目"更容易撞上这个空看板。
+    */
+    if (c.dataDir !== (cfgRef.current ? cfgRef.current.dataDir : '')) clearViewState();
+    /*
       ⛔ 读不到时**必须把显示清空**，不能留着旧 store：
       留着的话界面显示的是**上一个项目的任务**，
       而写入用的是新目录（cfgRef 已经换了）——
@@ -2191,6 +2204,21 @@ function TaskCard({
               认领
             </button>
           )}
+          {/*
+            同上：一个按钮都算不出来时要说明。
+            看板这里空间小，摆一行短文字 + title 带完整说明，
+            不然整张卡片的操作区是空的，看着像"这条没有操作"。
+          */}
+          {acts.length === 0 ? (
+            <span
+              className="tb-task-noflow"
+              title={flow.statuses.some((sd) => sd.id === task.status)
+                ? `流程里没配「${statusName(flow, task.status)}」能走到哪里 —— 到「流程设置」勾上出边`
+                : `这条的状态「${task.status}」不在流程配置里 —— 到「流程设置」补上这个状态`}
+            >
+              {flow.statuses.some((sd) => sd.id === task.status) ? '未配流转' : '状态未配置'}
+            </span>
+          ) : null}
           {acts
             /*
             过滤：从初始态直接"认领"这一步单独有按钮（上面那个），
@@ -5242,6 +5270,29 @@ function DetailPanel({
               {a.label}
             </button>
           ))}
+        {/*
+          ⛔ 一个按钮都算不出来时必须**说出来**。
+
+          实测：任务处于"配置里没有的状态"（状态被删掉、或 AI 经 API 写入）
+          时 actionsForIn 返回**空数组** —— 于是详情里一个按钮都没有，
+          而界面上只显示一条空白的操作区，完全不说为什么。
+
+          这比"孤岛状态"更糟：孤岛是没人能进去，
+          而这是**已有的任务被困在一个不存在的状态里，永远出不来**，
+          用户还不知道该去哪里修。
+
+          两种情况分开说，因为**该做的事不一样**：
+            · 状态不在配置里 → 去流程设置补上这个状态
+            · 状态在配置里但没配出边 → 去流程设置勾上出边
+          混成一句"没有可执行的操作"，用户不知道是哪种、也就不知道怎么修。
+        */}
+        {acts.length === 0 ? (
+          <span className="tb-dhint warn">
+            {flow.statuses.some((sd) => sd.id === task.status)
+              ? `流程里没配「${statusName(flow, task.status)}」能走到哪里 —— 到「流程设置」勾上出边`
+              : `这条的状态「${task.status}」不在流程配置里 —— 到「流程设置」补上这个状态`}
+          </span>
+        ) : null}
         <span className="tb-flex" />
         {confirmDel ? (
           <>
