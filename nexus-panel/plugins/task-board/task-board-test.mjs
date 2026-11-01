@@ -4303,6 +4303,70 @@ t('守卫：行内状态下拉点当前状态是无操作', (() => {
   return /if \(id === t\.status\) return;/.test(seg);
 })());
 
+
+/* ============================================================ 深度审查：core.d.ts 与实现一致性（本轮） */
+
+/*
+ * **core.d.ts 里留着两条"死声明"**：groupEstimate、isAncestor。
+ *
+ * 它们随**手动组**一起被删掉了（组改成"按列分组"的视图概念后，
+ * 数据里不再有父子层级，core.mjs 里也没有实现）。
+ *
+ * 死声明比没有声明更糟：
+ *   · 读 .d.ts 的人会以为有这个函数，照着 import 才发现不存在
+ *   · **TS 不会报错**（声明本身合法），只有运行到才炸
+ *   · 于是它会一直留在那儿，直到某天有人真的去调它
+ *
+ * 反向也成立：core.mjs 导出的函数若没写进 .d.ts，
+ * TS 侧就用不了（或者被迫 any），同样是缺口。
+ */
+t('守卫：core.d.ts 声明的函数与 core.mjs 实际导出一一对应', (() => {
+  const dts = fs.readFileSync(path.join(dir, 'core.d.ts'), 'utf8');
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const inDts = [...dts.matchAll(/^export declare function (\w+)/gm)].map((m) => m[1]);
+  const inMjs = [...mjs.matchAll(/^export function (\w+)/gm)].map((m) => m[1]);
+  const ghost = inDts.filter((x) => inMjs.indexOf(x) < 0);
+  const missing = inMjs.filter((x) => inDts.indexOf(x) < 0);
+  if (ghost.length) console.log('    有声明无实现:', ghost.join(' , '));
+  if (missing.length) console.log('    有实现无声明:', missing.join(' , '));
+  return ghost.length === 0 && missing.length === 0;
+})());
+
+
+/* ============================================================ 深度审查：自依赖死局（本轮） */
+
+/*
+ * **任务把自己列为前置 = 永远解锁不了。**
+ *
+ * lockOf 会算出 pending=['自己'] 且 cyclic=true ——
+ * 它等的是"自己完成"，而"自己完成"的前提是它先解锁。这是个死局。
+ *
+ * 界面上的下拉挡得住（depChoices 排除了自己和传递依赖），
+ * 但 AI 经 HTTP / MCP 直接写 JSON 不受那层约束，手改文件也能写出来。
+ * 所以**归一化**这里也要挡。
+ *
+ * 实测：deps=['a','b','a','','  ']（a 是它自己）
+ *   修前 → ['a','b'] → cyclic=true（死局）
+ *   修后 → ['b']     → 只等 b（正常）
+ */
+t('归一化要清掉指向自己的依赖', (() => {
+  const st = normalizeStore({
+    v: 1, nextId: 9,
+    tasks: [
+      { id: 'a', title: 'a', priority: 'P2', tags: [], deps: ['a', 'b', 'a', '', '  '], status: 'todo', history: [] },
+      { id: 'b', title: 'b', priority: 'P2', tags: [], deps: [], status: 'todo', history: [] },
+    ],
+  });
+  const a = st.tasks.find((t) => t.id === 'a');
+  if (JSON.stringify(a.deps) !== JSON.stringify(['b'])) {
+    console.log('    实际:', JSON.stringify(a.deps), '（应为 ["b"]）');
+    return false;
+  }
+  const lk = lockOf(a, st.tasks, st);
+  /* 清掉自依赖之后不该再判定成环（等 b 是另一回事，那是对的） */
+  return lk.cyclic === false;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
