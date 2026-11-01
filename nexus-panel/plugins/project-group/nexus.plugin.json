@@ -1,0 +1,9 @@
+{
+  "id": "project-group",
+  "name": "项目组分配",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "app",
+  "icon": "🗂",
+  "description": "项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份"
+}
