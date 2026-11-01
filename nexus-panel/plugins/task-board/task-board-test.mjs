@@ -4185,6 +4185,27 @@ t('守卫：轮询读失败不再静默（记到状态里，不许 .catch(() => 
     && /setPollErr\(\s*['"]/.test(seg);
 })());
 
+/*
+ * **新建项目是第三条路径，却漏了同一条判据。**
+ *
+ * 切项目、导入项目都已经改成"读不到要明说"，新建项目还留着
+ * `.catch(() => null)`：目录里本来就有一份坏的 tasks.json（或没权限读）时，
+ * 新建出来显示为一片空白，跟"新项目还没建任务"一模一样，
+ * 而提示说的是「已建项目」—— 三条路径不一致，
+ * 于是"哪条会静默"取决于用户走的是哪一步。
+ *
+ * ⛔ 必须 STRIP：这段说明里原样写了 `.catch(() => null)`。
+ */
+t('守卫：新建项目后读不到任务库也要报出来（三条路径一致）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('<NewProjectModal');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 1600);
+  return seg.indexOf('readErr') >= 0
+    && seg.indexOf('但读不到它的任务库') >= 0
+    && app.indexOf('S.readStore(ctx, next.dataDir).catch(() => null)') < 0;
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

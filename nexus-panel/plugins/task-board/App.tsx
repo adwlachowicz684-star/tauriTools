@@ -2102,10 +2102,28 @@ ${dir}
               const next = await S.addProject(ctx, cfg, name, dataDir, docsDir);
               setCfg(next);
               clearViewState();
-              const st = await S.readStore(ctx, next.dataDir).catch(() => null);
+              /*
+                ⛔ 与切项目 / 导入项目同一条判据：读不到要明说。
+                这里原来写的是 `.catch(() => null)` —— 目录里已有 tasks.json
+                且它是坏的（或没权限读）时，新建出来的项目显示为一片空白，
+                跟"新项目还没建任务"长得一模一样，而提示说的是「已建项目」。
+                三条路径必须一致，否则"哪条静默"取决于用户走的是哪一步。
+              */
+              let st: TaskStore | null = null;
+              let readErr = '';
+              try {
+                st = await S.readStore(ctx, next.dataDir);
+              } catch (e3: any) {
+                readErr = String(e3?.message || e3);
+              }
               setStore(st || normalizeStore(null));
               await restartServiceIfOn(cfg, next);
-              ctx.toast(`已建项目「${currentProject(next).name}」，记得设文档路径`, 'ok');
+              ctx.toast(
+                readErr
+                  ? `已建项目「${currentProject(next).name}」，但读不到它的任务库：${readErr}`
+                  : `已建项目「${currentProject(next).name}」，记得设文档路径`,
+                readErr ? 'err' : 'ok',
+              );
             })();
           }}
         />
