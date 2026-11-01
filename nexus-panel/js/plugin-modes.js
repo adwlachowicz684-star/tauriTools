@@ -65,7 +65,21 @@ export function parsePluginModes(registryPath = path.join(ROOT, 'plugins/registr
 
     let modes;
     if (tri) {
-      modes = { module: tri[1] === 'module', iframe: tri[2] === 'iframe' };
+      /*
+       * `noBuild ? A : B`：A 是无构建下的模式，B 是构建下的模式，
+       * **两者都会真实发生**（取决于运行方式）。所以某个模式只要在
+       * 任一支出现过，它就是"可能"的。
+       *
+       * ⛔ 不能写成 { module: A === 'module', iframe: B === 'iframe' } ——
+       * 那等于**假设了 A/B 的顺序**。真写成
+       * `type: noBuild ? 'iframe' : 'module'` 时两项同时为 false，
+       * 于是该插件的全部污染检查被跳过、而扫描报告照常显示"干净"。
+       * 这是**漏报**：比误报危险得多，且无任何提示。
+       * （当前 registry.js 全是常量写法，三元分支尚未触发 ——
+       *   所以这个洞现在看不出来，只能靠下面的断言钉住。）
+       */
+      const vals = [tri[1], tri[2]];
+      modes = { module: vals.includes('module'), iframe: vals.includes('iframe') };
     } else if (konst) {
       const v = konst[1];
       modes = { module: v === 'module', iframe: v === 'iframe' };
@@ -97,6 +111,12 @@ export function pluginIdFromPath(relPath) {
 export function mayRunAsModule(id, modes = parsePluginModes()) {
   const m = modes.get(id);
   if (!m) return true;    // 未知插件：保守按"可能"处理
+  /*
+   * 两个都 false = 解析失手（第三种模式名、写法变了、或三元判据没跟上）。
+   * 此时**不能**返回 false —— 那会让该插件的全部污染检查被静默跳过，
+   * 报告却显示干净。宁可多报一条噪音，不可漏掉真残留。
+   */
+  if (m.module !== true && m.iframe !== true) return true;
   return m.module === true;
 }
 

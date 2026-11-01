@@ -5,6 +5,7 @@
  * 重点验证"正则会漏的写法这里能抓住"，因为那才是 AST 的意义所在。
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -191,6 +192,54 @@ console.log('\n=== 10. 模式感知：同一段代码放不同插件下判定不
    * （location.href 会把**主窗口**导航走），而且将来该插件若迁成同页
    * 就是真事故。提前拦住的成本远低于事后排查。
    */
+}
+
+console.log('\n=== 10c. 模式三元：不能假设 A/B 的顺序 ===');
+/*
+ * 扫描器要知道插件跑在哪个文档，才能区分"真污染"与"iframe 内部的正常写法"。
+ * 而 registry.js 里可以写 `type: noBuild ? A : B` —— A 是无构建下的模式、
+ * B 是构建下的模式，**两者都会真实发生**。
+ *
+ * 若判据按"第一支是 module、第二支是 iframe"来读，那么写成
+ * `noBuild ? 'iframe' : 'module'` 时两项同时 false：
+ * 该插件的污染检查被全部跳过，扫描报告照常显示"干净" —— 漏报，且无提示。
+ * 当前 registry.js 全是常量写法，这个洞看不出来，只能靠断言钉住。
+ */
+{
+  const pm = await import('./js/plugin-modes.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-modes-'));
+  const reg = path.join(dir, 'registry-sample.js');
+  fs.writeFileSync(reg, [
+    'export const plugins = [',
+    "  { id: 'same',  type: noBuild ? 'module' : 'iframe' },",
+    "  { id: 'flip',  type: noBuild ? 'iframe' : 'module' },",
+    "  { id: 'weird', type: 'worker' },",
+    '];',
+    '',
+  ].join('\n'));
+
+  const mm = pm.parsePluginModes(reg);
+  t('样本确实解析出条目（否则下面几条是空跑）', mm.size === 3);
+
+  /* 先证明"假设顺序"的写法确实会漏 —— 钉的是缺陷本身，不是当前实现。
+     这样以后换任何正确实现都不用改断言，改回旧写法则下面几条照样红。 */
+  const oldWay = (a, b) => ({ module: a === 'module', iframe: b === 'iframe' });
+  const o = oldWay('iframe', 'module');
+  t('反例：假设顺序的写法在 noBuild ? iframe : module 下两项全 false（= 漏报）',
+    o.module === false && o.iframe === false);
+
+  t('顺序为正（module : iframe）→ 两模都可能',
+    mm.get('same').module === true && mm.get('same').iframe === true);
+  t('顺序为反（iframe : module）→ 同样两模都可能（不假设顺序）',
+    mm.get('flip').module === true && mm.get('flip').iframe === true);
+  t('反序写法下 mayRunAsModule 仍为 true（不能静默放行）',
+    pm.mayRunAsModule('flip', mm) === true);
+  t('第三种模式名 → 保守按同页（解析失手不能变成放行）',
+    pm.mayRunAsModule('weird', mm) === true);
+  t('自检没被放宽：真实 registry 下 iframe 插件仍判为不同页',
+    pm.mayRunAsModule('mindmap') === false);
+
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log('\n=== 11. 局限已写明（不夸大能力）===');
