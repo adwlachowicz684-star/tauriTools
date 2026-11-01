@@ -214,7 +214,21 @@ export async function switchProject(ctx: PluginContext, cfg: TbConfig, id: strin
 export async function removeProject(ctx: PluginContext, cfg: TbConfig, id: string): Promise<TbConfig> {
   if (cfg.projects.length <= 1) return cfg;
   const projects = cfg.projects.filter((p) => p.id !== id);
-  return saveConfig(ctx, normalizeConfig(aimAt({ ...cfg, projects }, projects[0].id)));
+  /*
+    ⛔ 只在**删的是当前项目**时才切换，否则保持不动。
+
+    原来一律 `aimAt(..., projects[0].id)` —— 于是：
+      projects [甲,乙,丙]、当前在「丙」，删掉「甲」（一个不用的项目）
+      → 当前项目被切到「乙」。
+
+    用户只是想清掉一个不用的项目，结果自己正在看的项目被换掉了：
+    不报错、不提示，界面上的任务突然变成另一批 ——
+    看着像"删错了"或者"界面抽风"，而实际数据在别的目录里好好的。
+
+    删的是当前项目时（projects[0]）才需要给它一个新的落点。
+  */
+  const nextId = cfg.currentId === id ? projects[0].id : cfg.currentId;
+  return saveConfig(ctx, normalizeConfig(aimAt({ ...cfg, projects }, nextId)));
 }
 
 /**
