@@ -6,6 +6,7 @@
  */
 
 import { getTauri, isInsideTauri } from './tauri-core.js';
+import { shouldPurgeDataOnUninstall, SOURCE_CUSTOM } from './plugin-data-policy.js';
 /* ctx.invoke 的命令白名单。此前是无条件透传（插件可调任意后端命令），
    它是文件残留与安全上最大的口子，嵌合后会进一步放大。 */
 import { checkInvoke, registerBuiltinIds, revokeAllGrants } from './invoke-policy.js';
@@ -25,13 +26,6 @@ import { createModuleContext, BRIDGE_CHANNEL } from './plugin-sdk.js';
 import { loadModuleEntry } from './plugin-entries.js';
 import { getPluginConfig } from './plugin-config.js';
 import * as pluginConfig from './plugin-config.js';
-/* 插件存储键：与 js/plugin-sdk.js 那份**必须是同一套**。
-   两种挂载模式落到同一份 localStorage，键名岔开就是"这边存那边读不到"，
-   且不报错 —— 详见该文件头部。 */
-import { storeKey, storePrefix, pluginCfgKey } from './plugin-store.js';
-/* 快捷键匹配：与插件侧共用一份判据（此前宿主这份不认 F5/esc/space/'?'，
-   插件声明了这些键会注册成功却永不触发）。详见该文件头部。 */
-import { accelMatches } from './accel.js';
 import * as extPolicy from './external-policy.js';
 import {
   initTheme, exportVars, exportVarsFor, findTheme,
@@ -78,14 +72,6 @@ export { THEME_VARS };
 export const KEY_LAST_PLUGIN = 'nexus:last-plugin';
 /** 侧栏展开状态：'1' 展开，'0' 收起，缺省（null）视为展开 */
 export const KEY_SIDEBAR_OPEN = 'nexus:sidebar-open';
-/**
- * 用户后来装的第三方插件清单（custom 插件的全部来源）。
- *
- * 此前是**三处裸字面量**（读、读、写），与上面两个键不同步。
- * 它比那两个更怕写坏：存的是用户装过的每一个插件，
- * 而且**没有备份** —— 覆盖即永久丢失。所以键名只认这一处。
- */
-export const KEY_CUSTOM_PLUGINS = 'nexus:custom-plugins';
 
 export function isNoBuild() {
   return globalThis.__NEXUS_NO_BUILD__ === true;
@@ -273,7 +259,7 @@ export async function loadRegistry() {
    */
   registerBuiltinIds(list.map((p) => p.id));
   try {
-    const custom = getCustomPlugins();
+    const custom = JSON.parse(localStorage.getItem('nexus:custom-plugins') || '[]');
     const ids = new Set(list.map((p) => p.id));
     list = list.concat(custom.filter((p) => !ids.has(p.id)));
   } catch { /* ignore */ }
@@ -281,30 +267,8 @@ export async function loadRegistry() {
   return list;
 }
 
-/*
- * 读失败的原因 —— **为什么不能默默返回 []**：
- *
- * 三个调用点全是 read-modify-write：`getCustomPlugins()` 读出来、
- * 改一下、再 `saveCustomPlugins()` 存回。读失败时它返回 []，
- * [] 经 filter / 展开后写回，就把用户装过的插件**全清掉并落盘**，
- * 而界面照旧提示「已添加」。这份清单**没有备份**，覆盖即不可恢复。
- *
- * 所以失败必须留痕，交给 saveCustomPlugins 那道闸拦下（见下）。
- */
-let lastCustomPluginReadError = null;
-
 export function getCustomPlugins() {
-  try {
-    const arr = JSON.parse(localStorage.getItem(KEY_CUSTOM_PLUGINS) || '[]');
-    /* 不是数组也当失败：'null' / '{}' 都能 parse 成功，
-       但后面的 .filter / 展开会崩，且同样是"存的东西不对"。 */
-    if (!Array.isArray(arr)) throw new Error(`清单不是数组（${typeof arr}）`);
-    lastCustomPluginReadError = null;
-    return arr;
-  } catch (e) {
-    lastCustomPluginReadError = e?.message || String(e);
-    return [];
-  }
+  try { return JSON.parse(localStorage.getItem('nexus:custom-plugins') || '[]'); } catch { return []; }
 }
 /*
  * 写入自定义插件清单 —— 全项目唯一入口，且**如实回答存没存成**。
@@ -346,23 +310,8 @@ export function customPluginWriteFailMsg(kind, name, err) {
 }
 
 export function saveCustomPlugins(list) {
-  /*
-   * ⚠️ 读不出来时**拒绝落盘**。
-   *
-   * 三个调用点都是「先 getCustomPlugins() 再存回」（理由见上方）：
-   * 读失败得到的 [] 一旦写回就是永久清空。宁可这次保存失败并把原因
-   * 说清，也不能拿一个读不出来的清单去覆盖那份**还能修好**的数据。
-   *
-   * 只对读失败生效：正常移除最后一个插件时读是成功的（返回 [{...}]），
-   * filter 之后得到 [] 属于预期，必须放行 —— 否则"删最后一个"会坏掉。
-   */
-  if (lastCustomPluginReadError) {
-    lastCustomPluginWriteError =
-      `清单读不出来（${lastCustomPluginReadError}），为避免把现有插件全部清空，已拒绝保存`;
-    return false;
-  }
   try {
-    localStorage.setItem(KEY_CUSTOM_PLUGINS, JSON.stringify(list));
+    localStorage.setItem('nexus:custom-plugins', JSON.stringify(list));
     lastCustomPluginWriteError = null;
     return true;
   } catch (e) {
@@ -1507,17 +1456,17 @@ export function createHost(opts = {}) {
         case 'listen':
           return reply(false, null, 'iframe 模式不支持 listenTauri，请使用 ctx.on / ctx.emit');
         case 'store.get': {
-          const raw = localStorage.getItem(storeKey(manifest.id, payload.k));
+          const raw = localStorage.getItem(`nexus:${manifest.id}:${payload.k}`);
           if (raw == null) return reply(true, payload.def);
           // 存储可能被外部改写、或跨版本格式变了。单个键读不出就退默认值，
           // 不该让一次读取把插件整体带崩。
           try { return reply(true, JSON.parse(raw)); } catch { return reply(true, payload.def); }
         }
         case 'store.set':
-          localStorage.setItem(storeKey(manifest.id, payload.k), JSON.stringify(payload.v));
+          localStorage.setItem(`nexus:${manifest.id}:${payload.k}`, JSON.stringify(payload.v));
           return reply(true, true);
         case 'store.del':
-          localStorage.removeItem(storeKey(manifest.id, payload.k));
+          localStorage.removeItem(`nexus:${manifest.id}:${payload.k}`);
           return reply(true, true);
         /* 服务调用：沙箱插件 → 宿主 → 服务 iframe。
            宿主居中转发是必要的：服务跑在自己的沙箱里，调用方拿不到它的
@@ -1548,7 +1497,7 @@ export function createHost(opts = {}) {
         case 'fs.release':
           return reply(true, releasePath(manifest.id, payload.path));
         case 'store.all': {
-          const out = {}, pre = storePrefix(manifest.id);
+          const out = {}, pre = `nexus:${manifest.id}:`;
           // 逐键 try：一个键坏掉不该让整份配置拿不到（此前会整体抛错）
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
@@ -1626,15 +1575,32 @@ export function createHost(opts = {}) {
   /** key: keyOf(pluginId, accel) */
   const appShortcuts = new Map();
 
-  /*
-   * accelMatches 现在来自 js/accel.js（与插件侧同一份）。
-   *
-   * 此前这里有一份独立的：认小键盘数字，但不认 F5 / esc / space / '?'。
-   * 于是插件声明 Ctrl+F5 这种键时**注册成功、永不触发、不报错** ——
-   * 用户会以为自己按错了，不会想到是宿主这份解析器不认这个键名。
-   *
-   * 反过来插件侧那份不认 Numpad，所以两份都不能单独留下。
-   */
+  function accelMatches(e, accel) {
+    // accel 形如 'Ctrl+Shift+1' / 'Alt+K' / 'Cmd+K'
+    const parts = String(accel).toLowerCase().split('+').map((x) => x.trim());
+    const key = parts.pop();
+    const need = { ctrl: false, shift: false, alt: false, meta: false };
+    for (const p of parts) {
+      if (p === 'ctrl' || p === 'control') need.ctrl = true;
+      else if (p === 'shift') need.shift = true;
+      else if (p === 'alt' || p === 'option') need.alt = true;
+      else if (p === 'meta' || p === 'cmd' || p === 'command' || p === 'mod') need.meta = true;
+    }
+    // 'mod' 在 macOS 映射 ⌘，其它平台映射 Ctrl
+    if (parts.includes('mod')) {
+      const mac = /mac|iphone|ipad/i.test(navigator.userAgent || '');
+      need.meta = mac; need.ctrl = !mac;
+    }
+    if (need.ctrl !== e.ctrlKey) return false;
+    if (need.shift !== e.shiftKey) return false;
+    if (need.alt !== e.altKey) return false;
+    if (need.meta !== e.metaKey) return false;
+    // 数字键：同时兼容主键盘与数字小键盘
+    const k = (e.key || '').toLowerCase();
+    if (/^[0-9]$/.test(key)) return k === key || e.code === `Digit${key}` || e.code === `Numpad${key}`;
+    return k === key;
+  }
+
   function registerAppShortcut(pluginId, accel, event, label = '') {
     const k = keyOf(pluginId, accel);
     if (appShortcuts.has(k)) window.removeEventListener('keydown', appShortcuts.get(k).fn);
@@ -1933,7 +1899,17 @@ export function createHost(opts = {}) {
      * 没开都是常态），全部失败也只降级为"有残留"，卸载本身必须完成。
      */
     async removePlugin(id) {
-      const ok = saveCustomPlugins(getCustomPlugins().filter((p) => p.id !== id));
+      const customs = getCustomPlugins();
+      /*
+       * 卸载**之前**先记下它是不是 custom 装的 —— 判据必须在 filter 之前取，
+       * 否则列表已经改过就查不到了。
+       *
+       * 用"在不在 custom 列表里"当判据，而不是看 id 是否以 `custom-` 开头：
+       * 前者是权威事实，后者是猜前缀 —— 一个恰好叫 custom-xxx 的市场插件
+       * 会把猜前缀的写法骗过去，后果是它的用户数据被当成残留清掉（不可逆）。
+       */
+      const wasCustom = customs.some((p) => p.id === id);
+      const ok = saveCustomPlugins(customs.filter((p) => p.id !== id));
       if (!ok) return { ok: false };
       /*
        * 卸载必须**连带撤销该插件的用户放行**。
@@ -1953,8 +1929,21 @@ export function createHost(opts = {}) {
       try { await dropServiceInstance(id); } catch { /* 不影响卸载 */ }
       /* 本地数据：ctx.store 的 KV + 每插件配置。按 id 命名空间清，
          误伤不到别人的键（fs 账本 nexus:fsclaim:<id> 前缀不同，
-         刻意不清 —— 文件不自动删，账本是将来手工清理的依据，N42）。 */
-      try { purgePluginStorage(id); } catch { /* 存储不可用：没有可清的东西 */ }
+         刻意不清 —— 文件不自动删，账本是将来手工清理的依据，N42）。
+
+         要不要清由 js/plugin-data-policy.js 统一判定，与
+         js/plugin-installer.js 的 uninstallPlugin 共用同一结论：
+           · custom 装的 → 清（id 含时间戳，重装必是新 id，留着没人取）
+           · 市场装的   → 默认保留（id 由仓库决定、固定不变，重装可恢复，D3）
+           · 谁显式要求"连数据一起删" → 无论来源都删
+         早先这里是**无条件** purgePluginStorage(id)，对 custom 成立、
+         对市场插件会静默绕过 D3 —— 界面上看不出数据被清了。 */
+      if (shouldPurgeDataOnUninstall({
+        id,
+        source: wasCustom ? SOURCE_CUSTOM : null,
+      })) {
+        try { purgePluginStorage(id); } catch { /* 存储不可用：没有可清的东西 */ }
+      }
       /* MCP 网关协作：注册表里躺着这个插件的代理服务就一并注销，
          否则插件没了、工具还挂在网关里，AI 每次都调一个必失败的工具。 */
       const mcp = await cleanupMcpForPlugin(id);
@@ -1978,8 +1967,8 @@ function purgePluginStorage(id) {
   const pid = String(id || '').trim();
   if (!pid) return;
   try {
-    const storePre = storePrefix(pid);
-    const cfgKey = pluginCfgKey(pid);
+    const storePre = `nexus:${pid}:`;
+    const cfgKey = `nexus:plugin-cfg:${pid}`;
     const doomed = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const k = localStorage.key(i);
