@@ -23,9 +23,10 @@
  * 3. **卸载只删代码，用户数据默认保留**。
  *    市场插件 id 固定，重装就是同一个 id ——
  *    「留着以后用」恰恰是设计目标，不是残留。
- *    （对比：js/host.js 的 purgePluginStorage 无条件清数据，
+ *    （对比：js/host.js 的 removePlugin 也曾无条件清数据，
  *      它的前提是「重装会是新的 custom-时间戳 id」，
- *      这个前提对市场插件不成立。）
+ *      这个前提对市场插件不成立 —— 现在两边都问同一个策略，
+ *      结论只认 js/plugin-data-policy.js 那一处。）
  */
 
 import {
@@ -35,6 +36,14 @@ import {
 import { join, resolve, sep, dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { MANIFEST_FILE, validateManifest, INSTALLED_PLUGINS_DIR } from './plugin-manifest.js';
+/* 卸载时"用户数据去留"只认这一份判据 —— 与 js/host.js 的 removePlugin 共用
+   同一结论。此前这里是自己那份 `if (p.removeUserData)`：
+   · 只认 removeUserData、**不认 purgeData**（策略里两个词都认），
+     用后者的调用方会被静默当成"没要求删" —— 用户勾了「连数据一起删」、
+     界面报成功，数据还在，而这是不可逆预期被打破；
+   · 不看来源，custom 装的插件走这条路会留下永远没人再取的数据。
+   两份判据各改各的是最难查的一类问题，所以收成一份。 */
+import { shouldPurgeDataOnUninstall, normalizeSource } from './plugin-data-policy.js';
 
 /* ------------------------------------------------------------------ *
  * 常量
@@ -443,7 +452,12 @@ export function uninstallPlugin(p) {
 
   const userDataDir = p && p.userDataRoot ? join(p.userDataRoot, id) : null;
   if (userDataDir) {
-    if (p.removeUserData) {
+    if (shouldPurgeDataOnUninstall({
+      id,
+      source: normalizeSource(p && p.source),
+      removeUserData: p && p.removeUserData,
+      purgeData: p && p.purgeData,
+    })) {
       try { rmSync(userDataDir, { recursive: true, force: true }); removed.push(userDataDir); }
       catch (err) { errors.push(`删除用户数据失败: ${err && err.message}`); kept.push(userDataDir); }
     } else {

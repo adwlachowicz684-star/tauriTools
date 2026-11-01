@@ -9,11 +9,16 @@
  *   · 判成"该清" → 用户配置/状态被删，不可恢复，界面上什么都不会报
  *   · 判成"不该清" → 残留数据占空间（可逆，但违背 custom 插件的既有语义）
  *
- * 两个方向都不报错。更麻烦的是：宿主里本来有**两条**卸载路径，
- * js/plugin-installer.js 早就按 D3 实现了（默认保留），而 js/host.js
- * 的 removePlugin 是**无条件清** —— 市场插件只要走后者，D3 就被绕过，
+ * 两个方向都不报错。更麻烦的是：宿主里有**两条**卸载路径，
+ * js/host.js 的 removePlugin 与 js/plugin-installer.js 的 uninstallPlugin。
+ * 早先前者**无条件清**、后者默认保留 —— 市场插件只要走前者，D3 就被绕过，
  * 且没有任何一处会喊。所以除了测纯函数，还必须有一条**接线断言**：
- * host.js 真的调用了这个策略（第 4 节）。
+ * 两条路径**都**真的调用了这个策略（第 4 节 host.js、第 7 节 installer）。
+ *
+ * 第 7 节为什么必须存在：策略文件自己写着「让两条路径共用同一个结论」，
+ * 而此前只有 host.js 接了线，installer 仍用自己那份 `if (p.removeUserData)`
+ * —— 于是同一件事两份判据，改一边另一边不跟着变，且不报错。
+ * 这类"注释承诺了代码没做的事"必须靠断言钉住，不能靠看注释。
  *
  * ------------------------------------------------------------
  * 元断言的写法：每条判据配一个"只被它决定"的独占样本
@@ -23,7 +28,7 @@
  * 所以下面第 3 节的每个样本都刻意只由**一条**判据决定结果。
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stripCommentsJs } from './test-scan-utils.mjs';
@@ -200,6 +205,87 @@ console.log('\n--- 6. 反向：不得误伤 ---');
   t('市场/未知来源一律保留，无一被误判成要清', wrong.length === 0,
     wrong.length ? `误判=${JSON.stringify(wrong)}` : '');
   info('保留样本数', String(keep.length));
+}
+
+/* ============================================================
+   7. 两条卸载路径共用同一份判据（installer 侧）
+   ============================================================
+   判据一律先剥注释：本文件与被测源码里都写着 `shouldPurgeDataOnUninstall`
+   这个名字（说明性文字也算匹配），不剥的话"接线断言"会被注释喂饱 ——
+   真把调用删掉它也照样绿。本项目已经在同一类事情上栽过多次。 */
+console.log('\n--- 7. installer 侧接线 ---');
+{
+  const instPath = join(HERE, 'js', 'plugin-installer.js');
+  const instRaw = readFileSync(instPath, 'utf8');
+  const instSrc = stripCommentsJs(instRaw);
+
+  t('installer 真的 import 了这份策略（不是自己再写一份）',
+    /from '\.\/plugin-data-policy\.js'/.test(instSrc));
+  t('installer 卸载处调用 shouldPurgeDataOnUninstall（而不是裸 removeUserData）',
+    /shouldPurgeDataOnUninstall\s*\(\s*\{/.test(instSrc));
+  t('installer 不再用裸 `if (p.removeUserData)` 自己判',
+    !/if\s*\(\s*p\.removeUserData\s*\)/.test(instSrc));
+  t('installer 认 purgeData 别名（两个词都传给策略）',
+    /purgeData\s*:\s*p\s*&&\s*p\.purgeData/.test(instSrc));
+  t('installer 用 normalizeSource 归一来源（不拿 id 前缀猜）',
+    /normalizeSource\s*\(\s*p\s*&&\s*p\.source\s*\)/.test(instSrc));
+
+  /* 元断言：判据本身能分辨"接了线"和"没接线"。
+     少了他这一条，把下面任何一条改成恒真都不会被发现。 */
+  const fake = "if (p.removeUserData) { rmSync(userDataDir); }";
+  t('判据认得出没接线的写法（合成样本：裸 removeUserData 不触发接线断言）',
+    !/shouldPurgeDataOnUninstall\s*\(\s*\{/.test(stripCommentsJs(fake)));
+
+  /* 行为层：真跑 uninstallPlugin，确认策略生效（不是只改了源码文本）。
+     三个样本各自只由一条判据决定，避免"禁掉一条另一条还在挡"的假绿。 */
+  const tmpRoot = join(HERE, '_pdpol_tmp');
+  rmSync(tmpRoot, { recursive: true, force: true });
+  const codeRoot = join(tmpRoot, 'installed');
+  const userRoot = join(tmpRoot, 'userdata');
+
+  const { uninstallPlugin } = await import('./js/plugin-installer.js');
+  const run = (params) => {
+    /* 每次重建"已安装"的样子：代码目录 + 用户数据目录都在 */
+    mkdirSync(join(codeRoot, 'plug-x'), { recursive: true });
+    writeFileSync(join(codeRoot, 'plug-x', 'index.js'), 'export default {};');
+    writeFileSync(join(codeRoot, 'plug-x', 'nexus.plugin.json'),
+      JSON.stringify({ id: 'plug-x', name: 'x', version: '1.0.0' }));
+    mkdirSync(join(userRoot, 'plug-x'), { recursive: true });
+    writeFileSync(join(userRoot, 'plug-x', 'keep.txt'), 'v');
+
+    const r = uninstallPlugin({
+      root: codeRoot,
+      id: 'plug-x',
+      userDataRoot: userRoot,
+      ...params,
+    });
+    return { r, left: existsSync(join(userRoot, 'plug-x')) };
+  };
+
+  /* 前置自检：卸载本身是成功的，否则"数据还在"可能只是因为整体失败
+     —— 那样样本 3（要求保留）会假绿、样本 1/2 会假红，三个都不可信。 */
+  {
+    const { r } = run({ source: 'market' });
+    t('前置：uninstallPlugin 本身成功（否则后面三项都不可信）', r.ok === true,
+      JSON.stringify(r.errors || []));
+  }
+
+  /* 样本 1：只由 purgeData 别名决定 —— 不认别名就会保留 */
+  {
+    const { left } = run({ purgeData: true });
+    t('行为：purgeData=true → 用户数据真被删（别名被认）', left === false);
+  }
+  /* 样本 2：只由 source=custom 决定 —— 不看来源就会保留 */
+  {
+    const { left } = run({ source: 'custom' });
+    t('行为：custom 来源 → 用户数据真被删（与 host.js 同结论）', left === false);
+  }
+  /* 样本 3：市场来源 + 无显式要求 → 保留（D3） */
+  {
+    const { left } = run({ source: 'market' });
+    t('行为：市场来源且未要求 → 用户数据保留（D3 不被绕过）', left === true);
+  }
+  rmSync(tmpRoot, { recursive: true, force: true });
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项，跳过 ${skip} 项，告知 ${note} 条`);
