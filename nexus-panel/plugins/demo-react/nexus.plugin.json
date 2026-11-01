@@ -1,0 +1,9 @@
+{
+  "id": "demo-react",
+  "name": "示例·React 沙箱",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "app",
+  "icon": "◆",
+  "description": "React + TSX 编写，跑在沙箱里，ctx 用法与同页插件完全一致"
+}
