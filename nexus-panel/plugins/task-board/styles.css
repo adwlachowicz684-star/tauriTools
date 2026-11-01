@@ -1707,6 +1707,32 @@ body.tb-col-resizing {
   font-size: var(--fs-micro);
 }
 
+.tb-colset-flags {
+  display: flex;
+  gap: var(--sp-2);
+  margin-inline-start: auto;
+}
+
+.tb-colset-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.tb-colset-flag input {
+  inline-size: 11px;
+  block-size: 11px;
+  margin: 0;
+}
+
+.tb-colset-flag input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .tb-colset-foot {
   display: flex;
   flex-direction: column;

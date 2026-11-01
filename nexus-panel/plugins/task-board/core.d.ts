@@ -156,6 +156,18 @@ export declare function colFilterActive(col: ListColumn, f: ColFilter | undefine
 
 /** 该列用于筛选的原始值（标签是多值） */
 export declare function colRawValues(task: Task, field: SortField): string[];
+/** 允许多选的列（状态 / 优先级不在内：状态走状态机、优先级是排序枚举） */
+export declare const MULTI_OK: string[];
+/** 允许配色的列 */
+export declare const COLOR_OK: string[];
+/** 列的「多选 / 颜色」开关。键是 field，缺省按 DEFAULT_COL_META */
+export declare type ColMeta = Record<string, { multi: boolean; color: boolean }>;
+export declare const DEFAULT_COL_META: ColMeta;
+export declare function normalizeColMeta(raw: unknown): ColMeta;
+export declare function toggleFieldVal(task: Task | null | undefined, field: string, id: string, multi: boolean): string | string[];
+export declare function fieldVals(task: Task | null | undefined, field: string): string[];
+export declare function colMulti(meta: ColMeta | null | undefined, field: string): boolean;
+export declare function colColorOn(meta: ColMeta | null | undefined, field: string): boolean;
 
 /*
   取某一行的某个字段值（用于文本筛选 / 排序取原始值）。
