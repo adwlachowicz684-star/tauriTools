@@ -1,0 +1,9 @@
+{
+  "id": "agent-flow",
+  "name": "Agent Flow",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "app",
+  "icon": "⧉",
+  "description": "工作流编排画布（跟随面板主题）"
+}
