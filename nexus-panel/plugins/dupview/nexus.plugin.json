@@ -1,0 +1,9 @@
+{
+  "id": "dupview",
+  "name": "组卷工具",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "app",
+  "icon": "⧈",
+  "description": "卷子整理：重名家族与重复比对、MD5 与文本一致标注、逐页截图对比、按规则批量改名与打包"
+}
