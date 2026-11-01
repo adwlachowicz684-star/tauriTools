@@ -293,7 +293,8 @@
     "test:installed-plugin-scan": "node installed-plugin-scan-test.mjs",
     "test:plugin-ledger": "node plugin-ledger-test.mjs",
     "test:plugin-fs-bridge": "node plugin-fs-bridge-test.mjs",
-    "test:af-theme-mode-persist": "node theme-mode-persist-test.mjs"
+    "test:af-theme-mode-persist": "node theme-mode-persist-test.mjs",
+    "test:plugin-manifest-sync": "node plugin-manifest-sync-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",
