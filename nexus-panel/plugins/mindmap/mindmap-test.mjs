@@ -18765,9 +18765,20 @@ group('BUG 123 · 交换格式丢掉的标记图标与关系线必须计入提�
     eq(l.relationships, 1, '但关系线丢了');
     // 所以两处提示的门必须把 relationships 也算进去，只看 nodes 就会漏
     const code = stripCommentsFlatJs(fs2.readFileSync(path2.join(HERE, 'index.js'), 'utf8'));
-    ok(/loss\.nodes > 0 \|\| loss\.relationships > 0/.test(code),
-      '★ 提示的门必须同时看 nodes 与 relationships');
-    ok((code.split('loss.nodes > 0 || loss.relationships > 0').length - 1) >= 2,
+    /*
+     * BUG 184：门已抽成 `fmt.hasExchangeLoss(loss)`（两处共用一份），
+     * 旧写法 `loss.nodes > 0 || loss.relationships > 0` 漏掉了**画布级**
+     * 的 theme / layout —— 只丢了主题时 nodes=0，提示整段不出现。
+     *
+     * 想守的事没变（nodes 与 relationships 都得算进门、两条路都得改），
+     * 改的是锚点：钉**字符串**会在判据再抽一次时又红一次，而这里真正要
+     * 验的是"门的行为" —— 换行为级断言（判据本身）+ 契约级（两处都接上）。
+     */
+    ok(fmt2.hasExchangeLoss({ nodes: 1, relationships: 0 }) === true,
+      '★ 门必须算进节点级损失（nodes）');
+    ok(fmt2.hasExchangeLoss({ nodes: 0, relationships: 1 }) === true,
+      '★ 门必须算进关系线（relationships）—— 只看 nodes 就会漏');
+    ok((code.split('fmt.hasExchangeLoss(loss)').length - 1) >= 2,
       '★ 两条导出路径的门都得改（只改一处等于没修）');
   }
 
@@ -19504,6 +19515,88 @@ group('BUG 134 · Mermaid 的 :::class 不能吃掉引号写法的行尾');
   }
 }
 
+
+
+/* ------------------------------------------------------------------
+   BUG 183：Mermaid 的样式指令行不是节点
+   ------------------------------------------------------------------
+   `classDef <名> <样式>` 是官方 mindmap 文档「Styling nodes」那一节的写法
+   （Mermaid v11+）；Live Editor 里给节点上过色、导出的 .mmd 自带这一行。
+   `style` / `linkStyle` 是 Mermaid 通用的样式指令，同理。
+
+   早先一概不认，于是每一行都变成一个真实节点 —— `classDef urgent fill:#f96`
+   凭空多出一个叫这串定义的子节点。而 .mmd 导入是整体替换且不可撤销，一条
+   提示都没有（与 BUG 167 的 frontmatter 是同一个洞：不是节点的东西被当节点）。
+
+   与 BUG 129（独立成行的 `::icon(…)` / `:::class`）同一类：那是"给上一个节点
+   加装饰"，这是"定义样式"，两者都不是节点。
+   ------------------------------------------------------------------ */
+group('BUG 183 · Mermaid 的样式指令行不是节点');
+{
+  const f = await import('./formats.js');
+  /* 一、三类指令行都不生成节点（核心行为） */
+  for (const line of ['classDef urgent fill:#f96',
+                      'classDef default fill:#f96,stroke:#333,stroke-width:2px',
+                      'style root fill:#f96',
+                      'linkStyle 0 stroke:#f96']) {
+    const root = JSON.parse(f.fromMermaid(`mindmap\n  root((R))\n    A\n    ${line}\n    B\n`)).root;
+    eq((root.children || []).map((n) => n.data.text).join(','), 'A,B',
+      `★ 指令行不生成节点：${line}`);
+  }
+  /* 缩进写法同样是指令（官方示例里 classDef 与节点同级缩进） */
+  {
+    const root = JSON.parse(f.fromMermaid('mindmap\n  root((R))\n    A\n      classDef urgent fill:#f96\n')).root;
+    eq((root.children[0].children || []).length, 0, '★ 缩进的 classDef 也不生成子节点');
+  }
+
+  /*
+   * 二、反向边界：不该被跳的一个都不能跳。
+   *
+   * ⓘ 判据要求**样式部分含 `:`**（Mermaid 的样式写法是 key:value），
+   *   所以 `classDef urgent` 这种两段写法仍按节点 —— 它不是合法指令。
+   * ⓘ 判据**不带 i**：Mermaid 的指令一律小写，带 i 会把「文字就叫
+   *   `ClassDef …`」的节点整条吃掉（BUG 104 的教训）。
+   */
+  /*
+   * ⓘ 一律走 kids() 取**列表**再比、不裸取 `children[0].data.text` ——
+   *   变异把判据放宽时这些行会被跳过、children 是空数组，裸取当场抛
+   *   TypeError、**整个测试进程挂掉**（汇总行都出不来，看着像"抓到了"
+   *   其实后面一条没跑）。本项目反复栽的这个坑，这里提前避开。
+   */
+  const kids = (md) => (JSON.parse(f.fromMermaid(md)).root.children || [])
+    .map((n) => n.data.text).join(',');
+  eq(kids('mindmap\n  root((R))\n    classDef urgent\n'),
+    'classDef urgent', '★ 两段写法（无冒号）仍按节点');
+  eq(kids('mindmap\n  root((R))\n    ClassDef x y:z\n'),
+    'ClassDef x y:z', '★ 大写不跳（判据不带 i）');
+  eq(kids('mindmap\n  root((R))\n    styleX a b:c\n'),
+    'styleX a b:c', '★ 非指令前缀不跳');
+
+  /*
+   * 三、往返：节点文字真的就叫这些指令时要保住。
+   *
+   * 含 `:` 的文字写侧会加引号（行首是 `[`），不命中指令判据；
+   * 不含冒号的（如 `classDef urgent`）走裸写，同样不命中。
+   */
+  for (const t of ['classDef urgent fill:#f96', 'style root fill:#f96',
+                   'linkStyle 0 stroke:#f96', 'classDef urgent']) {
+    const c = JSON.stringify({ root: { data: { text: t }, children: [{ data: { text: '子' } }] } });
+    const back = JSON.parse(f.fromMermaid(f.toMermaid(c)));
+    eq(back.root.data.text, t, `★ 往返保住文字：${t}`);
+    eq((back.root.children || []).map((n) => n.data.text).join(','), '子',
+      `★ 往返不丢子树：${t}`);
+  }
+
+  /* 四、源码契约：判据必须要求冒号、不带 i，且只有这一份 */
+  {
+    const src = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    const RE = '/^\\s*(classDef|style|linkStyle)\\s+\\S+\\s+\\S*:/';
+    ok(src.includes(RE), '★ 样式指令判据要求冒号（不许放宽成只认指令名）');
+    ok(!src.includes(RE + 'i'), '★ 判据不带 i（不许吃掉大写开头的节点文字）');
+    eq((src.match(/classDef\|style\|linkStyle/g) || []).length, 1,
+      '★ 判据只有一份（不得在别处再抄一份）');
+  }
+}
 
 /* ------------------------------------------------------------------
    BUG 132：写盘失败时不能说「已调整 / 已删除」
@@ -23027,6 +23120,160 @@ group('BUG 182 · FreeMind 连线颜色 / 粗细（`<edge>`）必须成对读写
       'ⓘ 已知取舍：<edge STYLE>（连线形状）不读 —— 内核没有对应概念');
     eq(f182.exchangeLoss(JSON.stringify({ root: { data: { text: 'R' }, children: [] } }),
       'freemind').style, 0, 'ⓘ 不为读不进来的形状喊丢（它会让每次导入都冒一句没意义的提示）');
+  }
+}
+
+
+/* ------------------------------------------------------------------
+   BUG 184：画布主题 / 布局丢了，提示却整段不出现
+   ------------------------------------------------------------------
+   BUG 181 让 `exchangeLoss` 算上画布级的 `theme` / `layout`，并把中文名
+   加进了交换格式那张 NAME 表。但**两处导出提示的触发条件**都写着
+
+       if (loss.nodes > 0 || loss.relationships > 0)
+
+   而 `nodes` 只统计**节点级**损失（`bump()` 加进 `touched` 的那些）——
+   主题 / 布局是画布级，**刻意不计进 nodes**：一句「共涉及 N 个节点」
+   对「整张画布换了个主题」不成立。
+
+   于是撞出这个洞：画布**只是改了个非默认主题**、节点上一个额外字段都没挂
+   时，`nodes = 0 && relationships = 0` → 提示段**整段不出现**；而导回侧
+   （`markdownToWorkbook` / `markdownToSheet`）一律写死默认值 —— 实测导回
+   后 `theme` 变 `fresh-blue`、`layout` 变 `default`，一句提示都没有。
+
+   Markdown 是**最常被当成备份**的格式，导入又是整体替换且不可撤销 ——
+   即 BUG 181 想防的事故，被这条触发条件原样架空了。
+
+   修法：判据抽成 `formats.hasExchangeLoss(loss)`，两处共用一份。
+   以后新增损失字段（概要 / 标注 / 主题 / 布局都是这么加进来的）自动覆盖，
+   不用再回头改判据 —— 各写一份必然只改一处（本项目反复撞的模式）。
+   ------------------------------------------------------------------ */
+group('BUG 184 · 画布主题 / 布局丢失必须让提示真的出现');
+{
+  const f184 = await import('./formats.js');
+  const w184 = await import('./workbook.js');
+  const th184 = await import('./themes.js');
+
+  const D184 = { theme: th184.DEFAULT_THEME, layout: th184.DEFAULT_LAYOUT };
+  const CLEAN184 = JSON.stringify({
+    root: { data: { text: 'ROOT' }, children: [{ data: { text: 'AAA' }, children: [] }] } });
+  const NOTE184 = JSON.stringify({
+    root: { data: { text: 'ROOT', note: '这是备注' }, children: [] } });
+
+  // ① 判据本身：画布级损失（nodes=0）必须算「有损失」
+  ok(f184.hasExchangeLoss({ theme: 1, nodes: 0 }) === true,
+    '★ 只有画布级损失（nodes=0）也算有损失 —— 早先这正是提示整段消失的元凶');
+  ok(f184.hasExchangeLoss({ note: 0, nodes: 0, theme: 0, layout: 0, relationships: 0 }) === false,
+    '★ 全 0 不算有损失（默认主题的默认画布不许平白喊一句）');
+  ok(f184.hasExchangeLoss({ nodes: 2 }) === true, '★ 节点级损失照旧算（回归）');
+  ok(f184.hasExchangeLoss(null) === false, 'null 不炸');
+
+  /*
+   * ② 端到端：抽 index.js 两处提示段**真身**跑。
+   *
+   * 只测 `hasExchangeLoss` 不够 —— 洞在**调用方**的条件里，判据对了但
+   * 没接上去，行为照样是静默。而切片执行能验到真实的那句话。
+   *
+   * ⓘ 用**代码锚点**定位而不是行号：行号会被任何一次插入顶掉，
+   *   而锚点就是那两行本身。定位不到就报红，不许静默跳过
+   *   （`slice(-1)` 会拼出空串 → SyntaxError → 整个测试进程挂掉，
+   *   看着像"抓到了"其实后面一条没跑）。
+   */
+  const idx184 = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').replace(/\r\n/g, '\n');
+  function cut184(from, endMark) {
+    const a = idx184.indexOf(from);
+    if (a < 0) return null;
+    const b = idx184.indexOf(endMark, a);
+    if (b < 0) return null;
+    return idx184.slice(a, b);
+  }
+  const mdBody184 = cut184("const loss = fmt.exchangeLossAll(workbook.sheets, 'markdown');",
+    '\n    if (notes.length) {');
+  const exBody184 = cut184('const loss = fmt.exchangeLoss(s.content, kind, s);',
+    '\n    if (notes.length) status');
+  ok(!!mdBody184, '能定位 index.js 的 Markdown 提示段（代码锚点）');
+  ok(!!exBody184, '能定位 index.js 的交换格式提示段（代码锚点）');
+
+  async function runMd184(sheets) {
+    const notes = [];
+    await new Function('fmt', 'wb', 'workbook', 'notes', 'status', 'deep',
+      'return (async () => {\n' + mdBody184 + '\nreturn notes; })()')(
+      f184, w184, { sheets }, notes, () => {}, 0);
+    return notes;
+  }
+  async function runEx184(sheets, kind) {
+    /*
+     * ⓘ 切片内部自己 `const notes = []`，所以**不能**从外面注入 notes ——
+     *   注入的参数会被内部那份声明盖掉，返回恒为空数组。
+     *   探针第一版就栽在这里：四种格式全报 []，看着像"没修好"，
+     *   其实是探针自己取错了变量（Markdown 那段没有内部声明，所以它是绿的
+     *   —— 两条路不一致正是这个坑容易被忽略的原因）。
+     *
+     * ⓘ 两个都是 async：切片用 `async () => {}` 包着，返回的是 Promise，
+     *   不 await 的话拿到的是 Promise 而不是数组 —— `.some` / `.length`
+     *   会直接抛 TypeError，**整个测试进程挂掉**（看着像"抓到了"，
+     *   其实后面的断言一条都没跑）。
+     */
+    return await new Function('fmt', 'workbook', 's', 'kind', 'meta',
+      'return (async () => {\n' + exBody184 + '\nreturn notes; })()')(
+      f184, { sheets }, sheets[0], kind, { label: kind.toUpperCase() });
+  }
+
+  // ③ 核心：非默认主题 + 节点干净 → 两处都要说话（修复前整段不出现）
+  {
+    const A = [{ id: 'a', title: 'T', content: CLEAN184, theme: 'dark-slate', layout: 'filetree' }];
+    const md = await runMd184(A);
+    ok(md.length > 0 && /画布主题/.test(md[0]) && /画布布局/.test(md[0]),
+      '★ Markdown：只丢了主题 / 布局也要提示（早先 nodes=0 → 整段不出现）',
+      JSON.stringify(md));
+    for (const k of ['freemind', 'opml', 'mermaid', 'plantuml']) {
+      const n = await runEx184(A, k);
+      ok(n.some((x) => /画布主题/.test(x) && /画布布局/.test(x)),
+        `★ ${k}：只丢了主题 / 布局也要提示`, JSON.stringify(n));
+    }
+  }
+
+  // ④ 反向边界：默认主题 / 默认布局不许误报（否则每次导出都冒一句没意义的提示）
+  {
+    const B = [{ id: 'b', title: 'T', content: CLEAN184, ...D184 }];
+    eq((await runMd184(B)).length, 0, '★ 默认主题 + 干净画布：Markdown 不许喊');
+    eq((await runEx184(B, 'opml')).length, 0, '★ 默认主题 + 干净画布：交换格式不许喊');
+  }
+
+  // ⑤ 回归：节点级损失照旧提示，且口径不变
+  {
+    const C = [{ id: 'c', title: 'T', content: NOTE184, ...D184 }];
+    const md = await runMd184(C);
+    ok(md.length > 0 && /备注 1 处/.test(md[0]) && /共涉及 1 个节点/.test(md[0]),
+      '★ 回归：节点有备注照旧提示，且带「共涉及 N 个节点」', JSON.stringify(md));
+  }
+
+  // ⑥ 导回实测：主题真的变回默认 —— 证明这是真丢失，不是虚报
+  {
+    const A = [{ id: 'a', title: 'T', content: CLEAN184, theme: 'dark-slate', layout: 'filetree' }];
+    const back = w184.markdownToWorkbook(w184.workbookToMarkdown(A));
+    eq(back[0].theme, th184.DEFAULT_THEME, '★ 导回后主题变回默认（真丢了）');
+    eq(back[0].layout, th184.DEFAULT_LAYOUT, '★ 导回后布局变回默认（真丢了）');
+  }
+
+  /*
+   * ⑦ 源码契约：两处都必须走**同一个**判据，且 NAME 表都要有主题 / 布局。
+   *
+   * 剥注释再判 —— 本文件新加的注释里就写着旧写法（`loss.nodes > 0 || …`），
+   * 不剥的话"不得再出现"数到的是自己的注释（本项目反复栽的这个坑）。
+   */
+  {
+    const plain = stripCommentsFlatJs(idx184);
+    ok(!/loss\.nodes\s*>\s*0\s*\|\|\s*loss\.relationships\s*>\s*0/.test(plain),
+      '★ 不得再有 `loss.nodes > 0 || loss.relationships > 0`（它漏掉了画布级损失）');
+    const hits = plain.split('fmt.hasExchangeLoss(loss)').length - 1;
+    eq(hits, 2, '★ 两处提示都走 fmt.hasExchangeLoss（各写一份必然只改一处）',
+      '命中 ' + hits + ' 次');
+    // 两张 NAME 表都要能说出来 —— 缺一张就是"统计到了但名字没有"
+    const t = plain.indexOf("theme: '画布主题', layout: '画布布局'");
+    ok(t > -1, '能定位第一处 NAME 表的主题 / 布局');
+    ok(plain.indexOf("theme: '画布主题', layout: '画布布局'", t + 10) > -1,
+      '★ 两处 NAME 表都带主题 / 布局（只加一处 = 那一路的提示里这两个词说不出来）');
   }
 }
 

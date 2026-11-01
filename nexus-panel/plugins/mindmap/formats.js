@@ -1121,6 +1121,28 @@ export function fromMermaid(text) {
      *   （`["::icon(x)"]`，因为它含 `(`），行首是 `[`、不会命中这里。
      */
     if (/^\s*(?:::icon\([^)]*\)|:::[^\s]+)\s*$/.test(raw)) continue;
+    /*
+     * **样式指令行**（BUG 183）：`classDef` / `style` / `linkStyle`。
+     *
+     * `classDef <名> <样式>` 是官方 mindmap 文档「Styling nodes」那一节的
+     * 写法（Mermaid v11+）；Live Editor 里给节点上过色、导出的 .mmd 自带
+     * 这一行。`style` / `linkStyle` 是 Mermaid 通用的样式指令，同理。
+     *
+     * 早先一概不认，于是每一行都变成一个**真实节点**：
+     *   `classDef urgent fill:#f96` → 凭空多出一个叫这串定义的子节点
+     * 而 `.mmd` 导入是整体替换且不可撤销，一条提示都没有 —— 与 BUG 129
+     * 独立成行的 `::icon(…)` 是同一类：那是"给上一个节点加装饰"，这是
+     * "定义样式"，两者都不是节点。
+     *
+     * ⓘ 判据要求**样式部分含 `:`** —— Mermaid 的样式写法是 `key:value`。
+     *   只认「指令 + 名字 + 含冒号的样式」三段，不认 `classDef urgent`
+     *   这种两段写法（它不是合法指令，可能是节点文字）。
+     * ⓘ **不带 `i`**：Mermaid 的指令一律小写；带 i 会把「文字就叫
+     *   `ClassDef …`」的节点整条吃掉（BUG 104 的教训）。
+     * ⓘ 本工具导出 .mmd 从不写样式指令，所以自己的往返不受影响；而文字
+     *   含 `:` 时写侧会加引号（行首是 `[`），也不会误命中这里。
+     */
+    if (/^\s*(classDef|style|linkStyle)\s+\S+\s+\S*:/.test(raw)) continue;
     const indent = (raw.match(/^[ \t]*/) || [''])[0].replace(/\t/g, '  ').length;
     let body = mermaidTextOf(raw);
     /*
@@ -2151,6 +2173,36 @@ export function exchangeLossAll(sheets, kind) {
     for (const k of LOSS_KEYS) out[k] += Number(one?.[k]) || 0;
   }
   return out;
+}
+
+/**
+ * 「这次导出到底有没有损失」—— 那句提示该不该出现的**唯一判据**。
+ *
+ * BUG 184：早先两处导出提示都写 `loss.nodes > 0 || loss.relationships > 0`，
+ * 而 `nodes` 只统计**节点级**损失（`bump()` 里加进 `touched` 的那些）。
+ * 画布级的 `theme` / `layout`（BUG 181 才收）**刻意不计进 nodes** ——
+ * 一句「共涉及 N 个节点」对「整张画布换了个主题」不成立。
+ *
+ * 于是撞出这个洞：**画布只是改了个非默认主题、节点上一个额外字段都没挂**
+ * 时，`nodes = 0 && relationships = 0` → 提示段**整段不出现**；
+ * 而导回侧（`markdownToWorkbook` / `markdownToSheet`）一律写死默认值 ——
+ * 实测导回后 `theme` 变 `fresh-blue`、`layout` 变 `default`，一句提示都没有。
+ *
+ * 而 Markdown 是**最常被当成备份**的格式，导入又是整体替换且不可撤销 ——
+ * 即 BUG 181 想防的事故，被这条触发条件原样架空了。
+ *
+ * 两处各写一份条件必然只改一处（本项目反复撞的模式），所以抽成一个：
+ * 以后新增损失字段（概要 / 标注 / 主题 / 布局都是这么加进来的）自动覆盖，
+ * 不用再回头改判据。
+ *
+ * ⓘ 遍历 loss 的**全部**字段而不是列一份名单 —— 漏掉某个 key 就会重演
+ *   这个洞（BUG 123 的关系线、BUG 181 的主题都是这么漏的）。
+ *   `nodes` 也在遍历范围内（它是节点级合计），所以旧场景下的行为不变。
+ */
+export function hasExchangeLoss(loss) {
+  if (!loss || typeof loss !== 'object') return false;
+  for (const k of Object.keys(loss)) if (Number(loss[k]) > 0) return true;
+  return false;
 }
 
 /**
