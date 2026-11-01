@@ -1,0 +1,9 @@
+{
+  "id": "mindmap",
+  "name": "思维导图",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "app",
+  "icon": "❖",
+  "description": "kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存"
+}
