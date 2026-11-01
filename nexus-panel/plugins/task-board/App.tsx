@@ -420,7 +420,27 @@ export default function App() {
   /* 当前项目是否与别的项目共用数据目录（只报不改，见下面的提示条） */
   const sameDir = cfg ? duplicateDataDirs(cfg).filter((d) => d.ids.indexOf(cfg.currentId) >= 0) : [];
   const flow = store ? { ...store.flow, typeDefs: store.typeDefs } : { ...DEFAULT_FLOW, typeDefs: normalizeTypeDefs(null) };
-  const statusIds = flow.statuses.map((s) => s.id);
+  /*
+    状态候选 = **流程配置 + 数据里实际在用的**。
+
+    ⛔ 只取配置是不够的：任务的状态可能是配置里没有的
+    （状态在流程设置里被删掉，或 AI 经 HTTP/MCP 直接写入）。
+    那些任务在列表里看得见，却**筛不到** ——
+    想把它们找出来改掉，只能一条条翻。
+
+    看板那边早就有 ghostStatuses（多出来的列标「未配置」），
+    列表的筛选候选这里漏了同一件事。
+  */
+  const statusIds = (() => {
+    const out = flow.statuses.map((s) => s.id);
+    if (store) {
+      const known = new Set(out);
+      for (const t of store.tasks) {
+        if (!known.has(t.status)) { known.add(t.status); out.push(t.status); }
+      }
+    }
+    return out;
+  })();
   const typeDefs = store ? store.typeDefs : [];
   const typeIds = typeDefs.map((d) => d.id);
   /*
@@ -455,8 +475,12 @@ export default function App() {
     漏了依赖就停在旧结果上（看着像搜索坏了）。
   */
   const filteredRows = useMemo(
-    () => filterTasksByColumns(flatRows, colFilters, q, typeDefs),
-    [flatRows, colFilters, q, typeDefs],
+    /*
+      ⛔ tagDefs 必须传：搜「重要」要能命中挂着那个标签的任务，
+      而任务上存的是 id。不传的话退回按 id 搜（老行为），等于标签搜不到。
+    */
+    () => filterTasksByColumns(flatRows, colFilters, q, typeDefs, store ? store.tagDefs : []),
+    [flatRows, colFilters, q, typeDefs, store ? store.tagDefs : []],
   );
   const filtered = useMemo(() => filteredRows.map((r) => r.task), [filteredRows]);
   /*
@@ -873,6 +897,31 @@ export default function App() {
   const doSaveFlow = (next: TaskFlow) =>
     withErr(async () => {
       if (!cfg) return;
+      /*
+        ⛔ 保存流程必须**顺带清掉指向已删状态的筛选**。
+
+        实测（jsdom）：筛着「挂起」，把「挂起」从流程里删掉 →
+          落盘状态：todo, claimed, doing, review, done, cancelled
+          列表行数：**0**，chip 还写着「状态：挂起」
+        而那个状态已经不在下拉里了 —— 用户看着一个空列表，
+        chip 上却是个选不到的东西，只会以为"任务没了"。
+
+        删分组 / 删类型 / 删标签三处早都清了筛选，流程这里漏了。
+        （有任务在用的状态删不掉，所以任务本身不会变成孤儿，
+          但**筛选**是独立于任务的界面状态，不受那道保护。）
+      */
+      const kept = new Set(normalizeFlow(next).statuses.map((s) => s.id));
+      setColFilters((prev) => {
+        const f = prev.status;
+        if (!f || !f.values.some((v) => !kept.has(v))) return prev;
+        const values = f.values.filter((v) => kept.has(v));
+        if (values.length === 0) {
+          const nx: Partial<Record<SortField, ColFilter>> = { ...prev };
+          delete nx.status;
+          return nx;
+        }
+        return { ...prev, status: { ...f, values } };
+      });
       await S.mutate(ctx, cfg.dataDir, (st) => ({ ...st, flow: normalizeFlow(next) }));
       await refresh();
       ctx.toast('流程已保存', 'ok');
@@ -1333,15 +1382,45 @@ ${dir}
     withErr(async () => {
       if (!cfg || !id || !name.trim()) return;
       const nm = name.trim();
+      /*
+        三种结果要说清楚，不能一律报"已改名"：
+
+        · dupe —— 改成已存在的另一个分组名。分组的 **id 就是名字**，
+          两条同 id 的定义在下一次读盘时会被 normalizeGroupDefs 去重
+          （seen 表）→ **静默少一条定义**，而 toast 还写着"已改名"。
+          同时两个分组的任务被合并，用户并没要求合并。
+          （新建那边早就挡了同名，改名这边漏了 —— 同一类判据两个入口不一致。）
+
+        · same —— 新名和旧名一样，什么都不用做。
+
+        · ok —— 真改名。
+      */
+      /*
+        用对象持有结果，不用 let：
+        mutate 的回调是**稍后才跑**的，TS 看不到它在闭包里的赋值，
+        会把 let 变量收窄成初始值 'ok'，下面的 if (state === 'dupe') 就成了死代码。
+      */
+      const res: { state: 'ok' | 'dupe' | 'same' } = { state: 'ok' };
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const defs = Array.isArray(st.groupDefs) ? [...st.groupDefs] : [];
         const idx = defs.findIndex((d) => d.id === id);
+        const taken = defs.some((d) => d.id === nm && d.id !== id);
+        if (taken) { res.state = 'dupe'; return null; }
+        if (idx >= 0 && defs[idx].id === nm) { res.state = 'same'; return null; }
         if (idx < 0) {
+          /*
+            ⛔ 原来 push 的是 `{ id, name: nm }` —— **id 用旧名、name 用新名**。
+            而任务上的 group 被改成了新名，于是这条定义的 id 和任务上的值
+            对不上：下拉里按 name 显示"设置改"，点它筛的却是 group='设置' → 0 条。
+
+            分组的 id 就是名字，两者必须一起改成新名。
+          */
           const used = new Set(defs.map((d) => d.color));
-          defs.push({ id, name: nm, color: TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0] });
+          defs.push({ id: nm, name: nm, color: TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0] });
+        } else {
+          defs[idx] = { ...defs[idx], id: nm, name: nm };
         }
-        else defs[idx] = { ...defs[idx], id: nm, name: nm };
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
           if (t.group !== id) return t;
@@ -1351,8 +1430,27 @@ ${dir}
         n = cnt;
         return { ...st, groupDefs: defs, tasks };
       });
+      /*
+        ⛔ 改名必须**顺带改掉正在生效的筛选**。
+
+        删分组那边早就清了筛选，改名这边漏了 —— 于是：
+        筛着「登录」把「登录」改名为「登录改」之后，筛选条件还指着"登录"，
+        而任务上已经没有这个值 → **命中 0 条**，chip 上还写着"分组：登录"。
+        用户看到空列表，只会以为"改完名任务没了"，不会想到是筛选没跟上。
+
+        （标签改名不需要这一步：标签改的是 name，id 不变，筛选存的是 id。）
+      */
+      if (res.state === 'ok' && id !== nm) {
+        setColFilters((prev) => {
+          const f = prev.group;
+          if (!f || f.values.indexOf(id) < 0) return prev;
+          const values = f.values.map((x) => (x === id ? nm : x));
+          return { ...prev, group: { ...f, values } };
+        });
+      }
       await refresh();
-      ctx.toast(`分组已改名「${nm}」${n > 0 ? `（${n} 条任务同步更新）` : ''}`, 'ok');
+      if (res.state === 'dupe') ctx.toast(`已经有同名分组「${nm}」了，换个名字`, 'err');
+      else if (res.state === 'ok') ctx.toast(`分组已改名「${nm}」${n > 0 ? `（${n} 条任务同步更新）` : ''}`, 'ok');
     })();
 
   /*
@@ -1557,9 +1655,23 @@ ${dir}
             留在这儿的话，"筛哪件事"取决于顶栏摆了哪几个框，
             而没摆上去的列（创建时间、ID）就永远筛不了。
           */}
+          {/*
+            搜索范围：id / 标题 / 详情 / 说明 / 分组 / 认领人 / 类型名 / 标签名。
+
+            ⛔ placeholder 不能还写"搜索标题 / 详情 / id"：
+            实际能搜的东西比这三样多得多，而用户**照着提示来判断** ——
+            写在提示里的他会去搜，没写的他不会试。
+            于是"搜标签名"这种明明支持的操作，用户永远发现不了，
+            只会得出"搜索不支持标签"的结论。
+
+            注意类型与标签存的是 **id**（t1 / tg_xxxx），
+            搜的是它们的**显示名** —— 这也是要在提示里说清楚的，
+            否则用户试着搜 id（他看不见 id）会得到 0 条。
+          */}
           <input
             className="tb-search"
-            placeholder="搜索标题 / 详情 / id"
+            placeholder="搜标题 / 说明 / 分组 / 认领人 / 类型 / 标签"
+            title="搜索范围：id、标题、详情、说明、分组、认领人、任务类型名、标签名（后两者按显示名匹配，不是内部 id）"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -2397,9 +2509,7 @@ function ImportProjectModal({
           {scan.restoreFailed ? (
             <div className="tb-scan-warn">
               ⚠ 探完没切回原来的数据目录：数据目录现在停在刚扫的这个目录上，
-              {/* ⛔ 说清"会变成什么样"，否则用户看不出"扫一下"和"看板空了"是同一件事 */}
-              当前项目的读写都会指向它（表现为整个看板变空）。请重新选一次数据目录，
-              或关掉重开恢复。
+              当前项目的读写都会指向它。请重新选一次数据目录。
             </div>
           ) : null}
           {scan.sample.length > 0 ? (
@@ -3041,7 +3151,17 @@ function InlineText({
     不带的话一点开就是空的，看着像"这行没内容"，
     而实际上只是输入框没初始化 —— 那种误会会让人以为数据丢了。
   */
-  useEffect(() => { if (open) setDraft(value); }, [open, value]);
+  /*
+    只在**刚打开**的那一刻带入当前值。
+
+    ⛔ 不能把 value 放进依赖里持续监听：
+    正在编辑时 value 一变（2s 轮询读到了别人的改动 / AI 经 API 改了这一格），
+    就把用户刚打的字冲掉 —— 打一半突然变回旧内容，看着像界面抽风。
+
+    DraftInput（详情面板那边）早就是这个判据（`if (!editing)`），
+    **这里漏了** —— 两个组件做的是同一件事，判据必须一致。
+  */
+  useEffect(() => { if (open) setDraft(value); }, [open]);
 
   const commit = () => {
     setOpen(false);
@@ -4913,6 +5033,29 @@ function DetailPanel({
   */
   const acts = actionsForIn(flow, task.status);
   const hist = [...task.history].reverse();
+
+  /*
+    Escape 关闭面板。
+
+    这是从 Modal 那边**跟着搬过来**的：详情原来是弹窗，Modal 自带 Escape 关闭；
+    改成 <aside> 之后它不再走 Modal，这个能力就悄悄丢了 ——
+    面板是"点一下就不该再出现"的东西，键盘上却没有退出的办法，只能去点 ✕。
+
+    ⛔ 焦点在输入框里时**不关**：面板里的自由文本字段用 Escape 表示
+    "撤销我打的字"（DraftInput 的语义，且它 stopPropagation）。
+    不挡的话一次 Escape 会同时做两件事 —— 用户只想撤掉一个错字，
+    结果整个面板没了。所以判据和 Modal 完全一致。
+  */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const tag = ((e.target as HTMLElement | null)?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const { byId } = indexTasks(tasks);
   /*
