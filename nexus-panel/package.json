@@ -145,7 +145,6 @@
     "test:theme": "node theme-test.mjs",
     "test:theme-bridge": "node theme-bridge-test.mjs",
     "test:theme-persist": "node theme-persist-test.mjs",
-    "test:af-theme-mode-persist": "node theme-mode-persist-test.mjs",
     "test:theme-picker": "node theme-picker-test.mjs",
     "test:theme-tokens": "node theme-tokens-test.mjs",
     "test:titlebar-drag": "node titlebar-drag-test.mjs",
@@ -292,7 +291,9 @@
     "test:shared-contract": "node shared-contract-test.mjs",
     "test:plugin-manifest": "node plugin-manifest-test.mjs",
     "test:installed-plugin-scan": "node installed-plugin-scan-test.mjs",
-    "test:plugin-ledger": "node plugin-ledger-test.mjs"
+    "test:plugin-ledger": "node plugin-ledger-test.mjs",
+    "test:plugin-fs-bridge": "node plugin-fs-bridge-test.mjs",
+    "test:af-theme-mode-persist": "node theme-mode-persist-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",
