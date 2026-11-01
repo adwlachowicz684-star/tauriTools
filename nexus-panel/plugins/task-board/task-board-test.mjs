@@ -3618,14 +3618,29 @@ t('审查：分组改名要连带改任务上的 group（任务上存的是名�
     不是代码有问题，是守卫自己的窗口开小了。
   */
   const seg = app.slice(i, i + 3600);
-  return /group:\s*nm/.test(seg) && /updatedAt:\s*Date\.now\(\)/.test(seg);
+  /*
+    锚点随"多值改用 replaceVal"改了：现在是
+    `group: replaceVal(t, 'group', id, nm, multiOfTask(t, 'group'))`。
+    继续钉 `group: nm` 会因为代码已改而恒红 —— 恒红的守卫等于没有守卫。
+    钉的是**语义**：改名后任务上的 group 被写成新名 nm，且推进 updatedAt。
+  */
+  return /replaceVal\(t, 'group', id, nm, multiOfTask\(t, 'group'\)\)/.test(seg)
+    && /updatedAt:\s*Date\.now\(\)/.test(seg);
 })());
 
 t('审查：删分组是把任务清成未分组，不是删任务', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const i = app.indexOf('const removeGroup');
-  const seg = app.slice(i, i + 900);
-  return /group:\s*''/.test(seg) && !/filter\(\(t\) => t\.group !== id\)/.test(seg);
+  const seg = app.slice(i, i + 1400);
+  /*
+    同上：删分组现在是"摘掉那一个值"而不是整条清空成 ''。
+    语义是**清成未分组、不删任务**：
+      · newId 传 null（摘掉）
+      · 用的是 map 不是 filter（不能把任务删了）
+  */
+  return /replaceVal\(t, 'group', id, null, multiOfTask\(t, 'group'\)\)/.test(seg)
+    && !/filter\(\(t\) => t\.group !== id\)/.test(seg)
+    && /\.map\(\(t\) => \{/.test(seg);
 })());
 
 
@@ -4829,6 +4844,15 @@ t('守卫：删除/改名定义时用 hasVal 匹配（多值任务不漏）', ((
     /* 认领人的改名/删除同理 */
     && /hasVal\(t, 'assignee', oldName\)/.test(app)
     && /hasVal\(t, 'assignee', name\)/.test(app)
+    /*
+      分组同样要覆盖：原来 `t.group !== id`，多值时永远不等，
+      改名/删除都漏掉多值任务（"删了又复活"的同源）。
+    */
+    && (app.match(/hasVal\(t, 'group', id\)/g) || []).length >= 2
+    && /replaceVal\(t, 'group', id, nm, multiOfTask\(t, 'group'\)\)/.test(app)
+    && /replaceVal\(t, 'group', id, null, multiOfTask\(t, 'group'\)\)/.test(app)
+    /* 不再有裸的 !== 判据（多值列上永远不等） */
+    && !/t\.group !== id/.test(app)
     /* 不再出现旧的 trim 比较（数组没有 .trim，会 TypeError） */
     && !/\(t\.assignee \|\| ''\)\.trim\(\)/.test(app);
 })());
@@ -4936,6 +4960,77 @@ t('守卫：写死的 actionsFor 已删（统一到 actionsForIn）', (() => {
   const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
   return !/export function actionsFor\(status\)/.test(mjs)
     && !/case 'todo':\s*\n\s*return \[/m.test(mjs);
+})());
+
+
+/* ============================================================ 读盘侧也要兜底 */
+
+/*
+ * **历史上限：写侧有、读侧没有 → AI 写 2000 条进来就卡死详情。**
+ *
+ * pushHistory 里截到 100，normalizeTask 不截。
+ * 于是 AI 经 MCP/HTTP 写一大段历史后，用户打开详情 → hist.map 全量渲染 → 卡，
+ * 而且**只要用户不改这条，就永远不触发写盘截断**，一直卡下去。
+ */
+t('守卫：读盘也要截历史上限（不只是写盘）', (() => {
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const i = mjs.indexOf('export function normalizeTask');
+  const seg = mjs.slice(i, i + 3000);
+  return /h\.length > HISTORY_CAP \? h\.slice\(h\.length - HISTORY_CAP\) : h/.test(seg)
+    && /export const HISTORY_CAP = 100;/.test(mjs);
+})());
+
+t('守卫：nextId 落后于数据时不会撞号', (() => {
+  const st = { nextId: 2, tasks: [{ id: 'tb-0005' }, { id: 'tb-0009' }] };
+  const okGen = nextTaskId(st) === 'tb-0010';
+  const st2 = normalizeStore({ v: 1, nextId: 2, tasks: [
+    { id: 'tb-0005', title: 'a', tags: [], deps: [], history: [] },
+    { id: 'tb-0009', title: 'b', tags: [], deps: [], history: [] }] });
+  return okGen && st2.nextId === 10;
+})());
+
+
+/* ============================================================ 多值要展开（本轮） */
+
+/*
+ * **勾了"多选"之后，统计与筛选候选里冒出一个不存在的合成类别。**
+ *
+ * `byType[t.type]` —— 多值时数组被 JS 转成键 "dev,bug"：
+ *   · 分布图里多出「dev,bug」这一个类别
+ *   · 而真正的 dev / bug 各自少算 1
+ * 于是"按类型看工作量"整个失真，界面上看不出为什么。
+ *
+ * 标签列本来就是多值（逐个计入），这里要与它**同一判据**。
+ */
+t('守卫：统计里多值字段逐个计入（不合成键）', (() => {
+  const flow = normalizeFlow(undefined);
+  const mk = (o) => normalizeTask({ id: 'x', title: 'x', status: 'todo', priority: 'P2', tags: [], deps: [], history: [], ...o }, flow);
+  const st = { flow, tasks: [
+    mk({ id: 'a', type: ['dev', 'bug'], assignee: ['zs', 'ls'], estimate: 2, updatedAt: 1e12 }),
+    mk({ id: 'b', type: 'dev', assignee: 'zs', estimate: 3, updatedAt: 1e12 })] };
+  const s = statsOf(st, 1e12 + 1);
+  const byType = s.byType;
+  const byWho = Object.fromEntries(s.byAssignee.map((x) => [x.id, x.count]));
+  return byType.dev === 2 && byType.bug === 1
+    && !Object.keys(byType).some((k) => k.indexOf(',') >= 0)
+    && byWho.zs === 2 && byWho.ls === 1;
+})());
+
+/*
+ * 筛选候选同理：多值时数组整个进 Set → 下拉里出现「张三,李四」，
+ * 而张三、李四作为单独候选反而没有。
+ */
+t('守卫：筛选候选把多值展开成单值', (() => {
+  const flow = normalizeFlow(undefined);
+  const mk = (o) => normalizeTask({ id: 'x', title: 'x', status: 'todo', priority: 'P2', tags: [], deps: [], history: [], ...o }, flow);
+  const rows = [mk({ id: 'a', assignee: ['zs', 'ls'], group: ['g1', 'g2'] })]
+    .map((t) => ({ task: t, depth: 0, groupPath: '' }));
+  const as = colFilterValues('assignee', rows, [], [], [], []);
+  const gs = colFilterValues('group', rows, [], [], [], []);
+  return as.indexOf('zs') >= 0 && as.indexOf('ls') >= 0
+    && gs.indexOf('g1') >= 0 && gs.indexOf('g2') >= 0
+    /* 不能有数组元素残留 */
+    && !as.some((x) => Array.isArray(x)) && !gs.some((x) => Array.isArray(x));
 })());
 
 /* ---------------- 汇总 ---------------- */

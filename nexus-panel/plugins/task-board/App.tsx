@@ -1658,9 +1658,22 @@ ${dir}
         }
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
-          if (t.group !== id) return t;
+          /*
+            ⛔ 不能写 `t.group !== id`：分组**可以是多值的**（勾了多选之后），
+            多值时两边永远不等 → 这条任务的分组**不会被改成新名**。
+
+            后果与"删了又复活"同源：定义表里已经没有旧名了，
+            而任务上还留着 → 它会从数据里继续冒出来，
+            下拉里显示的是一个不存在的值，而改名明明已经成功提示过。
+            匹配与替换一律走 hasVal / replaceVal（与类型、认领人同一判据）。
+          */
+          if (!hasVal(t, 'group', id)) return t;
           cnt += 1;
-          return { ...t, group: nm, updatedAt: Date.now() };
+          return {
+            ...t,
+            group: replaceVal(t, 'group', id, nm, multiOfTask(t, 'group')),
+            updatedAt: Date.now(),
+          };
         });
         n = cnt;
         return { ...st, groupDefs: defs, tasks };
@@ -1702,9 +1715,14 @@ ${dir}
         const defs = (Array.isArray(st.groupDefs) ? st.groupDefs : []).filter((d) => d.id !== id);
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
-          if (t.group !== id) return t;
+          /* 同上：多值时逐个摘掉这一个，留下其它（不是整条清空） */
+          if (!hasVal(t, 'group', id)) return t;
           cnt += 1;
-          return { ...t, group: '', updatedAt: Date.now() };
+          return {
+            ...t,
+            group: replaceVal(t, 'group', id, null, multiOfTask(t, 'group')),
+            updatedAt: Date.now(),
+          };
         });
         n = cnt;
         return { ...st, groupDefs: defs, tasks };
