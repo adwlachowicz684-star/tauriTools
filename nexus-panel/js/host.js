@@ -78,6 +78,14 @@ export { THEME_VARS };
 export const KEY_LAST_PLUGIN = 'nexus:last-plugin';
 /** 侧栏展开状态：'1' 展开，'0' 收起，缺省（null）视为展开 */
 export const KEY_SIDEBAR_OPEN = 'nexus:sidebar-open';
+/**
+ * 用户后来装的第三方插件清单（custom 插件的全部来源）。
+ *
+ * 此前是**三处裸字面量**（读、读、写），与上面两个键不同步。
+ * 它比那两个更怕写坏：存的是用户装过的每一个插件，
+ * 而且**没有备份** —— 覆盖即永久丢失。所以键名只认这一处。
+ */
+export const KEY_CUSTOM_PLUGINS = 'nexus:custom-plugins';
 
 export function isNoBuild() {
   return globalThis.__NEXUS_NO_BUILD__ === true;
@@ -265,7 +273,7 @@ export async function loadRegistry() {
    */
   registerBuiltinIds(list.map((p) => p.id));
   try {
-    const custom = JSON.parse(localStorage.getItem('nexus:custom-plugins') || '[]');
+    const custom = getCustomPlugins();
     const ids = new Set(list.map((p) => p.id));
     list = list.concat(custom.filter((p) => !ids.has(p.id)));
   } catch { /* ignore */ }
@@ -273,8 +281,30 @@ export async function loadRegistry() {
   return list;
 }
 
+/*
+ * 读失败的原因 —— **为什么不能默默返回 []**：
+ *
+ * 三个调用点全是 read-modify-write：`getCustomPlugins()` 读出来、
+ * 改一下、再 `saveCustomPlugins()` 存回。读失败时它返回 []，
+ * [] 经 filter / 展开后写回，就把用户装过的插件**全清掉并落盘**，
+ * 而界面照旧提示「已添加」。这份清单**没有备份**，覆盖即不可恢复。
+ *
+ * 所以失败必须留痕，交给 saveCustomPlugins 那道闸拦下（见下）。
+ */
+let lastCustomPluginReadError = null;
+
 export function getCustomPlugins() {
-  try { return JSON.parse(localStorage.getItem('nexus:custom-plugins') || '[]'); } catch { return []; }
+  try {
+    const arr = JSON.parse(localStorage.getItem(KEY_CUSTOM_PLUGINS) || '[]');
+    /* 不是数组也当失败：'null' / '{}' 都能 parse 成功，
+       但后面的 .filter / 展开会崩，且同样是"存的东西不对"。 */
+    if (!Array.isArray(arr)) throw new Error(`清单不是数组（${typeof arr}）`);
+    lastCustomPluginReadError = null;
+    return arr;
+  } catch (e) {
+    lastCustomPluginReadError = e?.message || String(e);
+    return [];
+  }
 }
 /*
  * 写入自定义插件清单 —— 全项目唯一入口，且**如实回答存没存成**。
@@ -316,8 +346,23 @@ export function customPluginWriteFailMsg(kind, name, err) {
 }
 
 export function saveCustomPlugins(list) {
+  /*
+   * ⚠️ 读不出来时**拒绝落盘**。
+   *
+   * 三个调用点都是「先 getCustomPlugins() 再存回」（理由见上方）：
+   * 读失败得到的 [] 一旦写回就是永久清空。宁可这次保存失败并把原因
+   * 说清，也不能拿一个读不出来的清单去覆盖那份**还能修好**的数据。
+   *
+   * 只对读失败生效：正常移除最后一个插件时读是成功的（返回 [{...}]），
+   * filter 之后得到 [] 属于预期，必须放行 —— 否则"删最后一个"会坏掉。
+   */
+  if (lastCustomPluginReadError) {
+    lastCustomPluginWriteError =
+      `清单读不出来（${lastCustomPluginReadError}），为避免把现有插件全部清空，已拒绝保存`;
+    return false;
+  }
   try {
-    localStorage.setItem('nexus:custom-plugins', JSON.stringify(list));
+    localStorage.setItem(KEY_CUSTOM_PLUGINS, JSON.stringify(list));
     lastCustomPluginWriteError = null;
     return true;
   } catch (e) {
