@@ -37,6 +37,9 @@ import {
   emptyColFilter,
   colFilterActive,
   colRawValues,
+  toggleFieldVal,
+  MULTI_OK,
+  COLOR_OK,
   colFilterValues,
   dependsOn,
   activeColFilters,
@@ -1500,14 +1503,14 @@ t('行内改状态：needNote 的边弹原因框，且目标状态不被写死',
  */
 t('行内改标签：多选不随点击关闭（勾一个就关要多开三次）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  const i = app.indexOf('function InlineTags');
-  // 用下一个顶层分隔符切，不能用 app.indexOf('function ')（组件内部就有）
-  const j = app.indexOf('/* ================================================================ 列表视图 */', i);
-  const seg = app.slice(i, j);
-  // 选项的 onClick 只调 onPick，不跟 setOpen(false) —— 跟了就是"勾一个就关"
-  return seg.indexOf('onClick={() => onPick(d.id)}') >= 0
-    && seg.indexOf('onPick(d.id);\n                setOpen(false)') < 0
-    && seg.indexOf('onPick(d.id); setOpen(false)') < 0;
+  /*
+    判据随"五列统一"改了：标签不再独用 InlineTags，
+    而是走 SinglePick 的 **multi 模式** —— 点选时 `if (!multi) setOpen(false)`
+    （多选就不关）。锚在 InlineTags 上会因为组件已删而恒红。
+  */
+  return /if \(!multi\) setOpen\(false\);/.test(app)
+    /* 标签列确实把自己那一列的 multi 传进去了 */
+    && /case 'tags':[\s\S]{0,1800}?multi=\{multi\}/.test(app);
 })());
 
 /*
@@ -4436,9 +4439,15 @@ t('守卫：五列单选型不再各写各的（InlinePick / TypePicker 已删�
  */
 t('守卫：清空类型传空串（不能把 NOTYPE 写进任务）', (() => {
   const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
-  const i = app.indexOf("clearLabel={t.type ? '清成「未分类」' : undefined}");
+  /*
+    判据随统一改造更新了：现在五列的清空都走 clearVal（单选存 ''、多选存 []），
+    所以钉的是"清空项存在 + 不再出现 onToggleType(t.id, NOTYPE)"。
+    ⛔ 不能钉死 `onToggleType(t.id, '')` —— 那行已经被 clearVal 取代，
+    锚点失效会让守卫恒红，而恒红的守卫等于没有守卫。
+  */
+  const i = app.indexOf("clearLabel={vals.length > 0 ? '清成「未分类」' : undefined}");
   if (i < 0) return false;
-  return app.slice(i, i + 900).indexOf("onToggleType(t.id, '')") >= 0
+  return app.slice(i, i + 900).indexOf("() => clearVal(t, 'type')") >= 0
     && !/onToggleType\(t\.id, NOTYPE\)/.test(app);
 })());
 
@@ -4598,6 +4607,113 @@ t('守卫：筛选面板的认领人列与类型/分组同构', (() => {
     && /isAssignee \? \(assigneeDefs \|\| \[\]\)/.test(seg)
     && /isAssignee \? '认领人'/.test(seg)
     && /isAssignee \? onAssigneeColor/.test(seg);
+})());
+
+
+/* ============================================================ 列的「多选 / 颜色」可配（腾讯文档同款） */
+
+/*
+ * **这两件事由用户勾选决定，不再写死在代码里。**
+ *
+ * ⛔ 以前：只有标签能多选，有没有色块取决于这一列碰巧有没有定义表。
+ * 于是用户想让"类型"能多选、想让"标签"不显示颜色，都做不到 ——
+ * 明明是同一类列，能力却由代码决定而不是由用户决定。
+ */
+t('守卫：core.mjs 导出列元数据（MULTI_OK / COLOR_OK / normalizeColMeta）', (() => {
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  return /export const MULTI_OK/.test(mjs)
+    && /export const COLOR_OK/.test(mjs)
+    && /export function normalizeColMeta/.test(mjs)
+    && /export function colMulti/.test(mjs)
+    && /export function colColorOn/.test(mjs);
+})());
+
+/* 状态和优先级不能多选：状态走状态机、优先级是排序枚举 */
+t('守卫：状态与优先级不支持多选（多选只给有语义的列）', (() => {
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  /*
+    ⛔ 只取 MULTI_OK **数组本身**，不能按字符数切片：
+    切片 300 会把后面的 COLOR_OK（含 status）和 DEFAULT_COL_META（含 priority）
+    一起框进来 → 判据恒假 → 守卫永远红 → 等于没有守卫。
+  */
+  const m = mjs.match(/export const MULTI_OK = \[([^\]]*)\]/);
+  if (!m) return false;
+  const arr = m[1];
+  return !/['"]status['"]/.test(arr) && !/['"]priority['"]/.test(arr)
+    && ['assignee', 'type', 'tags', 'group'].every((f) => arr.indexOf("'" + f + "'") >= 0);
+})());
+
+/*
+ * **归一化不能把数组值抹掉。**
+ *
+ * ⛔ 修前 type / group / assignee 一律 `str(v, '')`，
+ * 而 str 只认字符串、遇到数组返回 ''。
+ * 于是"设成多选 → 选两个 → 写盘 → 读回来"这个闭环里值被悄悄抹成空：
+ * 界面上这一列变回空白，而用户明明刚选了两个。**不报错，只是东西没了。**
+ *
+ * 实测：修前点完两个值落盘 type=["opt"]（第二个覆盖、第一个丢失）；
+ * 修后 ["dev","bug","opt"]。
+ */
+t('守卫：归一化保留数组值（多选列写了不能读回来变空）', (() => {
+  const st = normalizeStore({
+    v: 1, nextId: 9,
+    tasks: [{
+      id: 'a', title: 'a', status: 'todo', priority: 'P2', tags: [], deps: [], history: [],
+      type: ['dev', 'bug'], group: ['g1', 'g2'], assignee: ['张三', '李四'],
+    }],
+  });
+  const t = st.tasks[0];
+  return Array.isArray(t.type) && t.type.length === 2
+    && Array.isArray(t.group) && t.group.length === 2
+    && Array.isArray(t.assignee) && t.assignee.length === 2;
+})());
+
+/* 单值仍然要当单值（不能一律变成数组，否则老数据和 Rust 侧全乱） */
+t('守卫：单值字段归一化后仍是字符串（不是数组）', (() => {
+  const st = normalizeStore({
+    v: 1, nextId: 9,
+    tasks: [{ id: 'a', title: 'a', status: 'todo', priority: 'P2', tags: [], deps: [], history: [], type: 'dev', group: 'g1', assignee: '张三' }],
+  });
+  return st.tasks[0].type === 'dev' && st.tasks[0].group === 'g1' && st.tasks[0].assignee === '张三';
+})());
+
+/* toggleFieldVal：单选=赋值/点当前清空，多选=加/删 */
+t('守卫：toggleFieldVal 单选与多选行为正确', (() => {
+  const t = { type: 'dev', tags: ['a', 'b'] };
+  return toggleFieldVal(t, 'type', 'bug', false) === 'bug'
+    && toggleFieldVal(t, 'type', 'dev', false) === ''
+    && JSON.stringify(toggleFieldVal(t, 'tags', 'c', true)) === '["a","b","c"]'
+    && JSON.stringify(toggleFieldVal(t, 'tags', 'a', true)) === '["b"]'
+    /* 单值列被设成多选：第一次点也要能加成数组 */
+    && JSON.stringify(toggleFieldVal({ group: '' }, 'group', 'g1', true)) === '["g1"]';
+})());
+
+/* 列设置面板里：不支持的列不给开关 / 不支持多选的列置灰 */
+t('守卫：列设置面板按能力给开关（不支持的不摆、不支持多选的置灰）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('tb-colset-flags');
+  if (i < 0) return false;
+  const seg = app.slice(i - 900, i + 1400);
+  return /COLOR_OK\.indexOf\(c\.field\) >= 0/.test(seg)
+    && /disabled=\{MULTI_OK\.indexOf\(c\.field\) < 0\}/.test(seg);
+})());
+
+/* 关掉多选要压缩数据（数组 → 第一个），否则界面单选、筛选多值，两边不一致 */
+t('守卫：关掉多选时把数组压缩成第一个值', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const setColMetaFlag =');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 2200);
+  return /\[field\]: v\.length > 0 \? String\(v\[0\] \?\? ''\) : ''/.test(seg)
+    /* 并且要先确认——丢数据要有提示 */
+    && /window\.confirm/.test(seg);
+})());
+
+/* 五列都走 SinglePick（标签不再独用 InlineTags） */
+t('守卫：标签列也走统一组件（InlineTags 已删）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  return !/function InlineTags\(/.test(app)
+    && app.indexOf('<InlineTags') < 0;
 })());
 
 /* ---------------- 汇总 ---------------- */

@@ -16,6 +16,13 @@ import {
   NOTAG,
   UNASSIGNED,
   LIST_COLUMNS,
+  normalizeColMeta,
+  MULTI_OK,
+  COLOR_OK,
+  toggleFieldVal,
+  fieldVals,
+  colMulti,
+  colColorOn,
   actionsFor,
   activeColFilters,
   applyTransition,
@@ -259,6 +266,16 @@ export default function App() {
   */
   const [colHidden, setColHidden] = useState<string[]>([]);
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  /*
+    每列的「多选 / 颜色」开关（腾讯文档同款，由用户勾选决定）。
+
+    ⛔ 以前这两件事写死在代码里：只有标签能多选、有没有色块看这一列
+    碰巧有没有定义表。现在它们跟列宽、显示隐藏一样是**视图偏好**，
+    不跟任务数据走，换项目也不该被冲掉。
+  */
+  const [colMeta, setColMeta] = useState<Record<string, { multi: boolean; color: boolean }>>(
+    normalizeColMeta(undefined),
+  );
   const cfgRef = useRef<TbConfig | null>(null);
   cfgRef.current = cfg;
 
@@ -295,12 +312,13 @@ export default function App() {
         /* 视图偏好：读不到/格式坏了都静默回默认 —— 丢的只是「上次看到哪」，
            不该让看板起不来。存储桥接最坏 15s 超时，故整体 try 兜住。 */
         try {
-          const [v, g, s, hidden, widths] = await Promise.all([
+          const [v, g, s, hidden, widths, meta] = await Promise.all([
             ctx.store.get('view', 'board'),
             ctx.store.get('groupKeys', ['status']),
             ctx.store.get('sort', { field: 'priority', dir: 'asc' }),
             ctx.store.get('colHidden', []),
             ctx.store.get('colWidths', {}),
+            ctx.store.get('colMeta', {}),
           ]);
           if (!alive) return;
           if (VIEWS.some((x) => x.key === v)) setView(v as TbView);
@@ -314,6 +332,8 @@ export default function App() {
           if (s && typeof s === 'object' && SORT_FIELDS.includes((s as { field: SortField }).field)) {
             setSort({ field: (s as { field: SortField }).field, dir: (s as { dir?: string }).dir === 'desc' ? 'desc' : 'asc' });
           }
+          /* 列元数据（多选 / 颜色）：只认当前存在且可配的列 */
+          setColMeta(normalizeColMeta(meta));
           /*
             隐藏列与列宽：**只认已知的 field**。
             存的是配置、可能是旧版本写的（那时还有别的列），
@@ -848,6 +868,52 @@ export default function App() {
       }));
       await refresh();
     })();
+  /*
+    改某一列的「多选 / 颜色」。
+    ⛔ 关闭多选会**丢值**：数组里第二个之后的值会被丢掉
+    （一条任务不能同时属于多个"类型"，除非它是多选列）。
+    所以必须先把影响面说出来再改 —— 静默丢数据是最难查的一类问题。
+  */
+  const setColMetaFlag = (field: string, key: 'multi' | 'color', on: boolean) => {
+    const cur = colMeta[field] || { multi: false, color: false };
+    if (cur[key] === on) return;
+    if (key === 'multi' && !on) {
+      const arr = (store ? store.tasks : []).filter((t) => {
+        const v = (t as unknown as Record<string, unknown>)[field];
+        return Array.isArray(v) && v.length > 1;
+      });
+      if (arr.length > 0) {
+        const ok = window.confirm(
+          `有 ${arr.length} 条任务在这一列上选了多个值，关掉多选后**只保留第一个**：\n`
+            + arr.slice(0, 5).map((t) => `· ${t.id} ${t.title}`).join('\n')
+            + (arr.length > 5 ? `\n…等 ${arr.length} 条` : '')
+            + '\n\n其余的值会被丢弃（不可撤销）。确定关掉吗？',
+        );
+        if (!ok) return;
+      }
+    }
+    const next = { ...colMeta, [field]: { ...cur, [key]: on } };
+    setColMeta(next);
+    persist('colMeta', next);
+    /*
+      关掉多选要**立刻压缩数据**：不压的话任务上还留着数组，
+      而单选组件只认第一个 —— 界面看着正常，筛选却按多值命中，
+      两边不一致，且用户不知道数据里还有多余的值。
+    */
+    if (key === 'multi' && !on && cfg) {
+      withErr(async () => {
+        await S.mutate(ctx, cfg.dataDir, (st) => ({
+          ...st,
+          tasks: (st.tasks || []).map((t) => {
+            const v = (t as unknown as Record<string, unknown>)[field];
+            if (!Array.isArray(v)) return t;
+            return { ...t, [field]: v.length > 0 ? String(v[0] ?? '') : '', updatedAt: Date.now() };
+          }),
+        }));
+        await refresh();
+      })();
+    }
+  };
   const changeSort = (field: SortField, dir?: 'asc' | 'desc') => {
     // 点同一列 = 翻转方向；换列 = 用该列默认方向（时间类「新的在前」，其余升序）
     const next =
@@ -1284,9 +1350,16 @@ ${dir}
     颜色改一处、所有挂这个标签的行一起变 —— 这是"标签"该有的行为，
     逐行不同色就丢掉了"一眼分类"这个作用。
   */
+  /*
+    返回**新建标签的 id**（与 createType / addGroup 同一判据）。
+
+    单元格里"新建"的意图是"给这一行用一个还不存在的标签"，
+    建完要能接着挂上去 —— 拿不到 id 就只能让用户建完再点一次，
+    而别的列（认领人）是立刻生效的，同一个动作在两列结果不一样。
+  */
   const doAddTag = (name: string, color: string) =>
     withErr(async () => {
-      if (!cfg || !name.trim()) return;
+      if (!cfg || !name.trim()) return '';
       const nm = name.trim();
       /*
         ⛔ 同名时必须**说出来**：原来直接 return null（不写盘也不提示），
@@ -1294,9 +1367,11 @@ ${dir}
         看着就像"新建这个功能坏了"。同名是用户的输入问题，得让他知道。
       */
       let made = false;
+      let newId = '';
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
         made = false;
+        newId = '';
         if (defs.some((d) => d.name === nm)) return null;   // 同名不重复建
         /*
           颜色同样要去重（与新建类型同一判据）：
@@ -1310,10 +1385,12 @@ ${dir}
         const id = `tg_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
         defs.push({ id, name: nm, color: want });
         made = true;
+        newId = id;
         return { ...st, tagDefs: defs };
       });
       await refresh();
       if (!made) ctx.toast(`已经有同名标签「${nm}」了`, 'err');
+      return made ? newId : '';
     })();
 
   const doSetTagColor = (id: string, color: string) =>
@@ -2240,6 +2317,8 @@ ${dir}
             onBatchPriority={doBatchPriority}
             onBatchDelete={doBatchDelete}
             colHidden={colHidden}
+            colMeta={colMeta}
+            onColFlag={setColMetaFlag}
             colWidths={colWidths}
             onSetStatus={(id, to, needNote) => (needNote ? setRejectFor({ id: id, to }) : doTransition(id, to as TaskStatus))}
             onPatchField={(id, patch) => doPatch(id, patch)}
@@ -2586,9 +2665,17 @@ function tintOf(hex: string): { bg: string; fg: string; bd: string } {
  * 两个字的空间）、浅底深字 + 同色描边。一眼能分类，
  * 又不像实心块那样糊成一片。
  */
-function TagChip({ id, defs }: { id: string; defs: TagDef[] }) {
+function TagChip({ id, defs, noColor }: { id: string; defs: TagDef[]; noColor?: boolean }) {
   const d = defs.find((x) => x.id === id);
   const name = d ? d.name : id;
+  /*
+    关掉"颜色"之后只显示名字，不套色块。
+
+    ⛔ 不能"没有定义就不显示"混为一谈：那是另一回事
+    （没定义时 tintOf 给的是中性灰，仍然是个 chip）。
+    这里说的是**用户主动关掉了这一列的颜色**。
+  */
+  if (noColor) return <span className="tb-tag plain" title={name}>{name}</span>;
   const color = d ? d.color : '#78716c';
   const t = tintOf(color);
   return (
@@ -3308,6 +3395,13 @@ function SinglePick({
   onRemove,
   onPickColor,
   kindName,
+  /**
+     **多选模式**：点一个候选不关闭面板、也不取消其它已选的。
+
+     勾了"多选"的列走这条路 —— 勾一个就关的话想勾三个要点开三次，
+     那还不如去详情里改。
+  */
+  multi,
 }: {
   /** 当前显示的内容（优先级传徽章组件，其它传名字） */
   cur: React.ReactNode;
@@ -3336,6 +3430,8 @@ function SinglePick({
   onPickColor?: (initial: string) => Promise<string>;
   /** 这一列的名词（'类型' / '分组' / '认领人'），只用于按钮提示文案 */
   kindName?: string;
+  /** 多选模式：选完不关闭 */
+  multi?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState('');
@@ -3385,14 +3481,15 @@ function SinglePick({
                 onClick={() => {
                   if (o.disabled) return;
                   onPick(o.id);
-                  setOpen(false);
+                  /* 多选时**不关闭**：勾一个就关，想勾三个要点开三次 */
+                  if (!multi) setOpen(false);
                 }}
               >
                 {o.color ? (
                   <span className="tb-col-dot" style={{ background: o.color }} />
                 ) : null}
                 <span className="tb-ic-txt">{o.label}</span>
-                {o.on ? <span className="tb-ic-ck">✓</span> : null}
+                {o.on ? <span className="tb-ic-ck">{multi ? '☑' : '✓'}</span> : (multi ? <span className="tb-ic-ck">☐</span> : null)}
               </button>
               {editing === o.id ? (
                 <input
@@ -3608,73 +3705,16 @@ function InlineText({
 }
 
 /** 多选型（标签：一条任务可以同时有多个） */
-function InlineTags({
-  cur,
-  defs,
-  onPick,
-  title,
-}: {
-  cur: string[];
-  defs: { id: string; name: string; color: string }[];
-  onPick: (id: string) => void;
-  title?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement | null>(null);
+/*
+  ⛔ InlineTags 随"五列统一"删掉了。
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  它是标签列**独用**的多选组件，与类型/分组那套（SinglePick）并列 ——
+  于是"增删改色"在标签这儿和别处不是一个东西，
+  加一个能力要在两套组件里各写一遍，漏一处就是"别处能用这儿不能"。
 
-  return (
-    <span
-      className={'tb-ic' + (open ? ' open' : '')}
-      ref={ref}
-      onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-      title={title}
-    >
-      <span className="tb-ic-val">
-        {cur.length > 0 ? (
-          <span className="tb-ltags">
-            {cur.map((id) => <TagChip key={id} id={id} defs={defs} />)}
-          </span>
-        ) : (
-          <span className="tb-ldim">—</span>
-        )}
-      </span>
-      {open ? (
-        /*
-          ⛔ 选完**不关闭**：标签是多选，勾一个就关的话
-          想勾三个就要点开三次，那还不如去详情里改。
-        */
-        <span className="tb-ic-pop" onClick={(e) => e.stopPropagation()}>
-          {defs.length === 0 ? (
-            <span className="tb-ic-hint">还没有标签，去列头的漏斗里新建</span>
-          ) : defs.map((d) => {
-            const on = cur.indexOf(d.id) >= 0;
-            return (
-              <button
-                key={d.id}
-                type="button"
-                className={'tb-ic-opt' + (on ? ' on' : '')}
-                onClick={() => onPick(d.id)}
-              >
-                <span className="tb-col-dot" style={{ background: d.color }} />
-                <span className="tb-ic-txt">{d.name}</span>
-                {on ? <span className="tb-ic-ck">✓</span> : null}
-              </button>
-            );
-          })}
-        </span>
-      ) : null}
-    </span>
-  );
-}
+  现在标签也走 SinglePick，只是多传一个 `multi`（而且这个开关用户能关）。
+*/
+
 
 /* ================================================================ 列表视图 */
 
@@ -3687,11 +3727,16 @@ function InlineTags({
  */
 function ColSettingsPop({
   hidden,
+  meta,
   onToggle,
+  onFlag,
   onResetWidths,
 }: {
   hidden: string[];
+  /** 每列的多选 / 颜色开关 */
+  meta: Record<string, { multi: boolean; color: boolean }>;
   onToggle: (field: string, show: boolean) => void;
+  onFlag: (field: string, key: 'multi' | 'color', on: boolean) => void;
   onResetWidths: () => void;
 }) {
   const shown = LIST_COLUMNS.filter((c) => hidden.indexOf(c.field) < 0);
@@ -3715,6 +3760,46 @@ function ColSettingsPop({
             />
             <span>{c.label}</span>
             {isLast ? <span className="tb-colset-why">（至少留一列）</span> : null}
+            {/*
+              多选 / 颜色：**只对能配的列显示**（有定义表的那几列）。
+
+              ⛔ 给所有列都摆上开关是骗人：
+              给"标题"勾颜色没有任何效果（它没有定义表），
+              点了没反应比没有这个开关更让人困惑 ——
+              而用户分不清"不支持"和"坏了"。
+
+              状态和优先级**只给颜色、不给多选**：
+              状态走状态机、优先级是排序枚举，一条任务有两个值在语义上就是错的。
+            */}
+            {show && COLOR_OK.indexOf(c.field) >= 0 ? (
+              <span className="tb-colset-flags" onClick={(e) => e.preventDefault()}>
+                <label
+                  className="tb-colset-flag"
+                  title={MULTI_OK.indexOf(c.field) >= 0
+                    ? '勾上之后这一列可以选多个值'
+                    : '这一列不支持多选（状态走状态机、优先级是排序枚举）'}
+                >
+                  <input
+                    type="checkbox"
+                    checked={(meta[c.field] || { multi: false }).multi === true}
+                    disabled={MULTI_OK.indexOf(c.field) < 0}
+                    onChange={(e) => onFlag(c.field, 'multi', e.target.checked)}
+                  />
+                  <span>多选</span>
+                </label>
+                <label
+                  className="tb-colset-flag"
+                  title="勾上之后这一列显示色块"
+                >
+                  <input
+                    type="checkbox"
+                    checked={(meta[c.field] || { color: false }).color === true}
+                    onChange={(e) => onFlag(c.field, 'color', e.target.checked)}
+                  />
+                  <span>颜色</span>
+                </label>
+              </span>
+            ) : null}
           </label>
         );
       })}
@@ -3839,7 +3924,7 @@ function ColFilterPop({
   /** 标签定义。只标签列用得到 */
   tagDefs?: TagDef[];
   /** 新建标签（名字 + 颜色）。返回后由调用方把它挂到当前行 */
-  onCreateTag?: (name: string, color: string) => void;
+  onCreateTag?: (name: string, color: string) => Promise<string | undefined>;
   /** 改某个标签的颜色 */
   onTagColor?: (id: string, color: string) => void;
   /** 标签改名（改的是定义：所有挂它的行一起变） */
@@ -4335,6 +4420,8 @@ function ListView({
   onBatchPriority,
   onBatchDelete,
   colHidden,
+  colMeta,
+  onColFlag,
   colWidths,
   onSetStatus,
   onPatchField,
@@ -4376,7 +4463,7 @@ function ListView({
   onRemoveType: (id: string) => void;
   /** 标签定义（名字 + 颜色） */
   tagDefs: TagDef[];
-  onCreateTag: (name: string, color: string) => void;
+  onCreateTag: (name: string, color: string) => Promise<string | undefined>;
   onTagColor: (id: string, color: string) => void;
   /** 标签改名（改定义，所有挂它的行一起变） */
   onRenameTag: (id: string, name: string) => void;
@@ -4424,6 +4511,10 @@ function ListView({
   onToggleTag: (id: string, tagId: string) => void;
   /** 被隐藏的列（field 列表） */
   colHidden: string[];
+  /** 每列的多选 / 颜色开关 */
+  colMeta: Record<string, { multi: boolean; color: boolean }>;
+  /** 改某一列的多选 / 颜色 */
+  onColFlag: (field: string, key: 'multi' | 'color', on: boolean) => void;
   /** 用户手动拖过的列宽（field → px）。没拖过的列用默认值 */
   colWidths: Record<string, number>;
   onToggleCol: (field: string, show: boolean) => void;
@@ -4554,8 +4645,23 @@ function ListView({
     ⛔ 以前这五列的候选是五套算法（有的只有定义表、有的干脆没有候选），
     于是"同样的操作在不同列能不能做"全靠运气。现在一处算、五列共用。
   */
+  /*
+    列元数据的两个开关（多选 / 颜色），读取都走这两条 ——
+    ⛔ 不要在五个 case 里各写一遍 `colMeta[f]?.multi === true`：
+    写五遍就会漏改（正是前几轮反复出现的"新判据没在所有入口落实"）。
+  */
+  const multiOf = (f: string) => colMulti(colMeta, f);
+  const colorOfField = (f: string) => colColorOn(colMeta, f);
+  /** 点一个候选值：单选=赋值/清空，多选=加/删 */
+  const pickVal = (t: Task, f: string, id: string) =>
+    onPatchField(t.id, { [f]: toggleFieldVal(t, f, id, multiOf(f)) } as Partial<Task>);
+  /** 清空这一列：单选存空串，多选存空数组 */
+  const clearVal = (t: Task, f: string) =>
+    onPatchField(t.id, { [f]: multiOf(f) ? [] : '' } as Partial<Task>);
+
   const unionOpts = (
     defs: { id: string; name: string; color?: string }[],
+    /** 返回单个值；多值列用 \u0000 分隔（它在正常文本里不会出现） */
     fromTask: (t: Task) => string,
     withColor: boolean,
   ) => {
@@ -4567,11 +4673,14 @@ function ListView({
       out.push({ id: d.id, label: d.name || d.id, color: withColor ? d.color : undefined });
     }
     for (const r of allRows || []) {
-      const v = (fromTask(r.task) || '').trim();
-      if (!v || seen.has(v)) continue;
-      seen.add(v);
-      /* 数据里有、定义表里没有的：原样显示（认不出来比认错好） */
-      out.push({ id: v, label: v, color: undefined });
+      const rawV = fromTask(r.task) || '';
+      for (const one of String(rawV).split('\u0000')) {
+        const v = one.trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        /* 数据里有、定义表里没有的：原样显示（认不出来比认错好） */
+        out.push({ id: v, label: v, color: undefined });
+      }
     }
     return out;
   };
@@ -4586,6 +4695,8 @@ function ListView({
     几十条任务时扫色点比逐行读名字快得多。
   */
   const assigneeOpts = unionOpts(assigneeDefs || [], (t) => t.assignee || '', true);
+  /* 标签候选：定义表 ∪ 数据（与类型/分组同一判据） */
+  const tagOpts = unionOpts(tagDefs || [], (t) => (t.tags || []).join('\u0000'), true);
 
   /** 行内单元格：按 field 分发，新增列只改这一处 */
   const cellFor = (field: SortField, t: Task) => {
@@ -4607,7 +4718,10 @@ function ListView({
         );
       case 'id':
         return <span className="tb-lc c-id" key={field}>{t.id}</span>;
-      case 'group':
+      case 'group': {
+        const gVals = fieldVals(t, 'group');
+        const gMulti = multiOf('group');
+        const gColor = colorOfField('group');
         /*
           分组列：点一下就地填/改分组名。
 
@@ -4629,12 +4743,24 @@ function ListView({
               />
             ) : null}
             <SinglePick
-              cur={t.group || <span className="tb-ldim">—</span>}
-              title={t.group || '点击设置分组'}
+              cur={gVals.length > 0
+                ? <span className="tb-ltags">{gVals.map((v) => (
+                    <TagChip key={v} id={v} defs={groupDefs || []} noColor={!gColor} />
+                  ))}</span>
+                : <span className="tb-ldim">—</span>}
+              /*
+                单选且只有一个值时才显示圆点；多选时每个 chip 自己带色，
+                再叠一个圆点就成了"两个颜色指示器指着同一件事"。
+              */
+              dot={!gMulti && gVals.length === 1 && gColor
+                ? (groupDefs || []).find((d) => d.id === gVals[0])?.color || undefined
+                : undefined}
+              title={gVals.length > 0 ? gVals.join('、') : '点击设置分组'}
               options={groupOpts}
-              onPick={(id) => onPatchField(t.id, { group: id })}
-              clearLabel={t.group ? '不分组（清掉）' : undefined}
-              onClear={t.group ? () => onPatchField(t.id, { group: '' }) : undefined}
+              multi={gMulti}
+              onPick={(id) => pickVal(t, 'group', id)}
+              clearLabel={gVals.length > 0 ? (gMulti ? '清空分组' : '不分组（清掉）') : undefined}
+              onClear={gVals.length > 0 ? () => clearVal(t, 'group') : undefined}
               kindName="分组"
               /*
                 不指定颜色（传空串），让 addGroup 去取**第一个还没人用的**。
@@ -4653,6 +4779,7 @@ function ListView({
             />
           </span>
         );
+      }
       case 'title': {
         /* 锁定只在标题列显示时才算 —— 标题列被隐藏就别白跑 */
         /* 传 store：isDone 要认自定义流程的完成态（不能写死 'done'） */
@@ -4723,17 +4850,27 @@ function ListView({
           </span>
         );
       }
-      case 'assignee':
+      case 'assignee': {
+        const vals = fieldVals(t, 'assignee');
+        const multi = multiOf('assignee');
+        const showColor = colorOfField('assignee');
         return (
           <span className="tb-lc c-assignee" key={field}>
             <SinglePick
-              cur={t.assignee ? '@' + t.assignee : <span className="tb-ldim">未认领</span>}
-              dot={t.assignee ? (assigneeDefs || []).find((d) => d.id === t.assignee)?.color || undefined : undefined}
+              cur={vals.length > 0
+                ? <span className="tb-ltags">{vals.map((v) => (
+                    <TagChip key={v} id={v} defs={assigneeDefs || []} noColor={!showColor} />
+                  ))}</span>
+                : <span className="tb-ldim">未认领</span>}
+              dot={!multi && vals.length === 1 && showColor
+                ? (assigneeDefs || []).find((d) => d.id === vals[0])?.color || undefined
+                : undefined}
               title="点击改认领人"
               options={assigneeOpts}
-              onPick={(id) => onPatchField(t.id, { assignee: id })}
-              clearLabel={t.assignee ? '取消认领' : undefined}
-              onClear={t.assignee ? () => onPatchField(t.id, { assignee: '' }) : undefined}
+              multi={multi}
+              onPick={(id) => pickVal(t, 'assignee', id)}
+              clearLabel={vals.length > 0 ? (multi ? '清空认领人' : '取消认领') : undefined}
+              onClear={vals.length > 0 ? () => clearVal(t, 'assignee') : undefined}
               kindName="认领人"
               /*
                 新建 = 建一条定义（带颜色）+ 挂到当前行。
@@ -4750,17 +4887,25 @@ function ListView({
             />
           </span>
         );
-      case 'type':
+      }
+      case 'type': {
         /*
           类型单元格：点开就地改这一条的类型。
           摆在这儿而不是只在详情里 —— 归类是一次看一批、顺手改一批的动作，
           逐条点开详情改，二十条就得开关二十次。
         */
+        const vals = fieldVals(t, 'type');
+        const multi = multiOf('type');
+        const showColor = colorOfField('type');
         return (
           <span className="tb-lc c-type" key={field}>
             <SinglePick
-              cur={typeName(typeDefs, t.type) || <span className="tb-ldim">—</span>}
-              dot={t.type ? typeColor(typeDefs, t.type) : undefined}
+              cur={vals.length > 0
+                ? <span className="tb-ltags">{vals.map((v) => (
+                    <TagChip key={v} id={v} defs={typeDefs || []} noColor={!showColor} />
+                  ))}</span>
+                : <span className="tb-ldim">—</span>}
+              dot={!multi && vals.length === 1 && showColor ? typeColor(typeDefs || [], vals[0]) : undefined}
               title="点击改任务类型"
               /*
                 候选 = **定义表 ∪ 数据**。两头都不能省：
@@ -4769,22 +4914,18 @@ function ListView({
                   · 只从数据去重 → 刚新建、还没挂到任何任务上的类型选不到
               */
               options={typeOpts}
-              onPick={(id) => onToggleType(t.id, id)}
-              clearLabel={t.type ? '清成「未分类」' : undefined}
+              multi={multi}
+              onPick={(id) => pickVal(t, 'type', id)}
+              clearLabel={vals.length > 0 ? '清成「未分类」' : undefined}
               /*
-                ⛔ 清空传**空串**，不能传 NOTYPE（'__notype__'）。
+                ⛔ 清空传**空串 / 空数组**，不能传 NOTYPE（'__notype__'）。
 
-                toggleType 的语义是「点当前值 = 摘掉」：
-                `type: t.type === typeId ? '' : typeId`。
-                传 NOTYPE 时两边不等 → 直接把 **哨兵值写进任务数据**。
-
-                后果：typeName 查不到定义 → 界面上这一列显示成一串
+                NOTYPE 是**筛选用的哨兵**，写进任务数据的话
+                typeName 查不到定义 → 界面上这一列显示成一串
                 '__notype__'，而不是"未分类"。那正是前几轮反复修的
-                "显示原始哨兵"类 bug，这次是统一改造时自己引进来的。
-
-                传 '' 才对：不等 → 赋值为 ''（真正的未分类）。
+                "显示原始哨兵"类 bug。
               */
-              onClear={t.type ? () => onToggleType(t.id, '') : undefined}
+              onClear={vals.length > 0 ? () => clearVal(t, 'type') : undefined}
               kindName="类型"
               /*
                 新建后**立刻挂到这一行**。
@@ -4805,17 +4946,49 @@ function ListView({
             />
           </span>
         );
-      case 'tags':
+      }
+      case 'tags': {
+        /*
+          标签走**与类型/分组同一套组件**（SinglePick），不再独用 InlineTags。
+
+          ⛔ 以前它是五列里唯一的多选列、也是唯一用另一个组件的列：
+          于是"增删改色"在标签这儿和别处不是一个东西 ——
+          加一个能力要在两套组件里各写一遍，漏一处就是"别处能用这儿不能"。
+
+          现在它和别的列只差一个 `multi` 开关（而且这个开关用户还能关掉）：
+          关掉之后标签就是单选，跟类型一模一样。
+        */
+        const vals = fieldVals(t, 'tags');
+        const multi = multiOf('tags');
+        const showColor = colorOfField('tags');
         return (
           <span className="tb-lc c-tags" key={field}>
-            <InlineTags
-              cur={t.tags || []}
-              defs={tagDefs}
-              title="点击改标签（可多选）"
-              onPick={(id) => onToggleTag(t.id, id)}
+            <SinglePick
+              cur={vals.length > 0
+                ? <span className="tb-ltags">{vals.map((v) => (
+                    <TagChip key={v} id={v} defs={tagDefs || []} noColor={!showColor} />
+                  ))}</span>
+                : <span className="tb-ldim">—</span>}
+              title="点击改标签"
+              options={tagOpts}
+              multi={multi}
+              onPick={(id) => pickVal(t, 'tags', id)}
+              clearLabel={vals.length > 0 ? '清空标签' : undefined}
+              onClear={vals.length > 0 ? () => clearVal(t, 'tags') : undefined}
+              kindName="标签"
+              onCreate={async (name) => {
+                const id = await onCreateTag(name, '');
+                if (id) pickVal(t, 'tags', id);
+              }}
+              onRename={onRenameTag}
+              /* 颜色关掉时不给改色入口：显示了也没用 */
+              onColor={showColor ? onTagColor : undefined}
+              onRemove={onRemoveTag}
+              onPickColor={showColor ? onPickColor : undefined}
             />
           </span>
         );
+      }
       case 'summary':
         return (
           <span className="tb-lc c-summary" key={field}>
@@ -4937,7 +5110,9 @@ function ListView({
           {colsOpen ? (
             <ColSettingsPop
               hidden={colHidden}
+              meta={colMeta}
               onToggle={onToggleCol}
+              onFlag={onColFlag}
               onResetWidths={onResetWidths}
             />
           ) : null}

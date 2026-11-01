@@ -281,6 +281,32 @@ export function normalizeTask(raw) {
     这类值不报错，只在界面上表现为"有个东西但看不见它是什么"。
   */
   const str = (v, d) => (typeof v === 'string' ? v.trim() : d);
+  /*
+    ⛔ **多选列的值是个数组**，归一化不能把它转成字符串。
+
+    原来 type / group / assignee 一律走 `str(v, '')` ——
+    而 str 只认字符串，遇到数组返回默认值 ''。
+    于是"把类型设成多选 → 选了两个值 → 写盘 → 读回来"这个闭环里，
+    值被归一化**悄悄抹成空**：界面上这一列变回空白，
+    而用户明明刚选了两个。不报错，只是"东西没了"。
+
+    现在：数组 → 逐元素 trim + 去空 + 去重；单值 → 还是原来的字符串。
+    两种形态都保留，由"这一列是不是多选"决定界面怎么渲染。
+  */
+  const oneOrMany = (v) => {
+    if (Array.isArray(v)) {
+      const seen = new Set();
+      const out = [];
+      for (const x of v) {
+        const t = str(x, '');
+        if (!t || seen.has(t)) continue;
+        seen.add(t);
+        out.push(t);
+      }
+      return out;
+    }
+    return str(v, '');
+  };
   /* id 列表：去空白 + 去空 + 去重（排序保持原顺序） */
   const ids = (v) => {
     if (!Array.isArray(v)) return [];
@@ -365,14 +391,20 @@ export function normalizeTask(raw) {
 
       归一化这里兜一层：哨兵 → ''（真正的未分类）。
     */
-    type: str(t.type, '') === NOTYPE ? '' : str(t.type, ''),
+    /*
+      NOTYPE 是**筛选用的哨兵**，不该出现在任务数据里（见上）。
+      数组形态时逐元素清掉哨兵。
+    */
+    type: Array.isArray(t.type)
+      ? oneOrMany(t.type).filter((x) => x !== NOTYPE)
+      : (str(t.type, '') === NOTYPE ? '' : str(t.type, '')),
     /*
       分组列。相当于以前的"手动分组"，但**只是一列值** ——
       不再有组记录、也不再有父子层级；归拢关系由通用的"按列分组"机制表达。
       这样更通用：它能和任意其它列一起组成多层级（先按分组、再按状态…），
       而旧的手动组只能一层层嵌套，且两种层级会并存打架。
     */
-    group: str(t.group, ''),
+    group: oneOrMany(t.group),
     /* 同 deps：空标签会渲染成零宽度的 chip，重复标签会显示两个一样的 */
     tags: ids(t.tags),
     reporter: str(t.reporter, '') || 'manual',
@@ -381,7 +413,7 @@ export function normalizeTask(raw) {
       不 trim 的话它会被当成"有人认领" —— 于是界面显示一个空白的名字，
       筛"未认领"筛不到它，分组和统计里各多一个空白认领人。
     */
-    assignee: str(t.assignee, '') || null,
+    assignee: oneOrMany(t.assignee) || null,
     createdAt: num(t.createdAt, 0),
     updatedAt: num(t.updatedAt, 0),
     history: Array.isArray(t.history) ? t.history.filter((h) => h && typeof h === 'object') : [],
@@ -549,6 +581,104 @@ export const LIST_COLUMNS = [
   { field: 'updatedAt', label: '更新', kind: 'time' },
 ];
 
+/*
+  **列的"多选 / 颜色"开关**（腾讯文档同款：由用户勾选决定这一列长什么样）。
+
+  ⛔ 以前这两件事是**写死在代码里的**：
+    · 只有标签列是多选，其它列永远是单选
+    · 有没有色块取决于"这一列碰巧有没有定义表"
+
+  于是用户想让"类型"能多选、想让"标签"不显示颜色，都做不到 ——
+  明明是同一类列，能力却由代码决定而不是由用户决定。
+
+  现在改成配置：**勾了多选就真的能选多个，勾了颜色就真的有色块**。
+*/
+/**
+ * 允许多选的列。
+ *
+ * ⛔ 状态和优先级**不**在里面，不是漏了：
+ *   · 状态走的是状态机（applyTransition 校验流转、写历史），
+ *     一条任务同时处于两个状态在语义上就是错的，
+ *     而且"这条到底做完了没有"会失去唯一答案
+ *   · 优先级是固定枚举排序用的，多个优先级没有意义
+ */
+export const MULTI_OK = ['assignee', 'type', 'tags', 'group'];
+
+/** 允许配色的列（这些列有定义表，颜色落在定义上） */
+export const COLOR_OK = ['status', 'assignee', 'type', 'tags', 'group'];
+
+/** 默认：标签多选；这几列默认带色（与改造前的行为一致，老用户无感） */
+export const DEFAULT_COL_META = {
+  priority: { multi: false, color: false },
+  status: { multi: false, color: true },
+  assignee: { multi: false, color: true },
+  type: { multi: false, color: true },
+  tags: { multi: true, color: true },
+  group: { multi: false, color: true },
+};
+
+/**
+ * 归一化列元数据。
+ * 只认**当前存在且可配**的列，废弃列不会让配置凭空多一条；
+ * 开关再按该列是否支持收紧（给状态列传 multi:true 也不会生效）。
+ */
+export function normalizeColMeta(raw) {
+  const out = {};
+  const src = raw && typeof raw === 'object' ? raw : {};
+  for (const f of [...MULTI_OK, ...COLOR_OK]) {
+    const v = src[f] && typeof src[f] === 'object' ? src[f] : {};
+    const def = DEFAULT_COL_META[f] || { multi: false, color: false };
+    out[f] = {
+      multi: MULTI_OK.indexOf(f) >= 0 ? (v.multi === true || (v.multi === undefined && def.multi === true)) : false,
+      color: COLOR_OK.indexOf(f) >= 0 ? (v.color === true || (v.color === undefined && def.color === true)) : false,
+    };
+  }
+  return out;
+}
+
+/**
+ * 点一个候选值之后，这一列**该存成什么**。
+ *
+ * 单选：直接是这个值；点当前值 = 清空（''）。
+ * 多选：在数组里加/删；取不到就加，已有就删。
+ *
+ * ⛔ 读的时候要兼容**两种历史形态**：
+ * 这一列可能一直是单值字符串，也可能被设成多选之后存成了数组
+ * （以及"设成多选、又关掉"之后残留的数组）。只看一种会漏掉另一种。
+ */
+export function toggleFieldVal(task, field, id, multi) {
+  const raw = task && typeof task === 'object' ? task[field] : undefined;
+  const cur = Array.isArray(raw) ? raw.slice() : (raw === undefined || raw === null || raw === '' ? [] : [raw]);
+  if (!multi) {
+    return cur.length > 0 && String(cur[0]) === String(id) ? '' : String(id);
+  }
+  const i = cur.indexOf(id);
+  if (i >= 0) cur.splice(i, 1);
+  else cur.push(id);
+  return cur;
+}
+
+/** 某一列当前选了哪些值（去哨兵、去空），用于多选单元格的 chip 渲染 */
+export function fieldVals(task, field) {
+  const raw = task && typeof task === 'object' ? task[field] : undefined;
+  const arr = Array.isArray(raw) ? raw : (raw === undefined || raw === null || raw === '' ? [] : [raw]);
+  return arr.map((x) => String(x)).filter((x) => x && x !== UNASSIGNED && x !== NOTYPE && x !== NOGROUP);
+}
+
+/** 某一列是否多选（缺省按默认表） */
+export function colMulti(meta, field) {
+  const m = meta && typeof meta === 'object' ? meta[field] : null;
+  if (m && typeof m.multi === 'boolean') return m.multi;
+  return (DEFAULT_COL_META[field] || {}).multi === true;
+}
+
+/** 某一列是否带色（缺省按默认表） */
+export function colColorOn(meta, field) {
+  const m = meta && typeof meta === 'object' ? meta[field] : null;
+  if (m && typeof m.color === 'boolean') return m.color;
+  return (DEFAULT_COL_META[field] || {}).color === true;
+}
+
 /** 一列的筛选条件。四种字段全放在一个对象里 —— 换来的是一份判空、一份清空 */
 export function emptyColFilter() {
   return { text: '', values: [], min: '', max: '' };
@@ -644,17 +774,36 @@ export function colRawValues(task, field) {
       而筛选这边原来用 ''、分组那边用 '__none__' ——
       同一件事两个哨兵，各改一处就会错（筛得到但分组分不出，或反之）。
     */
-    case 'assignee': return [task.assignee || UNASSIGNED];
+    case 'assignee': {
+      const v = task.assignee;
+      if (Array.isArray(v)) return v.length > 0 ? v : [task.assignee || UNASSIGNED];
+      return [task.assignee || UNASSIGNED];
+    }
     /* 空类型落到 NOTYPE 哨兵，这样"未分类"才筛得到 */
-    case 'type': return [task.type || NOTYPE];
-    case 'tags': return task.tags || [];
+    case 'type': {
+      const v = task.type;
+      if (Array.isArray(v)) return v.length > 0 ? v : [task.type || NOTYPE];
+      return [task.type || NOTYPE];
+    }
+    /*
+      标签**以及任何被设成多选的列**存的是数组。
+
+      ⛔ 不能只给 tags 开这个口子：把"类型"设成多选之后，
+      task.type 也会变成数组，这里若还当单值处理，
+      那条任务在这一列会显示成一串逗号、筛选也命中不了。
+    */
+    case 'tags': return Array.isArray(task.tags) ? task.tags : (task.tags ? [task.tags] : []);
     /*
       分组改成 enum 之后**必须**在这里返回值。
       漏掉的话该列筛选 100% 失效（候选为空、勾了也不命中），
       而界面只显示"没有符合条件的任务"——看着像真的没有。
       未分组落 NOGROUP 哨兵，这样"没归类的"能筛出来集中处理。
     */
-    case 'group': return [task.group || NOGROUP];
+    case 'group': {
+      const v = task.group;
+      if (Array.isArray(v)) return v.length > 0 ? v : [task.group || NOGROUP];
+      return [task.group || NOGROUP];
+    }
     default: return [];
   }
 }
