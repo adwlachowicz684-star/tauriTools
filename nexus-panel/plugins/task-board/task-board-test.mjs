@@ -3567,7 +3567,12 @@ t('守卫：filterSummary 按列取定义表（含分组）', (() => {
 t('审查：分组改名要连带改任务上的 group（任务上存的是名字）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const i = app.indexOf('const renameGroup');
-  const seg = app.slice(i, i + 1200);
+  /*
+    窗口要够大：函数前面加了长注释说明三种结果，
+    切 1200 字符只能切到注释，判据恒假（红）——
+    不是代码有问题，是守卫自己的窗口开小了。
+  */
+  const seg = app.slice(i, i + 3600);
   return /group:\s*nm/.test(seg) && /updatedAt:\s*Date\.now\(\)/.test(seg);
 })());
 
@@ -3620,7 +3625,8 @@ t('守卫：MCP 列表带定义表', (() => {
 
 /* 三张表都要带，漏一张就有一个字段仍然靠猜 */
 t('守卫：defs 含三张定义表', (() => {
-  const seg = rsSeg('fn defs_of', 400);
+  /* 同上：defs_of 里加了注释，窗口要盖到 json! 块 */
+  const seg = rsSeg('fn defs_of', 1400);
   return !rsSrc
     || (seg.indexOf('groupDefs') >= 0 && seg.indexOf('typeDefs') >= 0 && seg.indexOf('tagDefs') >= 0);
 })());
@@ -3692,6 +3698,146 @@ t('守卫：行 cursor 不是 pointer（整行不再可点）', (() => {
   const i = css.indexOf('.tb-lrow {');
   const seg = css.slice(i, i + 400);
   return seg.indexOf('cursor: pointer') < 0;
+})());
+
+
+/* ============================================================ 深度审查：分组改名（本轮） */
+
+/*
+ * **改名不改正在生效的筛选** → 命中 0 条。
+ *
+ * 实测（jsdom 真跑）：筛着「登录」，把「登录」改成「登录改」之后
+ *   落盘定义：登录改, 支付
+ *   任务分组：登录改, 登录改, 支付
+ *   列表行数：**0**，chip 还写着「分组：登录」
+ *
+ * 用户看到空列表只会以为"改完名任务没了" —— 查错方向完全反了。
+ *
+ * 删分组那边早就清了筛选，改名这边漏了：
+ * 标签改名不需要这一步（标签改的是 name、id 不变，筛选存 id），
+ * 但**分组的 id 就是名字**，改名等于换了 id。
+ */
+t('守卫：分组改名要顺带改掉正在生效的筛选', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const renameGroup');
+  const seg = app.slice(i, i + 3200);
+  return seg.indexOf('setColFilters') >= 0
+    && /values\.map\(\(x\) => \(x === id \? nm : x\)\)/.test(seg);
+})());
+
+/*
+ * **改成已存在的分组名** → 两条同 id 的定义。
+ *
+ * 实测：把「登录」改成「支付」
+ *   落盘(立即)：支付, 支付（2 条）
+ *   刷新后    ：支付（1 条）  ← normalizeGroupDefs 的 seen 表去重，**静默少一条**
+ *   任务：3 条全变成「支付」（两个分组被合并，而用户没要求合并）
+ *   toast 还写着"已改名"
+ *
+ * 新建那边早就挡了同名（addGroup 有 dupe 提示），改名这边漏了 ——
+ * 同一类判据两个入口不一致。
+ */
+t('守卫：分组改名撞同名要挡住（否则定义被静默去重）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const renameGroup');
+  const seg = app.slice(i, i + 3200);
+  return seg.indexOf("const taken = defs.some((d) => d.id === nm && d.id !== id);") >= 0
+    && seg.indexOf("res.state = 'dupe'") >= 0;
+})());
+
+/*
+ * **裸名字分组改名后 id 与任务上的值对不上**。
+ *
+ * 实测：给没有定义的「设置」改名为「设置改」
+ *   落盘定义：{ id: '设置', name: '设置改' }   ← id 用旧名、name 用新名
+ *   任务分组：设置改
+ * 于是下拉里按 name 显示"设置改"，点它筛的却是 group='设置' → **0 条**。
+ *
+ * 分组的 id 就是名字，两者必须一起改成新名。
+ */
+t('守卫：补建分组定义时 id 用新名（不能还留旧名）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const renameGroup');
+  const seg = app.slice(i, i + 3200);
+  /* 原来错的是 `defs.push({ id, name: nm` —— id 是旧名 */
+  return /defs\.push\(\{ id: nm, name: nm/.test(seg)
+    && !/defs\.push\(\{ id, name: nm/.test(seg);
+})());
+
+/* ============================================================ 深度审查：面板的 Escape（本轮） */
+
+/*
+ * 详情从 Modal 改成 <aside> 之后，**Escape 关闭悄悄丢了** ——
+ * Escape 是 Modal 组件自带的，不在 DetailPanel 里。
+ *
+ * 面板是"看一眼就该能关掉"的东西，键盘上却没有退出的办法，只能去点 ✕。
+ * 现在没有入口能打开它（等右键菜单），所以暂时看不出来 ——
+ * 但那是"还没接上"，不是"不需要"。
+ */
+t('守卫：详情面板监听 Escape 关闭（且输入框内不关）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function DetailPanel({');
+  const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
+  return seg.indexOf("e.key !== 'Escape'") >= 0
+    && seg.indexOf("tag === 'textarea'") >= 0;   /* 输入框内交给 DraftInput */
+})());
+
+/* ============================================================ 深度审查：defs 要含状态清单（本轮） */
+
+/*
+ * defs 的目的就是"让 AI 看见有哪些可选值"，而**状态是最该让 AI 看见的一项**：
+ *
+ * MCP schema 里 status 的 enum 是写死的那 7 个（静态 schema，改不了），
+ * 用户自定义过流程之后 schema 就成了假话 ——
+ * AI 照它填，自定义状态永远用不上；猜一个填，Rust 这边其实是接受的。
+ * AI 没有任何途径知道这份数据认哪些状态。
+ */
+t('守卫：defs 含当前生效的状态清单', rsHas('"statuses":  statuses_for(store)'));
+
+
+/* ============================================================ 守卫：类名必须都有定义（本轮） */
+
+/*
+ * ⛔ 这条是**被真实事故逼出来的**：
+ *
+ * 一个后来的提交（只打算补两个漏定义的类）整段覆盖了 styles.css，
+   而它基于的是**改动之前的副本** —— 于是右侧面板那一整块样式
+   （.tb-viewarea / .tb-dpanel / .tb-dpanel-head / .tb-dpanel-body）
+   被悄悄抹掉了。App.tsx 里 `<aside className="tb-dpanel">` 照常渲染，
+   但**一个样式都没有** —— 面板渲染成一坨没排版的内容。
+
+   这类"改了又被悄悄盖回去"的问题，靠肉眼看不出来（代码里类名是对的），
+   只有"用得到的类名必须在 CSS 里有定义"这条能抓住。
+
+   所以这里做一条通用的：App.tsx / Settings.tsx 里出现的每一个 tb-*
+   类名，styles.css 都必须定义过。
+*/
+t('守卫：用到的 tb-* 类名都在 styles.css 里有定义', (() => {
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  const defined = new Set([...css.matchAll(/\.(tb-[a-z0-9-]+)/g)].map((m) => m[1]));
+  const missing = new Set();
+  for (const f of ['App.tsx', 'Settings.tsx']) {
+    const fp = path.join(dir, f);
+    if (!fs.existsSync(fp)) continue;
+    const src = fs.readFileSync(fp, 'utf8');
+    /*
+      静态字符串类名：className="a b" / className={'a b'} / className={`a ${x}`}
+
+      ⛔ 字符类里**必须有双引号**。
+      实测踩到：只写 ['`]（单引号 + 反引号）时，全文件 404 处 className
+      只抽到 25 处 —— 恰好全是单引号的，而 `className="tb-dpanel"`
+      是双引号，压根没进集合。于是注入"删掉面板样式"的缺陷**照样全绿**。
+
+      这是第 7 个"守卫自己写错了、靠反向验证才发现的"。
+    */
+    for (const m of src.matchAll(/className=\{?\s*['"\`]([^'"\`]*)['"\`]/g)) {
+      for (const c of m[1].split(/\s+/)) {
+        if (c && c.startsWith('tb-') && !defined.has(c)) missing.add(c);
+      }
+    }
+  }
+  if (missing.size) console.log('    未定义:', [...missing].join(', '));
+  return missing.size === 0;
 })());
 
 /* ---------------- 汇总 ---------------- */

@@ -810,7 +810,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "tb_list_tasks",
             "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）。响应里的 defs 带了三张定义表（groupDefs/typeDefs/tagDefs）——建任务或改字段前先读它，才知道分组与类型有哪些可选值",
             json!({
-                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部" },
+                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部。这个 enum 只是**默认值**——用户可能自定义过流程，实际生效的状态看响应里的 defs.statuses" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "按优先级过滤" },
                 "tag":      { "type": "string", "description": "按标签过滤" },
                 "assignee": { "type": "string", "description": "按认领人过滤；传 \"__none__\" 查未认领" },
@@ -845,7 +845,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "流转/修改任务：认领、开工、提交审查、通过、打回、退回、改字段",
             json!({
                 "id":       { "type": "string", "description": "任务 id" },
-                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）" },
+                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）。enum 只是默认值，实际生效的状态看 tb_list_tasks 返回的 defs.statuses" },
                 "assignee": { "type": "string", "description": "认领人；已被他人认领会被拒绝；空串=释放认领" },
                 "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
@@ -1151,10 +1151,22 @@ fn push_history(task: &mut Map<String, Value>, by: &str, action: &str, note: &st
  * 让 AI 先看见再填，比事后纠正便宜得多。
  */
 fn defs_of(store: &Value) -> Value {
+    /*
+      ⛔ statuses 不能省 —— 它是**最该让 AI 看见**的一项。
+
+      MCP schema 里 status 的 enum 是写死的那 7 个默认值，
+      那是**静态 schema**，改不了。用户自定义过流程之后：
+        · AI 照 schema 填，只能填那 7 个里的 → 自定义状态永远用不上
+        · AI 猜一个填进去，Rust 这边按 statuses_for 校验是**接受**的
+      于是 schema 成了假话，而 AI 没有任何途径知道这份数据认哪些状态。
+
+      把当前生效的状态清单放进 defs，AI 才有得查。
+    */
     json!({
         "groupDefs": store.get("groupDefs").cloned().unwrap_or(json!([])),
         "typeDefs":  store.get("typeDefs").cloned().unwrap_or(json!([])),
         "tagDefs":   store.get("tagDefs").cloned().unwrap_or(json!([])),
+        "statuses":  statuses_for(store),
     })
 }
 
