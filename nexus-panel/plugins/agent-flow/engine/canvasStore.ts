@@ -281,6 +281,18 @@ export function redactNodes(nodes: unknown[]): unknown[] {
  * 不脱敏的话导出画布就会把密钥带出去。
  */
 export function redactEnv(vars: Record<string, string>): Record<string, string> {
+  return blankEnvVars(vars);
+}
+
+/**
+ * 「变量名像不像密钥」这份判据的**唯一**实现。
+ *
+ * env.vars 与 MCP 服务的 env 是两处不同的明文存放地，以前各写了一份循环 ——
+ * 逐字相同，但那就是两份：将来给一处加判据（比如"空值不用挖"），
+ * 另一处不会跟着改，而两边都写着"密钥一律不落盘"。
+ * 不加判据今天看不出来（两份一样），加了才分叉。
+ */
+export function blankEnvVars(vars: Record<string, string> | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(vars ?? {})) {
     out[k] = looksLikeSecretName(k) ? '' : v;
@@ -296,10 +308,28 @@ export function redactEnv(vars: Record<string, string>): Record<string, string> 
  * 而界面上那句"不要在这里填密钥"还挂着 ——
  * 承诺了会挡、实际没挡，属于"忘了就出事"。
  */
+/**
+ * 这个参数卡装不装得下密钥。
+ *
+ * 数字卡 / 布尔卡装不下 —— 值是 4096 或 true，剥掉它没有任何安全收益，
+ * 只有"每次保存都把用户填的值清空"。而名字里带 token / key 的**数字**参数
+ * 是常态（maxTokens、token_limit、retry_count），
+ * 于是表现为：填了 4096 → 存盘 → 回来是空的 → 再填 → 还是空的。
+ *
+ * 与节点侧同口径：sanitize 的 blankSecretNamed 只挖字符串叶子，
+ * 数字与布尔原样留下（见那里的说明）。
+ *
+ * 只有 text（含老数据没标 valueType 的）才按名字判。
+ */
+function paramHoldsSecret(p: CanvasParam | undefined): boolean {
+  if (p?.valueType === 'num' || p?.valueType === 'bool') return false;
+  return looksLikeSecretName(String(p?.name ?? ''));
+}
+
 export function redactParams(list: CanvasParam[] | undefined): CanvasParam[] {
   return (list ?? []).map((p) => ({
     ...p,
-    value: looksLikeSecretName(String(p?.name ?? '')) ? '' : String(p?.value ?? ''),
+    value: paramHoldsSecret(p) ? '' : String(p?.value ?? ''),
   }));
 }
 
@@ -315,11 +345,7 @@ export function redactParams(list: CanvasParam[] | undefined): CanvasParam[] {
  * 而本文件顶部写的是「密钥一律不落盘」—— 承诺了会挡、实际没挡。
  */
 function redactServerEnv(env: Record<string, string> | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env ?? {})) {
-    out[k] = looksLikeSecretName(k) ? '' : v;
-  }
-  return out;
+  return blankEnvVars(env);
 }
 
 /**
