@@ -49,6 +49,20 @@ const ACC = 'js/accel.js';
 const hostC = code('js/host.js');
 const sdkC = code('js/plugin-sdk.js');
 const shellC = code('js/shell-shortcuts.js');
+const cfgC = code('js/plugin-config.js');
+
+/*
+ * 手拼字面量的判据。
+ *
+ * ⚠️ 第一版写的是 /nexus:\$\{/，对 plugin-config.js 的
+ *    `nexus:plugin-cfg:${id}` **永远为真**（判绿）——
+ *    因为 `nexus:` 与 ${ 之间还隔着 plugin-cfg。
+ *    实测把它改回手拼，守卫照样 42/0 全绿，是一条假绿。
+ *
+ * 所以判据必须允许中间有内容，但不能跨出这个字符串字面量
+ * （用 [^`'"\n] 隔断，免得把别处的无关代码也算进来）。
+ */
+const HAND_ROLLED = /nexus:[^`'"\n]*\$\{/;
 
 t('共享模块存在', (() => { try { src(ACC); return true; } catch { return false; } })());
 
@@ -123,10 +137,17 @@ const { storeKey, storePrefix, pluginCfgKey } = await import('./js/plugin-store.
 t('共享模块存在', (() => { try { src('js/plugin-store.js'); return true; } catch { return false; } })());
 
 /* 两侧都不得再手写字面量 —— 这是"岔开"的唯一入口 */
-t('host.js 不再手拼 nexus:<id>: 字面量', !/nexus:\$\{/.test(hostC));
-t('plugin-sdk.js 不再手拼 nexus:<id>: 字面量', !/nexus:\$\{/.test(sdkC));
+t('host.js 不再手拼 nexus:<id>: 字面量', !HAND_ROLLED.test(hostC));
+t('plugin-sdk.js 不再手拼 nexus:<id>: 字面量', !HAND_ROLLED.test(sdkC));
+t('plugin-config.js 不再手拼 nexus:<id>: 字面量', !HAND_ROLLED.test(cfgC));
 t('host.js 引用共享模块', /from\s+'\.\/plugin-store\.js'/.test(hostC));
 t('plugin-sdk.js 引用共享模块', /from\s+'\.\/plugin-store\.js'/.test(sdkC));
+t('plugin-config.js 引用共享模块', /from\s+'\.\/plugin-store\.js'/.test(cfgC));
+
+/* 卸载清理（host.js 侧）与配置读写（plugin-config.js 侧）用的是**同一个**
+   cfg 键函数 —— 两边拼法岔开就是"卸载了配置还在"，且不报错。 */
+t('cfg 键两侧同源（卸载清理 = 配置读写的键）',
+  /pluginCfgKey/.test(hostC) && /pluginCfgKey/.test(cfgC));
 
 /* 两侧调用形态必须一致 —— 只 import 了还不够，
    一边用 storeKey(id,k) 一边用别的写法照样会岔开。 */
@@ -165,9 +186,14 @@ t('pluginCfgKey 与 store 分开存', pluginCfgKey('demo') === 'nexus:plugin-cfg
 /* 元断言 */
 {
   const probe = "localStorage.getItem(`nexus:${manifest.id}:${payload.k}`)";
-  t('判据认得出手拼字面量（合成样本）', /nexus:\$\{/.test(stripCommentsJs(probe)));
+  t('判据认得出手拼字面量（合成样本）', HAND_ROLLED.test(stripCommentsJs(probe)));
+  /* 上面那条假绿的回归测试：中间还隔着 plugin-cfg 的写法也必须认出来 */
+  t('判据认得出"中间还有内容"的写法（合成样本）',
+    HAND_ROLLED.test(stripCommentsJs('const KEY = (id) => `nexus:plugin-cfg:${id}`;')));
   t('判据不误伤注释里的说明（已剥注释）',
-    !/nexus:\$\{/.test(stripCommentsJs('// 键形如 `nexus:${id}:${k}`，见共享模块')));
+    !HAND_ROLLED.test(stripCommentsJs('// 键形如 `nexus:${id}:${k}`，见共享模块')));
+  t('共享模块的调用不算手拼（不误伤调用方）',
+    !HAND_ROLLED.test(stripCommentsJs('const k = storeKey(id, k);')));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
