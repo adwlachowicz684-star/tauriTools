@@ -19756,6 +19756,132 @@ group('BUG 135 · FreeMind 图标与外框导成 XMind 会丢，必须数出来�
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 185：导出 .xmind 时画布主题 / 天盘图布局会回退默认，却一句不说
+   ------------------------------------------------------------------ */
+group('BUG 185 · 画布主题与「天盘图」导成 XMind 会回退默认，必须数出来且说出来');
+
+{
+  const X185 = await import('./xmind.js');
+  const { DEFAULT_THEME, DEFAULT_LAYOUT, LAYOUTS } = await import('./themes.js');
+  const S185 = (extra) => ({ id: 'sh1', title: 'T', theme: DEFAULT_THEME, layout: DEFAULT_LAYOUT,
+    content: JSON.stringify({ root: { data: { id: 'nR', text: '根' }, children: [] } }), ...extra });
+
+  // ① 非默认主题 → 1（XMind 的主题是另一套体系，私有主题名一个都写不进去）
+  eq(X185.xmindLossCount([S185({ theme: 'classic' })]).theme, 1,
+    '★ 画布换成非默认主题 → 1');
+  eq(X185.xmindLossCount([S185({ theme: 'wire' })]).theme, 1, '换个主题同样算');
+  eq(X185.xmindLossCount([S185({ theme: DEFAULT_THEME })]).theme, 0,
+    '★ 默认主题不算（否则每次导出都虚报一句「主题装不下」）');
+  eq(X185.xmindLossCount([S185({ theme: '   ' })]).theme, 0, '空白主题名不算（等于没设）');
+  {
+    // 脏数据只要求"不抛"——它确实不是默认值，导出去也确实会回退，所以按 1 计是对的
+    let crashed = null;
+    let v = -1;
+    try { v = X185.xmindLossCount([S185({ theme: 123 })]).theme; } catch (e) { crashed = e; }
+    ok(!crashed, '★ 非字符串主题不抛（脏数据不能让整个导出崩掉）', crashed ? String(crashed) : '');
+    eq(v, 1, '数字主题按"非默认"计（它真会回退，不能算虚报）');
+  }
+  eq(X185.xmindLossCount([S185({ theme: null })]).theme, 0, 'null 不算');
+
+  /*
+   * ② 布局：只有「天盘图」这类**没有 XMind structureClass 对应值**的才丢。
+   *    right / filetree / structure / fish-bone 四个写得出 structureClass，
+   *    一律计 layout 就会每次虚报 —— 与上面"默认主题不算"是同一个坑。
+   */
+  eq(X185.xmindLossCount([S185({ layout: 'tianpan' })]).layout, 1,
+    '★ 天盘图 → 1（没有对应的 structureClass，会回退成思维导图）');
+  for (const ly of ['right', 'filetree', 'structure', 'fish-bone']) {
+    eq(X185.xmindLossCount([S185({ layout: ly })]).layout, 0,
+      `★ ${ly} 不算（写得进 structureClass，不该虚报）`);
+  }
+  eq(X185.xmindLossCount([S185({ layout: DEFAULT_LAYOUT })]).layout, 0, '默认布局不算');
+  eq(X185.xmindLossCount([S185({ layout: 'tianpan', theme: 'classic' })]).theme, 1,
+    '主题与布局互不影响（各数各的）');
+  eq(X185.xmindLossCount([S185({ layout: 'tianpan', theme: 'classic' })]).layout, 1, '同上');
+
+  // ③ 多画布按张累加
+  eq(X185.xmindLossCount([S185({ theme: 'classic' }), S185({ theme: DEFAULT_THEME })]).theme, 1,
+    '★ 多画布只数"非默认"的那几张');
+  eq(X185.xmindLossCount([S185({ theme: 'classic' }), S185({ theme: 'wire' })]).theme, 2,
+    '两张都非默认 → 2');
+
+  // ④ 坏内容不算（与 fmIcons 同一口径：它本来也导不出东西）
+  eq(X185.xmindLossCount([{ id: 'x', theme: 'classic', content: '{坏' }]).theme, 0,
+    '★ 坏内容不算（不能把导不出的画布也算成损失）');
+
+  /*
+   * ⑤ 行为实据：真的写一份 .xmind，**剥掉无损快照**再读回来 ——
+   *    那正是"文件被别的 XMind 软件打开/重写过"的真实场景，
+   *    也是 xmindLossCount 存在的理由（快照自己认得，别人不认）。
+   */
+  {
+    const sheets = [{ id: 'sh1', title: 'T', theme: 'classic', layout: 'tianpan',
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根' }, children: [] } }) }];
+    const J = async (strip) => {
+      const blob = await X185.writeXMind(sheets, 'sh1');
+      const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+      if (!strip) return await X185.readXMind(new Blob([buf]));
+      const m = await X185.zipRead(buf);
+      const rest = [...m.entries()].filter(([n]) => n !== 'kityminder.json');
+      const z = await X185.zipWrite(rest.map(([name, data]) => ({ name, data })));
+      return await X185.readXMind(new Blob([z]));
+    };
+    const keep = await J(false);
+    eq(keep.sheets[0].theme, 'classic', '对照：带无损快照时主题保住（说明丢的是"别人打开"这一档）');
+    eq(keep.sheets[0].layout, 'tianpan', '对照：带无损快照时天盘图也保住');
+    const zen = await J(true);
+    eq(zen.sheets[0].theme, DEFAULT_THEME,
+      '★ 剥掉快照后主题回退成默认（这就是那 1 处损失）');
+    eq(zen.sheets[0].layout, DEFAULT_LAYOUT,
+      '★ 剥掉快照后天盘图回退成思维导图');
+  }
+
+  // ⑥ 布局清单要全在测试里过一遍（themes.js 加了新布局时这里会提醒补齐）
+  {
+    const vals = LAYOUTS.map((x) => x.value);
+    const seen = ['default', 'right', 'filetree', 'structure', 'fish-bone', 'tianpan'];
+    ok(vals.every((v) => seen.includes(v)),
+      '★ LAYOUTS 的每个取值都在本组测过（新增布局要回来补用例）', vals.join(','));
+  }
+
+  // ⑦ 导出侧必须说出来
+  {
+    const isrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const i = isrc.indexOf('async function exportXMind');
+    ok(i > 0, '能定位 exportXMind');
+    const body = isrc.slice(i, i + 3600);
+    for (const k of ['theme', 'layout']) {
+      ok(body.includes('loss.' + k), `★ 提示带上 ${k} 这一类（不数就等于没修）`);
+    }
+    ok(body.includes('张画布的主题未能写入'), '主题那句说清楚是什么丢了');
+    ok(body.includes('张画布的布局未能写入'), '布局那句同上');
+    const lt = body.slice(body.indexOf('const lossTotal'),
+      body.indexOf('if (lost > 0 || lossTotal > 0)'));
+    ok(body.indexOf('const lossTotal') > 0 && lt.includes('loss.theme') && lt.includes('loss.layout'),
+      '★ 两项都进了 lossTotal（否则整段提示不出现）');
+    /*
+     * 原因必须与其余两类分开：这两项是"画布外观回退"，不是"节点数据丢了"。
+     * 混成一句会让人以为内容被改坏，照着去删附件、白忙一场。
+     */
+    ok(body.includes('画布主题只有本工具认得'), '主题的原因要单独说');
+    ok(body.includes('没有对应的 XMind 结构类'), '布局的原因要单独说');
+  }
+
+  // ⑧ 默认值只能从 themes.js 取，不许在 xmind.js 里抄第二份
+  {
+    const xsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    ok(/import \{[\s\S]*?\} from '\.\/themes\.js'/.test(xsrc),
+      '★ xmind.js 从 themes.js 取默认外观（抄第二份必然与面板脱节）');
+    const i = xsrc.indexOf('export function xmindLossCount');
+    const body = xsrc.slice(i, i + 1200);
+    ok(/SHEET_THEME_DEFAULT/.test(body), '★ 判据用 SHEET_THEME_DEFAULT（不是别处的同名常量）');
+    ok(/SHEET_LAYOUT_DEFAULT/.test(body), '★ 判据用 SHEET_LAYOUT_DEFAULT');
+    ok(/LayoutToStructure\[ly\]/.test(body),
+      '★ 布局判据查 LayoutToStructure（有映射的那几个保得住，不能一律计）');
+  }
+}
+
 group('假边框四条边必须用同一个坐标系（相对 .mm-body）');
 
 {

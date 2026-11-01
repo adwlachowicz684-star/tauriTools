@@ -2934,7 +2934,7 @@ async function gcOrphanAssets(quiet = false) {
        */
       const lost = wanted - packed;
       const loss = xmind.xmindLossCount(workbook.sheets)
-        || { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0 };
+        || { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0, theme: 0, layout: 0 };
       /*
        * BUG 135：FreeMind 的标记图标 / 外框（data.fmIcons / data.fmCloud，
        * BUG 127 起从别人的 .mm 收进来）在 XMind 里**没有对应字段** ——
@@ -2946,7 +2946,7 @@ async function gcOrphanAssets(quiet = false) {
        *   · 图标 / 外框  → XMind 根本没有这两个概念（只有 .mm 带得走）
        */
       const lossTotal = loss.blocked + loss.unlinked + loss.images
-        + loss.fmIcons + loss.fmCloud;
+        + loss.fmIcons + loss.fmCloud + loss.theme + loss.layout;
       if (lost > 0 || lossTotal > 0) {
         const seg = [];
         if (lost > 0) seg.push(`${lost} 个附件未能打包`);
@@ -2955,6 +2955,8 @@ async function gcOrphanAssets(quiet = false) {
         if (loss.images > 0) seg.push(`${loss.images} 张图片未能写入`);
         if (loss.fmIcons > 0) seg.push(`${loss.fmIcons} 个标记图标未能写入`);
         if (loss.fmCloud > 0) seg.push(`${loss.fmCloud} 个外框未能写入`);
+        if (loss.theme > 0) seg.push(`${loss.theme} 张画布的主题未能写入`);
+        if (loss.layout > 0) seg.push(`${loss.layout} 张画布的布局未能写入`);
         const why = [];
         if (lost + loss.blocked + loss.unlinked + loss.images > 0) {
           why.push('XMind 每个节点只能挂 1 个附件、1 张图片');
@@ -2962,6 +2964,13 @@ async function gcOrphanAssets(quiet = false) {
         if (loss.fmIcons + loss.fmCloud > 0) {
           why.push('XMind 没有标记图标 / 外框的对应字段，这两项只有 .mm 带得走');
         }
+        /*
+         * BUG 185：这两项与上面两类**原因各不相同**，所以也必须分开说 ——
+         * 混进「XMind 没有对应字段」那一句，用户会以为是数据丢了，
+         * 实际是"在别的 XMind 软件里打开时，画布外观会回退成默认"。
+         */
+        if (loss.theme > 0) why.push('XMind 的主题是另一套体系，画布主题只有本工具认得');
+        if (loss.layout > 0) why.push('该布局没有对应的 XMind 结构类，会回退成思维导图');
         status(`XMind 已导出，但有 ${seg.join('、')}（${why.join('；')}）`, true);
       } else if (packed > 0) status(`XMind 已导出（含 ${packed} 个附件）`);
     } catch (e) {
