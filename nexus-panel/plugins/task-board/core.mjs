@@ -388,7 +388,14 @@ export function normalizeTask(raw) {
     assignee: oneOrMany(t.assignee) || null,
     createdAt: num(t.createdAt, 0),
     updatedAt: num(t.updatedAt, 0),
-    history: Array.isArray(t.history) ? t.history.filter((h) => h && typeof h === 'object') : [],
+    /*
+      读盘也截断到 HISTORY_CAP：写侧才截断的话，
+      AI 写进来的 2000 条会在**用户动它之前**一直全量渲染。
+    */
+    history: (() => {
+      const h = Array.isArray(t.history) ? t.history.filter((x) => x && typeof x === 'object') : [];
+      return h.length > HISTORY_CAP ? h.slice(h.length - HISTORY_CAP) : h;
+    })(),
   };
 }
 
@@ -475,10 +482,24 @@ export function normalizeStore(raw) {
     const x = Number(v);
     return Number.isFinite(x) ? x : d;
   };
+  const tasks = Array.isArray(s.tasks) ? s.tasks.map(normalizeTask) : [];
+  /*
+    nextId 还要**再看库里实际最大的编号**。
+
+    只信 nextId 的话，一旦它落后于数据（AI 自建 id、导入、手改文件），
+    新建任务就会撞号。这里把它提升到"最大编号 + 1"，
+    让持久化出去的 nextId 也是对的（导出/导入后不会重新撞）。
+  */
+  let maxSeq = 0;
+  for (const t of tasks) {
+    const m = /^tb-(\d+)$/.exec(String(t && t.id || ''));
+    if (m) { const v = Number(m[1]); if (Number.isFinite(v) && v > maxSeq) maxSeq = v; }
+  }
+  const nextId = Math.max(numOr(s.nextId, 0) > 0 ? Math.floor(numOr(s.nextId, 0)) : 1, maxSeq + 1);
   return {
     v: numOr(s.v, 1),
-    nextId: numOr(s.nextId, 0) > 0 ? Math.floor(numOr(s.nextId, 0)) : 1,
-    tasks: Array.isArray(s.tasks) ? s.tasks.map(normalizeTask) : [],
+    nextId,
+    tasks,
     agents: Array.isArray(s.agents)
       ? s.agents
           .filter((a) => a && typeof a.id === 'string' && a.id)
@@ -1005,7 +1026,15 @@ export function colFilterValues(field, rows, statusIds, typeIds, tagIds, groupId
     */
     case 'status': return statusIds && statusIds.length ? [...statusIds] : [...STATUSES];
     case 'assignee': {
-      const names = [...new Set(tasks.map((t) => t.assignee).filter(Boolean))];
+      /*
+        ⛔ 认领人**可以是多值的**（"多选"勾上之后）。
+
+        原来 `tasks.map(t => t.assignee)` —— 多值时数组整个进 Set，
+        下拉里出现一个「张三,李四」的怪项，而张三、李四作为
+        单独的候选反而没了（只有一条多值任务时尤其明显）。
+        展开成单值，与标签列同一判据。
+      */
+      const names = [...new Set(tasks.flatMap((t) => (Array.isArray(t.assignee) ? t.assignee : [t.assignee])).filter(Boolean))];
       names.sort((a, b) => a.localeCompare(b));
       // 未认领置尾：它是"没人"，不该顶在名单前面。哨兵与 colRawValues 一致
       return [...names, UNASSIGNED];
@@ -1067,7 +1096,10 @@ export function colFilterValues(field, rows, statusIds, typeIds, tagIds, groupId
       未分组必须能筛：把没归类的找出来集中处理，是建完分组紧接着要做的事。
     */
     case 'group': {
-      const fromData = (tasks || []).map((t) => t.group).filter(Boolean);
+      /* 同上：分组也可以是多值，展开成单值再并集 */
+      const fromData = (tasks || [])
+        .flatMap((t) => (Array.isArray(t.group) ? t.group : [t.group]))
+        .filter(Boolean);
       const fromDefs = Array.isArray(groupIds) ? [...groupIds] : [];
       const out = [];
       const seen = new Set();
@@ -1567,14 +1599,41 @@ export function allTags(tasks, limit = 0) {
 export function nextTaskId(store) {
   const nRaw = Number(store.nextId);
   const n = Number.isFinite(nRaw) && nRaw > 0 ? Math.floor(nRaw) : 1;
-  return `tb-${String(n).padStart(4, '0')}`;
+  /*
+    ⛔ 必须再看一眼**库里实际最大的编号**：nextId 可能已经落后于数据。
+
+    什么时候会落后：AI 经 MCP/HTTP 自建 id、导入、手改文件、
+    或 nextId 本身被写坏了。这时按 nextId 生成会和已有任务**撞号** ——
+    而 id 是依赖、历史、筛选、详情的键，两条同 id 任务意味着：
+      · 改一条会动到另一条（findIndex 只找第一个）
+      · 依赖指向不明、详情打开的是错的那条
+    静默产生重复主键，比报错糟得多。
+  */
+  let max = 0;
+  for (const t of (store && store.tasks) || []) {
+    const m = /^tb-(\d+)$/.exec(String(t && t.id || ''));
+    if (m) { const v = Number(m[1]); if (Number.isFinite(v) && v > max) max = v; }
+  }
+  const use = Math.max(n, max + 1);
+  return `tb-${String(use).padStart(4, '0')}`;
 }
+
+/**
+ * 历史上限。**读盘和写盘两侧都要做**。
+ *
+ * ⛔ 原来只在 pushHistory（写侧）做，normalizeTask 不做 ——
+ * 于是 AI 写入 2000 条历史后读进来就是 2000 条：
+ *   · 详情面板 `hist.map` 全部渲染 → 打开就卡
+ *   · 而如果用户只是看、不改，永远不触发写盘截断，就一直卡
+ * 写侧有上限、读侧没有，是同一件事的两份不一致判据。
+ */
+export const HISTORY_CAP = 100;
 
 /** 追加一条历史（前端写盘前调用；上限与 Rust 的 HISTORY_CAP 对齐） */
 export function pushHistory(task, by, action, note, at) {
   const hist = Array.isArray(task.history) ? [...task.history] : [];
   hist.push({ at: at || Date.now(), by: by || 'manual', action: action || 'note', note: note || '' });
-  if (hist.length > 100) hist.splice(0, hist.length - 100);
+  if (hist.length > HISTORY_CAP) hist.splice(0, hist.length - HISTORY_CAP);
   return { ...task, history: hist, updatedAt: at || Date.now() };
 }
 
@@ -1880,15 +1939,29 @@ export function statsOf(store, now = Date.now()) {
     estimateByStatus[t.status] = Math.round(
       ((estimateByStatus[t.status] || 0) + (Number(t.estimate) || 0)) * 100,
     ) / 100;
-    /* 类型分布：未分类也单独计 —— 那是"还没归类的工作量"，排期时要看得见 */
-    const tk = t.type || NOTYPE;
-    byType[tk] = (byType[tk] || 0) + 1;
+    /*
+      类型分布：未分类也单独计 —— 那是"还没归类的工作量"，排期时要看得见。
+
+      ⛔ 类型**可以是多值的**（"多选"勾上之后）。
+
+      原来直接 `byType[t.type]` —— 多值时数组被当成键，
+      JS 会把它转成 "dev,bug" 这样的**合成键**：
+        · 分布图里多出一个不存在的类别「dev,bug」
+        · 而真正的 dev / bug 各自少算 1
+      于是"按类型看工作量"整个失真，界面上还看不出为什么。
+      标签那列本来就是多值（逐个计入），这里要与它同一判据。
+    */
+    for (const tk of (Array.isArray(t.type) ? t.type : [t.type || NOTYPE])) {
+      byType[tk] = (byType[tk] || 0) + 1;
+    }
     byPriority[t.priority] = (byPriority[t.priority] || 0) + 1;
-    const who = t.assignee || UNASSIGNED;
-    const ae = byAssignee.get(who) || { id: who, count: 0, est: 0 };
-    ae.count += 1;
-    ae.est = Math.round((ae.est + (Number(t.estimate) || 0)) * 100) / 100;
-    byAssignee.set(who, ae);
+    /* 认领人分布：同样可以是多值（一条任务两个人一起做） */
+    for (const who of (Array.isArray(t.assignee) ? t.assignee : [t.assignee || UNASSIGNED])) {
+      const ae = byAssignee.get(who) || { id: who, count: 0, est: 0 };
+      ae.count += 1;
+      ae.est = Math.round((ae.est + (Number(t.estimate) || 0)) * 100) / 100;
+      byAssignee.set(who, ae);
+    }
     for (const tag of t.tags) tagCnt.set(tag, (tagCnt.get(tag) || 0) + 1);
     /*
       ⛔ 没有 updatedAt（老数据 / AI 直接写进 JSON 的）**不算"陈旧"**：
