@@ -111,6 +111,7 @@
     "test:plugin-admit": "node plugin-admit-test.mjs",
     "test:plugin-config-save": "node plugin-config-save-test.mjs",
     "test:plugin-installer": "node plugin-installer-test.mjs",
+    "test:plugin-identity": "node plugin-identity-test.mjs",
     "test:plugin-panel-actions": "node plugin-panel-actions-test.mjs",
     "test:plugin-store-client": "node plugin-store-client-test.mjs",
     "test:plugin-theme": "node plugin-theme-test.mjs",
