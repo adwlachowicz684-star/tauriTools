@@ -1,0 +1,9 @@
+{
+  "id": "demo-iframe",
+  "name": "示例·原生沙箱",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "kind": "app",
+  "icon": "◇",
+  "description": "不依赖构建工具的 iframe 插件"
+}
