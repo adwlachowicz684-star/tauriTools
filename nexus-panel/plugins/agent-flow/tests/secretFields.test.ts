@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SECRET_PATHS, stripSecrets, hadInlineSecret,
-  redactHeadersText, headersHaveSecret, looksLikeSecretHeader,
+  redactHeadersText, headersHaveSecret, looksLikeSecretHeader, isTemplateOnlyHeaderValue,
 } from '../engine/sanitize';
 import { parseHeaders } from '../engine/headers';
 import { redactNodes } from '../engine/canvasStore';
@@ -339,4 +339,71 @@ test('守卫: cookie 进了密钥名字清单，且全 engine 只有一份', () 
       `${f} 里出现了内联的密钥 hints 副本 —— 判据只此一份，抄一份必然漂移`,
     );
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* 纯引用不是明文密钥                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ⛔ `Authorization: Bearer {{login.token}}` 是一句**引用**，不是密钥字面量。
+ *
+ * 一视同仁地挖掉它，等于把用户的配置永久抹掉，且全程不报错：
+ * 存档里留下 `Authorization:` 空值，界面提示"这部分不会被存进去"
+ * （用户以为这就是预期），下次跑不带凭据 → 401，排查方向变成"令牌对不对"。
+ */
+test('纯引用: 模板值必须留着（不能当成密钥挖掉）', () => {
+  const samples = [
+    'Authorization: Bearer {{login.token}}',
+    'X-Api-Key: {{cfg.key}}',
+    'Cookie: {{session}}',
+    'Authorization: ${env.KEY}',
+    'X-Token: {{a}}',
+  ];
+  for (const s of samples) {
+    assert.equal(redactHeadersText(s), s, `纯引用不该被挖: ${JSON.stringify(s)}`);
+    assert.equal(headersHaveSecret(s), false, `纯引用不该报"有密钥": ${JSON.stringify(s)}`);
+  }
+});
+
+test('纯引用: `Bearer ` 前缀不算明文（用户就是这么写的）', () => {
+  assert.equal(redactHeadersText('Authorization: BEARER {{a}}'), 'Authorization: BEARER {{a}}');
+  assert.equal(isTemplateOnlyHeaderValue('Bearer {{a}}'), true);
+});
+
+/* 反例：真密钥照挖 —— 只盯"模板要留"的话，一律不挖也能通过 */
+test('纯引用: 真密钥照挖（反例，别把防线整个撤掉）', () => {
+  for (const s of ['Authorization: Bearer abc', 'X-Api-Key: k', 'Cookie: session=1']) {
+    assert.equal(redactHeadersText(s).split(':')[1].trim(), '', `真密钥必须挖空: ${s}`);
+    assert.equal(headersHaveSecret(s), true);
+  }
+});
+
+/*
+ * 反例：混合值按保守方向照挖。
+ * `Bearer sk-{{x}}` 里那个 `sk-` 是实打实的明文，不能因为含模板就放过。
+ */
+test('纯引用: 模板里掺了明文 → 照挖（保守方向）', () => {
+  assert.equal(redactHeadersText('Authorization: Bearer sk-{{x}}'), 'Authorization:');
+  assert.equal(redactHeadersText('Authorization: abc {{y}}'), 'Authorization:');
+  assert.equal(headersHaveSecret('Authorization: Bearer sk-{{x}}'), true);
+});
+
+/* ---------- 源码守卫 ---------- */
+
+/*
+ * headersHaveSecret 与 redactHeadersText 必须同口径。
+ * 一个说"有密钥"、另一个却一个字没挖（或反过来），
+ * 界面提示就跟事实对不上 —— 那种提示比没有更费排查。
+ */
+test('源码守卫: headersHaveSecret 与 redactHeadersText 同判据', () => {
+  const src = readSrc('engine/sanitize.ts');
+  const at = src.indexOf('export function headersHaveSecret');
+  assert.ok(at >= 0, '找不到 headersHaveSecret');
+  const body = src.slice(at, at + 400);
+  assert.ok(/isTemplateOnlyHeaderValue/.test(body),
+    'headersHaveSecret 没有排除纯引用 —— 会与 redactHeadersText 口径分叉');
+  const at2 = src.indexOf('export function redactHeadersText');
+  assert.ok(/isTemplateOnlyHeaderValue/.test(src.slice(at2, at2 + 400)),
+    'redactHeadersText 没有排除纯引用 —— 会挖掉用户的模板');
 });

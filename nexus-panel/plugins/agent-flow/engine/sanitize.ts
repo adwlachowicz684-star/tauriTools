@@ -111,6 +111,34 @@ export function looksLikeSecretHeader(name: string): boolean {
 }
 
 /**
+ * 值是不是**纯粹引用上游** —— 形如 `{{login.token}}` / `${env.KEY}`。
+ *
+ * ================= 为什么必须留着它们 =================
+ *
+ * 脱敏的目的是"密钥字面量不进存档"。而 `{{login.token}}` 不是密钥字面量，
+ * 它是一句**引用**：真正的值在运行时才从上游产出（上游又多半走连接库，
+ * 令牌本来就不在画布里）。
+ *
+ * 一视同仁地挖掉，后果是**用户配置被永久抹掉且不报错**：
+ *   · 存档里存的是 `Authorization:` 空值
+ *   · 界面提示的是「这部分不会被存进去」—— 用户以为这就是预期
+ *   · 下次跑，请求不带凭据 → 401，而排查方向是"令牌对不对"
+ * 也就是说，模板**丢了**，且全程没有任何东西指出"你丢的是模板"。
+ *
+ * `Bearer ` 是 Authorization 的标准前缀，本身不含任何密钥信息，
+ * 所以 `Bearer {{x}}` 同样算纯引用；但 `Bearer sk-{{x}}` 里那个 `sk-`
+ * 是实打实的明文，按保守方向照挖。
+ */
+export function isTemplateOnlyHeaderValue(value: string): boolean {
+  const rest = String(value ?? '')
+    .replace(/\{\{[^}]*\}\}/g, '')
+    .replace(/\$\{[^}]*\}/g, '')
+    .replace(/^bearer\b/i, '')
+    .trim();
+  return rest === '';
+}
+
+/**
  * 挖掉请求头里像密钥的那些值。
  *
  * 只挖值、留名字（`Authorization:` 还在）——
@@ -124,6 +152,7 @@ export function looksLikeSecretHeader(name: string): boolean {
 export function redactHeadersText(text: string): string {
   return mapHeaderLines(text, (l) => {
     if (!looksLikeSecretHeader(l.name)) return l.raw;
+    if (isTemplateOnlyHeaderValue(l.value)) return l.raw;
     const i = l.raw.indexOf(':');
     return i < 0 ? l.raw : l.raw.slice(0, i + 1);
   });
@@ -132,7 +161,12 @@ export function redactHeadersText(text: string): string {
 /** 请求头里有没有像密钥的值 —— 用于提示用户「这部分不会被存进去」 */
 export function headersHaveSecret(text: string): boolean {
   for (const l of parseHeaderLines(text)) {
-    if (l.value && looksLikeSecretHeader(l.name)) return true;
+    /*
+     * 口径必须与 redactHeadersText **完全一致**（纯引用不算），
+     * 否则界面提示「这部分不会被存进去」而实际一个字都没挖 ——
+     * 提示一旦与事实不符，比没有提示更费排查。
+     */
+    if (l.value && !isTemplateOnlyHeaderValue(l.value) && looksLikeSecretHeader(l.name)) return true;
   }
   return false;
 }
