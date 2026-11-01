@@ -1917,6 +1917,49 @@ body.tb-col-resizing {
   gap: 3px;
   flex-wrap: wrap;
 }
+
+/*
+  候选行上的颜色入口：默认只显示**一个当前色的小圆点**。
+
+  ⛔ 原来是 12 个色点全部平铺 —— 而面板宽度只有 190px，
+  12 × 13px + gap ≈ 204px **溢出后换行**，
+  于是"按任务类型筛选"面板的主体变成一片色块矩阵（7 个类型 × 每组十来个），
+  勾选框和候选名全被淹没。筛选是主职，改色只是顺手的便利，
+  便利功能把主功能挤没了等于没做。
+
+  折叠成一个点之后，一行是 [勾选框] [名字] [色点] [改名] [删]，紧凑能读。
+*/
+.tb-lpop-colors {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+/*
+  展开态：占**整行**（换到下一行），容得下 12 个色点。
+  ⛔ 不换到整行的话色板会和勾选框挤在一行，把名字压成省略号 ——
+  而"这个候选叫什么"恰恰是筛选时唯一要看的信息。
+*/
+.tb-lpop-colors.open {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+}
+
+.tb-lpop-dot {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, transparent);
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  flex: none;
+}
+
+/* 色板展开时该行允许换行（否则色板挤不进 190px 的面板） */
+.tb-lpop-item.is-colors {
+  flex-wrap: wrap;
+}
 /*
   色块本身是**纯色**（不能走主题变量）——
   它就是让用户挑颜色的，跟着主题变就没法挑了。

@@ -1912,11 +1912,20 @@ ${dir}
             onToggleType={toggleType}
             onRenameType={(id, name) => setTypeDef(id, { name })}
             /*
-              默认色与列头筛选面板里的新建保持一致（都取调色板的第 7 个）。
-              两处不同的话，同一个"新建类型"动作在不同入口得到不同颜色，
-              看着像两条互不相干的规则。
+              ⛔ 不指定颜色（传空串），让 createType 去取**第一个还没人用的**。
+
+              原来是写死 TAG_COLORS[6]（#3b82f6），
+              而实测本项目里 #3b82f6 已被「调研」占用 ——
+              靠 createType 内部"传进来的色已被占用就换一个"才没撞上。
+
+              依赖下游兜底不是不行，但传一个**明知会被占用**的值是自相矛盾的：
+              读代码的人会以为"这里就是要这个色"，而实际不是。
+              传空串直接把意图说清楚：我不指定，你来挑。
+
+              两个入口（这里 + 列头筛选面板）现在都走同一判据，
+              不会出现"同一个新建动作在不同地方得到不同颜色"。
             */
-            onCreateType={(name) => createType(name, TAG_COLORS[6])}
+            onCreateType={(name) => createType(name, '')}
             onTypeColor={(id, color) => setTypeDef(id, { color })}
             onRemoveType={removeType}
             tagDefs={store.tagDefs}
@@ -3485,7 +3494,9 @@ function ColFilterPop({
 }) {
   const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
   const [newName, setNewName] = useState('');
-  const [newColor, setNewColor] = useState(TAG_COLORS[6]);
+  const [newColor, setNewColor] = useState(TAG_COLORS[0]);
+  const [newColorOpen, setNewColorOpen] = useState(false);
+
   const isTag = col.field === 'tags';
   const isType = col.field === 'type';
   const isGroup = col.field === 'group';
@@ -3497,6 +3508,28 @@ function ColFilterPop({
   */
   const defCol = isType ? 'type' : isGroup ? 'group' : isTag ? 'tag' : '';
   const defs = isType ? (typeDefs || []) : isGroup ? (groupDefs || []) : (tagDefs || []);
+
+  /*
+    默认色**不能写死某一档**（原来是 TAG_COLORS[6] = '#3b82f6'）。
+
+    实测本项目：7 个类型已占用 #84cc16 #22c55e #f59e0b #ef4444
+    #3b82f6 #a855f7 #ec4899 —— 而 TAG_COLORS[6] 恰好是 #3b82f6，**已被占用**，
+    于是默认新建出一个和「调研」同色的类型，而配色的唯一作用就是一眼区分。
+
+    ⛔ 放在 useEffect 里而不是 useState 的惰性初值里：
+    defs 在这个函数里是**下面几行**才声明的（isType / isGroup 之后），
+    惰性初值会立刻求值 → `Cannot access 'defs' before initialization`，
+    整个面板直接白屏。（这正是之前那个 TDZ 报错的成因之一。）
+
+    ⛔ 只在"已被占用"时才 set —— 用户手动挑的色若没被占用就保持不动，
+    不会来回触发。
+  */
+  useEffect(() => {
+    const used = new Set((defs || []).map((d) => d.color));
+    if (!used.has(newColor)) return;
+    const free = TAG_COLORS.find((c) => !used.has(c));
+    if (free) setNewColor(free);
+  }, [defs, newColor]);
   const colorOf = (id: string) => defs.find((d) => d.id === id)?.color || '';
   const onCreate = isType ? onCreateType : isGroup ? onCreateGroup : onCreateTag;
   const onColor = isType ? onTypeColor : isGroup ? onGroupColor : onTagColor;
@@ -3505,6 +3538,21 @@ function ColFilterPop({
   const kindName = isType ? '类型' : isGroup ? '分组' : '标签';
   /* 正在改名的那一条（'' = 没在改）。标签与类型共用同一套输入 */
   const [editing, setEditing] = useState('');
+  /*
+    ⛔ 色板**默认折叠成一个当前色的小圆点**，点它才展开。
+
+    原来每个候选项都渲染完整的 12 色调色板 ——
+    而面板只有 190px 宽，12 个 13px 色点（含 gap）约 204px，**溢出后换行**，
+    于是"按任务类型筛选"这个面板的主体变成了一片色块矩阵：
+    7 个类型 × 每组十来个色点，把勾选框和名字全淹没了。
+
+    这是**筛选**面板，主职是"勾哪些值"，改色只是顺手提供的便利。
+    便利功能把主功能挤没了，等于没做。
+
+    折叠后：一行是 [勾选框] [名字] [当前色点] [改名] [删]，紧凑且一眼能读。
+    想改色时点那个色点才展开 —— 比原来多一次点击，但面板终于能用了。
+  */
+  const [colorFor, setColorFor] = useState('');
   /*
     「未分类」是哨兵值，不是定义表里的一条。
     给它摆上调色和删除按钮是骗人：改色改不到任何东西（没有定义可改），
@@ -3552,7 +3600,10 @@ function ColFilterPop({
           options.map((v) => {
             const on = filter.values.indexOf(v) >= 0;
             return (
-              <div key={v || '__none__'} className="tb-lpop-item">
+              <div
+                key={v || '__none__'}
+                className={'tb-lpop-item' + (colorFor === v ? ' is-colors' : '')}
+              >
                 <label className="tb-lpop-pick">
                   <input
                     type="checkbox"
@@ -3571,35 +3622,60 @@ function ColFilterPop({
                   那就丢掉了"一眼分类"这个作用。
                 */}
                 {defCol && !isSentinel(v) && onColor ? (
-                  <span className="tb-lpop-swatches">
-                    {TAG_COLORS.map((c) => (
+                  <span className={'tb-lpop-colors' + (colorFor === v ? ' open' : '')}>
+                    {colorFor === v ? (
+                      <>
+                      {TAG_COLORS.map((c) => (
                       <button
                         key={c}
                         type="button"
                         className={'tb-swatch' + (colorOf(v) === c ? ' on' : '')}
                         style={{ background: c }}
                         title={`把「${optionLabel(col.field, v, defs, flow)}」改成这个颜色`}
-                        onClick={() => onColor!(v, c)}
+                        onClick={() => {
+                          onColor!(v, c);
+                          /* 改完就收起：色板占一整行，不收起来会一直挡着下一项 */
+                          setColorFor('');
+                        }}
                       />
-                    ))}
-                    {/*
-                      取色器入口：固定调色板只有那几个色，
-                      要一个板子里没有的颜色（比如跟公司色号对齐）就只能靠它。
-                      拿到空串 = 用户取消，不改。
-                    */}
-                    {onPickColor ? (
+                      ))}
+                      {/*
+                        取色器入口：固定调色板只有那几个色，
+                        要一个板子里没有的颜色（比如跟公司色号对齐）就只能靠它。
+                        拿到空串 = 用户取消，不改。
+
+                        ⛔ 它必须在**展开态**里：折叠态下也渲染的话，
+                        每个候选行都会挂一个"＋"，既没有意义（点开才知道能选什么）
+                        又把行挤得更窄。
+                      */}
+                      {onPickColor ? (
+                        <button
+                          type="button"
+                          className="tb-swatch tb-swatch-more"
+                          title="用取色器选一个其他颜色"
+                          onClick={async () => {
+                            const hex = await onPickColor!(colorOf(v));
+                            if (hex) onColor!(v, hex);
+                            setColorFor('');
+                          }}
+                        >
+                          ＋
+                        </button>
+                      ) : null}
+                      </>
+                    ) : (
                       <button
                         type="button"
-                        className="tb-swatch tb-swatch-more"
-                        title="用取色器选一个其他颜色"
-                        onClick={async () => {
-                          const hex = await onPickColor!(colorOf(v));
-                          if (hex) onColor!(v, hex);
+                        className="tb-lpop-dot"
+                        style={{ background: colorOf(v) || '#78716c' }}
+                        title={`给「${optionLabel(col.field, v, defs, flow)}」改颜色`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          /* 再点一次收起（toggle），否则想取消展开只能去点别的地方 */
+                          setColorFor(colorFor === v ? '' : v);
                         }}
-                      >
-                        ＋
-                      </button>
-                    ) : null}
+                      />
+                    )}
                   </span>
                 ) : null}
                 {/*
@@ -3675,34 +3751,65 @@ function ColFilterPop({
                 if (!isComposing(e.nativeEvent) && e.key === 'Enter' && newName.trim()) {
                   onCreate!(newName.trim(), newColor);
                   setNewName('');
+                  /*
+                    建完把默认色挪到**下一个还没人用的**：
+                    连续建几个时不会都拿到同一个颜色。
+                    与新建类型 / 标签 / 状态统一判据。
+                  */
+                  const used = new Set((defs || []).map((d) => d.color));
+                  const free = TAG_COLORS.find((c) => !used.has(c));
+                  if (free) setNewColor(free);
+                  setNewColorOpen(false);
                 }
               }}
             />
-            <div className="tb-lpop-swatches">
-              {TAG_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className={'tb-swatch' + (newColor === c ? ' on' : '')}
-                  style={{ background: c }}
-                  title={`新${kindName}用这个颜色`}
-                  onClick={() => setNewColor(c)}
-                />
-              ))}
-              {onPickColor ? (
-                <button
-                  type="button"
-                  className="tb-swatch tb-swatch-more"
-                  title="用取色器选一个其他颜色"
-                  onClick={async () => {
-                    const hex = await onPickColor!(newColor);
-                    if (hex) setNewColor(hex);
-                  }}
-                >
-                  ＋
-                </button>
-              ) : null}
-            </div>
+            {/*
+              新建区的色板同样**折叠成一个色点**（与上面候选行一致的处理）。
+
+              ⛔ 12 个色点平铺在 190px 宽的面板里会换行成两排，
+              加上候选行原来的色板，整个面板就成了色块矩阵。
+
+              折叠后常见路径不变：输名字 → 回车 → 用默认色创建。
+              "默认色"取**第一个还没人用的**（与新建类型 / 标签 / 状态一致），
+              而不是写死某一档 —— 写死的话连续新建几个会拿到同一个颜色，
+              而配色的唯一作用就是一眼区分。
+            */}
+            {newColorOpen ? (
+              <div className="tb-lpop-swatches">
+                {TAG_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={'tb-swatch' + (newColor === c ? ' on' : '')}
+                    style={{ background: c }}
+                    title={`新${kindName}用这个颜色`}
+                    onClick={() => { setNewColor(c); setNewColorOpen(false); }}
+                  />
+                ))}
+                {onPickColor ? (
+                  <button
+                    type="button"
+                    className="tb-swatch tb-swatch-more"
+                    title="用取色器选一个其他颜色"
+                    onClick={async () => {
+                      const hex = await onPickColor!(newColor);
+                      if (hex) setNewColor(hex);
+                      setNewColorOpen(false);
+                    }}
+                  >
+                    ＋
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="tb-lpop-dot"
+                style={{ background: newColor }}
+                title={`新${kindName}的颜色（点击改）`}
+                onClick={() => setNewColorOpen(true)}
+              />
+            )}
           </div>
         ) : null}
         <div className="tb-lpop-foot">
