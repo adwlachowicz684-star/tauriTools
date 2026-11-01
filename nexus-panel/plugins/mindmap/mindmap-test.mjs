@@ -9055,18 +9055,27 @@ group('BUG 106 · 节点自定义样式不得在 XMind 往返中丢掉（键名�
   // ④ ★ 源码契约：StyleMap 不许改回那四个内核里不存在的键名
   //    这是本 BUG 的根因，也是它**从未被任何测试碰过**的原因
   {
+    /*
+     * BUG 187：早先这里是**文本锚点**断言 —— 在源码里找 `const StyleMap = [`
+     * 再切一片出来数键名。现在 StyleMap 从 `NODE_DATA_KEYS` 派生，直接对
+     * **真实值**断言：它验的是运行时那份表，改了实现写法（比如改成从矩阵
+     * 派生）不会假红，漏了键却一定红。
+     */
     const src = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
-    const i = src.indexOf('const StyleMap = [');
-    ok(i > 0, '能定位 StyleMap');
-    const body = src.slice(i, src.indexOf('];', i));
-    for (const k of ['background', 'node-stroke', 'node-stroke-width', 'node-radius',
-      'node-line-stroke', 'node-line-width', 'color', 'font-size', 'font-family', 'text-align']) {
-      ok(new RegExp("\\['" + k + "',").test(body), `StyleMap 含内核键 ${k}`);
+    const X = await import('./xmind.js');
+    const body = Object.fromEntries(X.StyleMap);
+    ok(Object.keys(body).length > 0, '能取到 StyleMap（已从 NODE_DATA_KEYS 派生）');
+    for (const [k, want] of [['background', 'svg:fill'], ['node-stroke', 'svg:stroke'],
+      ['node-stroke-width', 'svg:stroke-width'], ['node-radius', 'svg:corner-radius'],
+      ['node-line-stroke', 'line-color'], ['node-line-width', 'line-width'],
+      ['color', 'fo:color'], ['font-size', 'fo:font-size'],
+      ['font-family', 'fo:font-family'], ['text-align', 'fo:text-align']]) {
+      eq(body[k], want, `StyleMap 含内核键 ${k}`);
     }
-    ok(!/\['fill',/.test(body), "★ StyleMap 不得再出现 ['fill',（节点级是 background）");
-    ok(!/\['stroke',/.test(body), "★ 不得再出现 ['stroke',（是 node-stroke）");
-    ok(!/\['radius',/.test(body), "★ 不得再出现 ['radius',（是 node-radius）");
-    ok(!/\['forecolor',/.test(body), "★ 不得再出现 ['forecolor',（是 color）");
+    ok(!body.fill, '★ StyleMap 不得再出现 fill（节点级是 background）');
+    ok(!body.stroke, '★ 不得再出现 stroke（是 node-stroke）');
+    ok(!body.radius, '★ 不得再出现 radius（是 node-radius）');
+    ok(!body.forecolor, '★ 不得再出现 forecolor（是 color）');
     // 写侧 / 读侧都不得再读那三个面板状态键
     const bodyAll = src.slice(src.indexOf('function buildStyle'), src.indexOf('function parseZen'));
     ok(!/data\?\.bold|data\.bold\b/.test(bodyAll),
@@ -19882,6 +19891,131 @@ group('BUG 185 · 画布主题与「天盘图」导成 XMind 会回退默认，�
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 186：节点文字的垂直对齐走 XMind 私有键，导出后别人打开看不见
+   ------------------------------------------------------------------ */
+group('BUG 186 · 节点垂直对齐导成 XMind 走私有键，必须数出来且说出来');
+
+{
+  const X186 = await import('./xmind.js');
+  const S186 = (d) => ({ id: 'sh1', title: 'T', theme: null, layout: null,
+    content: JSON.stringify({ root: { data: { id: 'nR', text: '根', ...d }, children: [] } }) });
+
+  // ① 数得出来（垂直对齐写进的是私有键 nexusValign，别的软件不认）
+  eq(X186.xmindLossCount([S186({ 'vertical-align': 'top' })]).valign, 1,
+    '★ 节点文字靠上 → 1（nexusValign 是私有键，别的软件打开回居中）');
+  eq(X186.xmindLossCount([S186({ 'vertical-align': 'bottom' })]).valign, 1,
+    '靠下同样算');
+  eq(X186.xmindLossCount([S186({ 'vertical-align': 'middle' })]).valign, 0,
+    '★ 居中不算（那是视觉默认，丢了也看不出来，一律计 = 每次虚报）');
+  eq(X186.xmindLossCount([S186({ 'vertical-align': '   ' })]).valign, 0,
+    '空白不算（等于没设）');
+  eq(X186.xmindLossCount([S186({ 'vertical-align': null })]).valign, 0, 'null 不算');
+  {
+    let crashed = null;
+    let v = -1;
+    try { v = X186.xmindLossCount([S186({ 'vertical-align': 123 })]).valign; } catch (e) { crashed = e; }
+    ok(!crashed, '★ 非字符串不抛（脏数据不能让整个导出崩掉）', crashed ? String(crashed) : '');
+    eq(v, 1, '数字按"非默认"计（与 BUG 185 对主题的同口径）');
+  }
+
+  /*
+   * ② 没有附件的节点也要数得到。
+   *
+   * xmindLossCount 的附件段末尾有一句 `if (!total) return;` —— 垂直对齐的
+   * 统计**必须排在它前面**，否则「只设了对齐、没挂附件」的节点会在那里提前
+   * 退出，一项都数不到（与 BUG 135 ② 同一个坑）。
+   */
+  eq(X186.xmindLossCount([S186({ 'vertical-align': 'top', fmIcons: ['flag'] })]).valign, 1,
+    '★ 没有附件的节点也要数得到（附件段有提前 return）');
+  eq(X186.xmindLossCount([S186({ 'vertical-align': 'top',
+    file: JSON.stringify([{ n: '1.pdf' }]) })]).valign, 1,
+    '★ 有附件的节点同样数得到（挂了附件也不会被那句 return 挡住）');
+
+  // ③ 与其余统计各数各的，不能互相吃掉
+  {
+    const r = X186.xmindLossCount([S186({ 'vertical-align': 'top', fmCloud: '1' })]);
+    eq(r.valign, 1, '与外框各数各的');
+    eq(r.fmCloud, 1, '同上');
+  }
+
+  /*
+   * ④ 行为实据：真的写一份 .xmind —— 产物里垂直对齐是**私有键** `nexusValign`
+   *   （XMind 的属性表里没有它）。把它剥掉（模拟"文件被别的 XMind 软件重写
+   *   过、未知字段被丢弃"）再读回，垂直对齐就没了 —— 那正是这 1 处损失。
+   */
+  {
+    const sheets = [{ id: 'sh1', title: 'T', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'nR', text: '根',
+        'vertical-align': 'bottom' }, children: [] } }) }];
+    const J = async (strip) => {
+      const blob = await X186.writeXMind(sheets, 'sh1');
+      const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+      if (!strip) return await X186.readXMind(new Blob([buf]));
+      const m = await X186.zipRead(buf);
+      const rest = [];
+      for (const [name, data] of m.entries()) {
+        if (name === 'kityminder.json') continue;      // 剥掉无损快照
+        if (name === 'content.json') {
+          const j = JSON.parse(new TextDecoder().decode(data));
+          const st = j[0] && j[0].rootTopic && j[0].rootTopic.style;
+          if (st && st.properties) delete st.properties.nexusValign;   // 别的软件不认 → 丢
+          rest.push({ name, data: new TextEncoder().encode(JSON.stringify(j)) });
+          continue;
+        }
+        rest.push({ name, data });
+      }
+      const z = await X186.zipWrite(rest);
+      return await X186.readXMind(new Blob([z]));
+    };
+    const keep = await J(false);
+    ok(/"vertical-align"\s*:\s*"bottom"/.test(String(keep.sheets[0]?.content)),
+      '对照：私有键还在时垂直对齐保住（说明丢的是"别人打开/重写"这一档）');
+    const zen = await J(true);
+    ok(!/"vertical-align"\s*:\s*"bottom"/.test(String(zen.sheets[0]?.content)),
+      '★ 私有键被丢掉后垂直对齐没了（这就是那 1 处损失）');
+  }
+
+  // ⑤ 导出侧必须说出来
+  {
+    const isrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const i = isrc.indexOf('async function exportXMind');
+    ok(i > 0, '能定位 exportXMind');
+    const body = isrc.slice(i, i + 3600);
+    ok(body.includes('loss.valign'), '★ 提示带上 valign 这一类（不数就等于没修）');
+    ok(body.includes('个节点的垂直对齐未能写入'), '说清楚丢的是什么');
+    const lt = body.slice(body.indexOf('const lossTotal'),
+      body.indexOf('if (lost > 0 || lossTotal > 0)'));
+    ok(body.indexOf('const lossTotal') > 0 && lt.includes('loss.valign'),
+      '★ valign 进了 lossTotal（否则整段提示不出现）');
+    /*
+     * 原因必须与其余几类分开：它是"私有键别人不认"，不是"节点数据丢了"。
+     * 混进「XMind 没有对应字段」那句会让人以为节点内容被改坏。
+     */
+    ok(body.includes('垂直对齐是本工具的私有属性'), '垂直对齐的原因要单独说');
+  }
+
+  // ⑥ 判据不许抄第二份：键名与默认值必须与 StyleMap / 编辑器一致
+  {
+    const xsrc = stripCommentsFlat(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+    /*
+     * BUG 187：早先这里是在源码里找 `nexusValign` 这个字符串。StyleMap 改成
+     * 从 `NODE_DATA_KEYS` 派生后那个字面量没了，改对**运行时那份表**断言：
+     * 垂直对齐必须仍映射到私有键，否则「别人打开回居中」这个前提就不成立。
+     */
+    const XM = await import('./xmind.js');
+    eq(Object.fromEntries(XM.StyleMap)['vertical-align'], 'nexusValign',
+      '★ 写侧确实走私有键 nexusValign（这正是不被别人认的原因）');
+    const i = xsrc.indexOf('export function xmindLossCount');
+    const body = xsrc.slice(i, i + 4800);
+    ok(/d\['vertical-align'\]/.test(body),
+      '★ 判据用 data 键 vertical-align（不是面板上的简写 valign）');
+    ok(/!== 'middle'/.test(body),
+      "★ 默认 middle 不计（编辑器 getData 兜底就是 middle）");
+  }
+}
+
+
 group('假边框四条边必须用同一个坐标系（相对 .mm-body）');
 
 {
@@ -21352,12 +21486,16 @@ group('BUG 180 · 节点下划线丢在交换格式里必须计入提示');
   {
     const src = fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8');
     const plain = stripCommentsFlatJs(src);
-    ok(/const NODE_STYLE_KEYS = \[/.test(plain), '能定位 NODE_STYLE_KEYS');
-    const at = plain.indexOf('const NODE_STYLE_KEYS = [');
-    const win = plain.slice(at, at + 900);
-    ok(/'underline'/.test(win), '★ NODE_STYLE_KEYS 带上 underline');
-    eq((plain.match(/const NODE_STYLE_KEYS/g) || []).length, 1,
-      '★ NODE_STYLE_KEYS 只有一处定义（各抄一份必漏）');
+    /*
+     * BUG 187：同上，改成对真实派生值断言 —— NODE_STYLE_KEYS 现在是
+     * `NODE_DATA_KEYS` 里 bucket === 'style' 的那些键，只有一处来源。
+     */
+    const F = await import('file://' + path.join(HERE, 'formats.js'));
+    ok(Array.isArray(F.NODE_STYLE_KEYS) && F.NODE_STYLE_KEYS.length > 0,
+      '能取到 NODE_STYLE_KEYS（已从 NODE_DATA_KEYS 派生）');
+    ok(F.NODE_STYLE_KEYS.includes('underline'), '★ NODE_STYLE_KEYS 带上 underline');
+    eq(F.NODE_STYLE_KEYS.length, new Set(F.NODE_STYLE_KEYS).size,
+      '★ NODE_STYLE_KEYS 无重复（各抄一份必漏）');
     // 写侧成对：XMind 写回 fo:text-decoration 时必须带上 underline
     const xsrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
     ok(/data\?\.underline/.test(xsrc), '★ XMind 写侧仍写 underline（成对，不许单向删）');
@@ -23227,15 +23365,18 @@ group('BUG 182 · FreeMind 连线颜色 / 粗细（`<edge>`）必须成对读写
     eq((plain.match(/function freemindEdgeAttrs\(/g) || []).length, 1, '★ 写侧只有一份');
     ok(/freemindEdge\(el\)/.test(plain), '★ freemindStyle 里调用了读侧（否则读了也不落进 data）');
     // 带得走必须在 EXCHANGE_KEEP 里声明，否则 ⑤ 那条不成立
-    const at = plain.indexOf('styleKeys: [');
-    ok(at > -1, '能定位 EXCHANGE_KEEP.freemind.styleKeys');
-    const win = plain.slice(at, at + 400);
-    ok(/'node-line-stroke'/.test(win) && /'node-line-width'/.test(win),
+    /*
+     * BUG 187：同上，改成对真实派生值断言 —— styleKeys 现在是矩阵里带
+     * `keep.freemind` 的样式键，与 NODE_STYLE_KEYS 同源，两处不可能再走偏。
+     */
+    const F2 = await import('file://' + path.join(HERE, 'formats.js'));
+    const sk = F2.EXCHANGE_KEEP.freemind.styleKeys || [];
+    ok(sk.length > 0, '能取到 EXCHANGE_KEEP.freemind.styleKeys');
+    ok(sk.includes('node-line-stroke') && sk.includes('node-line-width'),
       '★ styleKeys 带上连线两项（不声明就等于瞒报）');
     // 两个键仍必须在 NODE_STYLE_KEYS 里 —— 否则另外四种格式不再报
-    const at2 = plain.indexOf('const NODE_STYLE_KEYS = [');
-    const win2 = plain.slice(at2, at2 + 900);
-    ok(/'node-line-stroke'/.test(win2) && /'node-line-width'/.test(win2),
+    ok(F2.NODE_STYLE_KEYS.includes('node-line-stroke')
+      && F2.NODE_STYLE_KEYS.includes('node-line-width'),
       '★ 连线两项仍在 NODE_STYLE_KEYS 里（否则 opml / mmd / puml / md 不报）');
   }
 
@@ -23402,6 +23543,351 @@ group('BUG 184 · 画布主题 / 布局丢失必须让提示真的出现');
       '★ 两处 NAME 表都带主题 / 布局（只加一处 = 那一路的提示里这两个词说不出来）');
   }
 }
+
+/* ============================================================
+   BUG 187：导入导出的**单一能力矩阵** + 常驻「声称 vs 实测」测试
+
+   背景：这个洞重演了 8 次（BUG 123 关系线 / 127 图标外框 / 135 XMind 侧图标
+   外框 / 152 概要标注 / 180 下划线 / 181 画布外观 / 182 连线样式 / 186 垂直
+   对齐），每次都是「新数据收进来了，某一份手写名单没同步」—— 名单此前散在
+   四处：formats.js 的 NODE_STYLE_KEYS、EXCHANGE_KEEP、xmind.js 的 StyleMap、
+   以及 buildStyle / applyStyle 里那三段手写代码，改一处漏三处是必然。
+
+   现在全部收敛到 formats.js 的 `NODE_DATA_KEYS`（后三者都从它派生），本组
+   测试盯三件事：
+     ① 覆盖度：新增 data 键必须登记（漏登记 = 静默丢失、一句提示都没有）
+     ② 声称 vs 实测：每个键 × 每种交换格式真的导出再导回，与声称逐一比对
+     ③ 派生名单与矩阵同源（不可能再各改一处）
+   ============================================================ */
+{
+  const f = await import('file://' + path.join(HERE, 'formats.js'));
+  const wb = await import('./workbook.js');
+
+  // ① 覆盖度：新增 data 键必须登记
+  {
+    const keys = Object.keys(f.NODE_DATA_KEYS);
+    ok(keys.length >= 33, '能力矩阵登记了全部节点级 data 键', keys.length + ' 个');
+    for (const [k, def] of Object.entries(f.NODE_DATA_KEYS)) {
+      ok(typeof def.name === 'string' && def.name, `★ ${k} 有中文名（导出提示要说得出它）`);
+      ok(typeof def.bucket === 'string' && def.bucket,
+        `★ ${k} 登记了 bucket（漏了就是静默丢失，如 BUG 180 的下划线）`);
+      ok('probe' in def, `★ ${k} 有往返测试样本值`);
+      if (def.bucket === 'style') {
+        ok(def.xmind || def.xmindBold || def.xmindItalic || def.xmindDeco,
+          `★ 样式键 ${k} 必须声明 XMind 映射（漏了 = 别的软件打开就丢，如 BUG 186 的垂直对齐）`);
+      }
+    }
+    // 派生名单与矩阵同源 —— 早先是两份手写名单，各写一份必然只改一处
+    eq(f.NODE_STYLE_KEYS.length, new Set(f.NODE_STYLE_KEYS).size, '★ 样式键无重复');
+    ok(f.NODE_STYLE_KEYS.every((k) => f.NODE_DATA_KEYS[k]?.bucket === 'style'),
+      '★ NODE_STYLE_KEYS 全部来自能力矩阵');
+    const xm = await import('./xmind.js');
+    const mapped = Object.fromEntries(xm.StyleMap);
+    for (const k of f.NODE_STYLE_KEYS) {
+      if (f.NODE_DATA_KEYS[k].xmind) {
+        eq(mapped[k], f.NODE_DATA_KEYS[k].xmind, `★ StyleMap 的 ${k} 与矩阵声明一致`);
+      }
+    }
+  }
+
+  /*
+   * ② 声称 vs 实测：每个键 × 每种交换格式，真的导出再导回。
+   *
+   * 声称与实测不符就是瞒报或虚报（BUG 153 的 OPML 备注、BUG 182 的连线样式
+   * 都是这么来的）。以前这类验证是一次性探针、跑完就删，所以改了格式代码
+   * 忘了更新名单没人发现 —— 现在它是常驻测试。
+   */
+  {
+    const mk = (key, probe) => f.stringifyKm(
+      { data: { id: 'r', text: '中心主题' },
+        children: [{ data: { id: 'c', text: 'AAA', [key]: probe } }] },
+      'default', 'classic');
+    const kmOf = (x) => {
+      if (x == null) return null;
+      if (typeof x === 'string') { try { return JSON.parse(x); } catch { return null; } }
+      return x;
+    };
+    const findChild = (km) => {
+      let hit = null;
+      f.walkKm(km?.root, (n) => { if (!hit && n?.data?.text === 'AAA') hit = n; });
+      return hit;
+    };
+    const present = (v) => {
+      if (v == null) return false;
+      if (Array.isArray(v)) return v.length > 0;
+      if (typeof v === 'object') return Object.keys(v).length > 0;
+      return String(v).trim() !== '';
+    };
+    // ⓘ parseFreemind 回的是 { content, xrelationships }，其余四种回 JSON 串
+    const RT = {
+      freemind: (c) => kmOf(f.parseFreemind(f.toFreemind(c))?.content),
+      opml: (c) => kmOf(f.fromOpml(f.toOpml(c))),
+      mermaid: (c) => kmOf(f.fromMermaid(f.toMermaid(c))),
+      plantuml: (c) => kmOf(f.fromPlantUml(f.toPlantUml(c))),
+      markdown: (c) => kmOf(wb.markdownToSheet(wb.sheetToMarkdown(c))),
+    };
+
+    let checked = 0;
+    for (const [key, def] of Object.entries(f.NODE_DATA_KEYS)) {
+      const c0 = mk(key, def.probe);
+      for (const [name, fn] of Object.entries(RT)) {
+        const n = findChild(fn(c0));
+        /*
+         * 找不到节点时这条检查是**空的**（恒假），必须喊出来 —— 否则
+         * 「带不走」会被一路绿灯地误判成"实测确实丢了"。
+         */
+        ok(n, `★ ${key}/${name}：往返后找得到那个节点（否则这条比对是空的）`);
+        const kept = !!(n && present(n.data?.[key]));
+        const claim = !!(def.keep && def.keep[name]);
+        eq(kept, claim,
+          `★ ${key} 在 ${name} 上：声称「${claim ? '带得走' : '带不走'}」与实测一致`);
+        checked++;
+      }
+    }
+    eq(checked, Object.keys(f.NODE_DATA_KEYS).length * 5,
+      '★ 矩阵全覆盖（每个键 × 5 种交换格式）', checked + ' 组');
+  }
+}
+
+
+/*
+ * BUG 188：导出 .xmind 时**画布级关系线**只写进 content.json，没写进本工具的
+ * 无损快照 —— 而读侧第 1) 档是「快照优先」（有 kityminder.json 就根本不看
+ * content.json）。于是**我们自己导出再导入，关系线全部消失**：
+ *
+ *   实测（修复前）：一条 nA→nB 的关系线
+ *     · content.json 里 sheet.relationships 有它    ← 数据写对了
+ *     · 快照 kityminder.json 的 sheets[0] 只有
+ *       id / title / theme / layout / content       ← 没带关系线
+ *     · 导回来 r.sheets[0].xrelationships === undefined
+ *
+ * 而 `xmindLossCount` 压根不数关系线（它只数节点级与画布主题 / 布局），
+ * 界面只说一句「XMind 已导出 / 已导入」—— 一声不响。
+ *
+ * 与 BUG 135 / 186 同一语义（快照认得、另一条路不认），但这次丢的是
+ * **本工具自己的往返**，比"被别的软件打开"更常见：用户画好关系线存成
+ * .xmind，再打开就没了。
+ */
+{
+  const X8 = await import('./xmind.js');
+  const REL = [{ id: 'r1', end1Id: 'nA', end2Id: 'nB', title: 'T1' }];
+  const CONTENT = JSON.stringify({ root: { data: { id: 'root', text: 'ROOT' }, children: [
+    { data: { id: 'nA', text: 'AAA' } }, { data: { id: 'nB', text: 'BBB' } }] } });
+
+  /** 写一份 .xmind，返回 { entries, snap, buf } */
+  const pack = async (sheets) => {
+    const blob = await X8.writeXMind(sheets, 'sh1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await X8.zipRead(buf);
+    return { entries, buf, snap: JSON.parse(new TextDecoder().decode(entries.get('kityminder.json'))) };
+  };
+  const repack = async (entries) => new Uint8Array(await X8.zipWrite(
+    [...entries].map(([name, data]) => ({ name, data }))));
+
+  // ① 事实：content.json 里关系线是写对的（丢的是快照那一份）
+  {
+    const { entries } = await pack([{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: CONTENT, xrelationships: REL }]);
+    const cj = JSON.parse(new TextDecoder().decode(entries.get('content.json')));
+    const rels = cj[0]?.sheet?.relationships ?? cj[0]?.relationships ?? [];
+    eq(rels.length, 1, '① content.json 里关系线写对了（所以数据一直都在，是快照漏了）');
+  }
+
+  // ② 修复后：快照带上关系线，本工具读回自己的文件仍在
+  {
+    const { snap, buf } = await pack([{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: CONTENT, xrelationships: REL }]);
+    ok('xrelationships' in snap.sheets[0], '★ ② 快照必须带上关系线（早先只有 id/title/theme/layout/content）');
+    const r = await X8.readXMind(buf);
+    eq(r.sheets[0].xrelationships?.length, 1, '★ ② 本工具读回自己的 .xmind，关系线还在');
+    eq(r.sheets[0].xrelationships?.[0]?.title, 'T1', '② 关系线的标题也还在');
+  }
+
+  // ③ 老文件补救：快照里没有这个键时，从 content.json 补回来
+  {
+    const { entries } = await pack([{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: CONTENT, xrelationships: REL }]);
+    const snap = JSON.parse(new TextDecoder().decode(entries.get('kityminder.json')));
+    delete snap.sheets[0].xrelationships;          // 模拟老版本写出的文件
+    entries.set('kityminder.json', new TextEncoder().encode(JSON.stringify(snap)));
+    const r = await X8.readXMind(await repack(entries));
+    eq(r.sheets[0].xrelationships?.length ?? 0, 1,
+      '★ ③ 老文件（快照无线）也要能从 content.json 补回关系线');
+  }
+
+  /*
+   * ④ 反向边界一：快照里**已有**这个键时不许被 content.json 覆盖。
+   *
+   * ⓘ 必须是**两张画布**才测得出来：补救那段外面还有一句
+   *   `if (missing)` —— 只有一张画布时，它带了值就 `missing === false`，
+   *   整段压根不执行，内层那句「快照有值就不补」的判据**根本没跑到**。
+   *   早先这条只有一张画布，于是"一律覆盖"的变异测出来是**全绿** ——
+   *   看着在把关，其实什么都没守（本项目第 43 次"断言绿但没在把关"）。
+   *   两张画布：一张明确带值、一张缺键 → `missing` 为真、内层判据才会跑。
+   */
+  {
+    const { entries } = await pack([
+      { id: 'sh1', title: '甲', theme: null, layout: null, content: CONTENT, xrelationships: REL },
+      { id: 'sh2', title: '乙', theme: null, layout: null, content: CONTENT },
+    ]);
+    const snap = JSON.parse(new TextDecoder().decode(entries.get('kityminder.json')));
+    snap.sheets[0].xrelationships = [];           // 快照明确说"甲没有线"
+    entries.set('kityminder.json', new TextEncoder().encode(JSON.stringify(snap)));
+    const r = await X8.readXMind(await repack(entries));
+    eq(r.sheets[0].xrelationships?.length ?? -1, 0,
+      '★ ④ 快照里已有这个键时不许被 content.json 压掉（一律补会把旧口径盖回来）');
+    ok(!('xrelationships' in (r.sheets[1] || {})), '④ 缺键的那张才补（content.json 里它也没有）');
+  }
+
+  // ⑤ 反向边界二：没有关系线时不许给每张画布都写一个空数组
+  {
+    const { snap } = await pack([{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: CONTENT }]);
+    ok(!('xrelationships' in snap.sheets[0]), '⑤ 没有关系线时快照不写这个键（同 workbook.js 的口径）');
+  }
+
+  // ⑥ 源码契约：两处 return 都要带，只改一处等于换个分支复现
+  {
+    const src = stripCommentsFlatJs(fs.readFileSync(
+      path.join(HERE, 'xmind.js'), 'utf8'));
+    const n = (src.match(/\.\.\.relExtra\(s\)/g) || []).length;
+    eq(n, 2, '★ ⑥ 快照的两处 return 都必须带 relExtra（只改一处会漏掉「无附件」那条分支）', '实际 ' + n + ' 处');
+  }
+}
+
+
+/* ------------------------------------------------------------------
+   容量类损失（多图 / 多附件 / 超链接争位）· 声称 vs 实测
+   ------------------------------------------------------------------ */
+
+/*
+ * NODE_DATA_KEYS 那份矩阵（BUG 187）盯的是**单键**：一个键能不能被某个格式
+ * 带走。但有三类损失**不在单键层面**，它们是「槽位不够」造成的容量取舍：
+ *
+ *   · 多图      XMind 的 topic.image 只有一个 src，槽位一张 + 横幅若干张
+ *               → 只留一张，其余丢（统计进 images）
+ *   · 多附件    content.json 的 href 只有一个 → 只留第一个，其余丢（unlinked）
+ *   · 超链接争位 href 被超链接占了 → 附件**一个都写不进去**（blocked）
+ *
+ * 这三类此前只有**纯函数单元测试**（钉 xmindLossCount 返回什么），而写侧
+ * （buildTopic 的 href 判据、`firstRef(video) || firstRef(file)`）是**另一份**
+ * 手写代码 —— 两边没有测试钉在一起。于是改了写侧而统计没跟上（或反过来），
+ * 单元测试照样全绿，界面却开始瞒报或虚报。这与 BUG 187 那份矩阵想消灭的
+ * 是同一个洞，只是它管单键、这里管容量。
+ *
+ * 所以下面每条都是**真的导出再导回**（走 zen 档：只留 content.json，模拟
+ * 文件被别的 XMind 软件打开重写过），拿「统计报的数」与「实际丢的数」比对。
+ */
+{
+  const XC = await import('./xmind.js');
+
+  /** 造 n 个附件引用（与 panels 存的形态一致：JSON 数组） */
+  const AREFS = (n, a) => JSON.stringify(
+    Array.from({ length: n }, (_, i) => ({ n: `${a}${i + 1}.bin`, a: `${a}S${i + 1}`, s: 10 })));
+
+  /** 单个根节点的 zen 档往返 —— 返回导回后的 data、content.json 的 topic、包内条目 */
+  const zenRt = async (data, loadAsset = null) => {
+    const sheets = [{ id: 'sh1', title: '画布', theme: null, layout: null,
+      content: JSON.stringify({ root: { data: { id: 'n', text: 'T', ...data }, children: [] } }) }];
+    const blob = await XC.writeXMind(sheets, 'sh1', loadAsset);
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const en = await XC.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(en.get('content.json')));
+    const zb = await XC.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await XC.readXMind(new Uint8Array(zb));
+    return { data: JSON.parse(r.sheets[0].content).root.data, topic: cj[0].rootTopic,
+      res: [...en.keys()].filter((k) => k.startsWith('resources/')) };
+  };
+
+  const lossOf = (data) => XC.xmindLossCount([{ id: 'sh1', title: '画布', theme: null, layout: null,
+    content: JSON.stringify({ root: { data: { id: 'n', text: 'T', ...data }, children: [] } }) }]);
+
+  const BYTE = async () => new Uint8Array([1, 2, 3]);
+
+  /* ---- 一、多图 ---- */
+  {
+    // 槽 1 张 + 横幅 2 张 = 3 张，XMind 只留一张 → 实际丢 2 张
+    const d = { image: 'a.png', images: ['b.png', 'c.png'] };
+    const { data } = await zenRt(d);
+    const got = [data.image, ...(Array.isArray(data.images) ? data.images : [])].filter(Boolean);
+    eq(lossOf(d).images, 3 - got.length,
+      '★ 多图：统计报的 images 必须等于实际丢掉的张数（3 张只回 1 张 → 报 2）',
+      JSON.stringify({ claimed: lossOf(d).images, back: got }));
+  }
+  {
+    // 反向边界：只有一张时不许报（否则每次导出都虚报一句"图片装不下"）
+    const d = { image: 'a.png' };
+    eq(lossOf(d).images, 0, '★ 多图：只有一张时不算损失（不许虚报）');
+  }
+
+  /* ---- 二、多附件（无超链接） ---- */
+  {
+    const d = { file: AREFS(3, 'f') };
+    const { data } = await zenRt(d, BYTE);
+    /*
+     * ⓘ 导回的附件**形态变了**：原来存的 3 个引用是 JSON 数组，而 zen 档只能
+     *   带回来一个 —— 它落成**包内相对路径字符串**（不是数组）。早先这里按
+     *   数组长度算，字符串 parse 不出来就当 0，于是"实际丢掉的个数"被算成 3，
+     *   与统计的 2 对不上 —— 是我的断言错了，不是统计错了。
+     */
+    const back = (() => {
+      if (!data.file) return 0;
+      try { const a = JSON.parse(data.file); return Array.isArray(a) ? a.length : 1; }
+      catch { return String(data.file).trim() ? 1 : 0; }
+    })();
+    eq(lossOf(d).unlinked, 3 - back,
+      '★ 多附件：统计报的 unlinked 必须等于实际丢掉的个数（3 个只回 1 个 → 报 2）',
+      JSON.stringify({ claimed: lossOf(d).unlinked, back }));
+  }
+  {
+    // 视频优先（firstRef(video) || firstRef(file)）—— 统计与写侧必须是同一个口径
+    const d = { video: AREFS(1, 'v'), file: AREFS(1, 'f') };
+    const { topic } = await zenRt(d, BYTE);
+    ok(/v1\.bin/.test(String(topic.href || '')),
+      '★ 多附件：video 优先于 file（统计与写侧同一口径）', String(topic.href));
+    eq(lossOf(d).unlinked, 1, '★ 视频 + 文件各一个 → 丢 1 个');
+  }
+  {
+    const d = { file: AREFS(1, 'f') };
+    eq(lossOf(d).unlinked, 0, '★ 多附件：只有一个时不算损失（不许虚报）');
+  }
+
+  /* ---- 三、超链接争位：href 被超链接占了，附件一个都写不进去 ---- */
+  {
+    const d = { file: AREFS(1, 'f'), hyperlink: 'https://e.g/x' };
+    const { data, topic } = await zenRt(d, BYTE);
+    eq(topic.href, 'https://e.g/x', '★ 超链接优先：href 挂的是超链接');
+    ok(!data.file, '★ 有超链接时附件确实一个都进不去（实测）', String(data.file));
+    eq(lossOf(d).blocked, 1, '★ 超链接争位：统计报的 blocked 必须等于附件个数（1 个 → 报 1）');
+    eq(lossOf(d).unlinked, 0, '★ 性质不同：被超链接挤掉算 blocked，不算 unlinked');
+  }
+  {
+    const d = { file: AREFS(3, 'f'), hyperlink: 'https://e.g/x' };
+    const { data } = await zenRt(d, BYTE);
+    ok(!data.file, '★ 3 个附件 + 超链接 → 全部进不去（实测）', String(data.file));
+    eq(lossOf(d).blocked, 3, '★ 3 个附件 + 超链接 → 报 3（不是只报 1）');
+  }
+  {
+    // 反向边界：没有附件时不许报 blocked
+    eq(lossOf({ hyperlink: 'https://e.g/x' }).blocked, 0, '★ 只有超链接、没有附件时不算损失');
+  }
+
+  /*
+   * 已知取舍（**不是** BUG，锁住当前行为防误改）：被挤掉的附件 / 多余的附件，
+   * 字节**仍然会被打进包**，成为没有引用的孤儿。
+   *
+   * 这不影响数据正确性（提示里已经说了丢几个），只是包体积变大。要改就得在
+   * 收集阶段按同样的取舍跳过，而取舍判据分散在两处容易再次跑偏 —— 先锁住。
+   */
+  {
+    const d = { file: AREFS(3, 'f'), hyperlink: 'https://e.g/x' };
+    const { res } = await zenRt(d, BYTE);
+    eq(res.length, 3, '（已知取舍）被挤掉的附件字节仍会打进包 —— 锁住当前行为',
+      JSON.stringify(res));
+  }
+}
+
 
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {

@@ -65,7 +65,8 @@ async function deflateRaw(bytes) {
  *
  * 对齐 mediainfo.js 的做法：那里对同等不可信的二进制输入也设了 guard++/depth 上限。
  */
-import { htmlToPlain, plainToHtml, elToPlain, isCollapsed, fontSizeNum } from './formats.js';
+import { htmlToPlain, plainToHtml, elToPlain, isCollapsed, fontSizeNum,
+  NODE_DATA_KEYS } from './formats.js';
 /*
  * 画布默认外观 —— **从 themes.js 取，不在这里抄第二份**（与 BUG 181 同一口径）。
  *
@@ -394,27 +395,26 @@ function collectXMarkers(data, mid) {
  *   填充、描边、描边线宽、圆角、连线色、连线宽、文字色 7 项静默消失 ——
  *   给用户标红的重要节点导出再打开就变回默认配色，且不报错。
  */
-const StyleMap = [
-  ['background', 'svg:fill'],
-  ['node-stroke', 'svg:stroke'],
-  ['node-stroke-width', 'svg:stroke-width'],
-  ['node-radius', 'svg:corner-radius'],
-  ['node-line-stroke', 'line-color'],
-  ['node-line-width', 'line-width'],
-  ['color', 'fo:color'],
-  ['font-size', 'fo:font-size'],
-  ['font-family', 'fo:font-family'],
-  ['text-align', 'fo:text-align'],
-  /*
-   * 垂直对齐 XMind **没有**对应的标准属性（它的节点文字固定居中）。
-   * 走私有键保住本工具的往返，避免「设了垂直：下 → 导出再导入 → 变回居中」。
-   * 私有键只在真的设了值时才写，别的软件忽略未知键，无害。
-   */
-  ['vertical-align', 'nexusValign'],
-];
+/*
+ * BUG 187：从 formats.js 的**单一能力矩阵** `NODE_DATA_KEYS` 派生。
+ *
+ * 早先是这里手写一份、formats.js 的 `NODE_STYLE_KEYS` 再写一份、buildStyle /
+ * applyStyle 里对粗体 / 斜体 / 删除线 / 下划线再手写三段 —— 四个地方各写一遍。
+ * 新增一个样式键要改四处，漏一处就是「数据收进来了、某条路没带上」的静默
+ * 丢失（这个洞重演了 8 次：BUG 123 / 127 / 135 / 152 / 180 / 181 / 182 / 186）。
+ *
+ * 现在只认矩阵里带 `xmind` 的那些键；粗体 / 斜体 / 删除线 / 下划线在矩阵里
+ * 标的是 `xmindBold` / `xmindItalic` / `xmindDeco`，由 buildStyle / applyStyle
+ * 里那几段专门处理（它们不是简单的一对一映射：字重要归一化、删除线与下划线
+ * 挤在同一个 `fo:text-decoration` 里）。
+ */
+export const StyleMap = Object.entries(NODE_DATA_KEYS)
+  .filter(([, def]) => def.xmind)
+  .map(([kmKey, def]) => [kmKey, def.xmind]);
 
-/** 这几个键 XMind 里带 px 单位（其余原样，font-size 走 pt） */
-const StylePxKeys = new Set(['node-radius', 'node-stroke-width', 'node-line-width']);
+/** 这几个键 XMind 里带 px 单位（其余原样，font-size 走 pt）—— 同样从矩阵派生 */
+const StylePxKeys = new Set(Object.entries(NODE_DATA_KEYS)
+  .filter(([, def]) => def.px).map(([kmKey]) => kmKey));
 
 export const XMIND_ENTRIES = { ContentEntry, NativeEntry, MetadataEntry, ManifestEntry, LegacyContentEntry, LegacyStylesEntry };
 
@@ -1894,10 +1894,12 @@ function applyXmlBoundaries(pairs, boundariesEl, counter = null) {
  *
  * @param {Array} sheets 画布数组（content 为 kityminder JSON 文本或对象）
  * @returns {{blocked:number, unlinked:number, images:number,
- *            fmIcons:number, fmCloud:number}} 0 = 没有损失
+ *            fmIcons:number, fmCloud:number, theme:number, layout:number,
+ *            valign:number}} 0 = 没有损失
  */
 export function xmindLossCount(sheets) {
-  const out = { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0, theme: 0, layout: 0 };
+  const out = { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0,
+    theme: 0, layout: 0, valign: 0 };
   for (const s of sheets || []) {
     const km = parseKm(s?.content);
     if (!km) continue;              // 坏内容不算 —— 它本来也导不出东西
@@ -1929,6 +1931,28 @@ export function xmindLossCount(sheets) {
         if (str(one).trim()) out.fmIcons++;
       }
       if (String(d.fmCloud ?? '').trim()) out.fmCloud++;
+
+      /*
+       * BUG 186：节点文字的**垂直对齐**走的是**私有键** `nexusValign`
+       * （StyleMap 最后一条，那里的注释已写明「XMind 没有对应的标准属性」）。
+       *
+       * 于是它与 BUG 135 的 fmIcons / fmCloud 是同一语义 —— 本工具认得，
+       * 别人不认：
+       *   · 在别的 XMind 软件里打开我们导出的文件 → 那个键被忽略 →
+       *     文字回居中，用户设的「靠上 / 靠下」看不见
+       *   · 文件被别的软件存过一遍 → 私有键没了 → 我们导回来也变回居中
+       * 而这里报 0 → 界面只说「XMind 已导出」。
+       *
+       * 与 BUG 185（画布主题 / 天盘图）是同一条线的**节点级**那一半：
+       * 那次补的是画布级，节点级这条没同步 —— 同一个洞的第 7 次重演。
+       *
+       * ⓘ 居中（middle）是视觉默认：编辑器里 `getData('vertical-align') ||
+       *   'middle'`（见 editor/index.html），别的软件忽略私有键后显示的就是
+       *   居中。所以**设成 middle 不算丢** —— 一律计会让每次导出都冒一句
+       *   没意义的提示，噪音会让人不再看提示（同 BUG 185 对默认主题的取舍）。
+       */
+      const va = String(d['vertical-align'] ?? '').trim();
+      if (va && va !== 'middle') out.valign++;
 
       // 图片：槽位一张 + 横幅若干张，XMind 只写 src 一个
       const imgs = [];
@@ -2010,10 +2034,31 @@ export async function writeXMind(sheets, activeId, loadAsset = null) {
     resources.push(...packed);
   }
 
+  /*
+   * BUG 188：画布级**关系线**（`xrelationships`）必须一起进快照。
+   *
+   * 它写在 `sheet.relationships`（`buildRelationships`，见上），**只有
+   * content.json 这一份有**；下面这份快照早先只带 id / title / theme /
+   * layout / content —— 关系线一个都没写进去。
+   *
+   * 而读侧第 1) 档是「本工具无损快照优先」：只要包里有 kityminder.json
+   * 就走它，content.json 根本不看。于是**我们自己导出再导入，关系线全部
+   * 消失**，且不报错 —— xmindLossCount 也压根不数关系线（它只数节点级
+   * 与画布主题 / 布局），界面只说一句「XMind 已导出 / 已导入」。
+   *
+   * 实测：一条 nA→nB 的关系线，导出后 content.json 里有、导回来是
+   * undefined。快照既然自称「无损」，画布级字段就不能漏。
+   *
+   * ⓘ 只在真的有线时才带这个键 —— 与 workbook.js 的 `...(rel.length ? … : {})`
+   *   同一口径，避免给每张画布都写一个空数组（读侧那份"有没有"的判据会更松）。
+   */
+  const relExtra = (s) => (Array.isArray(s.xrelationships) && s.xrelationships.length
+    ? { xrelationships: s.xrelationships } : {});
+
   // 2) 无损快照：附件引用改写成包内相对路径（与 C# RewriteSnapshot 一致）
   const snapshotSheets = list.map((s) => {
     const km = parseKm(s.content);
-    if (!km || packs.size === 0) return { id: s.id, title: s.title, theme: s.theme, layout: s.layout, content: s.content };
+    if (!km || packs.size === 0) return { id: s.id, title: s.title, theme: s.theme, layout: s.layout, content: s.content, ...relExtra(s) };
     walkKmNodes(km, (node) => {
       const d = node.data;
       if (!d) return;
@@ -2030,7 +2075,7 @@ export async function writeXMind(sheets, activeId, loadAsset = null) {
         if (changed) d[key] = JSON.stringify(out);
       }
     });
-    return { id: s.id, title: s.title, theme: s.theme, layout: s.layout, content: pretty(km) };
+    return { id: s.id, title: s.title, theme: s.theme, layout: s.layout, content: pretty(km), ...relExtra(s) };
   });
 
   const files = [
@@ -2089,6 +2134,28 @@ export async function readXMind(input, saveAsset = null) {
       if (Array.isArray(o?.sheets) && o.sheets.length) {
         wb = { sheets: o.sheets, activeId: o.activeId };
         source = 'native';
+        /*
+         * BUG 188（补救一半）：早先写出的 .xmind 里，快照**没有**关系线，
+         * 而 content.json 里是有的 —— 那些文件导回来照样全丢。既然数据在
+         * 包里，就从 content.json 补回快照缺的那些画布。
+         *
+         * ⓘ 只在快照那张画布**确实没有**这个键时才补（`== null`）：
+         *   修好之后写出的文件里快照是有值的（可能就是空数组之外的真值），
+         *   一律覆盖会拿 content.json 的旧口径压掉快照。
+         * ⓘ 补不到就保持原样 —— 少了这个兜底，老文件永远救不回来。
+         */
+        const missing = o.sheets.some((s) => s && s.xrelationships == null);
+        if (missing) {
+          try {
+            const cj = readText(ContentEntry);
+            const zs = cj ? parseZen(cj).sheets : [];
+            o.sheets.forEach((s, i) => {
+              if (s && s.xrelationships == null && Array.isArray(zs[i]?.xrelationships)) {
+                s.xrelationships = zs[i].xrelationships;
+              }
+            });
+          } catch { /* content.json 也坏了就不补 —— 快照那份内容仍然可用 */ }
+        }
       }
     } catch { /* 坏快照继续往下走 */ }
   }
