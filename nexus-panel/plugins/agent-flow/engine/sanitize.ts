@@ -97,8 +97,19 @@ export function blankSecretNamed(data: unknown): unknown {
  * `Authorization: Bearer <token>` 与 `Cookie: session=...`。
  * 只按 SECRET_NAME_HINTS 判会**两个都漏掉**。
  */
-/* 'cookie' 已进 SECRET_NAME_HINTS，这里去重，免得同一条判据列两遍 */
-export const SECRET_HEADER_HINTS = [...new Set([...SECRET_NAME_HINTS, 'auth', 'cookie'])];
+/*
+ * 请求头专属的三条，都**不能**进 SECRET_NAME_HINTS —— 那边判的是参数名，
+ * 加进去会误伤正常字段（'session' 会剥掉 sessionId、'signature' 剥掉
+ * signatureAlgorithm、'credential' 剥掉 credentialId）。
+ * 请求头这边的误伤代价小得多（多剥只是让用户重填一次），方向正好相反。
+ *
+ * ⛔ 别加 'key'：Idempotency-Key / X-Request-Key 都是**普通**请求头，
+ * 加了会让每次幂等重试的键被挖空，用户填一次丢一次。
+ * 真正带凭据的 key 头都带前缀（X-Api-Key / X-Access-Key），已由上面覆盖。
+ */
+export const SECRET_HEADER_HINTS = [
+  ...new Set([...SECRET_NAME_HINTS, 'auth', 'cookie', 'session', 'credential', 'signature']),
+];
 
 /** 请求头的名字是否像带密钥 */
 export function looksLikeSecretHeader(name: string): boolean {

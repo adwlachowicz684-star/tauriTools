@@ -407,3 +407,66 @@ test('源码守卫: headersHaveSecret 与 redactHeadersText 同判据', () => {
   assert.ok(/isTemplateOnlyHeaderValue/.test(src.slice(at2, at2 + 400)),
     'redactHeadersText 没有排除纯引用 —— 会挖掉用户的模板');
 });
+
+/* ------------------------------------------------------------------ */
+/* 请求头漏认 —— 漏一个就是明文进存档                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ⛔ 为什么穷举而不用固定样例：
+ * 既有那条守卫只喂 5 个样例，样例之外的头名漏认它一条都看不见。
+ * 而"漏认"的表现是**明文躺进存档、且没有任何报错** ——
+ * 只有真去翻 localStorage 才看得见，那时密钥早就在导出的画布文件里了。
+ */
+test('请求头: 真实世界里带凭据的头名必须全部认出来', () => {
+  const creds = [
+    'Authorization', 'Proxy-Authorization', 'WWW-Authenticate',
+    'Cookie', 'Set-Cookie', 'X-Api-Key', 'X-Auth-Token', 'X-CSRF-Token',
+    'Private-Token', 'X-Vault-Token', 'X-Access-Key', 'X-Secret',
+    // 下面这几个**不含** token / key 字样，曾全部漏认
+    'X-Session', 'X-Session-Id', 'X-SessionId',
+    'X-Credential', 'X-Credentials',
+    'X-Signature', 'X-Hub-Signature-256', 'X-Signature-Key',
+  ];
+  for (const n of creds) {
+    assert.equal(looksLikeSecretHeader(n), true, `漏认了带凭据的请求头 ${n} —— 它的值会明文进存档`);
+  }
+});
+
+/*
+ * 反例：普通请求头不能被挖。
+ * 只盯"漏认"的话，加一条万能 hint（比如 'x'）就能全绿，
+ * 而用户每次填的普通头都会被抹掉 —— 那种"白填一次"是持续的。
+ */
+test('请求头: 普通头不能被误伤（反例，别用万能 hint 糊过去）', () => {
+  const plain = [
+    'Accept', 'Accept-Encoding', 'Accept-Language', 'Content-Type', 'Content-Length',
+    'User-Agent', 'Cache-Control', 'Referer', 'Origin', 'Retry-After',
+    'X-Request-Id', 'X-Trace-Id', 'X-Forwarded-For', 'X-Correlation-Id',
+    // 带 key 但不带凭据 —— 所以 hint 里决不能加裸 'key'
+    'Idempotency-Key', 'X-Idempotency-Key',
+  ];
+  for (const n of plain) {
+    assert.equal(looksLikeSecretHeader(n), false, `误伤了普通请求头 ${n} —— 用户会白填一次`);
+  }
+});
+
+/*
+ * 两条判据各自独立：请求头这三条 hint 若被并进 SECRET_NAME_HINTS，
+ * 参数名判定就会开始误伤（sessionId / credentialId / signatureAlgorithm
+ * 都是真实存在的普通字段）。所以请求头必须是**自己的一份**。
+ */
+test('源码守卫: 请求头 hint 是独立一份，不并进参数名判据', () => {
+  const src = readSrc('engine/sanitize.ts');
+  assert.ok(/SECRET_HEADER_HINTS\s*=\s*\[/.test(src), 'SECRET_HEADER_HINTS 不见了');
+  /*
+   * 用会剥注释的 readSrc，所以下面这句只看真实代码：
+   * SECRET_NAME_HINTS 里决不能出现请求头专属那三条。
+   */
+  const atName = src.indexOf('export const SECRET_NAME_HINTS');
+  assert.ok(atName >= 0, '找不到 SECRET_NAME_HINTS');
+  const nameBody = src.slice(atName, atName + 900);
+  for (const bad of ["'session'", "'credential'", "'signature'"]) {
+    assert.ok(!nameBody.includes(bad), `SECRET_NAME_HINTS 里出现了 ${bad} —— 会剥掉普通参数字段`);
+  }
+});
