@@ -289,27 +289,11 @@ export function hadInlineSecret(data: unknown): boolean {
  * 而且恰恰是我们希望用户改用、并能随预设一起复用的东西。
  */
 export function stripSecrets(data: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...data };
-  for (const path of SECRET_PATHS) {
-    const parts = path.split('.');
-    if (parts.length === 1) {
-      if (typeof out[parts[0]] === 'string' && out[parts[0]]) out[parts[0]] = '';
-      continue;
-    }
-    const head = out[parts[0]];
-    if (head && typeof head === 'object' && !Array.isArray(head)) {
-      const nested = { ...(head as Record<string, unknown>) };
-      if (typeof nested[parts[1]] === 'string' && nested[parts[1]]) nested[parts[1]] = '';
-      out[parts[0]] = nested;
-    }
-  }
-  /* 请求头是「最顺手写 Authorization: Bearer xxx」的地方，
-     不脱的话预设分享出去就等于把令牌贴给别人 */
-  if (typeof out.headersText === 'string') {
-    out.headersText = redactHeadersText(out.headersText);
-  }
-  /* 兜住固定路径覆盖不到的那些（数组里的、没进清单的） */
-  return blankSecretNamed(out) as Record<string, unknown>;
+  /*
+   * 传副本：blankSecrets 没改动时原样返回入参，而调用方手里那份
+   * 不该被这里的返回值"同一引用"绑住（旧实现恒返回新对象）。
+   */
+  return blankSecrets({ ...data });
 }
 
 /* ------------------------------------------------------------------ */
@@ -341,20 +325,34 @@ function pathGet(data: Record<string, unknown>, path: string): string | null {
   return typeof cur === 'string' && cur !== '' ? cur : null;
 }
 
-/** 按点号路径写值，返回新的 data。只改这一条路径，其余保持原引用 */
+/**
+ * 按点号路径写值，返回新的 data。只改这一条路径，其余保持原引用。
+ *
+ * 逐段递归而不是「只认两层」—— 对面的 pathGet 是逐段走的（任意深度），
+ * 而 hadInlineSecret 判「有没有」用的正是 pathGet。
+ *
+ * 这边只认两层的话，将来清单里加一条 'a.b.c' 这种三层路径就会出现：
+ *   界面说「这里有内联密钥，不会存进默认」← pathGet 认出来了
+ *   实际一个字都没挖                      ← 这里写不进去
+ * 而这类"说了没做"不会报错、测试也不会红，只有翻 localStorage 才看得见。
+ *
+ * 走不通（中间不是普通对象，或干脆没有）就原样返回 —— 与 pathGet 返回 null 同口径。
+ */
 function pathSet(
   data: Record<string, unknown>,
   path: string,
   value: string,
 ): Record<string, unknown> {
   const parts = path.split('.');
-  if (parts.length === 1) return { ...data, [parts[0]]: value };
-  const head = data[parts[0]];
-  if (!head || typeof head !== 'object' || Array.isArray(head)) return data;
-  return {
-    ...data,
-    [parts[0]]: { ...(head as Record<string, unknown>), [parts[1]]: value },
+  const walk = (node: Record<string, unknown>, i: number): Record<string, unknown> | null => {
+    if (i === parts.length - 1) return { ...node, [parts[i]]: value };
+    const head = node[parts[i]];
+    if (!head || typeof head !== 'object' || Array.isArray(head)) return null;
+    const sub = walk(head as Record<string, unknown>, i + 1);
+    if (!sub) return null;
+    return { ...node, [parts[i]]: sub };
   };
+  return (walk(data, 0) ?? data) as Record<string, unknown>;
 }
 
 /** 把某个密钥字段写成空串，返回新的 data */
@@ -363,6 +361,45 @@ function blankSecretField(
   field: SecretField,
 ): Record<string, unknown> {
   return pathSet(data, field, '');
+}
+
+/**
+ * 挖密钥的唯一一份实现 —— 路径 → 请求头 → 名字兜底，三步。
+ *
+ * ================= 为什么收成一份 =================
+ *
+ * 节点数据有三个出口，此前各写了一份：
+ *   · stripSecrets（预设 / 默认值）    —— 路径(只认两层) + 请求头 + 名字
+ *   · redactNodeSecrets（画布 / 模块） —— 路径(只认两层) + 请求头 + 名字
+ *   · redactVarValues（变量）          —— **只有**请求头 + 名字，没有路径
+ *
+ * 第三份那句注释写着「判定与节点侧同一套，不另写一份」，而它本身就是
+ * 另写的一份 —— 只是恰好今天的 SECRET_PATHS 三条都以 token / apiKey 收尾，
+ * 名字兜底顺手盖住了，所以看不出来。
+ *
+ * 清单里哪天加一条「名字不像密钥、但确实是密钥」的路径（如 llm.value），
+ * 变量侧就会明文落盘，而那句注释会让人以为它跟节点侧一样安全。
+ *
+ * 这正是文件头那段话讲的事：安全向的清单复制两份，漏改一处就是明文泄露，
+ * 而且不报错、测试也不红。所以三个出口一律调这里。
+ *
+ * 没改动时返回**入参本身**（引用不变），改动才返回新对象。
+ */
+function blankSecrets(data: Record<string, unknown>): Record<string, unknown> {
+  let out = data;
+  for (const f of SECRET_PATHS) {
+    if (pathGet(out, f) !== null) out = blankSecretField(out, f);
+  }
+  /* 请求头是「最顺手写 Authorization: Bearer xxx」的地方，
+     不脱的话预设分享出去就等于把令牌贴给别人 */
+  if (typeof out.headersText === 'string') {
+    const redacted = redactHeadersText(out.headersText);
+    if (redacted !== out.headersText) out = { ...out, headersText: redacted };
+  }
+  /* 兜住固定路径覆盖不到的那些（数组里的、没进清单的） */
+  const named = blankSecretNamed(out);
+  if (named !== out) out = named as Record<string, unknown>;
+  return out;
 }
 
 /**
@@ -389,25 +426,11 @@ export function redactNodeSecrets(n: unknown): unknown {
     return redactNodeSecrets({ ...o, data: stripped } as unknown);
   }
 
-  let next = dd;
-  for (const f of SECRET_PATHS) {
-    if (pathGet(next, f) !== null) next = blankSecretField(next, f);
-  }
   /*
-   * 请求头里的 Authorization / Cookie 也是内联密钥 ——
-   * 按路径枚举认不出来（名字用户随便起），要按"名字像不像密钥"判。
+   * 三步（路径 → 请求头 → 名字兜底）都在 blankSecrets 里，
+   * 与预设侧、变量侧共用一份 —— 各写一份必然各改各的。
    */
-  if (typeof next.headersText === 'string') {
-    const redacted = redactHeadersText(next.headersText);
-    if (redacted !== next.headersText) next = { ...next, headersText: redacted };
-  }
-  /*
-   * 最后按名字再兜一层 —— 固定路径覆盖不到的那些：
-   *   · 触发器的 entries[].config.token（带数组下标，点号路径表达不了）
-   *   · 检测更新的 biliCookie / targets[].biliCookie（压根不在清单里）
-   */
-  const named = blankSecretNamed(next);
-  if (named !== next) next = named as Record<string, unknown>;
+  const next = blankSecrets(dd);
   if (next === dd) return n;
   return { ...o, data: next };
 }
@@ -461,14 +484,15 @@ export function stripDerivedKeys(data: Record<string, unknown>): Record<string, 
  * 变量是"存成变量 → 导出分享"的，漏了同样是明文外流。
  */
 export function redactVarValues(values: Record<string, unknown>): Record<string, unknown> {
-  const v = (values ?? {}) as Record<string, unknown>;
-  let out = v;
-  if (typeof out.headersText === 'string') {
-    const redacted = redactHeadersText(out.headersText);
-    if (redacted !== out.headersText) out = { ...out, headersText: redacted };
-  }
-  const named = blankSecretNamed(out);
-  return (named ?? out) as Record<string, unknown>;
+  /*
+   * 与节点侧、预设侧同一份（blankSecrets）。
+   *
+   * 改之前这里只做了「请求头 + 名字兜底」，**漏了 SECRET_PATHS**，
+   * 而上面那句注释还写着「判定与节点侧同一套，不另写一份」—— 注释是假的。
+   * 今天看不出问题，是因为三条路径都以 token / apiKey 收尾，
+   * 被名字兜底顺手盖住了；清单里加一条名字不像密钥的路径，变量侧就会明文落盘。
+   */
+  return blankSecrets({ ...((values ?? {}) as Record<string, unknown>) });
 }
 
 /** 剥掉显示与布局状态 */

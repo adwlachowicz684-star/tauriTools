@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   SECRET_PATHS, stripSecrets, hadInlineSecret,
   redactHeadersText, headersHaveSecret, looksLikeSecretHeader, isTemplateOnlyHeaderValue,
-  blankSecretNamed, looksLikeSecretName,
+  blankSecretNamed, looksLikeSecretName, redactVarValues,
 } from '../engine/sanitize';
 import { parseHeaders } from '../engine/headers';
 import { redactNodes } from '../engine/canvasStore';
@@ -313,9 +313,23 @@ test('守卫: redactNode 走了按名字兜底（退化成只靠路径会红）'
    * 数组入口只做转发，按名字兜底发生在判定本体里。
    * 所以两处各钉一头 —— 少钉一头，"把兜底摘掉只留路径判定"就抓不住。
    */
+  /*
+   * 三步（路径 → 请求头 → 按名字兜底）已收进 blankSecrets 一处，
+   * 所以钉的是「redactNodeSecrets 转发到它」+「它里面确实有兜底」两头。
+   *
+   * 只钉一头的话，"把兜底摘掉只留路径判定"就抓不住 ——
+   * 只靠 SECRET_PATHS 会漏掉数组里的 entries[].config.token。
+   */
   assert.ok(
-    /blankSecretNamed\(/.test(bodyOf(san, 'redactNodeSecrets')),
-    'redactNodeSecrets 必须走按名字兜底 —— 只靠 SECRET_PATHS 会漏掉数组里的密钥',
+    /blankSecrets\(/.test(bodyOf(san, 'redactNodeSecrets')),
+    'redactNodeSecrets 必须走 blankSecrets —— 三步都在那一份里，别自己再写一遍',
+  );
+  const coreAt = san.indexOf('function blankSecrets(');
+  assert.notEqual(coreAt, -1, '找不到 blankSecrets');
+  const coreBody = san.slice(coreAt, coreAt + 700);
+  assert.ok(
+    /blankSecretNamed\(/.test(coreBody),
+    'blankSecrets 里必须有按名字兜底 —— 只靠 SECRET_PATHS 会漏掉数组里的密钥',
   );
   assert.ok(
     /redactNodeSecrets\b/.test(bodyOf(san, 'redactNodes')),
@@ -577,5 +591,102 @@ test('hint: privateKey / passphrase 必须认得（名字里没有 token/key）'
   /* 用完整词，所以这些带 key 的普通字段安全 */
   for (const n of ['keyword', 'keyColor', 'keyboard', 'donkey', 'monkey']) {
     assert.equal(looksLikeSecretName(n), false, `${n} 是普通字段`);
+  }
+});
+
+
+/* ================================================================== */
+/* 三个出口必须是同一份实现                                             */
+/* ================================================================== */
+
+/*
+ * 节点数据离开内存有三个出口，此前各写了一份判定：
+ *
+ *   stripSecrets      —— 预设 / 默认值
+ *   redactNodeSecrets —— 画布存档 / 模块
+ *   redactVarValues   —— 变量
+ *
+ * 第三份那句注释写着「判定与节点侧同一套，不另写一份」，
+ * 而它本身就是另写的一份：只做了「请求头 + 名字兜底」，**没有 SECRET_PATHS**。
+ *
+ * 今天看不出来是因为三条路径都以 token / apiKey 收尾，被名字兜底顺手盖住了。
+ * 清单里加一条「名字不像密钥、但确实是密钥」的路径（如 llm.value），
+ * 变量侧就会明文落盘 —— 而那句注释会让人以为它跟节点侧一样安全。
+ *
+ * 这正是文件头讲的那件事：安全向的清单复制两份，漏改一处就是明文泄露，
+ * 而且不报错、测试也不红。
+ */
+const EXITS: Array<[string, (d: Record<string, unknown>) => unknown]> = [
+  ['stripSecrets（预设/默认值）', (d) => stripSecrets(d)],
+  ['redactNodes（画布/模块）', (d) => (redactNodes([{ id: 'n', data: d }])[0] as { data: unknown }).data],
+  ['redactVarValues（变量）', (d) => redactVarValues(d)],
+];
+
+test('三个出口对同一份数据的脱敏结果必须一致', () => {
+  const base: Array<[string, Record<string, unknown>]> = [
+    ['顶层 token', { token: 'ghp_x' }],
+    ['llm.apiKey', { llm: { apiKey: 'sk-live' } }],
+    ['config.token', { config: { token: 'tok' } }],
+    ['请求头凭据', { headersText: 'Authorization: Bearer sk' }],
+    ['请求头纯引用（不该挖）', { headersText: 'Authorization: Bearer {{a.b}}' }],
+    ['名字兜底 biliCookie', { biliCookie: 'x' }],
+    ['数组里的 config.token', { entries: [{ config: { token: 'ghp' } }] }],
+    ['裸字符串数组', { tokens: ['sk-a'] }],
+    ['没有密钥', { name: 'n', port: 8080 }],
+    ['凭据引用不该挖', { credentialId: 'c1' }],
+  ];
+  for (const [name, d] of base) {
+    /* 节点侧要求 data 里有 kind（鸭子类型），其余两个出口不要求 */
+    const probe = { kind: 'probe', ...d };
+    const outs = EXITS.map(([, fn]) => JSON.stringify(fn(probe)));
+    const first = outs[0];
+    for (let i = 1; i < outs.length; i += 1) {
+      assert.equal(outs[i], first,
+        `${name}：${EXITS[i][0]} 与 ${EXITS[0][0]} 结果不一致 —— 又抄了一份`);
+    }
+  }
+});
+
+/*
+ * 逐条路径验证：把密钥放在清单里每一条路径上，
+ * 三个出口都得挖掉，而且 hadInlineSecret 都得说"有"。
+ *
+ * 这一条同时盯住 pathSet 的深度 —— 它是逐个 path 合成的，
+ * 哪天清单里加了三层路径而 pathSet 只认两层，这里就红。
+ */
+test('SECRET_PATHS 每条路径：三个出口都挖、hadInlineSecret 都说有', () => {
+  for (const path of SECRET_PATHS) {
+    const parts = path.split('.');
+    /* 按路径造出嵌套对象，最深一层放密钥 */
+    const build = (i: number): Record<string, unknown> => (
+      i === parts.length - 1
+        ? { [parts[i]]: 'sk-secret' }
+        : { [parts[i]]: build(i + 1) }
+    );
+    const d = { kind: 'probe', ...build(0) };
+    assert.equal(hadInlineSecret(d), true, `${path}：hadInlineSecret 该说有`);
+    for (const [label, fn] of EXITS) {
+      const out = JSON.stringify(fn(d));
+      assert.equal(out.includes('sk-secret'), false, `${path}：${label} 没挖掉`);
+    }
+  }
+});
+
+/* 源码守卫: 三个出口都得调同一份核心，不许谁自己再写一份 */
+test('源码守卫: 脱敏只有一份实现（三个出口都走 blankSecrets）', () => {
+  const src = readSrc('engine/sanitize.ts');
+  const body = (fn: string) => {
+    const at = src.indexOf(`function ${fn}(`);
+    assert.ok(at >= 0, `找不到 ${fn}`);
+    return src.slice(at, at + 500);
+  };
+  for (const fn of ['stripSecrets', 'redactNodeSecrets', 'redactVarValues']) {
+    assert.ok(body(fn).includes('blankSecrets'), `${fn} 必须走 blankSecrets`);
+  }
+  /* 反例：核心自己不许被绕开 —— 出口里不许直接写一遍三步里的任何一步 */
+  for (const fn of ['stripSecrets', 'redactVarValues']) {
+    const b = body(fn);
+    assert.equal(b.includes('blankSecretNamed('), false,
+      `${fn} 不该自己调 blankSecretNamed（三步都在 blankSecrets 里）`);
   }
 });
