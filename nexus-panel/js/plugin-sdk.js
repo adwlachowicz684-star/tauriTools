@@ -38,6 +38,10 @@ export const BRIDGE_CHANNEL = 'nexus-bridge-v1';
 import { checkInvoke } from './invoke-policy.js';
 /* Owned 归属通道：让"卸载干净"从约定变成结构性保证。详见该文件头部。 */
 import { createOwned } from './owned.js';
+/* 快捷键解析/匹配：与宿主侧（js/host.js）共用同一份判据。 */
+import { parseCombo, matchCombo, isMac } from './accel.js';
+/* 存储键：与宿主侧（js/host.js）同一套，见该文件头部说明。 */
+import { storeKey, storePrefix } from './plugin-store.js';
 import { claimPath, readClaims, releasePath } from './plugin-fs.js';
 
 export const SHELL_SHORTCUTS = ['mod+b', 'mod+r', 'mod+,', 'esc'];
@@ -84,58 +88,20 @@ function append(parent, children) {
    快捷键
    ============================================================ */
 
-/**
- * 解析快捷键串。
- * 支持：mod+k / ctrl+shift+p / meta+s / alt+/ / esc / f5 / ?
- *  · mod = macOS 的 ⌘、其它平台 Ctrl（写一次两端都对）
- *  · 单字符不区分大小写；'?' 需配合 shift，单独判断
+/*
+ * 解析与匹配都在 js/accel.js —— **宿主侧（js/host.js）用的是同一份**。
+ *
+ * 此前这里有一份独立的：认 F5 / esc / space / '?' / super，但不认数字小键盘；
+ * 宿主那份正好相反（认小键盘，不认功能键）。同一个 combo 走哪条路由结果不同：
+ *
+ *   · 插件声明 Ctrl+F5（走宿主那条路）→ 注册成功、永不触发、**不报错**；
+ *   · 外壳保留键 esc 在小键盘场景下不匹配。
+ *
+ * 现在两份合一、语义取并集（两边原本能匹配的都仍然匹配）。
+ * 这里保留具名导出，让 `import { parseCombo } from './plugin-sdk.js'`
+ * 这类既有写法与 plugin-sdk.d.ts 都不必改。
  */
-export function parseCombo(combo) {
-  const parts = String(combo || '').toLowerCase().split('+').map((s) => s.trim()).filter(Boolean);
-  if (!parts.length) return null;
-  const spec = { key: '', mod: false, ctrl: false, shift: false, alt: false, meta: false };
-  for (const p of parts) {
-    if (p === 'mod') { spec.mod = true; }
-    else if (p === 'ctrl' || p === 'control') { spec.ctrl = true; }
-    else if (p === 'shift') { spec.shift = true; }
-    else if (p === 'alt' || p === 'option') { spec.alt = true; }
-    else if (p === 'meta' || p === 'cmd' || p === 'command' || p === 'super') { spec.meta = true; }
-    else spec.key = p;
-  }
-  if (!spec.key) return null;
-  return spec;
-}
-
-/** 判断一次按键事件是否匹配某个快捷键 */
-export function matchCombo(e, spec) {
-  if (!spec) return false;
-  // mod：macOS 认 meta，其它认 ctrl
-  const modOk = !spec.mod || (isMac() ? e.metaKey : e.ctrlKey);
-  if (!modOk) return false;
-  // 显式声明的修饰键必须按下；未声明的必须没按（避免 mod+k 被 ctrl+alt+k 误触发）
-  const metaOk = spec.meta ? e.metaKey : !e.metaKey || (spec.mod && isMac());
-  const ctrlOk = spec.ctrl ? e.ctrlKey : !e.ctrlKey || (spec.mod && !isMac());
-  if (!metaOk || !ctrlOk) return false;
-  if (spec.alt !== e.altKey) return false;
-  if (spec.shift !== e.shiftKey) return false;
-
-  const k = String(e.key || '').toLowerCase();
-  const code = String(e.code || '').toLowerCase();
-  if (k === spec.key) return true;
-  // 功能键：code 形如 f5 / escape
-  if (code === spec.key) return true;
-  if (code === 'key' + spec.key) return true;         // 'k' → KeyK
-  if (spec.key === 'esc' && k === 'escape') return true;
-  if (spec.key === 'space' && (k === ' ' || code === 'space')) return true;
-  if (spec.key === '?' && k === '?') return true;
-  return false;
-}
-
-export function isMac() {
-  try {
-    return /mac|iphone|ipad/i.test(globalThis.navigator?.platform || globalThis.navigator?.userAgent || '');
-  } catch { return false; }
-}
+export { parseCombo, matchCombo, isMac };
 
 /* ============================================================
    内部：通用 ctx 构造（两种模式共用）
@@ -693,21 +659,21 @@ export function createModuleContext({
           return ev.listen(payload.event, (e) => payload.handler(e.payload, e));
         }
         case 'store.get': {
-          const raw = localStorage.getItem(`nexus:${manifest.id}:${payload.k}`);
+          const raw = localStorage.getItem(storeKey(manifest.id, payload.k));
           if (raw == null) return payload.def;
           // 存储可能被外部改写、或跨版本格式变了。单个键读不出就退默认值，
           // 不该让一次读取把调用方整体带崩。
           try { return JSON.parse(raw); } catch { return payload.def; }
         }
         case 'store.set':
-          localStorage.setItem(`nexus:${manifest.id}:${payload.k}`, JSON.stringify(payload.v));
+          localStorage.setItem(storeKey(manifest.id, payload.k), JSON.stringify(payload.v));
           return true;
         case 'store.del':
-          localStorage.removeItem(`nexus:${manifest.id}:${payload.k}`);
+          localStorage.removeItem(storeKey(manifest.id, payload.k));
           return true;
         case 'store.all': {
           const out = {};
-          const pre = `nexus:${manifest.id}:`;
+          const pre = storePrefix(manifest.id);
           // 逐键 try：一个键坏掉不该让整份配置拿不到（此前会整体抛错）
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
