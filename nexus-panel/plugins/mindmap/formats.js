@@ -1928,60 +1928,105 @@ export function baseTitle(name, fallback = '导入的脑图') {
 
 /** 各格式的显示名与扩展名，供 UI 与提示复用 */
 /**
- * 节点 data 键的**单一能力矩阵**（BUG 187）。
+ * 节点自定义样式的 data 键 —— 与 xmind.js 的 `StyleMap` 对齐，另加内核用的
+ * 三个字重/字形键。交换格式（.mm / .opml / .mmd / .puml）**一律不带样式**，
+ * 这里只用来数「有多少节点设了样式」，好让导出时说清楚丢了什么。
+ */
+/**
+ * 节点级 data 键的**单一能力矩阵**（BUG 187）。
  *
- * 早先是 xmind.js 手写一份 `StyleMap`、formats.js 再手写一份 `NODE_STYLE_KEYS`、
- * buildStyle / applyStyle 对粗体 / 斜体 / 删除线 / 下划线再手写三段 —— 四处各
- * 写一遍，新增一个样式键要改四处，漏一处就是「数据收进来了、某条路没带上」
- * 的静默丢失（这个洞重演了 8 次：BUG 123 / 127 / 135 / 152 / 180 / 181 /
- * 182 / 186）。现在这里是唯一来源，其余全部派生。
+ * 一份表说清四件事，其余全部从它派生 —— 新增一个 data 键只在这里登记一次：
+ *   · name    导出提示里怎么叫它
+ *   · bucket  丢了算进 `exchangeLoss` / `xmindLossCount` 的哪一桶
+ *   · keep    哪些交换格式**真的带得走**（不写 = 一律丢）
+ *   · xmind*  落到 XMind 的哪个属性（不写 = XMind 也带不走）
+ *   · probe   常驻往返测试用的样本值
  *
- * 字段含义：
- *   bucket    'style' = 自定义样式键（`NODE_STYLE_KEYS` 就是这一类）
- *   xmind     该键在 XMind 里的属性名；**不给**表示不走简单的一对一映射，
- *             由 buildStyle / applyStyle 专门处理（见下）
- *   px        true = XMind 里这个值带 px 单位（其余原样，font-size 走 pt）
- *   xmindBold / xmindItalic / xmindDeco
- *             字重 / 斜体 / 删除线+下划线：它们不是一对一映射 —— 字重要归一化，
- *             删除线与下划线还挤在同一个 `fo:text-decoration` 里，只能专门处理。
+ * ⓘ 为什么必须有这一份表：这个洞已经重演 8 次 —— 关系线（BUG 123）、FreeMind
+ *   图标外框（BUG 127 / 135）、概要与标注（BUG 152）、下划线（BUG 180）、连线
+ *   样式（BUG 182）、垂直对齐（BUG 186）、画布主题与布局（BUG 181 / 185），
+ *   每次都是「数据收进来了，某一份手写名单没同步」。而名单此前散在四处：
+ *   本表之前的 `NODE_STYLE_KEYS`、`EXCHANGE_KEEP`、xmind.js 的 `StyleMap`、
+ *   以及 buildStyle / applyStyle 里那三段手写代码 —— 改一处漏三处是必然。
+ *
+ * ⓘ `keep` 的真值由常驻测试盯：`mindmap-test.mjs` 里的能力矩阵测试会对
+ *   **每个键 × 每种格式**真的导出再导回，与这里的声称逐一比对。声称与实测
+ *   不符就是瞒报或虚报（BUG 153 / 182 都是这么来的）—— 以后改了格式代码
+ *   却忘了更新这里，会被那条测试抓到。
+ *
+ * ⓘ 另有两条覆盖度断言盯着「新键漏登记」：样式键必须声明 XMind 映射（漏了
+ *   = 别的软件打开就丢，如 BUG 186 的垂直对齐），全部键必须声明 bucket
+ *   （漏了 = 静默丢失、一句提示都没有，如 BUG 180 的下划线）。
  */
 export const NODE_DATA_KEYS = {
-  background: { bucket: 'style', xmind: 'svg:fill' },
-  'node-stroke': { bucket: 'style', xmind: 'svg:stroke' },
-  'node-stroke-width': { bucket: 'style', xmind: 'svg:stroke-width', px: true },
-  'node-radius': { bucket: 'style', xmind: 'svg:corner-radius', px: true },
-  'node-line-stroke': { bucket: 'style', xmind: 'line-color' },
-  'node-line-width': { bucket: 'style', xmind: 'line-width', px: true },
-  color: { bucket: 'style', xmind: 'fo:color' },
-  'font-size': { bucket: 'style', xmind: 'fo:font-size' },
-  'font-family': { bucket: 'style', xmind: 'fo:font-family' },
-  'text-align': { bucket: 'style', xmind: 'fo:text-align' },
+  /* ---- 内容 ---- */
+  note:        { name: '备注',     bucket: 'note',       probe: 'NOTE1',
+                 keep: { freemind: 1, opml: 1 } },
+  hyperlink:   { name: '超链接',   bucket: 'hyperlink',  probe: 'https://e.g/x',
+                 keep: { freemind: 1, opml: 1 } },
+  priority:    { name: '优先级',   bucket: 'priority',   probe: 3 },
+  progress:    { name: '进度',     bucket: 'progress',   probe: 5 },
+  labels:      { name: '标签',     bucket: 'labels',     probe: ['L1'] },
+  // 折叠状态：只有 FreeMind 的 `FOLDED` 带得走（BUG 111）
+  expandState: { name: '折叠状态', bucket: 'collapsed',  probe: 'collapse',
+                 keep: { freemind: 1 } },
 
+  /* ---- 样式（与 xmind.js 的写侧成对，见那里的 buildStyle / applyStyle） ---- */
+  background:          { name: '背景色',   bucket: 'style', probe: '#112233',
+                         xmind: 'svg:fill',        keep: { freemind: 1 } },
+  'node-stroke':       { name: '描边色',   bucket: 'style', probe: '#445566',
+                         xmind: 'svg:stroke' },
+  'node-stroke-width': { name: '描边粗细', bucket: 'style', probe: '2px',
+                         xmind: 'svg:stroke-width', px: true },
+  'node-radius':       { name: '圆角',     bucket: 'style', probe: '6px',
+                         xmind: 'svg:corner-radius', px: true },
+  'node-line-stroke':  { name: '连线颜色', bucket: 'style', probe: '#00ff00',
+                         xmind: 'line-color',      keep: { freemind: 1 } },
+  'node-line-width':   { name: '连线粗细', bucket: 'style', probe: '3px',
+                         xmind: 'line-width', px: true, keep: { freemind: 1 } },
+  color:               { name: '文字颜色', bucket: 'style', probe: '#ff0000',
+                         xmind: 'fo:color',        keep: { freemind: 1 } },
+  'font-size':         { name: '字号',     bucket: 'style', probe: '18px',
+                         xmind: 'fo:font-size',    keep: { freemind: 1 } },
+  'font-family':       { name: '字体',     bucket: 'style', probe: 'Arial',
+                         xmind: 'fo:font-family',  keep: { freemind: 1 } },
+  'text-align':        { name: '水平对齐', bucket: 'style', probe: 'left',
+                         xmind: 'fo:text-align' },
   /*
-   * 垂直对齐 XMind **没有**对应的标准属性（它的节点文字固定居中）。
-   * 走私有键保住本工具的往返，避免「设了垂直：下 → 导出再导入 → 变回居中」。
-   * 私有键只在真的设了值时才写，别的软件忽略未知键，无害。
+   * 垂直对齐：XMind **没有**对应的标准属性，走私有键 `nexusValign`
+   * （BUG 186）—— 本工具认得，别的软件打开不认、重写后连我们自己导回也
+   * 变回居中。所以这里给了 `xmind`（本工具往返带得走），但**不**给 zen：
+   * 「被别的软件打开」这一档它确实会丢，xmindLossCount 要说清楚。
    */
-  'vertical-align': { bucket: 'style', xmind: 'nexusValign' },
+  'vertical-align':    { name: '垂直对齐', bucket: 'style', probe: 'top',
+                         xmind: 'nexusValign' },
+  'font-weight':       { name: '粗体',     bucket: 'style', probe: 'bold',
+                         xmindBold: true,  keep: { freemind: 1 } },
+  'font-style':        { name: '斜体',     bucket: 'style', probe: 'italic',
+                         xmindItalic: true, keep: { freemind: 1 } },
+  'font-strikethrough': { name: '删除线',  bucket: 'style', probe: true,
+                         xmindDeco: 'line-through' },
+  underline:           { name: '下划线',   bucket: 'style', probe: true,
+                         xmindDeco: 'underline' },
 
-  'font-weight': { bucket: 'style', xmindBold: true },
-  'font-style': { bucket: 'style', xmindItalic: true },
-  'font-strikethrough': { bucket: 'style', xmindDeco: true },
+  /* ---- 媒体 ---- */
+  image:      { name: '图片',     bucket: 'image',      probe: 'i.png' },
+  images:     { name: '横幅图',   bucket: 'image',      probe: ['b.png'] },
+  imageSize:  { name: '图片尺寸', bucket: 'image',      probe: { width: 10, height: 10 } },
+  imageTitle: { name: '图片标题', bucket: 'image',      probe: 'IMG1' },
+  file:       { name: '附件',     bucket: 'attachment', probe: 'f.bin' },
+  video:      { name: '视频',     bucket: 'attachment', probe: 'v.mp4' },
 
-  /*
-   * BUG 180：下划线（`data.underline`）。
-   *
-   * 它是 xmind.js 读 XMind 的 `fo:text-decoration` 时落下的（写侧再写回去，
-   * 成对存在，见 xmind.js 那两处注释）—— 所以 .xmind 与 .json 都带得走。
-   * 但**五种交换格式一个都没有对应属性**：FreeMind 的 `<font>` 只有
-   * NAME/SIZE/BOLD/ITALIC，OPML 只有 text/_note，Mermaid / PlantUML /
-   * Markdown 更没有。实测产物里连 "underline" 字样都没有。
-   *
-   * 而它不在 `NODE_STYLE_KEYS` 里 → `exchangeLoss` 报 style:0 / nodes:0 →
-   * 导出时那句「装不下…」**整句不出现**，界面只说「已保存」。与 BUG 123 /
-   * 127 / 152 是同一个洞：数据收进来了，丢失统计没同步。
-   */
-  underline: { bucket: 'style', xmindDeco: true },
+  /* ---- 结构 ---- */
+  boundaryGroup: { name: '外框', bucket: 'boundary', probe: 'bg1' },
+  xmarkers:      { name: '标记图标', bucket: 'markers', probe: ['flag-red'] },
+  xsummary:      { name: '概要', bucket: 'summary', probe: true },
+  xcallout:      { name: '标注', bucket: 'callout', probe: true },
+  // FreeMind 自家的 `<icon>` / `<cloud>`（BUG 127），只有 .mm 带得走
+  fmIcons:       { name: 'FreeMind 图标', bucket: 'markers',  probe: ['full-1'],
+                   keep: { freemind: 1 } },
+  fmCloud:       { name: 'FreeMind 外框', bucket: 'boundary', probe: 'CLOUD1',
+                   keep: { freemind: 1 } },
 };
 
 /**
