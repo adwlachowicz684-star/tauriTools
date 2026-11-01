@@ -53,6 +53,16 @@ export interface HistoryEntry {
   note: string;
 }
 
+/**
+ * 单值 或 多值。
+ *
+ * 用户在列设置里给这一列勾上「多选」之后，值就变成数组
+ * （一条任务可以同时属于多个类型 / 分组 / 认领人）。
+ * 两种形态**长期共存**：老数据是字符串，关掉多选会压回字符串。
+ * 所以读写都要兼容这两者，不能假设一定是一种。
+ */
+export type MultiVal = string | string[];
+
 export interface Task {
   id: string;
   title: string;
@@ -81,18 +91,26 @@ export interface Task {
   priority: Priority;
   /** 预估工作量，单位人日，允许小数（0.5 = 半天）。0 = 没估 */
   estimate: number;
+/**
+ * 单值 或 多值。
+ *
+ * 用户在列设置里给这一列勾上「多选」之后，值就变成数组
+ * （一条任务可以同时属于多个类型 / 分组 / 认领人）。
+ * 两种形态**长期共存**：老数据是字符串，关掉多选会压回字符串。
+ * 所以读写都要兼容这两者，不能假设一定是一种。
+ */
   /** 任务类型，存的是 typeDefs 里的 id（'dev'/'bug'…）。'' = 未分类 */
-  type: string;
+  type: MultiVal;
   /**
    * 分组名。留空 = 不分组。
    *
    * 相当于以前的"手动分组"，但只是一列**值**：不再有组记录、也不再有父子层级，
    * 归拢完全由通用的"按列分组"机制表达（在分组设置里选这一列即可）。
    */
-  group: string;
+  group: MultiVal;
   tags: string[];
   reporter: string;
-  assignee: string | null;
+  assignee: MultiVal | null;
   createdAt: number;
   updatedAt: number;
   history: HistoryEntry[];

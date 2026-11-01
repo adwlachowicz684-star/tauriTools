@@ -10,7 +10,7 @@ import {
   normalizeStore,
   nextTaskId,
   pushHistory,
-  applyTransition,
+  applyTransitionIn,
 } from '../core';
 import { DEFAULT_CONFIG } from '../types';
 import type { TbConfig, TaskStore, Task, Agent } from '../types';
@@ -432,7 +432,14 @@ export async function transitionTask(
   await mutate(ctx, dataDir, (store) => {
     const idx = store.tasks.findIndex((t) => t.id === id);
     if (idx < 0) return null;
-    const next = applyTransition(store.tasks[idx], to, me, note);
+    /*
+      ⛔ 必须把 **store.flow** 传进去：校验要认用户配的流程。
+
+      原来调的是 applyTransition（只认默认那七个状态），
+      于是自定义流程下每一次流转都失败、抛「状态不允许或任务不存在」——
+      而真正的原因是"流程没被认"，报错文案却把人往"任务不存在"上引。
+    */
+    const next = applyTransitionIn(store.flow, store.tasks[idx], to, me, note);
     if (!next) return null;
     const tasks = [...store.tasks];
     tasks[idx] = next;

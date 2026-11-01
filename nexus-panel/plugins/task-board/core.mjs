@@ -202,57 +202,29 @@ export function actionsForIn(flow, status) {
   });
 }
 
-/** 允许的状态流转（不在表内的直接拒） */
+/**
+ * 允许的状态流转（不传 flow 就是默认那套）。
+ *
+ * ⛔ 以前这里**另抄了一份** `allowed` 字面量表，
+ * 与 DEFAULT_FLOW.transitions 内容相同 —— 那是典型的两份真相：
+ * 改流程默认值时只改一处，另一处就悄悄过期。
+ * 现在直接委托给 canTransitionIn，默认值只有 DEFAULT_FLOW 一个来源。
+ */
 export function canTransition(from, to) {
-  if (!STATUSES.includes(from) || !STATUSES.includes(to)) return false;
-  if (from === to) return true;
-  const allowed = {
-    todo: ['claimed', 'doing', 'hold', 'cancelled'],
-    claimed: ['doing', 'todo', 'hold', 'cancelled'],
-    doing: ['review', 'todo', 'hold', 'cancelled'],
-    hold: ['doing', 'todo', 'cancelled'],
-    review: ['done', 'doing', 'hold', 'cancelled'],
-    done: ['review'],
-    cancelled: ['todo'],
-  };
-  return (allowed[from] || []).includes(to);
+  return canTransitionIn(DEFAULT_FLOW, from, to);
 }
 
-/** 当前状态下界面上要显示的操作按钮 */
-export function actionsFor(status) {
-  switch (status) {
-    case 'todo':
-      return [
-        { to: 'claimed', label: '认领' },
-        { to: 'doing', label: '开始' },
-      ];
-    case 'claimed':
-      return [
-        { to: 'doing', label: '开始' },
-        { to: 'todo', label: '退回' },
-      ];
-    case 'doing':
-      return [
-        { to: 'review', label: '提交审查' },
-        { to: 'todo', label: '退回' },
-        { to: 'hold', label: '挂起' },
-        { to: 'cancelled', label: '取消' },
-      ];
-    case 'review':
-      return [
-        { to: 'done', label: '通过' },
-        { to: 'doing', label: '打回', needNote: true },
-        { to: 'hold', label: '挂起' },
-        { to: 'cancelled', label: '取消' },
-      ];
-    case 'done':
-      return [{ to: 'review', label: '重开' }];
-    case 'cancelled':
-      return [{ to: 'todo', label: '重开' }];
-    default:
-      return [];
-  }
-}
+/*
+  旧的 `actionsFor(status)`（写死"认领/开始/提交审查"的 switch）**删掉了**。
+
+  它有三重问题：
+    · 写死默认流程的动词，自定义流程下全不适用
+    · 与 actionsForIn(DEFAULT_FLOW, …) 结果**不一致**（它只返回 2 个按钮，
+      而按配置推导是 4 个）—— 两个函数说同一件事却说法不同
+    · 界面早已全走 actionsForIn，它只被老测试引用着（活着的死代码）
+  统一到 actionsForIn：默认流程也只是"一份配置"而已。
+*/
+
 
 export function normalizeTask(raw) {
   const t = raw && typeof raw === 'object' ? raw : {};
@@ -656,6 +628,68 @@ export function toggleFieldVal(task, field, id, multi) {
   if (i >= 0) cur.splice(i, 1);
   else cur.push(id);
   return cur;
+}
+
+/**
+ * 排序时用于比较的**单个字符串**。
+ *
+ * ⛔ 多值列的字段是个数组，直接 `a.assignee.localeCompare(b.assignee)` 会
+ * **TypeError: a.assignee.localeCompare is not a function** ——
+ * 只要那条多值任务恰好作为比较的左操作数就会崩（实测 5 条里多值在位置
+ * 1/2/4 都崩，位置 0 侥幸不崩），表现是**整个列表白屏**。
+ *
+ * 取哪个值当代表：按显示名排好取第一个 —— 这样"先勾的"和"后勾的"
+ * 在同一列上得到确定的结果，不会因为勾选顺序不同而顺序乱跳。
+ */
+export function sortKey(task, field, nameOf) {
+  const v = task && typeof task === 'object' ? task[field] : undefined;
+  const arr = Array.isArray(v) ? v.filter((x) => x !== null && x !== undefined && x !== '')
+    : (v === null || v === undefined || v === '' ? [] : [v]);
+  const names = arr.map((x) => String(nameOf ? nameOf(String(x)) : x));
+  if (names.length === 0) return '';
+  names.sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  return names[0];
+}
+
+/**
+ * 这一列上**是否含有**某个值（兼容单值 / 多值 / 空）。
+ *
+ * ⛔ 管理操作（改名、删定义、统计影响条数）里到处是 `t.type === id`
+ * 这种单值比较 —— 把这一列设成多选之后，多值的任务**一条都匹配不上**：
+ *   · 删类型：影响条数报 0，而且任务上残留着那个 id（删了又复活）
+ *   · 改名：多值的任务不同步，界面上显示一个已经不存在的旧值
+ * 所以匹配一律走这里，不写 `===`。
+ */
+export function hasVal(task, field, id) {
+  const v = task && typeof task === 'object' ? task[field] : undefined;
+  const arr = Array.isArray(v) ? v : (v === null || v === undefined || v === '' ? [] : [v]);
+  if (id === undefined || id === null || id === '') return arr.length === 0;
+  return arr.indexOf(id) >= 0;
+}
+
+/**
+ * 把这一列上的 oldId 换成 newId（或摘掉）。
+ *
+ * multi=false 时返回单值（保持单选列的数据结构），
+ * multi=true 时返回数组。
+ */
+export function replaceVal(task, field, oldId, newId, multi) {
+  const v = task && typeof task === 'object' ? task[field] : undefined;
+  const arr = Array.isArray(v) ? v.slice() : (v === null || v === undefined || v === '' ? [] : [v]);
+  const out = [];
+  const seen = new Set();
+  for (const x of arr) {
+    if (x === oldId) {
+      if (newId !== null && newId !== undefined && newId !== '' && !seen.has(newId)) {
+        seen.add(newId);
+        out.push(newId);
+      }
+      continue;
+    }
+    if (!seen.has(x)) { seen.add(x); out.push(x); }
+  }
+  if (!multi) return out.length > 0 ? out[0] : '';
+  return out;
 }
 
 /** 某一列当前选了哪些值（去哨兵、去空），用于多选单元格的 chip 渲染 */
@@ -1365,10 +1399,17 @@ function cmpTask(a, b, field, sign, tagNames = null) {
       r = (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
       break;
     case 'assignee': {
-      if (!a.assignee && !b.assignee) r = 0;
-      else if (!a.assignee) return 1;
-      else if (!b.assignee) return -1;
-      else r = a.assignee.localeCompare(b.assignee);
+      /*
+        ⛔ 必须走 sortKey：**多值列上 a.assignee 是个数组**，
+        `a.assignee.localeCompare(...)` 直接 TypeError ——
+        实测 5 条任务里多值那条排在第 1/2/4 位都会崩，表现为列表白屏。
+      */
+      const ka = sortKey(a, 'assignee');
+      const kb = sortKey(b, 'assignee');
+      if (!ka && !kb) r = 0;
+      else if (!ka) return 1;
+      else if (!kb) return -1;
+      else r = ka.localeCompare(kb);
       break;
     }
     case 'group': {
@@ -1377,10 +1418,13 @@ function cmpTask(a, b, field, sign, tagNames = null) {
         ⛔ 这一列必须有分支 —— 落到 default 就是 r=0，
         点列头排序会纹丝不动，而界面上写着"排序：分组 ↓"。
       */
-      if (!a.group && !b.group) r = 0;
-      else if (!a.group) return 1;
-      else if (!b.group) return -1;
-      else r = a.group.localeCompare(b.group, 'zh-Hans-CN');
+      /* 同上：多值分组时 a.group 是数组，.localeCompare 会崩 */
+      const ga = sortKey(a, 'group');
+      const gb = sortKey(b, 'group');
+      if (!ga && !gb) r = 0;
+      else if (!ga) return 1;
+      else if (!gb) return -1;
+      else r = ga.localeCompare(gb, 'zh-Hans-CN');
       break;
     }
     case 'updatedAt':
@@ -1394,8 +1438,13 @@ function cmpTask(a, b, field, sign, tagNames = null) {
         自定义类型不在表里，落 99 排最后（它们之间的先后没意义），
         未分类同理恒排最后：它是"还没归类"，不该混在中间。
       */
-      r = (TYPE_RANK[a.type] ?? 99) - (TYPE_RANK[b.type] ?? 99)
-        || (a.type ? 0 : 1) - (b.type ? 0 : 1);
+      /*
+        多值时 TYPE_RANK[数组] 恒 undefined → 99，所有多值任务挤在最后
+        且彼此顺序随机。取**排名最靠前**的那个值当代表 ——
+        这条任务属于"开发"也属于"BUG"，按"BUG"排才有意义。
+      */
+      r = (TYPE_RANK[sortKey(a, 'type')] ?? 99) - (TYPE_RANK[sortKey(b, 'type')] ?? 99)
+        || (String(sortKey(a, 'type')) ? 0 : 1) - (String(sortKey(b, 'type')) ? 0 : 1);
       break;
     case 'estimate':
       r = (Number(a.estimate) || 0) - (Number(b.estimate) || 0);
@@ -1529,14 +1578,33 @@ export function pushHistory(task, by, action, note, at) {
   return { ...task, history: hist, updatedAt: at || Date.now() };
 }
 
-/** 应用一次流转（含合法性校验），返回新任务；不合法返回 null */
-export function applyTransition(task, to, by, note, at) {
-  if (!canTransition(task.status, to)) return null;
+/**
+ * 应用一次流转（含合法性校验），返回新任务；不合法返回 null。
+ *
+ * ⛔ **必须传 flow**：校验走 canTransitionIn（认用户的流程配置）。
+ *
+ * 原来这里调的是 canTransition —— 它只认**默认那七个状态**。
+ * 于是自定义流程下（状态叫 s1/s2/s3）：
+ *   · 界面按钮按 actionsForIn 算出来了，点得动
+ *   · 真正写盘时 applyTransition 校验失败 → 返回 null
+ *   → transitionTask 抛「流转失败（状态不允许或任务不存在）」
+ * 也就是**自定义流程下每一次状态流转都失败**，而报错文案还把人
+ * 往"任务不存在"的方向引导（真正的原因是流程没被认）。
+ *
+ * 不传 flow 时退回默认流程（保持老调用点的行为）。
+ */
+export function applyTransitionIn(flow, task, to, by, note, at) {
+  if (!canTransitionIn(flow, task.status, to)) return null;
   const stamp = at || Date.now();
   let next = { ...task, status: to, updatedAt: stamp };
   const suffix = note ? `（${note}）` : '';
   next = pushHistory(next, by, 'status', `${task.status} -> ${to}${suffix}`, stamp);
   return next;
+}
+
+/** 不传 flow 的默认版本（走 DEFAULT_FLOW） */
+export function applyTransition(task, to, by, note, at) {
+  return applyTransitionIn(DEFAULT_FLOW, task, to, by, note, at);
 }
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
@@ -1593,9 +1661,31 @@ const TYPE_RANK = Object.fromEntries(TYPE_WORDS.map((t, i) => [t, i]));
 export function groupValuesOf(t, key) {
   if (key === 'status') return [t.status];
   if (key === 'priority') return [t.priority];
-  if (key === 'assignee') return [t.assignee || UNASSIGNED];
-  if (key === 'type') return [t.type || NOTYPE];
-  if (key === 'group') return [t.group || NOGROUP];
+  /*
+    ⛔ 这几列**可以是多值的**（用户把"多选"勾上之后）。
+
+    原来一律返回单值 `[t.assignee]` —— 多值时这个"组名"就是个数组，
+    groupName 拿数组去查定义表查不到 → 组头显示成一串逗号连接的原始值，
+    而且这条任务**只出现在其中一个组里**。
+
+    多选的语义本来就是"同时属于多个"，所以应该返回**全部值**，
+    让它同时进每一个组（和标签列一样）。
+  */
+  if (key === 'assignee') {
+    const v = t.assignee;
+    if (Array.isArray(v)) return v.length > 0 ? v : [UNASSIGNED];
+    return [v || UNASSIGNED];
+  }
+  if (key === 'type') {
+    const v = t.type;
+    if (Array.isArray(v)) return v.length > 0 ? v : [NOTYPE];
+    return [v || NOTYPE];
+  }
+  if (key === 'group') {
+    const v = t.group;
+    if (Array.isArray(v)) return v.length > 0 ? v : [NOGROUP];
+    return [v || NOGROUP];
+  }
   if (key === 'tag') return t.tags.length > 0 ? t.tags : [NOTAG];
   return [''];
 }
