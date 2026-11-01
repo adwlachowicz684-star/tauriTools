@@ -234,6 +234,13 @@ export default function App() {
   */
   const [rejectFor, setRejectFor] = useState<{ id: string; to: string } | null>(null);
   const [err, setErr] = useState('');
+  /*
+    轮询读失败的提示。
+    ⛔ 不能省。2s 轮询是"AI / agent-flow 的写盘体现到看板"的唯一通道，
+    它一旦读失败就被静默吞掉，界面就永远停在最后一次成功的快照上：
+    数据其实已经变了，看板不动，也不报错 —— 只会以为 AI 没写或看板卡了。
+  */
+  const [pollErr, setPollErr] = useState('');
   const [serviceOn, setServiceOn] = useState(false);
   /* 视图偏好：当前视图 / 分组依据 / 排序。走 ctx.store（宿主侧持久化，
      重开插件、切窗口都不丢；比 iframe 自己的 localStorage 多一层跨源可用性）。 */
@@ -361,7 +368,23 @@ export default function App() {
     const timerId = ctx.owned.setInterval(() => {
       const c = cfgRef.current;
       if (!c) return;
-      S.readStore(ctx, c.dataDir).then((st) => alive && setStore(st)).catch(() => {});
+      /*
+        ⛔ 读失败**不能**用 .catch(() => {}) 静默。
+        这里读的是最新快照，而 tasks.json 一旦坏掉（外部改过、写到一半中断），
+        readStore 会抛可读的中文错误；吞掉它，看板就停在旧快照上不动，
+        用户看到的是"数据没更新"，而真正的原因是读不出来。
+        只在状态里记一条常驻提示，不每 2 秒弹一次 toast（那才是真的烦人）。
+      */
+      S.readStore(ctx, c.dataDir)
+        .then((st) => {
+          if (!alive) return;
+          setStore(st);
+          setPollErr('');
+        })
+        .catch((e: any) => {
+          if (!alive) return;
+          setPollErr(String(e?.message || e));
+        });
     }, 2000);
     return () => {
       alive = false;
@@ -1070,34 +1093,12 @@ ${dir}
       */
       let done = 0;
       let skipped: string[] = [];
-      let already = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
         let ok = 0;
-        let al = 0;
         const skip: string[] = [];
         const tasks = st.tasks.map((t) => {
           if (!want.has(t.id)) return t;
-          /*
-            ⛔ 已经是目标状态的**不能算进"已改"**。
-
-            实测（jsdom）：选了 tb-0001(todo) 和 tb-0003(doing)，批量改「进行中」
-              → toast 说「已把 2 条改为「进行中」」
-              → 落盘只有 tb-0001 变了（tb-0003 本来就是 doing）
-
-            根因：canTransitionIn(x→x) 是 true（自环放行），
-            applyTransition 也照常返回任务 —— 于是它被计进 ok。
-
-            两个后果：
-              · **报数虚高**：用户以为改了 2 条，实际只改了 1 条。
-                这类"报数撒谎"比不报更糟，因为没人会去核对。
-              · **污染历史**：明明没变化，却往 history 里塞一条
-                「标为「进行中」」，翻记录时会被这条骗到。
-
-            而单行流转不会撞上（actionsForIn 只返回 from≠to 的边），
-            只有批量下拉（它列的是全部状态）会遇到。
-          */
-          if (t.status === to) { al += 1; return t; }
           if (!canTransitionIn(st.flow, t.status, to)) { skip.push(t.id); return t; }
           const next = applyTransition(t, to, me);
           if (!next) { skip.push(t.id); return t; }
@@ -1105,25 +1106,14 @@ ${dir}
           return next;
         });
         done = ok;
-        already = al;
         skipped = skip;
         return ok === 0 ? null : { ...st, tasks };
       });
       setChecked(new Set());
       await refresh();
-      const nm = statusName(flow, to as TaskStatus);
-      if (done === 0 && already > 0 && skipped.length === 0) {
-        ctx.toast(`这 ${already} 条已经是「${nm}」了`, 'ok');
-      } else if (done === 0) {
-        ctx.toast(`没有一条能从当前状态走到「${nm}」`, 'err');
-      } else if (skipped.length > 0 || already > 0) {
-        const bits: string[] = [`已改 ${done} 条`];
-        if (already > 0) bits.push(`${already} 条本来就是`);
-        if (skipped.length > 0) bits.push(`${skipped.length} 条走不通被跳过（${skipped.slice(0, 3).join('、')}…）`);
-        ctx.toast(bits.join('；'), skipped.length > 0 ? 'err' : 'ok');
-      } else {
-        ctx.toast(`已把 ${done} 条改为「${nm}」`, 'ok');
-      }
+      if (done === 0) ctx.toast(`没有一条能从当前状态走到「${statusName(flow, to as TaskStatus)}」`, 'err');
+      else if (skipped.length > 0) ctx.toast(`已改 ${done} 条；${skipped.length} 条走不通被跳过（${skipped.slice(0, 3).join('、')}…）`, 'err');
+      else ctx.toast(`已把 ${done} 条改为「${statusName(flow, to as TaskStatus)}」`, 'ok');
     })();
 
   /** 批量改类型。类型没有流转规则，直接赋值即可 */
@@ -1756,6 +1746,13 @@ ${dir}
       </header>
 
       {err && <div className="tb-err">{err}</div>}
+      {/* 读不到最新快照：界面停在旧快照上，必须说出来，否则「数据没更新」查不出原因 */}
+      {pollErr ? (
+        <div className="tb-err tb-stale">
+          ⚠ 读不到最新数据（{pollErr}）—— 界面停在最后一次读到的快照上，
+          不是最新的。改完这一处之前别在这里改任务。
+        </div>
+      ) : null}
 
       {/* 视图切换条：左段四视图 tab，右段放各视图自己的参数 + 命中数 */}
       <div className="tb-views">
@@ -2105,34 +2102,10 @@ ${dir}
               const next = await S.addProject(ctx, cfg, name, dataDir, docsDir);
               setCfg(next);
               clearViewState();
-              /*
-                ⛔ 不能用 .catch(() => null) 静默掉。
-
-                新建项目的目录"本来就没文件"走的是 readStore 的
-                `if (!text) return normalizeStore(null)` 分支 —— 它**不抛**，
-                所以能走到 catch 的都是真错误：目录没授权、路径写错、
-                里面已有 tasks.json 但损坏了。
-
-                静默掉的话 toast 说"已建项目「X」"，而面板是一片空白 ——
-                用户以为建成功了、只是还没任务，然后开始往里加东西；
-                而实际那些东西根本没写到他以为的地方。
-
-                与 doSwitchProject 那条同判据：读不到要明说。
-              */
-              let st: TaskStore | null = null;
-              let readErr = '';
-              try {
-                st = await S.readStore(ctx, next.dataDir);
-              } catch (e: any) {
-                readErr = String(e?.message || e);
-              }
+              const st = await S.readStore(ctx, next.dataDir).catch(() => null);
               setStore(st || normalizeStore(null));
               await restartServiceIfOn(cfg, next);
-              if (readErr) {
-                ctx.toast(`已建项目「${currentProject(next).name}」，但读不到它的任务库：${readErr}`, 'err');
-              } else {
-                ctx.toast(`已建项目「${currentProject(next).name}」，记得设文档路径`, 'ok');
-              }
+              ctx.toast(`已建项目「${currentProject(next).name}」，记得设文档路径`, 'ok');
             })();
           }}
         />
@@ -4306,20 +4279,6 @@ function ListView({
               title="点击改状态"
               options={opts}
               onPick={(id) => {
-                /*
-                  ⛔ 点**当前状态**必须是无操作。
-
-                  当前那一项在下拉里是"已选中"的样子（on: isCur），
-                  但 canTransitionIn(x→x) 是 true、applyTransition 照常返回，
-                  于是点它会走到 doTransition：
-                    · toast 说「tb-0001 → 进行中」，而它**本来就是**进行中 ——
-                      看着像发生了什么，实际什么都没变
-                    · history 里多一条没有变化的记录，翻记录时会被它骗到
-
-                  与批量改状态那处同一个根因（canTransitionIn 放行自环），
-                  单行这里在 UI 层挡掉。
-                */
-                if (id === t.status) return;
                 const a = acts.find((x) => x.to === id);
                 onSetStatus(t.id, id, a ? a.needNote === true : false);
               }}

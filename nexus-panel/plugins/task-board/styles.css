@@ -198,6 +198,14 @@
   font-size: var(--fs-note);
 }
 
+/* 轮询读失败：界面停在旧快照。用警示色而不是 accent ——
+   它要传达的是"你看到的不是最新的"，不是"有个操作失败了" */
+.tb-err.tb-stale {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+}
+
 /* ------------------------------------------------ 看板 */
 
 .tb-board {

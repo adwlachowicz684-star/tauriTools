@@ -4163,74 +4163,26 @@ t('守卫：新建区的默认色取第一个未被占用的（不写死某一�
     && /const free = TAG_COLORS\.find\(\(c\) => !used\.has\(c\)\)/.test(app);
 })());
 
-
-/* ============================================================ 深度审查：自环状态（本轮） */
-
 /*
- * **批量改状态把"已经是目标状态"的任务算进"已改"，报数虚高。**
+ * **2s 轮询读失败被静默吞掉 → 看板停在旧快照上不动。**
  *
- * 实测（jsdom）：选 tb-0001(todo) + tb-0003(doing)，批量改「进行中」
- *   → toast 说「已把 **2** 条改为「进行中」」
- *   → 落盘只有 tb-0001 变了（tb-0003 本来就是 doing）
+ * 这 2s 一次的重读是"AI / agent-flow 的写盘体现到看板"的**唯一**通道。
+ * 写成 `.catch(() => {})` 之后：tasks.json 一旦坏掉（外部工具改过、
+ * 写到一半中断），readStore 抛的是可读的中文错误，被吞掉 →
+ * 界面永远停在最后一次成功的快照：数据其实已经变了，看板不动、也不报错
+ * —— 只会以为 AI 没写，或者看板卡了。
  *
- * 根因：`canTransitionIn(x → x)` 是 **true**（自环放行），
- * `applyTransition` 也照常返回任务，于是它被计进 ok。
- *
- * 两个后果：
- *   · 报数虚高 —— 这类"报数撒谎"比不报更糟，因为没人会去核对
- *   · 污染历史 —— 明明没变化却塞一条「标为「进行中」」，翻记录时会被骗
- *
- * 单行流转不会撞上（actionsForIn 只返回 from≠to 的边），
- * 只有批量下拉会 —— 因为它列的是**全部状态**。
+ * ⛔ 判据必须先过 STRIP：下面这段说明里原样写了 `.catch(() => {})`，
+ *    不剥离的话守卫恒红，而恒红的守卫跟没有一样，真回归反而看不出来。
  */
-t('守卫：批量改状态不计入"已经是目标状态"的任务', (() => {
+t('守卫：轮询读失败不再静默（记到状态里，不许 .catch(() => {})）', (() => {
   const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
-  const i = app.indexOf('const doBatchStatus');
-  if (i < 0) return false;
-  const seg = app.slice(i, i + 2600);
-  /* 必须在计数前把 t.status === to 的排除掉，且单独计 already */
-  return /if \(t\.status === to\) \{ al \+= 1; return t; \}/.test(seg)
-    && /let already = 0;/.test(seg)
-    && /条本来就是/.test(seg);
-})());
-
-/*
- * 行内状态下拉里，**当前状态**那一项是"已选中"的样子（on: isCur），
- * 但 canTransitionIn 放行自环 → 点它会走 doTransition：
- *   · toast 说「tb-0001 → 进行中」，而它本来就是 —— 看着像变了，实际没变
- *   · 历史里多一条没有变化的记录
- */
-t('守卫：行内状态下拉点当前状态是无操作', (() => {
-  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
-  const i = app.indexOf('const acts = actionsForIn(flow, t.status);');
+  const i = app.indexOf('ctx.owned.setInterval');
   if (i < 0) return false;
   const seg = app.slice(i, i + 1200);
-  return /if \(id === t\.status\) return;/.test(seg);
-})());
-
-/* ============================================================ 深度审查：新建项目读失败静默（本轮） */
-
-/*
- * 新建项目后用 `.catch(() => null)` 把读失败静默掉。
- *
- * "目录本来就没文件"走的是 readStore 的 `if (!text) return normalizeStore(null)`
- * 分支 —— 它**不抛**。所以能走到 catch 的都是真错误：
- * 目录没授权、路径写错、里面已有 tasks.json 但损坏了。
- *
- * 静默掉的话 toast 说"已建项目「X」"，而面板是一片空白 ——
- * 用户以为建成功了、只是还没任务，然后开始往里加东西，
- * 而实际那些东西根本没写到他以为的地方。
- *
- * 与 doSwitchProject 那条同判据：读不到要明说。
- */
-t('守卫：新建项目读不到任务库时要报错（不能 .catch(() => null)）', (() => {
-  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
-  const i = app.indexOf('onCreate={async (name, dataDir, docsDir)');
-  if (i < 0) return false;
-  const seg = app.slice(i, i + 1600);
-  return seg.indexOf('.catch(() => null)') < 0
-    && /readErr/.test(seg)
-    && /读不到它的任务库/.test(seg);
+  return seg.indexOf('.catch(() => {})') < 0
+    && seg.indexOf('setPollErr') >= 0
+    && /setPollErr\(\s*['"]/.test(seg);
 })());
 
 /* ---------------- 汇总 ---------------- */
