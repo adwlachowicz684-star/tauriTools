@@ -179,7 +179,21 @@ export async function runLlmChat(ctx: RunContext): Promise<void> {
     try {
       res = await opts.llmCaller!({
         url: cfg.url,
-        headers: buildHeaders(resolveSecret(opts.credentials ?? [], eff.credentialId, cfg.apiKey)),
+        /*
+         * ⛔ 密钥**只**用 cfg.apiKey，不再绕 resolveSecret 重取一遍。
+         *
+         * resolveLlmFromCredential 的意义正是"把连接 + 模型算成真正能发的配置"，
+         * 它的 apiKey 已经走完了"连接优先、老节点内联兜底"这整条路。
+         * 再调 resolveSecret(list, id, cfg.apiKey) 等于同一个东西取第二遍，
+         * 而两遍**不一样**：cfg.apiKey 是 trim 过的，resolveSecret 里的
+         * `if (c && c.secret) return c.secret` 返回的是**未 trim** 的原值。
+         *
+         * 实测：secret 存成 "  sk-real\n"（从文件复制粘贴很常见）时
+         *   cfg.apiKey = "sk-real"        ← 任何"填了吗"的判断都说填了
+         *   实际发出   = "  sk-real\n"    ← Authorization 头里带换行 → 请求直接失败
+         * 报错落在网络/HTTP 层，跟"密钥多复制了一个换行"差了十万八千里。
+         */
+        headers: buildHeaders(cfg.apiKey),
         body,
         timeoutSec: cfg.timeoutSec,
       });

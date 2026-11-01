@@ -456,3 +456,62 @@ for (const f of ['engine/runners/llmChat.ts', 'engine/runners/ocr.ts', 'engine/r
     assert.ok(/missingLlmMessage\s*\(/.test(src), `${f} 用了判据却没说共用文案 —— 三个节点各写一份必然各改各的`);
   });
 }
+
+/* ---------- 密钥只该有一个来源 ---------- */
+
+/*
+ * ⛔ resolveLlmFromCredential 的意义就是"算成真正能发的配置"，
+ * 它的 apiKey 已走完"连接优先 + 老节点内联兜底"。
+ * 再绕 resolveSecret(list, id, cfg.apiKey) 取第二遍，
+ * 拿到的是**未 trim** 的原值 —— 两处各说各的。
+ */
+test('密钥: cfg.apiKey 是 trim 过的（从文件粘贴带了换行也不会带进 header）', () => {
+  const c = makeCredential({
+    kind: 'llm', name: 'x', secret: '  sk-real\n',
+    meta: { [LLM_META.provider]: 'openai', [LLM_META.baseUrl]: '', [LLM_META.models]: 'gpt-4o' },
+    capabilities: ['llm:chat'],
+  });
+  const cfg = resolveLlmFromCredential(c, 'gpt-4o');
+  assert.equal(cfg.apiKey, 'sk-real', '必须 trim —— 带换行的 Authorization 头会让请求直接失败');
+  assert.ok(!/[\r\n]/.test(cfg.apiKey));
+});
+
+test('密钥: 全空白的 secret 算"没填"（不能发出三个空格）', () => {
+  const c = makeCredential({
+    kind: 'llm', name: 'x', secret: '   ',
+    meta: { [LLM_META.provider]: 'openai', [LLM_META.baseUrl]: '', [LLM_META.models]: '' },
+    capabilities: ['llm:chat'],
+  });
+  assert.equal(resolveLlmFromCredential(c, 'gpt-4o').apiKey, '');
+});
+
+test('密钥: 连接悬空 + 老节点有内联 → 用内联（反例，别把兜底弄丢）', () => {
+  const cfg = resolveLlmFromCredential(undefined, 'm', {
+    fallback: { provider: 'openai', baseUrl: 'https://p/v1', model: 'm', apiKey: 'sk-old', timeoutSec: 60 } as never,
+  });
+  assert.equal(cfg.apiKey, 'sk-old');
+});
+
+test('密钥: 连接在 → 用连接的，不是内联的（反例，别退回旧值）', () => {
+  const c = makeCredential({
+    kind: 'llm', name: 'x', secret: 'sk-new',
+    meta: { [LLM_META.provider]: 'openai', [LLM_META.baseUrl]: '', [LLM_META.models]: 'm' },
+    capabilities: ['llm:chat'],
+  });
+  const cfg = resolveLlmFromCredential(c, 'm', {
+    fallback: { provider: 'openai', baseUrl: 'https://p/v1', model: 'm', apiKey: 'sk-old', timeoutSec: 60 } as never,
+  });
+  assert.equal(cfg.apiKey, 'sk-new', 'cfg 里算的就得是发出去的那个');
+});
+
+/* ---------- 源码守卫 ---------- */
+
+for (const f of ['engine/runners/llmChat.ts', 'engine/runners/ocr.ts', 'engine/runners/translate.ts']) {
+  test(`源码守卫: ${f.split('/').pop()} 的密钥只走 cfg.apiKey（不再取第二遍）`, () => {
+    const src = readSrc(f);
+    assert.ok(/buildHeaders\(\s*cfg\.apiKey\s*\)/.test(src),
+      `${f} 没有直接用 cfg.apiKey —— 两处取值必然分叉（一份 trim 过、一份没有）`);
+    assert.ok(!/buildHeaders\(\s*resolveSecret/.test(src),
+      `${f} 又在 buildHeaders 里取了一遍 —— 那一份是未 trim 的原值`);
+  });
+}

@@ -4,7 +4,7 @@ import type {
   FsNodeData, ConditionNodeData, ParallelNodeData, TriggerNodeData,
 } from '../../types';
 import { DEFAULT_BRANCH, defaultFileOutput, defaultOcrPrompt } from '../../types';
-import { resolveSecret, findCredential } from '../credentials';
+import { findCredential } from '../credentials';
 import { resolveLlmFromCredential, missingLlmReason, missingLlmMessage } from '../llmCredential';
 
 import { extractFileRefs, parseManualPaths, buildFileFields, type FileRef } from '../files';
@@ -107,7 +107,8 @@ export async function runOcr(ctx: RunContext): Promise<void> {
   try {
     res = await opts.llmCaller!({
       url: cfg.url,
-      headers: buildHeaders(resolveSecret(opts.credentials ?? [], d.credentialId, cfg.apiKey)),
+      /* 同 llmChat：只用 cfg.apiKey，不再 resolveSecret 取第二遍（那份未 trim） */
+      headers: buildHeaders(cfg.apiKey),
       body,
       timeoutSec: cfg.timeoutSec,
     });
