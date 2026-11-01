@@ -1118,6 +1118,58 @@
   flex: 0 0 auto;
 }
 
+/*
+  单选型列（优先级 / 状态 / 类型 / 分组 / 认领人）共用的下拉里，
+  每个候选占一行：[选项] [改名] [色点] [删除]。
+  管理按钮只在那一列有这个能力时才渲染，所以行内元素数量是变的 ——
+  用 flex + nowrap，选项吃掉剩余宽度。
+*/
+.tb-ic-row {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-wrap: wrap;
+}
+
+.tb-ic-row .tb-ic-opt {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.tb-ic-rename {
+  inline-size: 100%;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--r-xs);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-micro);
+}
+
+/* 改色入口：默认是一个当前色的小圆点，点它才展开整行色板 */
+.tb-ic-dot {
+  flex: 0 0 auto;
+  inline-size: 13px;
+  block-size: 13px;
+  padding: 0;
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/*
+  色板**独占一整行**。
+  12 个色点（含 gap）约 204px，塞在选项行里必然换行，
+  把名字和按钮全淹掉 —— "筛选面板被色板淹没"那个 bug 就是这么来的。
+*/
+.tb-ic-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: var(--sp-1) var(--sp-2);
+}
+
 .tb-ic-hint {
   padding: var(--sp-1) var(--sp-2);
   color: var(--text-dim);
@@ -1163,73 +1215,14 @@ body.tb-col-resizing {
   justify-content: center;
 }
 
-/* ---------- 任务类型 ---------- */
-/* 单元格里的类型胶囊：点开就地改，不用进详情 */
-.tb-typepick {
-  position: relative;
-  display: inline-flex;
-  max-inline-size: 100%;
-}
-.tb-typechip {
-  max-inline-size: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 1px var(--sp-2);
-  border: 1px solid var(--divider);
-  border-radius: var(--r-xs);
-  background: none;
-  color: var(--text);
-  font-size: var(--fs-micro);
-  cursor: pointer;
-}
-.tb-typechip.empty {
-  color: var(--text-mute);
-  border-style: dashed;
-}
-.tb-typepop {
-  position: absolute;
-  z-index: 6;
-  inset-inline-start: 0;
-  inset-block-start: calc(100% + 2px);
-  min-inline-size: 10em;
-  display: flex;
-  flex-direction: column;
-  padding: var(--sp-1);
-  border: 1px solid var(--divider);
-  border-radius: var(--r-sm);
-  background: var(--surface-overlay);
-  box-shadow: var(--sh-cast-lg);
-}
-.tb-typerow {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-.tb-typeopt {
-  flex: 1 1 auto;
-  text-align: start;
-  padding: var(--sp-1) var(--sp-2);
-  border: none;
-  background: none;
-  color: var(--text);
-  font-size: var(--fs-micro);
-  cursor: pointer;
-  border-radius: var(--r-xs);
-  white-space: nowrap;
-}
-.tb-typeopt:hover {
-  background: var(--surface-sunk);
-}
-.tb-typerename {
-  inline-size: 6em;
-  padding: 1px var(--sp-1);
-  border: 1px solid var(--divider);
-  border-radius: var(--r-xs);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--fs-micro);
-}
+/*
+  ⛔ 任务类型单元格原来有一套**独用的**样式（.tb-typepick / .tb-typechip / .tb-typepop …），
+  与优先级、状态那套（.tb-ic*）并列 —— 五列单选型却有两套观感。
+
+  现在五列统一走 SinglePick（.tb-ic* 系列），这套随 TypePicker 一起删掉。
+  留着是死样式：类名在代码里已经没人用了，改它没反应、看着却像在生效。
+*/
+
 .tb-lc.c-type {
   overflow: visible;
 }
