@@ -418,7 +418,24 @@ export function redactNodeSecrets(n: unknown): unknown {
   const d = o.data;
   if (!d || typeof d !== 'object') return n;
   const dd = d as Record<string, unknown>;
-  if (typeof dd.kind !== 'string') return n;
+  /*
+   * 改之前这里有一道 `if (typeof dd.kind !== 'string') return n;`
+   * —— 没有 kind 就**整个节点原样放过**，一个字段都不看。
+   *
+   * 而 serialize() 上面写着「这里默认脱敏而不是让调用方自己记得调 ——
+   * 密钥泄露属于忘了就出事」。也就是承诺是无条件的，实现里却有一道
+   * 静默的逃生门：data.kind 不是字符串（老存档、手改过的、导入进来的、
+   * 或将来某种不带 kind 的节点），那里的 token / apiKey 就明文落盘，
+   * 且没有任何提示 —— 界面照常说「密钥不进存档」。
+   *
+   * 去掉这道门会不会误伤？判据本身（blankSecrets）只动
+   * 「路径命中 / 请求头 / 名字像密钥」三种，且**有 kind 的节点本来
+   * 就已经这么处理了**。所以这不是放宽判据，只是让同一把尺子
+   * 也量到没有 kind 的那些节点上 —— 原本就是同一类数据。
+   *
+   * 仍然只动 data，不去递归扫 output：用户让 AI 生成一段恰好含
+   * llm 字样的文本，不该被改（这条边界没变）。
+   */
 
   /* 派生字段与密钥一样不该进存档 —— 见 stripDerivedKeys 的说明 */
   if (DERIVED_KEYS.some((k) => k in dd)) {
