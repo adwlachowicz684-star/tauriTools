@@ -23588,6 +23588,21 @@ group('BUG 184 · 画布主题 / 布局丢失必须让提示真的出现');
         eq(mapped[k], f.NODE_DATA_KEYS[k].xmind, `★ StyleMap 的 ${k} 与矩阵声明一致`);
       }
     }
+    /*
+     * 第四份名单：EXCHANGE_KEEP.freemind.styleKeys。
+     *
+     * 它和矩阵里 `keep.freemind` 说的是同一件事 —— 早先各写一遍，改一处漏
+     * 一处就是「导出提示瞒报或虚报」。现已改成从矩阵派生，这两条断言盯的
+     * 是**不许有人再把它写回硬编码**（写回去而没同步矩阵，下面立刻红）。
+     *
+     * ⓘ 非空那条同样要紧：一旦名单变空，`exchangeLoss` 会把**每个**设了样式
+     *   的节点都算成丢失 —— 于是每次导出 .mm 都凭空冒一句「样式 N 处」。
+     */
+    const sk = f.EXCHANGE_KEEP.freemind.styleKeys || [];
+    ok(sk.length > 0, '★ EXCHANGE_KEEP.freemind.styleKeys 非空（空 = 每次导出 .mm 都虚报样式丢失）');
+    const skExpect = f.NODE_STYLE_KEYS.filter((k) => f.NODE_DATA_KEYS[k]?.keep?.freemind);
+    eq(sk.slice().sort().join(','), skExpect.slice().sort().join(','),
+      '★ styleKeys 与矩阵同源（写回硬编码就会漂移）');
   }
 
   /*
