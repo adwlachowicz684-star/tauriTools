@@ -20,14 +20,15 @@
  * 它是同页插件，与外壳同一个文档，不存在跨文档取不到的问题。
  */
 
-/** macOS 上 mod = ⌘，其它平台 = Ctrl */
-export function isMac() {
-  try {
-    return /mac|iphone|ipad/i.test(navigator?.platform || navigator?.userAgent || '');
-  } catch {
-    return false;
-  }
-}
+/*
+ * macOS 上 mod = ⌘，其它平台 = Ctrl。
+ *
+ * 实现在 js/accel.js（与宿主侧、插件侧共用）：此前本文件、plugin-sdk.js、
+ * host.js 各有一份判断，三份写法还略有不同（读 platform 还是 userAgent）。
+ * 平台判断只有一份，"mod 在两台机器上指不同的键"这件事才不会分叉。
+ */
+import { isMac } from './accel.js';
+export { isMac };
 
 /**
  * 外壳快捷键。
