@@ -23,7 +23,11 @@
  * 旧配置里残留的 adaptTheme 值无害 —— 没人读它了。
  */
 
-const KEY = (id) => `nexus:plugin-cfg:${id}`;
+/* 与宿主侧（js/host.js 的 purgePluginStorage）同一套键格式 ——
+   那边卸载时按这个键清配置，两边拼法岔开就是"卸载了配置还在"。 */
+import { pluginCfgKey } from './plugin-store.js';
+
+const KEY = pluginCfgKey;
 const EVENT = 'nexus:plugin-cfg-changed';
 
 /**
