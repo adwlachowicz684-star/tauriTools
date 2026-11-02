@@ -26,6 +26,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { createHash } from 'node:crypto';
 
 import { parseTar, unpackTarGz } from './js/plugin-tarball.js';
 import { createPluginMarket, inferAssetId } from './js/plugin-market.js';
@@ -118,11 +119,21 @@ function jsonRes(obj) {
 }
 /** 造一个 release：assets 里每个 {name, buffer?} 都指向同一份 tar（默认） */
 function makeFetch(cfg) {
-  const assets = cfg.assets.map((a) => ({
-    name: a.name, size: (a.buffer || cfg.tar).length, id: 1,
-    browser_download_url: `https://dl.example/${encodeURIComponent(a.name)}`,
-    updated_at: '2026-11-01T00:00:00Z',
-  }));
+  /* 默认带真实 sha256 + state=uploaded —— 与 2026-11-03 真联调看到的
+     GitHub asset 形态一致。这样**所有安装用例都会真的走过 digest 校验**，
+     而不是只有专门写的一节在验。cfg 可注入四种异常形态。 */
+  const assets = cfg.assets.map((a) => {
+    const buf = a.buffer || cfg.tar;
+    const base = {
+      name: a.name, size: buf.length, id: 1,
+      browser_download_url: `https://dl.example/${encodeURIComponent(a.name)}`,
+      updated_at: '2026-11-01T00:00:00Z',
+      state: cfg.assetState || 'uploaded',
+    };
+    if (cfg.noDigest) return base;
+    if (cfg.badDigest) return { ...base, digest: `sha256:${'0'.repeat(64)}` };
+    return { ...base, digest: `sha256:${createHash('sha256').update(buf).digest('hex')}` };
+  });
   return async (url) => {
     if (/\/releases\/(latest|tags\/)/.test(url)) {
       return jsonRes({ tag_name: cfg.tag || 'v1.0.0', assets });
@@ -344,6 +355,57 @@ console.log('\n--- 6. 元断言（防止整节空跑 / 判据恒真） ---');
     (await makeMarket({ assets: [], tar: Buffer.alloc(0) }).market.uninstall('ghost')).ok === false);
   t('checkUpdates 空台账不报插件（不是凭空造结果）',
     (await makeMarket({ assets: [], tar: Buffer.alloc(0) }).market.checkUpdates()).results.length === 0);
+}
+
+/* ==========================================================================
+   7. 产物完整性：真实 GitHub asset 形态接线（2026-11-03 真联调后补）
+   ==========================================================================
+   夹具默认带真 sha256 + state=uploaded，所以**前面所有安装用例都真的
+   走过校验**。这里专门验四种异常形态，并确认注入真的落到了响应里 ——
+   字段名拼错时 cfg 会被静默忽略，测试照样全绿，那是最难查的一种假绿。
+   ========================================================================== */
+console.log('\n--- 7. digest 完整性校验接线 ---');
+{
+  const tar = makeTarGz(pluginEntries('demo', '1.0.0'));
+  const name = assetNameFor('demo', '1.0.0');
+  const relUrl = 'https://api.github.com/repos/owner/demo-repo/releases/latest';
+
+  /* 元断言：先证明三种注入确实落到假 GitHub 响应里 */
+  const badResp = await (makeFetch({ assets: [{ name }], tar, badDigest: true }))(relUrl);
+  const badAssets = (await badResp.json()).assets;
+  t('元断言：badDigest 真的写进了响应（不是拼错字段名）',
+    /^sha256:0{64}$/.test(badAssets[0].digest || ''), String(badAssets[0].digest).slice(0, 20));
+  const noResp = await (makeFetch({ assets: [{ name }], tar, noDigest: true }))(relUrl);
+  t('元断言：noDigest 响应里确实没有 digest 字段',
+    !('digest' in (await noResp.json()).assets[0]));
+  const stResp = await (makeFetch({ assets: [{ name }], tar, assetState: 'starter' }))(relUrl);
+  t('元断言：assetState 真的写进了响应',
+    (await stResp.json()).assets[0].state === 'starter');
+
+  const okCtx = makeMarket({ assets: [{ name }], tar });
+  const r = await okCtx.market.install('owner/demo-repo');
+  t('默认（带真实 digest）安装成功', r.ok === true, `${r.stage} ${r.error}`);
+  t('digestChecked=true（这次真的验了，不是空跑）', r.digestChecked === true);
+
+  const bad = makeMarket({ assets: [{ name }], tar, badDigest: true });
+  const br = await bad.market.install('owner/demo-repo');
+  t('digest 不匹配 → 拒装且 stage=digest', br.ok === false && br.stage === 'digest',
+    `${br.stage} ${br.error}`);
+  t('digest 拒装后没有落目录（无半状态）', !existsSync(join(bad.installedDir, 'demo')));
+  t('digest 拒装后台账没写', !readLedgerSafe(bad.ledgerFile).plugins.demo);
+
+  const old = makeMarket({ assets: [{ name }], tar, noDigest: true });
+  const or = await old.market.install('owner/demo-repo');
+  t('老 release 无 digest → 仍能装上（不把兼容当故障）', or.ok === true, `${or.stage} ${or.error}`);
+  t('无 digest 时 digestChecked=false（不冒充已校验）', or.digestChecked === false);
+  t('无 digest 在 warnings 里如实告知',
+    (or.warnings || []).some((w) => /没有 digest/.test(w)), JSON.stringify(or.warnings || []));
+
+  const up = makeMarket({ assets: [{ name }], tar, assetState: 'starter' });
+  const ur = await up.market.install('owner/demo-repo');
+  t('上传中的产物不被挑中 → 明确拒绝', ur.ok === false && ur.stage === 'asset',
+    `${ur.stage} ${ur.error}`);
+  t('上传中拒装后没有落目录', !existsSync(join(up.installedDir, 'demo')));
 }
 
 for (const d of cleanup) { try { rmSync(d, { recursive: true, force: true }); } catch { /* 临时目录 */ } }
