@@ -3261,8 +3261,35 @@ async function gcOrphanAssets(quiet = false) {
         status(`${fmt.FORMAT_META[kind].label} 解析失败：文件结构不符合预期`, true);
         return;
       }
-      // 交换格式只带一张画布 —— 用文件名做标题，用户才认得出是哪张
+      /*
+       * 交换格式只带一张画布 —— 用文件名做标题，用户才认得出是哪张。
+       *
+       * ⓘ **OPML 例外**（BUG 193）：它的 `<head><title>` 就是这份文档自己
+       *   声明的名字，写侧（`toOpml`）把画布标题写进去了。一律用文件名的话
+       *   「导出 → 导入」往返一次画布就被改名（「产品规划」→ 落盘名带时间戳
+       *   → 导入后叫「产品规划-20261102-1430」），另存成「备份1.opml」时
+       *   画布直接跟着改叫「备份1」。
+       *
+       *   拿不到（别处产出的 OPML 常常没有 `<title>`）才回落文件名 ——
+       *   那时文件名仍是唯一可用的名字。
+       */
       const one = { id: wb.newSheetId(), title: fmt.baseTitle(f.name), content, theme: null, layout: null };
+      /*
+       * OPML 例外（BUG 193）：`<head><title>` 是这份文档**自己声明**的名字，
+       * 写侧（`toOpml`）把画布标题写进去了。一律用文件名的话「导出 → 导入」
+       * 往返一次画布就被改名（「产品规划」→ 落盘名带时间戳 → 导入后叫
+       * 「产品规划-20261102-1430」），另存成「备份1.opml」时画布直接跟着
+       * 改叫「备份1」。导入是整体替换且不可撤销，画布名又是分辨几张画布
+       * 的唯一依据。
+       *
+       * 取不到（别处产出的 OPML 常常不写 `<title>`）就**保持文件名** ——
+       * 那时文件名仍是唯一可用的名字，所以这里是"覆盖"而不是"替换判据"：
+       * 文件名当默认值这一点没变。
+       */
+      if (kind === 'opml') {
+        const docTitle = wb.opmlHeadTitle(text);
+        if (docTitle) one.title = docTitle;
+      }
       if (parsed?.xrelationships?.length) one.xrelationships = parsed.xrelationships;
       sheets = [one];
       form = kind;
