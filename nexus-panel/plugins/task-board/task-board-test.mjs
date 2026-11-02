@@ -5453,6 +5453,24 @@ t('守卫：通知失败要提示（不阻塞主流程，但说出来）', (() =
     && app.indexOf('通知没发出去') >= 0;
 })());
 
+/*
+ * **多值列（assignee / type / group）不能裸渲染。**
+ *
+ * 实测两处都直接写 `task.assignee`：
+ *   · 数组在 JSX 里**无分隔符**拼接 → ['张三','李四'] 显示成"张三李四"，
+ *     看着像一个人的名字
+ *   · 空数组 [] 是 truthy → `assignee ? … : '未认领'` 走不到"未认领"，显示成空白
+ *
+ * 修后走 whoText（fieldVals 展开 + labelFor 取显示名 + 「、」连接）：
+ *   实测 "@张三、李四" / 空数组 → "未认领"。
+ */
+t('守卫：不裸渲染 task.assignee（多值列要展开再连接）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  return !/\{task\.assignee[^a-zA-Z_]/.test(app)
+    && !/title=\{`认领人：\$\{task\.assignee\}`\}/.test(app)
+    && app.indexOf('whoText') >= 0;
+})());
+
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
   const nums = [...rd.matchAll(/(\d+)\s*项/g)].map((m) => Number(m[1]));

@@ -164,6 +164,22 @@ const SORT_FIELDS: SortField[] = [
  *
  * 现在与 optionLabel 共用 labelFor，两处不可能再不一致。
  */
+/**
+ * 认领人的**显示文本**（可能多个）。
+ *
+ * ⛔ 不能直接渲染 task.assignee：
+ *   · 多选列的值是数组，JSX 里无分隔符拼接 → "张三李四" 看着像一个名字
+ *   · 空数组是 truthy → `assignee || '未认领'` 走不到"未认领"，显示成空白
+ *
+ * 展开成值数组 → 逐个查定义表取显示名 → 以「、」连接。
+ */
+function whoText(task: Task, store: unknown): string {
+  return fieldVals(task, 'assignee')
+    .map((v) => labelFor('assignee', v, store, null))
+    .filter(Boolean)
+    .join('、');
+}
+
 function groupLabel(
   key: string,
   by: GroupKey,
@@ -2741,9 +2757,18 @@ function TaskCard({ task, me, flow, onOpen, onAction, onClaim, store }: {
         </div>
       )}
       <div className="tb-task-foot">
-        {task.assignee ? (
-          <span className="tb-who" title={`认领人：${task.assignee}`}>
-            @{task.assignee}
+        {/*
+          ⛔ 认领人可以是**多个**（列设置里勾了多选）。
+          直接渲染 task.assignee 有两个问题：
+            · 数组在 JSX 里**无分隔符**拼接 → ['张三','李四'] 显示成"张三李四"，
+              看着像一个人的名字
+            · 空数组 [] 是 truthy → `assignee ? … : '未认领'` 走不到"未认领"，
+              显示成空白
+          所以走 fieldVals（多值展开）+ labelFor（查定义表取显示名），再以「、」连接。
+        */}
+        {whoText(task, store) ? (
+          <span className="tb-who" title={`认领人：${whoText(task, store)}`}>
+            @{whoText(task, store)}
           </span>
         ) : (
           <span className="tb-who none">未认领</span>
@@ -6110,7 +6135,7 @@ function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAc
         <PriorityBadge p={task.priority} />
         <span className="tb-dtag">状态：{statusName(flow, task.status)}</span>
         <span className="tb-dtag">报告人：{task.reporter}</span>
-        <span className="tb-dtag">认领人：{task.assignee || '未认领'}</span>
+        <span className="tb-dtag">认领人：{whoText(task, store) || '未认领'}</span>
         <span className="tb-dtag">更新：{fmtTime(task.updatedAt)}</span>
         <span className="tb-dtag">创建：{task.createdAt ? fmtTime(task.createdAt) : '—'}</span>
         {task.tags.map((tag) => (
