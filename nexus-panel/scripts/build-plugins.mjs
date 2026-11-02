@@ -144,6 +144,38 @@ function restoreOutDir(outDir, stale) {
 }
 
 /**
+ * 「真·单文件」判定 —— 阶段 0 安装方案的口径。
+ *
+ * ⛔ htmlOk 只覆盖 **index.html 里静态写着的**子资源引用。它看不见
+ *    运行时用字符串拼出来的路径（例：icon-picker 的
+ *    `ICON_DIR + encodeURIComponent(name) + '.ico'`）。这类资源 Vite
+ *    不解析、checkSingleFile 也分析不了，产物里原样留着 `./preseticons/`，
+ *    但 checkSingleFile 仍返回 ok:true —— 实测（第一百八十五轮）。
+ *
+ * 于是「HTML 自包含」≠「只拷一个 index.html 就能用」。
+ * runtimeDirs 来自 NATIVE_SUBDIRS（构建脚本自己维护的权威清单，机械可查），
+ * 非空就说明安装时必须整目录带上，否则图标/编辑器静默 404。
+ *
+ * 汇总报告曾把这类插件也打印成「完全自包含」—— 报告在撒谎。
+ * 现在由这个函数统一口径，测试直接 import 它（本模块末尾有 isMain 守卫）。
+ */
+export function isInstallableSingleFile({ htmlOk, runtimeDirs = [] }) {
+  return htmlOk === true && runtimeDirs.length === 0;
+}
+
+/**
+ * 某插件在产物目录里真实存在的运行时资源目录。
+ * 从 NATIVE_SUBDIRS 取，并核实目录确实产出 —— 清单写了但没拷出来要报空，
+ * 不能凭清单就宣称"有资源"。
+ */
+export function runtimeDirsOf(id, outDir) {
+  return NATIVE_SUBDIRS
+    .filter((x) => x.plugin === id)
+    .map((x) => x.dir)
+    .filter((d) => existsSync(resolve(outDir, d)));
+}
+
+/**
  * 把构建产物内联成单文件 index.html（仅 --single-file 时执行）。
  *
  * 为什么单独一步：asset 协议加载时，页面里任何 ./assets/*.js 都会因路径
@@ -179,12 +211,15 @@ function inlineOne(id, outDir, inlineImages) {
   writeFileSync(htmlPath, r.html);
 
   const kb = (Buffer.byteLength(r.html, 'utf8') / 1024).toFixed(0);
-  const ok = chk.remaining.length === 0 && chk.warnings.length === 0;
+  const htmlOk = chk.remaining.length === 0 && chk.warnings.length === 0;
+  const runtimeDirs = runtimeDirsOf(id, outDir);
+  const selfContained = isInstallableSingleFile({ htmlOk, runtimeDirs });
   console.log(
-    `   ${ok ? '📄' : '⚠️ '} 单文件 ${id}：${kb}KB，内联 ${r.inlined.length} 项`
+    `   ${htmlOk ? '📄' : '⚠️ '} 单文件 ${id}：${kb}KB，内联 ${r.inlined.length} 项`
     + (r.removed.length ? `，删除预载 ${r.removed.length} 条` : '')
     + (chk.remaining.length ? `，残留外部引用 ${chk.remaining.length} 条` : '')
-    + (chk.warnings.length ? `，告警 ${chk.warnings.length} 条` : ''),
+    + (chk.warnings.length ? `，告警 ${chk.warnings.length} 条` : '')
+    + (runtimeDirs.length ? `，另有运行时资源目录 ${runtimeDirs.join(', ')}` : ''),
   );
   for (const x of chk.remaining.slice(0, 5)) {
     console.log(`      · 残留 ${x.kind} ${x.url}`);
@@ -192,7 +227,12 @@ function inlineOne(id, outDir, inlineImages) {
   for (const w of chk.warnings.slice(0, 5)) {
     console.log(`      · 告警 ${w.kind} ${w.url}`);
   }
-  return { ok, remaining: chk.remaining.length, warnings: chk.warnings.length, kb };
+  if (runtimeDirs.length) {
+    console.log(`      · ⚠ 上述目录不随 index.html 内联，安装时必须整目录带上`
+      + `（只拷 index.html 会静默丢资源）`);
+  }
+  return { ok: htmlOk, selfContained, runtimeDirs,
+    remaining: chk.remaining.length, warnings: chk.warnings.length, kb };
 }
 
 /** 构建单个插件到 runtime-plugins/<id>/ */
@@ -311,15 +351,22 @@ async function main() {
   }
   console.log(`[build-plugins] 完成，总耗时 ${Date.now() - t0}ms`);
 
-  /* 逐插件结论汇总：阶段 0 要的就是「哪些插件真能单文件」这份硬数据，
-     不是凭推测。完全自包含 = remaining 0 且 warnings 0。 */
+  /* 逐插件结论汇总：阶段 0 要的就是「哪些插件真能只拷一个 index.html」这份硬数据。
+     ⛔ 口径已改：htmlOk 只说明 HTML 静态引用内联干净；带运行时资源目录的
+        插件（icon-picker 的 preseticons、mindmap 的 editor）**不算**完全自包含。
+        第一百八十四轮曾把 icon-picker 报成「完全自包含 1/1」—— 报告撒谎。 */
   if (reports.length) {
-    const full = reports.filter((r) => r.ok);
-    console.log(`\n[单文件] 完全自包含 ${full.length}/${reports.length}：`
+    const full = reports.filter((r) => r.selfContained);
+    console.log(`\n[单文件] 真·完全自包含 ${full.length}/${reports.length}：`
       + full.map((r) => r.id).join(', '));
+    const withDirs = reports.filter((r) => r.ok && !r.selfContained);
+    if (withDirs.length) {
+      console.log(`[单文件] HTML 自包含但另有运行时资源目录 ${withDirs.length}（安装须整目录拷）：`
+        + withDirs.map((r) => `${r.id}(${r.runtimeDirs.join(',')})`).join(', '));
+    }
     const partial = reports.filter((r) => !r.ok);
     if (partial.length) {
-      console.log(`[单文件] 非完全自包含 ${partial.length}：`
+      console.log(`[单文件] HTML 仍残留引用 ${partial.length}：`
         + partial.map((r) => `${r.id}(残留${r.remaining}/告警${r.warnings})`).join(', '));
     }
   }
