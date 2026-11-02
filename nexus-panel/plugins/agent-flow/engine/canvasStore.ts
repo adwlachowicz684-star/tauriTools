@@ -311,6 +311,27 @@ export function blankEnvVars(vars: Record<string, string> | undefined): Record<s
  * 承诺了会挡、实际没挡，属于"忘了就出事"。
  */
 /**
+ * 这张卡存盘时的值。
+ *
+ * 与「装不装得下密钥」分开，是因为地址那一侧是**挖**不是**清空**：
+ * `?api_key=sk-live` 要留着地址本身（否则下次跑连不上），只挖掉凭据部分。
+ *
+ * 看值本身而不看名字 —— 参数名允许中文，叫「接口地址」的卡片
+ * 名字里一个 url 字样都没有。scrubUrlSecrets 只认以 scheme 开头的整串，
+ * 所以散文里夹一句地址不会被动（参数值是用户手填的配置，不是 AI 生成的文本，
+ * 与节点侧「不去扫 output」那条边界的风险不同）。
+ *
+ * 节点侧 data 里的 url 走的是同一份 scrubUrlSecrets ——
+ * 各写一份必然漂（MCP 服务地址那次已经见过）。
+ */
+export function paramStoredValue(p: CanvasParam | undefined): string {
+  if (paramHoldsSecret(p)) return '';
+  const raw = String(p?.value ?? '');
+  const scrubbed = scrubUrlSecrets(raw);
+  return scrubbed === raw ? raw : scrubbed;
+}
+
+/**
  * 这个参数卡装不装得下密钥。
  *
  * 数字卡 / 布尔卡装不下 —— 值是 4096 或 true，剥掉它没有任何安全收益，
@@ -331,7 +352,7 @@ function paramHoldsSecret(p: CanvasParam | undefined): boolean {
 export function redactParams(list: CanvasParam[] | undefined): CanvasParam[] {
   return (list ?? []).map((p) => ({
     ...p,
-    value: paramHoldsSecret(p) ? '' : String(p?.value ?? ''),
+    value: paramStoredValue(p),
   }));
 }
 

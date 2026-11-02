@@ -70,6 +70,7 @@ export const PARAM_ALIASES = ['params', 'env'] as const;
 
 import { normBoolText } from '../types';
 import { tokenRe, REF_NAME_CHARS, REF_NAME_FIRST } from './template';
+import { scrubUrlSecrets } from './sanitize';
 
 export type CanvasParam = {
   /**
@@ -355,6 +356,24 @@ export function paramIssues(params: CanvasParam[] | undefined): ParamCardIssue[]
       issues.push({ field: n, message: '重名了 —— 取值按名字查表，后一张会盖掉前一张' });
     }
     seen.add(n);
+    /*
+     * 值里躺着凭据：地址参数（?api_key=）或 user:pw@。
+     *
+     * 只按名字判是不够的 —— 参数名允许中文，叫「接口地址」的卡片
+     * 名字里一个 url 字样都没有，而值里明文躺着密钥。
+     * 所以看**值本身**：scrubUrlSecrets 只认以 scheme 开头的整串，
+     * 于是散文里夹一句地址（「详见 https://x.com?token=abc」）不会被动。
+     *
+     * 报出来是因为存盘时会把它挖掉：不说的话用户填了、界面还显示着，
+     * 刷新回来发现被截断了却不知道为什么 —— 与节点侧「挖了要说」同一条。
+     */
+    const val = String(p?.value ?? '');
+    if (val !== '' && scrubUrlSecrets(val) !== val) {
+      issues.push({
+        field: n,
+        message: '值里含凭据（地址参数或 user:pw@）—— 存盘与导出时会被挖掉，请改用连接管理器',
+      });
+    }
   });
   return issues;
 }
