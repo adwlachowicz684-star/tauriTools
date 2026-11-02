@@ -4701,7 +4701,11 @@ t('守卫：详情面板有认领人和优先级字段（都能改，不是只�
   if (j < 0 || k < 0) return false;
   const segA = app.slice(j, j + 700);
   const segP = app.slice(k, k + 700);
-  return /<select/.test(segA) && /onPatch\(\{ assignee: e\.target\.value \}\)/.test(segA)
+  /*
+    锚点跟着多值修复走：写回不再裸覆盖，改用 patchOneOf
+    （多值时只替换第一个、保留其余）。继续钉旧写法会**恒红**。
+  */
+  return /<select/.test(segA) && /onPatch\(patchOneOf\(task, 'assignee'/.test(segA)
     && /<select/.test(segP) && /onPatch\(\{ priority: e\.target\.value as Priority \}\)/.test(segP);
 })());
 
@@ -5076,7 +5080,12 @@ t('守卫：transitionTask 用 applyTransitionIn(store.flow, …)', (() => {
 /* doClaim 与批量改状态同样要传 flow */
 t('守卫：认领与批量改状态都传 flow', (() => {
   const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
-  return /applyTransitionIn\(st\.flow, cur, acts\[0\]\.to, me\)/.test(app)
+  /*
+    推进目标收敛成 claimTarget（与按钮判据共用），
+    doClaim 不再是 acts[0].to。钉旧锚点会恒红。
+  */
+  return /claimTarget\(st\.flow\)/.test(app)
+    && /applyTransitionIn\(st\.flow, cur, ct, me\)/.test(app)
     && /applyTransitionIn\(st\.flow, t, to, me\)/.test(app)
     /* 不再有不带 flow 的调用 */
     && !/applyTransition\(cur,/.test(app)
@@ -5577,6 +5586,119 @@ t('守卫：多值展开只有一份实现（rawVals / fieldVals）', (() => {
   return /export function rawVals\(/.test(mjs)
     && /export function fieldVals\(/.test(mjs)
     && /return rawVals\(task, field\)/.test(mjs);
+})());
+
+/*
+ * ============================================================
+ * 历史类别反查：这一轮按"以前修过的类"逐个全仓扫，抓到 4 个漏网。
+ * 下面 5 条守卫把它们钉死，其中 2 条是通杀（自动覆盖新增列）。
+ * ============================================================
+ */
+
+/* ① 认领推进目标：两个入口必须调同一个函数，不许各算各的 */
+t('守卫：认领目标只由 claimTarget 决定（doClaim 与 TaskActions 同一判据）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const core = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  /* 不许再写死"第二个状态" */
+  if (/flow\.statuses\[1\]/.test(app)) return false;
+  if (/export function claimTarget\(/.test(core) === false) return false;
+  /* 两个调用点都要在 */
+  const dc = app.indexOf('const doClaim');
+  const ta = app.indexOf('function TaskActions(');
+  if (dc < 0 || ta < 0) return false;
+  return /claimTarget\(st\.flow\)/.test(app.slice(dc, dc + 2600))
+    && /claimTarget\(flow\)/.test(app.slice(ta, ta + 1800));
+})());
+
+/* ② 通杀：改名若会改掉 id，必须同步筛选 */
+t('守卫：通杀 —— 改 id 的改名动作都要同步列筛选', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const re = /\n  const (rename\w+|doRename\w+) = /g;
+  let m; const bad = [];
+  while ((m = re.exec(app))) {
+    const start = m.index;
+    const next = app.indexOf('\n  const ', start + m[0].length);
+    const seg = app.slice(start, next > 0 ? next : start + 3500);
+    /*
+      会改 id 的信号：把 id 一起改成新名（group / assignee 的 id 就是名字），
+      或者用 replaceVal 改了这两列的值。
+      标签 / 类型改名只改 name、id 不变，筛选存 id → 不需要同步，不算违规。
+    */
+    const changesId = /id:\s*nm\b/.test(seg)
+      || /replaceVal\(t,\s*'(group|assignee)'/.test(seg);
+    /*
+      ⛔ 只检查"setColFilters 这几个字在不在"太宽：
+      把同步块包进 `if (false && res.state…)`（或整块注释掉但留个残字）
+      照样通过 —— 守卫是假绿的。
+      钉住结构：同步必须发生在**改名成功分支**的 if 块里。
+    */
+    /*
+      两种合法结构都要认：
+        if (res.state === 'ok' && …)          （分组）
+        if ((res.state === 'ok' || …) && …)  （认领人，条件里带括号）
+      ⛔ 所以用 `[^)]*` 判条件会在第一个右括号截断 → 认领人恒红。
+      改成"setColFilters 之前 300 字符内、if 条件以 res.state 开头"。
+      顺带把 `if (false && …)` 这种短路挡掉。
+    */
+    const si = seg.indexOf('setColFilters');
+    const before = si >= 0 ? seg.slice(Math.max(0, si - 300), si) : '';
+    const sync = si >= 0 && /if\s*\(\s*\(?\s*res\.state\s*===/.test(before);
+    if (changesId && !sync) bad.push(m[1]);
+  }
+  if (bad.length) console.log('  改 id 却没同步筛选：' + bad.join(', '));
+  return bad.length === 0;
+})());
+
+/* ③ 详情面板的多值下拉：必须走 patchOneOf，不许裸覆盖整列 */
+t('守卫：详情面板多值列的 select 不许裸覆盖（走 patchOneOf）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  if (!/function patchOneOf\(/.test(app)) return false;
+  const fields = ['type', 'assignee'];
+  for (const f of fields) {
+    /* 允许 patchOneOf(task, 'field', …)，禁止 onPatch({ field: e.target.value }) */
+    if (new RegExp("onPatch\\(\\{\\s*" + f + ":\\s*e\\.target\\.value\\s*\\}\\)").test(app)) return false;
+    if (!new RegExp("patchOneOf\\(task,\\s*'" + f + "'").test(app)) return false;
+  }
+  return true;
+})());
+
+/* ④ 详情面板的候选必须含定义表（刚建好的人要能在详情里指派） */
+t('守卫：详情面板的认领人候选来自定义表 ∪ 当前任务值', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  /*
+    ⛔ 全文件 indexOf 会命中**主组件里另一个同名的 assigneeDefs**，
+    切片里当然没有 DetailPanel 的候选逻辑 → 恒红。
+    先切到 DetailPanel 区段再找。
+  */
+  const d = app.indexOf('function DetailPanel(');
+  if (d < 0) return false;
+  const i = app.indexOf('const assigneeDefs = defsOf(store,', d);
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 700);
+  return /defsOf\(store,\s*'assignee'\)/.test(seg)
+    && /fieldVals\(task,\s*'assignee'\)/.test(seg)
+    && /assigneeOpts/.test(seg);
+})());
+
+/* ⑤ 通杀：候选集合一律「定义表 ∪ 数据」，不许只取一边 */
+t('守卫：通杀 —— 每个候选生成都以定义表为首源', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  /* 所有 unionOpts 调用，第一个实参必须是 defsOf(...) */
+  const re = /unionOpts\(\s*([^,]+),/g;
+  let m; let n = 0; const bad = [];
+  while ((m = re.exec(app))) {
+    n += 1;
+    if (!/defsOf\(/.test(m[1])) bad.push(m[1].slice(0, 50));
+  }
+  if (n === 0 || bad.length) console.log('  候选首源不是定义表：' + bad.join(' | '));
+  return n > 0 && bad.length === 0;
+})());
+
+/* 提示文案不裸显示优先级 id（界面显示「P1 高」，toast 不能只说「P1」） */
+t('守卫：批量改优先级的 toast 用显示名（不裸显示 P1）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  if (/优先级改为 \$\{prio\}`/.test(app)) return false;
+  return /优先级改为 \$\{prio\} \$\{PRIORITY_LABEL\[/.test(app);
 })());
 
 const readmeCount = (() => {

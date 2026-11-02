@@ -121,6 +121,7 @@ export declare function statusColor(flow: TaskFlow | null | undefined, id: strin
 export declare function statusDone(flow: TaskFlow | null | undefined, id: string): boolean;
 
 /** 初始状态 = 列表第一个 */
+export declare function claimTarget(flow: FlowLike | null | undefined): string | null;
 export declare function initialStatus(flow: TaskFlow | null | undefined): string;
 
 /** 按配置判断能否流转 */

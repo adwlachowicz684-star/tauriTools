@@ -31,6 +31,7 @@ import {
   emptyColFilter,
   filterTasksByColumns,
   actionsForIn,
+  claimTarget,
   ancestorChain,
   canTransitionIn,
   currentProject,
@@ -164,6 +165,27 @@ const SORT_FIELDS: SortField[] = [
  *
  * 现在与 optionLabel 共用 labelFor，两处不可能再不一致。
  */
+/**
+ * 详情面板里那个**单选下拉**改的是多值列的"其中一个"，不是整列覆盖。
+ *
+ * ⛔ 原来两个 select 都写 `onPatch({ type: e.target.value })`
+ * （认领人同款）。而 type/assignee 勾了多选后是数组：
+ * 用户在详情里点一下下拉，其余的值**全被静默清掉**。
+ *
+ * 更讽刺的是 type 那行小字明明白白写着
+ * 「下拉里改的是其中一个；要增删请到列表那一列」——
+ * 注释和实现说的根本不是一回事。认领人那边连小字都没有，
+ * 共同认领的人被挤掉后完全不知情。
+ *
+ * 现在：只有一个值时走覆盖（老行为），多值时替换第一个、保留其余。
+ * 选空值 = 摘掉第一个、保留其余。
+ */
+function patchOneOf(task: Task, field: string, newVal: string): Partial<Task> {
+  const vals = fieldVals(task, field);
+  if (vals.length <= 1) return { [field]: newVal } as Partial<Task>;
+  return { [field]: replaceVal(task, field, vals[0], newVal || null, true) } as Partial<Task>;
+}
+
 /**
  * 认领人的**显示文本**（可能多个）。
  *
@@ -1078,10 +1100,14 @@ export default function App() {
         */
         const init = initialStatus(flow);
         let next = null;
-        if (cur.status === init) {
-          const acts = actionsForIn(flow, cur.status);
-          /* 同样要传 flow：认的是用户配的流程，不是默认那七个状态 */
-          if (acts.length > 0) next = applyTransitionIn(st.flow, cur, acts[0].to, me);
+        /*
+          ⛔ 推进目标走 claimTarget，与 TaskActions 排除按钮用的是**同一个函数**。
+          原来这里算的是"第一条出边"、那边算的是"第二个状态"，
+          自定义流程下两者可以不同（见 core.mjs claimTarget 注释）。
+        */
+        const ct = claimTarget(st.flow);
+        if (cur.status === init && ct) {
+          next = applyTransitionIn(st.flow, cur, ct, me);
         }
         /* 流程里没有可走的边（终态、或只配了一个状态）：只署名 */
         if (!next) next = { ...cur };
@@ -1418,7 +1444,13 @@ ${dir}
       setChecked(new Set());
       await refresh();
       if (hit === 0) ctx.toast('没有一条改成功（它们可能已被删除）', 'err');
-      else ctx.toast(`已把 ${hit} 条的优先级改为 ${prio}`, 'ok');
+      else /*
+          ⛔ 不能裸显示 prio（P1）：界面上这一列显示的是「P1 高」，
+          toast 说「改为 P1」而列表说「P1 高」—— 两处说法不一致。
+          这与"状态名查 STATUS_LABEL 显示原始 id"是同一类，
+          优先级用 PRIORITY_LABEL 查表即可。
+        */
+        ctx.toast(`已把 ${hit} 条的优先级改为 ${prio} ${PRIORITY_LABEL[prio as Priority] || ''}`.trim(), 'ok');
     })();
 
   /*
@@ -1930,6 +1962,27 @@ ${dir}
         if (cnt === 0) res.state = 'def';
         return withDefs({ ...st, tasks }, 'assignee', defs);
       });
+      /*
+        ⛔ 改名必须**顺带改掉正在生效的筛选**，与 renameGroup 完全同一判据。
+
+        认领人的 id 就是名字（和分组一样），改名会把 id 一起改掉；
+        而筛选里存的正是这个值。原来这里漏了 —— 实测：
+          筛着「张三」→ 改名「张三改」→ 任务同步改了、定义同步改了，
+          但筛选还指着「张三」→ **命中 0 条**，chip 还写着"认领人：张三"。
+        用户看到空列表，只会以为"改完名任务没了"。
+
+        （标签/类型改名不需要：它们改 name、id 不变，筛选存的是 id。）
+        ⚠️ 成功与"只改了定义"两种状态都要同步 —— 定义改了值就变了，
+        与有没有任务在用无关。
+      */
+      if ((res.state === 'ok' || res.state === 'def') && oldName !== nm) {
+        setColFilters((prev) => {
+          const f = prev.assignee;
+          if (!f || f.values.indexOf(oldName) < 0) return prev;
+          const values = f.values.map((x) => (x === oldName ? nm : x));
+          return { ...prev, assignee: { ...f, values } };
+        });
+      }
       await refresh();
       if (res.state === 'taken') ctx.toast(`已经有叫「${nm}」的人了，换个名字`, 'err');
       else if (res.state === 'none') ctx.toast(`没有找到「${oldName}」`, 'err');
@@ -2826,7 +2879,12 @@ function TaskActions({
     ⛔ 不能写死 'todo' / 'claimed'：自定义流程里初始态可能叫别的，
     认领那一步也可能叫别的。用流程里的**初始态** + "第二个状态"来判。
   */
-  const claimTo = (flow.statuses[1] || {}).id;
+  /*
+    ⛔ 原来是 `(flow.statuses[1] || {}).id` —— 写死"认领 = 第二个状态"。
+    与 doClaim 的"第一条出边"在默认流程恰好一致、自定义流程下会分叉。
+    现在两边都调 claimTarget。
+  */
+  const claimTo = claimTarget(flow);
   const visible = acts.filter(
     (a) => !(task.status === initialStatus(flow) && a.to === claimTo),
   );
@@ -6044,25 +6102,29 @@ function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAc
   */
   const hist = [...task.history].reverse();
   /*
-    认领人候选：从已有任务里汇总。
-    任务上没有"人员表"这种东西，出现过谁就是谁 ——
-    这与列表那一列用的是**同一套判据**（数据里汇总），
-    不会出现"详情里能选的人"和"列表里能选的人"不一致。
+    认领人候选 = **定义表 ∪ 这条任务上不在定义表里的值**。
+
+    ⛔ 原来只从全量任务里汇总（注释还写着"人员表不存在、出现过谁就是谁"）。
+    但认领人**早就有定义表**了（能新建 / 改名 / 改色 / 删除，见列头筛选面板）：
+    在筛选面板里新建一个人（比如「王五」）→ 定义表里有他，
+    而详情面板的下拉里**选不到他**，因为还没有任何任务用这个名字。
+    于是"刚建好的人，在详情里指派不了"。
+
+    与上面「任务类型」那个 select 完全同一判据：
+    定义表给全集，当前任务上的裸值（AI 手写进 JSON 的）补进去，
+    保证这条任务现在的值一定能被选中。
+
+    ⚠️ 与列表列头**筛选面板**的候选范围不同是**有意的**：
+    筛选要能筛到任何任务上的值（定义表 ∪ 全量数据），
+    详情这里只是"改这一条"，不需要把别人用过的裸名字都列出来。
   */
-  const assigneeOpts = (() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const x of tasks || []) {
-      /* 认领人可以是多值的：每个值都要成为候选，走 fieldVals 统一展开 */
-      for (const one of fieldVals(x, 'assignee')) {
-        const a = String(one || '').trim();
-        if (!a || seen.has(a)) continue;
-        seen.add(a);
-        out.push(a);
-      }
-    }
-    return out;
-  })();
+  const assigneeDefs = defsOf(store, 'assignee') || [];
+  const assigneeOpts: { id: string; label: string }[] = [
+    ...assigneeDefs.map((d) => ({ id: d.id, label: d.name || d.id })),
+    ...fieldVals(task, 'assignee')
+      .filter((v) => !assigneeDefs.some((d) => d.id === v))
+      .map((v) => ({ id: v, label: v })),
+  ];
 
   /*
     Escape 关闭面板。
@@ -6169,17 +6231,22 @@ function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAc
           两处说法不一致，用户会以为详情里这条没认领人。
 
           取第一个值当代表；多值时下面那行小字说明还有几个。
+          ⛔ 写回必须走 patchOneOf：原来直接 `assignee: e.target.value`，
+          一次选择就把其余共同认领的人全挤掉了（而这里连提示都没有）。
         */}
         <select
           className="tb-dinput tb-dsel"
           value={fieldVals(task, 'assignee')[0] || ''}
-          onChange={(e) => onPatch({ assignee: e.target.value })}
+          onChange={(e) => onPatch(patchOneOf(task, 'assignee', e.target.value))}
         >
           <option value="">未认领</option>
           {assigneeOpts.map((a) => (
-            <option key={a} value={a}>{a}</option>
+            <option key={a.id} value={a.id}>{a.label}</option>
           ))}
         </select>
+        {fieldVals(task, 'assignee').length > 1 ? (
+          <span className="tb-dhint">这条有 {fieldVals(task, 'assignee').length} 个认领人，下拉里改的是其中一个；要增删请到列表那一列</span>
+        ) : null}
       </div>
       <div className="tb-dfield">
         <span className="tb-dlabel">优先级</span>
@@ -6198,7 +6265,7 @@ function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAc
         <select
           className="tb-dinput tb-dsel"
           value={fieldVals(task, 'type')[0] || ''}
-          onChange={(e) => onPatch({ type: e.target.value })}
+          onChange={(e) => onPatch(patchOneOf(task, 'type', e.target.value))}
         >
           <option value="">未分类</option>
           {(defsOf(store, 'type') || []).map((d) => (
@@ -6215,7 +6282,7 @@ function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAc
           ))}
         </select>
         {fieldVals(task, 'type').length > 1 ? (
-          <span className="tb-dhint">这条有 {fieldVals(task, 'type').length} 个类型，下拉里改的是其中一个；要增删请到列表那一列</span>
+          <span className="tb-dhint">这条有 {fieldVals(task, 'type').length} 个类型，下拉里改的是其中一个（其余保留）；要增删请到列表那一列</span>
         ) : null}
 
         <span className="tb-dlabel">任务说明</span>

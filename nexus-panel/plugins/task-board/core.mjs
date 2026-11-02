@@ -167,6 +167,29 @@ export function statusDone(flow, id) {
 }
 
 /** 初始状态 = 列表第一个 */
+/**
+ * "认领"这一步会把任务推进到**哪个状态** —— 全应用唯一的一份判据。
+ *
+ * ⛔ 之前两个入口各算各的：
+ *   · doClaim（写盘）  → actionsForIn(flow, 初始态)[0].to（第一条**出边**）
+ *   · TaskActions（按钮）→ flow.statuses[1].id（流程里**第二个状态**）
+ *
+ * 默认流程里两者恰好都是 'claimed'，所以一直没暴露。
+ * 但自定义流程下完全可以不同，实测：
+ *   statuses [s1,s2,s3], transitions { s1: ['s3','s2'] }
+ *   → doClaim 推进到 s3，而按钮排除的是 s2
+ *   → 初始态任务同时出现「认领」和「去 s3」两个按钮，做同一件事。
+ *
+ * 这与"同一判据两个入口不一致"是同一类（删分组 vs 改名、
+ * 看板卡片 vs 详情面板操作区、DraftInput vs InlineText…），
+ * 收敛成一个函数，两边都调，不可能再各算各的。
+ */
+export function claimTarget(flow) {
+  const f = normalizeFlow(flow);
+  const acts = actionsForIn(f, initialStatus(f));
+  return acts.length > 0 ? acts[0].to : null;
+}
+
 export function initialStatus(flow) {
   const f = flowOf(flow);
   return (f.statuses[0] && f.statuses[0].id) || 'todo';
