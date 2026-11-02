@@ -23,6 +23,7 @@ import {
   fieldVals,
   hasVal,
   replaceVal,
+  addVal,
   colMulti,
   colColorOn,
   activeColFilters,
@@ -65,6 +66,15 @@ import {
   UNESTIMATED,
   statusColor,
   statusName,
+
+  defsOf,
+  withDefs,
+
+  labelFor,
+  normalizeGroupKey,
+  colDef,
+
+  hasDefs,
 } from './core';
 import type { ColFilter, FlatRow, GroupKey, ListColumn, SortField, TbStats } from './core';
 /* 输入法守卫：中文 / 日文输入时回车是「把候选词上屏」，不是界面上的「提交」。
@@ -147,11 +157,21 @@ const SORT_FIELDS: SortField[] = [
 ];
 
 /** 分组 key → 展示名（label 只在这一处映射，core.mjs 不碰文案） */
+/**
+ * 分组 key → 展示名。
+ *
+ * ⛔ 重构前 6 个分支，且**来源不一致**：类型从 defsOf(store, 'type') 取、
+ * 标签从单独的参数取 —— 同一件事两个来源，正是"改一处漏一处"的温床。
+ * 按标签分组时漏查定义表那次（组头显示 tg_xxxx）就是这么来的。
+ *
+ * 现在与 optionLabel 共用 labelFor，两处不可能再不一致。
+ */
 function groupLabel(
   key: string,
   by: GroupKey,
   flow?: FlowLike,
-  tagDefs?: TagDef[],
+  defs?: { id: string; name: string }[],
+  store?: unknown,
 ): string {
   /*
     空 key（**没选任何分组依据**时，所有任务落在同一个 key='' 的组里）。
@@ -161,23 +181,8 @@ function groupLabel(
     而弹层里那句"还没选任何列"在关掉弹层后就看不到了。
   */
   if (key === '') return '全部任务';
-  if (by === 'status') return statusName(flow, key);
-  if (by === 'priority') return `${key} ${PRIORITY_LABEL[key as Priority] || ''}`.trim();
-  if (by === 'type') return key === NOTYPE ? '未分类' : typeName(flow && flow.typeDefs, key);
-  if (key === UNASSIGNED) return '未认领';
-  if (key === NOTAG) return '无标签';
-  if (key === NOGROUP) return '未分组';
-  /*
-    按标签分组时，key 是**标签 id**（tg_xxxx）。
-    ⛔ 不查定义表的话组头显示一串没人看得懂的字符，
-    而用户选"按标签分组"就是要按**名字**归拢 ——
-    看着像分组功能坏了（"这些都是什么？"）。
-  */
-  if (by === 'tag') {
-    const d = (tagDefs || []).find((x) => x.id === key);
-    return d ? d.name : key;
-  }
-  return key;
+  /* 旧名 'tag' 归一到列名 'tags' */
+  return labelFor(normalizeGroupKey(by), key, store || defs, flow);
 }
 /** 排序字段 → 展示名。与列头用的是同一套名字，两处说法必须一致 */
 const SORT_LABEL: Record<SortField, string> = {
@@ -476,7 +481,15 @@ export default function App() {
   */
   /* 当前项目是否与别的项目共用数据目录（只报不改，见下面的提示条） */
   const sameDir = cfg ? duplicateDataDirs(cfg).filter((d) => d.ids.indexOf(cfg.currentId) >= 0) : [];
-  const flow = store ? { ...store.flow, typeDefs: store.typeDefs } : { ...DEFAULT_FLOW, typeDefs: normalizeTypeDefs(null) };
+  /*
+    ⛔ 不再把类型定义表**挂在 flow 上**（`{ ...store.flow, typeDefs }`）。
+
+    那是个"少传一个参数"的取巧：于是类型定义有了两个来源
+    （store.defs 和 defsOf(store, 'type')），改一处漏一处 ——
+    按标签分组时组头显示 tg_xxxx 就是这么来的（标签走参数、类型走 flow）。
+    现在一律 defsOf(store, field)。
+  */
+  const flow = store ? store.flow : DEFAULT_FLOW;
   /*
     状态候选 = **流程配置 + 数据里实际在用的**。
 
@@ -498,13 +511,13 @@ export default function App() {
     }
     return out;
   })();
-  const typeDefs = store ? store.typeDefs : [];
-  const typeIds = typeDefs.map((d) => d.id);
+  const typeDefs = defsOf(store, 'type');
+  const typeIds = defsOf(store, 'type').map((d) => d.id);
   /*
     标签 id → 显示名的映射。排序要用它：
     任务上存的是 id、界面显示的是名字，按 id 排出来的顺序看着像随机。
   */
-  const tagDefs = store ? store.tagDefs : [];
+  const tagDefs = defsOf(store, 'tags');
   /*
     认领人定义表。与分组同构（id 就是名字），颜色在这里配。
 
@@ -512,8 +525,8 @@ export default function App() {
     —— 而"记哪些列有例外"正是统一要消灭的东西。
   */
   /** 分组定义表（App 主体也要有：看板卡片要查名字） */
-  const groupDefs = store ? (store.groupDefs || []) : [];
-  const assigneeDefs = store ? (store.assigneeDefs || []) : [];
+  const groupDefs = defsOf(store, 'group');
+  const assigneeDefs = defsOf(store, 'assignee');
   /*
     已有分组名（去重、排序）。新建弹窗的分组下拉用它做候选 ——
     分组是自由文本，但"复用已有分组"比"再敲一遍"常见得多，
@@ -534,24 +547,24 @@ export default function App() {
   }, [store]);
   const tagNames = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const d of tagDefs) m[d.id] = d.name;
+    for (const d of defsOf(store, 'tags')) m[d.id] = d.name;
     return m;
-  }, [tagDefs]);
+  }, [defsOf(store, 'tags')]);
 
   const flatRows = useMemo(() => flattenTasks(store ? store.tasks : []), [store]);
   /*
-    typeDefs 要传进去：搜索要匹配**类型的显示名**（"开发"），
+    defsOf(store, 'type') 要传进去：搜索要匹配**类型的显示名**（"开发"），
     而任务上存的是 id（'dev'）—— 不传就只能按 id 搜，用户搜不到。
     ⛔ 依赖里也要带上：改了类型名，同一个关键词的命中结果会变，
     漏了依赖就停在旧结果上（看着像搜索坏了）。
   */
   const filteredRows = useMemo(
     /*
-      ⛔ tagDefs 必须传：搜「重要」要能命中挂着那个标签的任务，
+      ⛔ defsOf(store, 'tags') 必须传：搜「重要」要能命中挂着那个标签的任务，
       而任务上存的是 id。不传的话退回按 id 搜（老行为），等于标签搜不到。
     */
-    () => filterTasksByColumns(flatRows, colFilters, q, typeDefs, store ? store.tagDefs : []),
-    [flatRows, colFilters, q, typeDefs, store ? store.tagDefs : []],
+    () => filterTasksByColumns(flatRows, colFilters, q, typeDefs, tagDefs),
+    [flatRows, colFilters, q, typeDefs, tagDefs],
   );
   const filtered = useMemo(() => filteredRows.map((r) => r.task), [filteredRows]);
   /*
@@ -600,7 +613,7 @@ export default function App() {
         于是列表里点了"按更新排"，切到看板顺序纹丝不动，
         而顶栏还写着"排序：更新 ↓"，看着像生效了，实际没有。
       */
-      const list = sortTasksBy(filtered, sort.field, sort.dir, tagNames);
+      const list = sortTasksBy(filtered, sort.field, sort.dir, tagNames, flow);
       for (const t of list) {
         if (!map[t.status]) map[t.status] = [];
         map[t.status].push(t);
@@ -609,7 +622,7 @@ export default function App() {
     return map;
   }, [store, filtered, boardColumns, tagNames]);
   const listRows = useMemo(
-    () => sortRowsBy(filteredRows, sort.field, sort.dir, tagNames),
+    () => sortRowsBy(filteredRows, sort.field, sort.dir, tagNames, flow),
     /*
       ⛔ tagNames 必须进依赖：改了标签名之后排序结果会变，
       不重算的话列表还停在旧顺序上 —— 而改名明明已经生效了。
@@ -760,10 +773,8 @@ export default function App() {
   const setTypeDef = (id: string, patch: { name?: string; color?: string }) =>
     withErr(async () => {
       if (!cfg) return;
-      await S.mutate(ctx, cfg.dataDir, (st) => ({
-        ...st,
-        typeDefs: (st.typeDefs || []).map((d) => (d.id === id ? { ...d, ...patch } : d)),
-      }));
+      await S.mutate(ctx, cfg.dataDir, (st) =>
+        withDefs(st, 'type', defsOf(st, 'type').map((d) => (d.id === id ? { ...d, ...patch } : d))));
       await refresh();
     })();
 
@@ -778,11 +789,26 @@ export default function App() {
   const createType = (name: string, color: string) =>
     withErr(async () => {
       if (!cfg) return '';
+      const nm = (name || '').trim();
+      let made = false;
       let newId = '';
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = st.typeDefs || [];
+        const defs = defsOf(st, 'type') || [];
+        /*
+          ⛔ 同名必须挡住，且**按 name 判重，不能按 id**。
+
+          类型的 id 是自动生成的（t_xxx），同名两条定义 id 不同 ——
+          按 id 判重永远判不出来，于是下拉里出现两个「开发」：
+          用户分不清该选哪个，而且删掉一个另一个还在，看着像删不掉。
+
+          分组/认领人的 id 就是名字，所以它们按 id 判重恰好也挡住了同名；
+          **类型与标签的 id 与名字是两回事**，必须显式按 name 判。
+          标签那边（doAddTag）早就这么判了，类型这里漏了。
+        */
+        if (defs.some((d) => d.name === nm)) return null;
         const id = newDefId('t', defs.map((d) => d.id));
         newId = id;
+        made = true;
         /*
           传进来的色为空、或已被占用时，取**第一个还没人用的颜色**。
           连着建几个类型却拿到同一个颜色的话，颜色就失去了"一眼区分"的作用 ——
@@ -794,13 +820,19 @@ export default function App() {
         const want = (color && !used.has(color))
           ? color
           : (TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[defs.length % TAG_COLORS.length]);
-        return { ...st, typeDefs: [...defs, { id, name, color: want }] };
+        return withDefs(st, 'type', [...defs, { id, name: nm, color: want }]);
       });
       /*
         同上：新建完必须立刻重读，否则下拉里要等两秒才出现这个类型，
         而这两秒里用户已经按了回车却什么都没看到，会以为没建成。
       */
       await refresh();
+      /*
+        ⛔ 建不成必须**说出来**：原来静默返回，用户敲完名字按回车、
+        输入框清空了而下拉里什么都没多 —— 看着像"新建这个功能坏了"。
+        同名是输入问题，得让用户知道（与 doAddTag 同一判据）。
+      */
+      if (!made) ctx.toast(`已经有同名的类型「${nm}」了`, 'err');
       return newId;
     })();
 
@@ -819,13 +851,11 @@ export default function App() {
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         n = (st.tasks || []).filter((t) => hasVal(t, 'type', id)).length;
-        return {
-          ...st,
-          /*
-            清空类型是**改任务**，要推进 updatedAt ——
-            不推进的话"更新"列不动，看着像这几条没被改过。
-          */
-          tasks: (st.tasks || []).map((t) => (
+        /*
+          清空类型是**改任务**，要推进 updatedAt ——
+          不推进的话"更新"列不动，看着像这几条没被改过。
+        */
+        const nextStore = { ...st, tasks: (st.tasks || []).map((t) => (
             hasVal(t, 'type', id)
               /*
                 摘掉这个类型。多值列要**只摘这一个、留下其它**，
@@ -833,9 +863,8 @@ export default function App() {
               */
               ? { ...t, type: replaceVal(t, 'type', id, null, multiOfTask(t, 'type')), updatedAt: Date.now() }
               : t
-          )),
-          typeDefs: (st.typeDefs || []).filter((d) => d.id !== id),
-        };
+          )) };
+        return withDefs(nextStore, 'type', defsOf(st, 'type').filter((d) => d.id !== id));
       });
       /*
         顺手把筛选里对它的引用摘掉。
@@ -1316,11 +1345,22 @@ ${dir}
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const want = new Set(ids);
         let k = 0;
-        /* 改的是任务，要推进 updatedAt（否则"更新"列不动，看着像没改） */
+        /*
+          ⛔ 不能直接 `type: typeId` 覆盖：这一列**可以是多选的**
+          （列设置里勾了"多选"），任务上存的是数组（['dev','bug']）。
+          直接赋单值会把原有的 dev / bug **静默丢掉** ——
+          用户从下拉挑一个值是"把这些任务归到这一类"，
+          不是"清掉它们原有的分类再归到这一类"。
+          要清空另有"清成未分类"那条路。
+
+          多选列走 addVal（保留已有 + 加新的，且去重）；
+          单选列走 addVal 得到的也是单值，两条路同一个函数。
+        */
         const tasks = st.tasks.map((t) => {
           if (!want.has(t.id)) return t;
           k += 1;
-          return { ...t, type: typeId, updatedAt: Date.now() };
+          /* multiOfTask：这条任务自己这一列是不是多值（按数据判断，不按列设置） */
+          return { ...t, type: addVal(t, 'type', typeId, multiOfTask(t, 'type')), updatedAt: Date.now() };
         });
         hit = k;
         return { ...st, tasks };
@@ -1328,7 +1368,7 @@ ${dir}
       setChecked(new Set());
       await refresh();
       if (hit === 0) ctx.toast('没有一条改成功（它们可能已被删除）', 'err');
-      else ctx.toast(`已把 ${hit} 条的类型改为「${typeId === NOTYPE ? '未分类' : typeName(typeDefs, typeId)}」`, 'ok');
+      else ctx.toast(`已把 ${hit} 条的类型改为「${typeId === NOTYPE ? '未分类' : typeName(defsOf(store, 'type'), typeId)}」`, 'ok');
     })();
 
   const doBatchPriority = (ids: string[], prio: string) =>
@@ -1391,7 +1431,7 @@ ${dir}
     })();
 
   /*
-    标签定义落在 store.tagDefs（任务上只存 id）。
+    标签定义落在 defsOf(store, 'tags')（任务上只存 id）。
     颜色改一处、所有挂这个标签的行一起变 —— 这是"标签"该有的行为，
     逐行不同色就丢掉了"一眼分类"这个作用。
   */
@@ -1414,7 +1454,7 @@ ${dir}
       let made = false;
       let newId = '';
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
+        const defs = defsOf(st, 'tags');
         made = false;
         newId = '';
         if (defs.some((d) => d.name === nm)) return null;   // 同名不重复建
@@ -1431,7 +1471,7 @@ ${dir}
         defs.push({ id, name: nm, color: want });
         made = true;
         newId = id;
-        return { ...st, tagDefs: defs };
+        return withDefs(st, 'tags', defs);
       });
       await refresh();
       if (!made) ctx.toast(`已经有同名标签「${nm}」了`, 'err');
@@ -1442,12 +1482,12 @@ ${dir}
     withErr(async () => {
       if (!cfg || !id) return;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
+        const defs = defsOf(st, 'tags');
         /* 标签还没建过（任务上直接写了个裸名字）→ 补一条定义 */
         const idx = defs.findIndex((d) => d.id === id);
         if (idx < 0) defs.push({ id, name: id, color });
         else defs[idx] = { ...defs[idx], color };
-        return { ...st, tagDefs: defs };
+        return withDefs(st, 'tags', defs);
       });
       await refresh();
     })();
@@ -1463,7 +1503,7 @@ ${dir}
     withErr(async () => {
       if (!cfg || !id || !name.trim()) return;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = Array.isArray(st.tagDefs) ? [...st.tagDefs] : [];
+        const defs = defsOf(st, 'tags');
         const idx = defs.findIndex((d) => d.id === id);
         /*
           定义不存在（任务上写的是裸名字）→ 补一条，否则改名无处可落。
@@ -1477,7 +1517,7 @@ ${dir}
           defs.push({ id, name: name.trim(), color: free || TAG_COLORS[0] });
         }
         else defs[idx] = { ...defs[idx], name: name.trim() };
-        return { ...st, tagDefs: defs };
+        return withDefs(st, 'tags', defs);
       });
       await refresh();
     })();
@@ -1493,7 +1533,7 @@ ${dir}
   const doRemoveTag = (id: string) =>
     withErr(async () => {
       if (!cfg || !id) return;
-      const nm = (store ? store.tagDefs : []).find((d) => d.id === id)?.name || id;
+      const nm = (store ? defsOf(store, 'tags') : []).find((d) => d.id === id)?.name || id;
       /*
         ⛔ 计数不能写成 `n += 1`：**mutate 带乐观锁，写冲突时会重读再试**，
         回调因此可能被跑多次 —— 累加就会把条数报成两倍、三倍。
@@ -1503,7 +1543,7 @@ ${dir}
       */
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = (Array.isArray(st.tagDefs) ? st.tagDefs : []).filter((d) => d.id !== id);
+        const defs = (Array.isArray(defsOf(st, 'tags')) ? defsOf(st, 'tags') : []).filter((d) => d.id !== id);
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
           if (!Array.isArray(t.tags) || t.tags.indexOf(id) < 0) return t;
@@ -1515,7 +1555,7 @@ ${dir}
           return { ...t, tags: t.tags.filter((x) => x !== id), updatedAt: Date.now() };
         });
         n = cnt;
-        return { ...st, tagDefs: defs, tasks };
+        return withDefs({ ...st, tasks }, 'tags', defs);
       });
       /*
         正在用这个标签做筛选的话要一并清掉：
@@ -1559,6 +1599,50 @@ ${dir}
     }
   };
 
+  /*
+    ================================================================ 定义表操作
+   *
+   * 四列（标签 / 类型 / 分组 / 认领人）的**增删改色**，按 field 给一份。
+   *
+   * ⛔ 重构前是 16 个独立的回调，ListView 原样转发一遍、
+   * ColFilterPop 再用一条四层三元链挑出"这列用哪套"。
+   * 于是加一列要在三处各加 4 个参数，而"改名连带改任务"
+   * "删了要清筛选"这类判据要在 App 主体里写四遍 ——
+   * 漏一遍就是一个"只在某列发生"的 bug（前面修过好几个）。
+   *
+   * 现在合成一张表：加一列 = 在这里加一项。
+   */
+  const defOpsFor = (field: string): DefOps | undefined => {
+    switch (field) {
+      case 'tags':
+        return { kindName: '标签', create: doAddTag, setColor: doSetTagColor, rename: doRenameTag, remove: doRemoveTag };
+      case 'type':
+        /*
+          ⛔ 不指定颜色（传空串），让 createType 去取**第一个还没人用的**。
+          见调用点那段说明：传一个明知会被占用的值是自相矛盾的。
+        */
+        return {
+          kindName: '类型',
+          create: (name: string) => createType(name, ''),
+          setColor: (id: string, color: string) => setTypeDef(id, { color }),
+          rename: (id: string, name: string) => setTypeDef(id, { name }),
+          remove: removeType,
+        };
+      case 'group':
+        return { kindName: '分组', create: addGroup, setColor: setGroupColor, rename: renameGroup, remove: removeGroup };
+      case 'assignee':
+        return { kindName: '认领人', create: addAssignee, setColor: setAssigneeColor, rename: renameAssignee, remove: removeAssignee };
+      default:
+        /*
+          没有定义表的列（优先级 / 状态 / 文本 / 数值 / 时间）不返回 ops ——
+          面板里就不会出现增删改色按钮。
+          给它们摆上按钮是骗人：点了弹确认框然后什么都没发生。
+        */
+        return undefined;
+    }
+  };
+
+
   /* ---------------------------------------------------------- 分组定义表
    *
    * 分组与标签/类型同构（定义表 + 增删改色），但 **id 就是名字** ——
@@ -1573,7 +1657,7 @@ ${dir}
       const nm = name.trim();
       let made = false;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = Array.isArray(st.groupDefs) ? [...st.groupDefs] : [];
+        const defs = defsOf(st, 'group');
         made = false;
         /* 同名不重复建 —— 但要说出来（见 doAddTag 那条） */
         if (defs.some((d) => d.id === nm || d.name === nm)) return null;
@@ -1583,7 +1667,7 @@ ${dir}
           : (TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0]);
         defs.push({ id: nm, name: nm, color: want });
         made = true;
-        return { ...st, groupDefs: defs };
+        return withDefs(st, 'group', defs);
       });
       await refresh();
       if (!made) ctx.toast(`已经有同名分组「${nm}」了`, 'err');
@@ -1596,12 +1680,12 @@ ${dir}
     withErr(async () => {
       if (!cfg || !id) return;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = Array.isArray(st.groupDefs) ? [...st.groupDefs] : [];
+        const defs = defsOf(st, 'group');
         const idx = defs.findIndex((d) => d.id === id);
         /* 没建过定义（老数据里的裸名字）→ 补一条，否则改色无处可落 */
         if (idx < 0) defs.push({ id, name: id, color });
         else defs[idx] = { ...defs[idx], color };
-        return { ...st, groupDefs: defs };
+        return withDefs(st, 'group', defs);
       });
       await refresh();
     })();
@@ -1638,7 +1722,7 @@ ${dir}
       const res: { state: 'ok' | 'dupe' | 'same' } = { state: 'ok' };
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = Array.isArray(st.groupDefs) ? [...st.groupDefs] : [];
+        const defs = defsOf(st, 'group');
         const idx = defs.findIndex((d) => d.id === id);
         const taken = defs.some((d) => d.id === nm && d.id !== id);
         if (taken) { res.state = 'dupe'; return null; }
@@ -1676,7 +1760,7 @@ ${dir}
           };
         });
         n = cnt;
-        return { ...st, groupDefs: defs, tasks };
+        return withDefs({ ...st, tasks }, 'group', defs);
       });
       /*
         ⛔ 改名必须**顺带改掉正在生效的筛选**。
@@ -1712,7 +1796,7 @@ ${dir}
       if (!cfg || !id) return;
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = (Array.isArray(st.groupDefs) ? st.groupDefs : []).filter((d) => d.id !== id);
+        const defs = (Array.isArray(defsOf(st, 'group')) ? defsOf(st, 'group') : []).filter((d) => d.id !== id);
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
           /* 同上：多值时逐个摘掉这一个，留下其它（不是整条清空） */
@@ -1725,7 +1809,7 @@ ${dir}
           };
         });
         n = cnt;
-        return { ...st, groupDefs: defs, tasks };
+        return withDefs({ ...st, tasks }, 'group', defs);
       });
       setColFilters((prev) => {
         const f = prev.group;
@@ -1773,7 +1857,7 @@ ${dir}
       let n = 0;
       await S.mutate(ctx, cfg.dataDir, (st) => {
         const taken = (st.tasks || []).some((t) => hasVal(t, 'assignee', nm))
-          || (Array.isArray(st.assigneeDefs) ? st.assigneeDefs : []).some((d) => d.id === nm && d.id !== oldName);
+          || (Array.isArray(defsOf(st, 'assignee')) ? defsOf(st, 'assignee') : []).some((d) => d.id === nm && d.id !== oldName);
         if (taken) { res.state = 'taken'; return null; }
         /*
           ⛔ 定义表要跟着改，而且 **id 和 name 一起改成新名**（id 就是名字）。
@@ -1787,7 +1871,7 @@ ${dir}
           （认领人定义表是这轮才加的），不补的话改名改不动任务之外的东西，
           而这个人的颜色配置也就永远无处可落。
         */
-        const defs = Array.isArray(st.assigneeDefs) ? [...st.assigneeDefs] : [];
+        const defs = defsOf(st, 'assignee');
         const di = defs.findIndex((d) => d.id === oldName);
         if (di >= 0) defs[di] = { ...defs[di], id: nm, name: nm };
         else {
@@ -1816,7 +1900,7 @@ ${dir}
         */
         if (cnt === 0 && di < 0) { res.state = 'none'; return null; }
         if (cnt === 0) res.state = 'def';
-        return { ...st, tasks, assigneeDefs: defs };
+        return withDefs({ ...st, tasks }, 'assignee', defs);
       });
       await refresh();
       if (res.state === 'taken') ctx.toast(`已经有叫「${nm}」的人了，换个名字`, 'err');
@@ -1837,11 +1921,11 @@ ${dir}
     withErr(async () => {
       if (!cfg || !id) return;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = Array.isArray(st.assigneeDefs) ? [...st.assigneeDefs] : [];
+        const defs = defsOf(st, 'assignee');
         const idx = defs.findIndex((d) => d.id === id);
         if (idx < 0) defs.push({ id, name: id, color });
         else defs[idx] = { ...defs[idx], color };
-        return { ...st, assigneeDefs: defs };
+        return withDefs(st, 'assignee', defs);
       });
       await refresh();
     })();
@@ -1859,13 +1943,13 @@ ${dir}
       const nm = name.trim();
       let made = false;
       await S.mutate(ctx, cfg.dataDir, (st) => {
-        const defs = Array.isArray(st.assigneeDefs) ? [...st.assigneeDefs] : [];
+        const defs = defsOf(st, 'assignee');
         made = false;
         if (defs.some((d) => d.id === nm)) return null;
         const used = new Set(defs.map((d) => d.color));
         defs.push({ id: nm, name: nm, color: TAG_COLORS.find((c) => !used.has(c)) || TAG_COLORS[0] });
         made = true;
-        return { ...st, assigneeDefs: defs };
+        return withDefs(st, 'assignee', defs);
       });
       await refresh();
       if (!made) ctx.toast(`已经有叫「${nm}」的人了`, 'err');
@@ -1898,7 +1982,7 @@ ${dir}
           先删定义的话，任务上还留着名字，而这个名字在下拉里已经选不到了
           —— 想改只能逐条手打。这与删分组 / 删类型是同一判据。
         */
-        const defs = (Array.isArray(st.assigneeDefs) ? st.assigneeDefs : []).filter((d) => d.id !== name);
+        const defs = (Array.isArray(defsOf(st, 'assignee')) ? defsOf(st, 'assignee') : []).filter((d) => d.id !== name);
         let cnt = 0;
         const tasks = (st.tasks || []).map((t) => {
           if (!hasVal(t, 'assignee', name)) return t;
@@ -1907,7 +1991,7 @@ ${dir}
           return { ...t, assignee: replaceVal(t, 'assignee', name, null, multiOfTask(t, 'assignee')), updatedAt: Date.now() };
         });
         n = cnt;
-        return cnt === 0 ? null : { ...st, tasks, assigneeDefs: defs };
+        return cnt === 0 ? null : withDefs({ ...st, tasks }, 'assignee', defs);
       });
       /* 与删分组/删类型同判据：正在筛这个人的筛选要清掉，否则筛一个已不存在的人 */
       setColFilters((prev) => {
@@ -2207,7 +2291,7 @@ ${dir}
             const f = colFilters[c.field] as ColFilter;
             return (
               <span key={c.field} className="tb-chip">
-                {c.label}：{filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow, store ? store.groupDefs : [])}
+                {c.label}：{filterSummary(c, f, store, flow)}
                 <button
                   type="button"
                   className="tb-chip-x"
@@ -2259,12 +2343,11 @@ ${dir}
                 {(byColumn[sd.id] || []).length === 0 && <div className="tb-col-empty">空</div>}
                 {(byColumn[sd.id] || []).map((t) => (
                   <TaskCard
+            store={store}
                     key={t.id}
                     task={t}
                     me={me}
                     flow={flow}
-                    tagDefs={tagDefs}
-                    groupDefs={groupDefs}
                     onOpen={() => setDetailId(t.id)}
                     onAction={(to, needNote) => (needNote ? setRejectFor({ id: t.id, to }) : doTransition(t.id, to))}
                     onClaim={() => doClaim(t.id)}
@@ -2338,42 +2421,10 @@ ${dir}
             taskStore={store}
             flow={flow}
             statusIds={statusIds}
-            typeDefs={typeDefs}
             typeIds={typeIds}
             onToggleType={toggleType}
-            onRenameType={(id, name) => setTypeDef(id, { name })}
-            /*
-              ⛔ 不指定颜色（传空串），让 createType 去取**第一个还没人用的**。
+            defOpsFor={defOpsFor}
 
-              原来是写死 TAG_COLORS[6]（#3b82f6），
-              而实测本项目里 #3b82f6 已被「调研」占用 ——
-              靠 createType 内部"传进来的色已被占用就换一个"才没撞上。
-
-              依赖下游兜底不是不行，但传一个**明知会被占用**的值是自相矛盾的：
-              读代码的人会以为"这里就是要这个色"，而实际不是。
-              传空串直接把意图说清楚：我不指定，你来挑。
-
-              两个入口（这里 + 列头筛选面板）现在都走同一判据，
-              不会出现"同一个新建动作在不同地方得到不同颜色"。
-            */
-            onCreateType={(name) => createType(name, '')}
-            onTypeColor={(id, color) => setTypeDef(id, { color })}
-            onRemoveType={removeType}
-            tagDefs={store.tagDefs}
-            onCreateTag={doAddTag}
-            onTagColor={doSetTagColor}
-            onRenameTag={doRenameTag}
-            onRemoveTag={doRemoveTag}
-            groupDefs={store.groupDefs}
-            onCreateGroup={addGroup}
-            onGroupColor={setGroupColor}
-            onRenameGroup={renameGroup}
-            onRemoveGroup={removeGroup}
-            assigneeDefs={assigneeDefs}
-            onCreateAssignee={addAssignee}
-            onAssigneeColor={setAssigneeColor}
-            onRenameAssignee={renameAssignee}
-            onRemoveAssignee={removeAssignee}
             onPickColor={pickColor}
             checked={checked}
             onCheck={(id, on) => setChecked((prev) => {
@@ -2405,12 +2456,11 @@ ${dir}
           />
           {detail ? (
             <DetailPanel
+            store={store}
               task={detail}
               me={me}
               tasks={store.tasks}
               taskStore={store}
-              tagDefs={store.tagDefs}
-              typeDefs={typeDefs}
               flow={flow}
               onClose={() => setDetailId(null)}
               onComment={(note) => doComment(detail.id, note)}
@@ -2435,8 +2485,7 @@ ${dir}
           groupKeys={groupKeys}
           flow={flow}
           me={me}
-          tagDefs={tagDefs}
-          groupDefs={groupDefs}
+          store={store}
           onOpen={(id) => setDetailId(id)}
           onAction={(id, to, needNote) => (needNote ? setRejectFor({ id, to }) : doTransition(id, to))}
           onClaim={(id) => doClaim(id)}
@@ -2446,10 +2495,9 @@ ${dir}
       {/* 统计：看全量，不受顶部筛选影响 */}
       {view === 'stats' && stats && (
         <StatsView
+            store={store}
           stats={stats}
           flow={flow}
-          typeDefs={typeDefs}
-          tagDefs={store.tagDefs}
           onOpen={(id) => setDetailId(id)}
         />
       )}
@@ -2457,7 +2505,7 @@ ${dir}
       {/* 新建任务 */}
       {newOpen && (
         <NewTaskModal
-          typeDefs={typeDefs}
+            store={store}
           groups={allGroupNames}
           agents={store.agents}
           me={me}
@@ -2575,23 +2623,12 @@ function PriorityBadge({ p }: { p: Priority }) {
   return <span className={'tb-pri p-' + p}>{p}</span>;
 }
 
-function TaskCard({
-  task,
-  me,
-  flow,
-  tagDefs,
-  groupDefs,
-  onOpen,
-  onAction,
-  onClaim,
-}: {
+function TaskCard({ task, me, flow, onOpen, onAction, onClaim, store }: {
+  /** 传 store：所有列的定义表都从 defs 查（defsOf / labelFor），不再逐列传 */
+  store: unknown;
   task: Task;
   me: string;
   flow: FlowLike;
-  /** 标签定义：卡片上的标签要显示名字而不是 id */
-  tagDefs: TagDef[];
-  /** 分组定义：同上，卡片上的分组要显示名字而不是 id */
-  groupDefs: TagDef[];
   /*
     打开详情（右侧面板）。
     ⛔ 现在**没有点击触发** —— 卡片上的 onClick 已经去掉了，
@@ -2626,7 +2663,7 @@ function TaskCard({
       */}
       {(() => {
         const tv = Array.isArray(task.type) ? task.type : (task.type ? [task.type] : []);
-        const shown = tv.filter((x) => x && typeName(flow.typeDefs, x));
+        const shown = tv.filter((x) => x && typeName(defsOf(store, 'type'), x));
         if (shown.length === 0) return null;
         return (
           <div className="tb-task-tags">
@@ -2635,12 +2672,12 @@ function TaskCard({
                 key={x}
                 className="tb-tag"
                 style={{
-                  background: typeColor(flow.typeDefs, x) + '22',
-                  color: typeColor(flow.typeDefs, x),
-                  borderColor: typeColor(flow.typeDefs, x) + '55',
+                  background: typeColor(defsOf(store, 'type'), x) + '22',
+                  color: typeColor(defsOf(store, 'type'), x),
+                  borderColor: typeColor(defsOf(store, 'type'), x) + '55',
                 }}
               >
-                {typeName(flow.typeDefs, x)}
+                {typeName(defsOf(store, 'type'), x)}
               </span>
             ))}
           </div>
@@ -2667,12 +2704,12 @@ function TaskCard({
               key={x}
               className="tb-tag tb-tag-group"
               style={(() => {
-                const c = groupColor(groupDefs || [], x);
+                const c = groupColor(defsOf(store, 'group'), x);
                 return c ? { background: c + '22', color: c, borderColor: c + '55' } : undefined;
               })()}
-              title={`分组：${groupName(groupDefs || [], x)}`}
+              title={`分组：${groupName(defsOf(store, 'group'), x)}`}
             >
-              {groupName(groupDefs || [], x)}
+              {groupName(defsOf(store, 'group'), x)}
             </span>
           ))}
         </div>
@@ -2687,7 +2724,7 @@ function TaskCard({
             看板因此看不出这些标签是什么、也分不清彼此。
           */}
           {task.tags.map((tag) => (
-            <TagChip key={tag} id={tag} defs={tagDefs} />
+            <TagChip key={tag} id={tag} defs={defsOf(store, 'tags')} />
           ))}
         </div>
       )}
@@ -3985,69 +4022,113 @@ function ColSettingsPop({
  * 映射在这一处完成 —— 列头的下拉、已生效筛选的摘要都用同一份，
  * 否则同一个值在两个地方说法不一样。
  */
+/**
+ * 候选值的显示名。
+ *
+ * ⛔ 重构前是 7 个 `if (field === …)`，每列各写一遍"查哪张表、
+ * 空值算什么"—— 于是分组列改成 enum 之后，它的显示名分支**漏了**，
+ * 下拉里显示 "__nogroup__"（无人看得懂的一串下划线）。
+ *
+ * 现在全部委托 core 的 labelFor（查列注册表），这里没有任何按 field 的分支。
+ */
 function optionLabel(
   field: SortField,
   v: string,
   defs?: { id: string; name: string }[],
   flow?: FlowLike,
 ): string {
-  if (field === 'priority') return `${v} ${PRIORITY_LABEL[v as Priority] || ''}`.trim();
-  /*
-    状态名走 statusName(flow, v)，不查写死的 STATUS_LABEL：
-    自定义流程的 id 在那张默认表里查不到，于是筛选面板里显示
-    "s2"，而列表同一行显示"开发中" —— 同一个筛选两处说法不一样。
-  */
-  if (field === 'status') return statusName(flow, v as TaskStatus);
-  /*
-    未分类是哨兵值（不在定义表里），必须在这里单独认 ——
-    否则 chip 上会显示 "__notype__"，没人看得懂那一串下划线是什么。
-  */
-  if (field === 'type') return v === NOTYPE ? '未分类' : (typeName(defs, v) || v);
-  /* 老存档 / AI 手写的数据里可能是空串，两种哨兵都认 */
-  if (field === 'assignee') return !v || v === UNASSIGNED ? '未认领' : v;
-  /*
-    标签同理：任务上存的是 **id**（tg_xxxx），直接显示没人看得懂。
-    认不出来就退回 id —— 至少看得见这里挂了个东西（AI 直接写进 JSON 的裸标签就是这种）。
-  */
-  if (field === 'tags') return defs?.find((d) => d.id === v)?.name || v;
-  /*
-    分组：定义表里的 name；「未分组」是哨兵（不在定义表里），要单独认 ——
-    否则下拉里显示 "__nogroup__"，没人看得懂那一串下划线是什么
-    （和上面「未分类」是同一类漏，这次是被分组列改成 enum 带出来的）。
-  */
-  if (field === 'group') return v === NOGROUP ? '未分组' : (defs?.find((d) => d.id === v)?.name || v);
-  return v;
+  return labelFor(field, v, defs, flow);
 }
 
 /**
  * 已生效筛选的一句摘要，写在 chip 上。
  *
- * 传 typeDefs：类型列显示的是 id（'dev'），不查定义表的话
+ * 传 defsOf(store, 'type')：类型列显示的是 id（'dev'），不查定义表的话
  * chip 上写 "dev" 而筛选面板里写 "开发" —— 同一个筛选两处说法不一样，
  * 会让人以为那是两个不同的东西。
  */
+/**
+ * 已生效筛选的一句摘要，写在 chip 上。
+ *
+ * ⛔ 重构前这里按列取定义表（typeDefs / tagDefs / groupDefs 三个参数，
+ * 函数内再用 `col.field === 'tags' ? … : …` 三元链挑一个）——
+ * 于是"哪列用哪张表"这件事在**调用点和函数内各写了一遍**，
+ * 漏一处就是 chip 上显示原始 id 而面板里显示名字（两处说法不一样）。
+ *
+ * 现在只传 store，值名一律走 labelFor（查列注册表）。
+ */
+/**
+ * 已生效筛选的一句摘要，写在 chip 上。
+ *
+ * ⛔ 重构前这里按列取定义表（typeDefs / tagDefs / groupDefs 三个参数，
+ * 函数内再用三元链挑一张）—— 于是"哪列用哪张表"在**调用点和函数内各写一遍**，
+ * 漏一处就是 chip 上显示原始 id 而面板里显示名字（两处说法不一样）。
+ *
+ * 现在只传 store，值名一律走 labelFor（查列注册表）。
+ */
 function filterSummary(
-  col: ListColumn, f: ColFilter, typeDefs?: TagDef[], tagDefs?: TagDef[], flow?: FlowLike,
-  groupDefs?: TagDef[],
+  col: ListColumn,
+  f: ColFilter,
+  store: unknown,
+  flow?: FlowLike,
 ): string {
   if (col.kind === 'enum') {
-    /*
-      ⛔ 定义表要**按列取**：原来一律传 typeDefs，
-      于是标签列的筛选摘要显示成原始 id（tg_xxxx）——
-      而同一个筛选在下拉面板里显示的是名字，两处说法不一样。
-
-      分组列同理：不传 groupDefs 的话，已生效的分组筛选在 chip 上
-      显示的是裸名字（没定义时）或 id，而下拉里显示的是定义表的 name。
-    */
-    const defs = col.field === 'tags' ? tagDefs : col.field === 'group' ? groupDefs : typeDefs;
-    return f.values.map((v) => optionLabel(col.field, v, defs)).join('、');
+    const vs = (f.values || []).map((v) => labelFor(col.field as SortField, v, store, flow));
+    return vs.length > 1 ? `${vs.length} 项：${vs.join('、')}` : (vs[0] || '');
   }
-  if (col.kind === 'text') return f.text.trim();
-  const lo = f.min.trim();
-  const hi = f.max.trim();
-  if (lo && hi) return `${lo} ~ ${hi}`;
-  if (lo) return `${lo} 起`;
-  return `至 ${hi}`;
+  const mn = f.min === '' || f.min === null || f.min === undefined ? '' : String(f.min);
+  const mx = f.max === '' || f.max === null || f.max === undefined ? '' : String(f.max);
+  if (col.kind === 'num') {
+    /*
+      "只要没估的"是一个勾选项（UNESTIMATED 哨兵），不是区间的一部分 ——
+      它的语义是"缺失"而不是"0"，混进区间里没人能预测出结果。
+    */
+    if ((f.values || []).indexOf(UNESTIMATED) >= 0) return colDef(col.field)?.emptyLabel || '未估';
+    if (mn && mx) return `${mn} ~ ${mx}`;
+    if (mn) return `≥ ${mn}`;
+    if (mx) return `≤ ${mx}`;
+    return '';
+  }
+  if (col.kind === 'time') {
+    if (mn && mx) return `${mn} ~ ${mx}`;
+    if (mn) return `≥ ${mn}`;
+    if (mx) return `≤ ${mx}`;
+    return '';
+  }
+  return String(f.text || '');
+}
+
+
+
+/**
+ * **某一列定义表的一组操作**（增 / 删 / 改名 / 改色）。
+ *
+ * ⛔ 重构前是**每列一套回调**，四列共 16 个 prop：
+ *   onCreateTag / onTagColor / onRenameTag / onRemoveTag
+ *   onCreateType / onTypeColor / onRenameType / onRemoveType
+ *   onCreateGroup / onGroupColor / onRenameGroup / onRemoveGroup
+ *   onCreateAssignee / onAssigneeColor / onRenameAssignee / onRemoveAssignee
+ *
+ * 于是：
+ *   · ColFilterPop 内部用一条四层三元链把它们挑出来（"这列用哪套"）
+ *   · ListView 再把这 16 个**原样转发**一遍（多 16 行 prop，且加一列要加 4 个）
+ *   · 而每列的 create / remove 实现在 App 主体里也是各写一份
+ *     （"改名连带改任务""删了要清筛选"这类判据要补四遍，漏一遍就复发）
+ *
+ * 现在合成**一组**，调用方按 field 给一份即可。加一列 = 加一组实现，
+ * 不再需要在三个组件里各加 4 个 prop。
+ */
+export interface DefOps {
+  /** 这一列的中文名（"类型" / "分组" / "标签" / "认领人"），提示文案用 */
+  kindName: string;
+  /** 新建。返回新建项的 id（建完即挂到当前行由调用方决定） */
+  create?: (name: string, color: string) => Promise<string | undefined> | void;
+  /** 改色 */
+  setColor?: (id: string, color: string) => void;
+  /** 改名（改的是定义；连带改任务由实现负责） */
+  rename?: (id: string, name: string) => void;
+  /** 删除（连带摘任务、清筛选由实现负责） */
+  remove?: (id: string) => void;
 }
 
 /**
@@ -4061,21 +4142,13 @@ function filterSummary(
  */
 function ColFilterPop({
   col, filter, options, onChange, onClear, anchorRight,
-  tagDefs, onCreateTag, onTagColor, onRenameTag, onRemoveTag,
-  typeDefs, onCreateType, onTypeColor, onRemoveType, onRenameType,
-  /** 分组定义。分组列用 —— 与标签/类型同构，同样可增删改色 */
-  groupDefs,
-  onCreateGroup, onGroupColor, onRenameGroup, onRemoveGroup,
-  /** 认领人定义。认领人列用 —— 与标签/类型/分组同构，同样可增删改色 */
-  assigneeDefs,
-  onCreateAssignee, onAssigneeColor, onRenameAssignee, onRemoveAssignee,
-  /**
-    调起主面板的取色器选任意颜色。
-    固定调色板是快捷项，取色器是"要一个板子里没有的颜色"的入口 —— 两者并存。
-    返回空串 = 用户取消（或取色器不可用），调用方不该当成"改成无色"。
-  */
+  /** 这一列的定义表（defsOf(store, col.field)） */
+  defs,
+  /** 这一列定义表的一组操作。没有 = 这一列不支持增删改色 */
+  defOps,
+  /** 调起主面板取色器；返回空串 = 取消，不该当成"改成无色" */
   onPickColor,
-  /** 流程配置：状态名要认自定义流程，不能查写死的默认表 */
+  /** 流程配置（状态名认自定义流程，不能查写死的默认表） */
   flow,
 }: {
   col: ListColumn;
@@ -4084,40 +4157,9 @@ function ColFilterPop({
   onChange: (f: ColFilter) => void;
   onClear: () => void;
   anchorRight?: boolean;
-  /** 标签定义。只标签列用得到 */
-  tagDefs?: TagDef[];
-  /** 新建标签（名字 + 颜色）。返回后由调用方把它挂到当前行 */
-  onCreateTag?: (name: string, color: string) => Promise<string | undefined>;
-  /** 改某个标签的颜色 */
-  onTagColor?: (id: string, color: string) => void;
-  /** 标签改名（改的是定义：所有挂它的行一起变） */
-  onRenameTag?: (id: string, name: string) => void;
-  /** 删标签：调用方负责把任务上的这个标签摘掉，这里只管问一句 */
-  onRemoveTag?: (id: string) => void;
-  /** 类型定义。只任务类型列用得到 —— 与标签同构，同样可增删改色 */
-  typeDefs?: TagDef[];
-  onCreateType: (name: string, color: string) => Promise<string | undefined>;
-  onTypeColor?: (id: string, color: string) => void;
-  /** 删类型。调用方负责先把挂着的任务清空，这里只管问一句 */
-  onRemoveType?: (id: string) => void;
-  /** 类型改名（与标签同构：改的是定义） */
-  onRenameType?: (id: string, name: string) => void;
-  /** 分组定义（id 就是名字） */
-  groupDefs?: TagDef[];
-  onCreateGroup?: (name: string, color: string) => void;
-  onGroupColor?: (id: string, color: string) => void;
-  onRenameGroup?: (id: string, name: string) => void;
-  onRemoveGroup?: (id: string) => void;
-  /** 认领人定义（id 就是名字） */
-  assigneeDefs?: TagDef[];
-  /** 新建认领人（返回名字；分组/认领人的 id 就是名字，建完可直接用） */
-  onCreateAssignee?: (name: string) => Promise<string | undefined>;
-  onAssigneeColor?: (id: string, color: string) => void;
-  onRenameAssignee?: (oldName: string, newName: string) => void;
-  onRemoveAssignee?: (name: string) => void;
-  /** 调起主面板取色器；返回空串表示取消 */
+  defs?: TagDef[];
+  defOps?: DefOps;
   onPickColor?: (initial: string) => Promise<string>;
-  /** 流程配置（状态名认自定义流程，不能查写死的默认表） */
   flow?: FlowLike;
 }) {
   const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
@@ -4125,18 +4167,18 @@ function ColFilterPop({
   const [newColor, setNewColor] = useState(TAG_COLORS[0]);
   const [newColorOpen, setNewColorOpen] = useState(false);
 
-  const isTag = col.field === 'tags';
-  const isType = col.field === 'type';
-  const isGroup = col.field === 'group';
-  const isAssignee = col.field === 'assignee';
   /*
-    三种"定义表驱动"的列（标签 / 类型 / 分组）共用同一套交互：
-    增、删、改名、改色。以前只有前两种，分组因为是自由文本
-    只能敲关键词 —— 于是"这一列有哪些分组"根本看不到，
-    而分组恰恰最需要"从已有项里挑一个"（手打必然打出 '登录'/'登陆'）。
+    ⛔ 这里**不能**再写 `const isType = col.field === 'type'` 这类分列标志。
+
+    重构前正是靠 isType / isGroup 三元链挑文案，于是：
+      · 加"认领人"这第四种定义列时，它落到 else 分支 ——
+        删认领人时提示写的是"删除这个**标签**…"，用户以为自己要删标签
+      · 每加一列都要回来改这条链，漏改就是"某列说着别列的话"
+
+    现在文案由**列注册表**给：emptyLabel 就是这个列清空后的叫法
+    （未分类 / 未分组 / 未认领 / 无标签），kindName 是这个列的叫法。
   */
-  const defCol = isType ? 'type' : isGroup ? 'group' : isAssignee ? 'assignee' : isTag ? 'tag' : '';
-  const defs = isType ? (typeDefs || []) : isGroup ? (groupDefs || []) : isAssignee ? (assigneeDefs || []) : (tagDefs || []);
+  const list = defs || [];
 
   /*
     默认色**不能写死某一档**（原来是 TAG_COLORS[6] = '#3b82f6'）。
@@ -4159,12 +4201,13 @@ function ColFilterPop({
     const free = TAG_COLORS.find((c) => !used.has(c));
     if (free) setNewColor(free);
   }, [defs, newColor]);
-  const colorOf = (id: string) => defs.find((d) => d.id === id)?.color || '';
-  const onCreate = isType ? onCreateType : isGroup ? onCreateGroup : isAssignee ? onCreateAssignee : onCreateTag;
-  const onColor = isType ? onTypeColor : isGroup ? onGroupColor : isAssignee ? onAssigneeColor : onTagColor;
-  const onRename = isType ? onRenameType : isGroup ? onRenameGroup : isAssignee ? onRenameAssignee : onRenameTag;
-  const onRemove = isType ? onRemoveType : isGroup ? onRemoveGroup : isAssignee ? onRemoveAssignee : onRemoveTag;
-  const kindName = isType ? '类型' : isGroup ? '分组' : isAssignee ? '认领人' : '标签';
+  const colorOf = (id: string) => (defs || []).find((d) => d.id === id)?.color || '';
+  const onCreate = defOps && defOps.create;
+  const onColor = defOps && defOps.setColor;
+  const onRename = defOps && defOps.rename;
+  const onRemove = defOps && defOps.remove;
+  /* 没有 ops 就没有增删改色，沿用列注册表的 label 作为文案 */
+  const kindName = (defOps && defOps.kindName) || (colDef(col.field)?.label) || '项';
   /* 正在改名的那一条（'' = 没在改）。标签与类型共用同一套输入 */
   const [editing, setEditing] = useState('');
   /*
@@ -4192,7 +4235,16 @@ function ColFilterPop({
     给它摆上调色和删除按钮是骗人：改色改不到任何东西（没有定义可改），
     点了"删"会弹确认框然后什么都没发生 —— 而用户已经以为自己删掉了什么。
   */
-  const isSentinel = (id: string) => (isType && id === NOTYPE) || (isGroup && id === NOGROUP);
+  /*
+    哨兵判据同样查注册表：**这一列的空值标记**是什么，由列自己声明。
+    ⛔ 原来写 `(isType && id === NOTYPE) || (isGroup && id === NOGROUP)` ——
+    认领人和标签的哨兵不在这条链里，于是它们的哨兵**不被当成哨兵**，
+    面板上「未认领」「无标签」那一项会长出改名/删除按钮。
+    点了"删"会弹确认框然后什么都没发生，而用户已经以为自己删掉了什么。
+  */
+  const sentinelOf = colDef(col.field)?.sentinel || '';
+  const emptyOf = colDef(col.field)?.emptyLabel || '空';
+  const isSentinel = (id: string) => !!sentinelOf && id === sentinelOf;
 
   /*
     下方空间不够时**向上翻**。
@@ -4250,7 +4302,7 @@ function ColFilterPop({
                   做成逐行改色的话同一个标签在不同行颜色不同，
                   那就丢掉了"一眼分类"这个作用。
                 */}
-                {defCol && !isSentinel(v) && onColor ? (
+                {hasDefs(col.field) && !isSentinel(v) && onColor ? (
                   <span className={'tb-lpop-colors' + (colorFor === v ? ' open' : '')}>
                     {colorFor === v ? (
                       <>
@@ -4314,7 +4366,7 @@ function ColFilterPop({
                   行内那个下拉是"给这一条改"，而这里是"改这个标签本身"；
                   顺手能在这里做，就不用为了改个名字先去找某一行挂着它。
                 */}
-                {defCol && !isSentinel(v) && onRename ? (
+                {hasDefs(col.field) && !isSentinel(v) && onRename ? (
                   editing === v ? (
                     <input
                       className="tb-lpop-rename"
@@ -4343,22 +4395,15 @@ function ColFilterPop({
                     </button>
                   )
                 ) : null}
-                {defCol && !isSentinel(v) && onRemove ? (
+                {hasDefs(col.field) && !isSentinel(v) && onRemove ? (
                   <button
                     type="button"
                     className="tb-act sm warn tb-lpop-del"
-                    title={isType
-                      ? '删除这个类型（挂在这个类型上的任务会变成「未分类」）'
-                      : isGroup
-                        ? '删除这个分组（在这个组里的任务会变成未分组）'
-                        : '删除这个标签（会从所有挂它的任务上摘掉）'}
+                    title={`删除这个${kindName}（用了它的任务会变成「${emptyOf}」）`}
                     onClick={() => {
                       const nm = optionLabel(col.field, v, defs, flow);
-                      const after = isType
-                        ? '挂在这个类型上的任务会变成「未分类」'
-                        : isGroup
-                          ? '在这个组里的任务会变成「未分组」'
-                          : '会从所有挂这个标签的任务上摘掉';
+                      /* 文案里的"清成什么"同样来自注册表，不写死 */
+                      const after = `用了它的任务会变成「${emptyOf}」`;
                       if (window.confirm(`删除${kindName}「${nm}」？\n\n${after}。`)) onRemove!(v);
                     }}
                   >
@@ -4369,7 +4414,7 @@ function ColFilterPop({
             );
           })
         )}
-        {defCol && onCreate ? (
+        {hasDefs(col.field) && onCreate ? (
           <div className="tb-lpop-new">
             <input
               className="tb-lpop-input"
@@ -4553,53 +4598,7 @@ function ColFilterPop({
     </div>
   );
 }
-function ListView({
-  rows,
-  allRows,
-  store,
-  /** 完整 store（含 flow）。形参里的 store 是 Task[]，拿不到 flow */
-  taskStore,
-  flow,
-  statusIds,
-  typeDefs,
-  typeIds,
-  onToggleType,
-  onRenameType,
-  onCreateType,
-  onTypeColor,
-  onRemoveType,
-  tagDefs,
-  onCreateTag,
-  onTagColor,
-  onRenameTag,
-  onRemoveTag,
-  groupDefs,
-  onCreateGroup, onGroupColor, onRenameGroup, onRemoveGroup, onPickColor,
-  assigneeDefs, onCreateAssignee, onAssigneeColor, onRenameAssignee, onRemoveAssignee,
-  checked,
-  onCheck,
-  onBatchStatus,
-  onBatchType,
-  onBatchPriority,
-  onBatchDelete,
-  colHidden,
-  colMeta,
-  onColFlag,
-  colWidths,
-  onSetStatus,
-  onPatchField,
-  onToggleTag,
-  onToggleCol,
-  onColWidth,
-  onColResizeEnd,
-  onResetWidths,
-  sort,
-  filters,
-  onSort,
-  onFilter,
-  onClearFilter,
-  onOpen,
-}: {
+function ListView({ rows, allRows, store, /** 完整 store（含 flow）。形参里的 store 是 Task[]，拿不到 flow */   taskStore, flow, statusIds, typeIds, onToggleType, defOpsFor, onPickColor, checked, onCheck, onBatchStatus, onBatchType, onBatchPriority, onBatchDelete, colHidden, colMeta, onColFlag, colWidths, onSetStatus, onPatchField, onToggleTag, onToggleCol, onColWidth, onColResizeEnd, onResetWidths, sort, filters, onSort, onFilter, onClearFilter, onOpen }: {
   rows: FlatRow[];
   /** 全量（未筛）的行。筛选项从它去重 —— 用过滤后的会漏掉已被筛掉的值 */
   allRows: FlatRow[];
@@ -4610,46 +4609,14 @@ function ListView({
   flow: FlowLike;
   /** 状态筛选的候选值（用户配了哪些状态） */
   statusIds: string[];
-  /** 任务类型定义表（列头下拉里可增删改色） */
-  typeDefs: TagDef[];
   /** 类型筛选的候选值（用户定义了哪些类型） */
   typeIds: string[];
   /** 给某条任务挂/摘类型 */
   onToggleType: (taskId: string, typeId: string) => void;
-  /** 改某个类型的显示名 */
-  onRenameType: (id: string, name: string) => void;
-  /** 就地新建类型（只要名字，颜色用默认灰） */
-  onCreateType: (name: string) => Promise<string | undefined>;
-  /** 改某个类型的颜色 */
-  onTypeColor: (id: string, color: string) => void;
-  /** 删某个类型（调用方负责先把任务清成未分类） */
-  onRemoveType: (id: string) => void;
-  /** 标签定义（名字 + 颜色） */
-  tagDefs: TagDef[];
-  onCreateTag: (name: string, color: string) => Promise<string | undefined>;
-  onTagColor: (id: string, color: string) => void;
-  /** 标签改名（改定义，所有挂它的行一起变） */
-  onRenameTag: (id: string, name: string) => void;
-  /** 删标签：连带把任务上的这个标签摘掉 */
-  onRemoveTag: (id: string) => void;
-  /** 分组定义（id 就是名字） */
-  groupDefs: TagDef[];
-  onCreateGroup: (name: string, color: string) => Promise<string | undefined>;
+  /** 按 field 取这一列定义表的一组操作（增/删/改名/改色）。没有定义表的列返回 undefined */
+  defOpsFor: (field: string) => DefOps | undefined;
   /** 认领人定义表。与分组同构（id 就是名字），颜色在这里配 */
   assigneeDefs?: TagDef[];
-  /** 新建认领人（建定义 + 返回名字，供调用方挂到当前行） */
-  onCreateAssignee?: (name: string) => Promise<string | undefined>;
-  /** 改某个认领人的颜色 */
-  onAssigneeColor?: (id: string, color: string) => void;
-  /** 认领人改名（同步所有他认领的任务）。与分组改名同判据 */
-  onRenameAssignee?: (oldName: string, newName: string) => void;
-  onGroupColor: (id: string, color: string) => void;
-  /** 分组改名：定义与任务都要改（任务上存的就是名字） */
-  onRenameGroup: (id: string, name: string) => void;
-  /** 移除认领人（把他从所有任务上摘掉） */
-  onRemoveAssignee?: (name: string) => void;
-  /** 删分组：连带把任务清成未分组 */
-  onRemoveGroup: (id: string) => void;
   /** 调起主面板取色器；返回 '' 表示取消 */
   onPickColor: (initial: string) => Promise<string>;
   checked: Set<string>;
@@ -4853,8 +4820,8 @@ function ListView({
     遇到含逗号的值就会拆错。\u0000 在正常文本里不会出现。
   */
   const flat = (v: unknown) => (Array.isArray(v) ? v.join('\u0000') : String(v || ''));
-  const typeOpts = unionOpts(typeDefs || [], (t) => flat(t.type), true);
-  const groupOpts = unionOpts(groupDefs || [], (t) => flat(t.group), true);
+  const typeOpts = unionOpts(defsOf(taskStore, 'type') || [], (t) => flat(t.type), true);
+  const groupOpts = unionOpts(defsOf(taskStore, 'group'), (t) => flat(t.group), true);
   /*
     认领人现在**也有定义表**了（与分组同构，id 就是名字）。
 
@@ -4863,12 +4830,27 @@ function ListView({
     颜色的用途不是"给人分类"，而是**一眼看出这一批是谁的活** ——
     几十条任务时扫色点比逐行读名字快得多。
   */
-  const assigneeOpts = unionOpts(assigneeDefs || [], (t) => flat(t.assignee), true);
+  const assigneeOpts = unionOpts(defsOf(taskStore, 'assignee') || [], (t) => flat(t.assignee), true);
   /* 标签候选：定义表 ∪ 数据（与类型/分组同一判据） */
-  const tagOpts = unionOpts(tagDefs || [], (t) => (t.tags || []).join('\u0000'), true);
+  const tagOpts = unionOpts(defsOf(taskStore, 'tags') || [], (t) => (t.tags || []).join('\u0000'), true);
 
   /** 行内单元格：按 field 分发，新增列只改这一处 */
   const cellFor = (field: SortField, t: Task) => {
+    /*
+      ⛔ 定义表一律从 **taskStore** 取，不是 store：
+
+      ListView 的 `store` 形参是 **Task[]**（全量任务，用来算前置锁定），
+      `taskStore` 才是 TaskStore（含 flow 与 defs）。
+      写成 defsOf(store, …) 的话，拿到的是数组身上的 defs（undefined），
+      于是每个定义表都变空 —— 单元格显示**原始 id**（dev / tg_xxxx），
+      而类型检查**一声不响**（两个形参名太像）。
+      这正是"六个显示点漏查定义表"的又一次复发，只是这次错在**取错了对象**。
+    */
+    const ops = defOpsFor(field);
+    const opsCreate = ops && ops.create;
+    const opsRename = ops && ops.rename;
+    const opsColor = ops && ops.setColor;
+    const opsRemove = ops && ops.remove;
     switch (field) {
       case 'priority':
         return (
@@ -4910,16 +4892,16 @@ function ListView({
               groupColor(数组) 查不到定义 → 返回默认色，
               于是"有两个分组"的任务都显示成同一个灰点。
             */}
-            {gVals.length > 0 && gColor && groupColor(groupDefs || [], gVals[0]) ? (
+            {gVals.length > 0 && gColor && groupColor(defsOf(taskStore, 'group'), gVals[0]) ? (
               <span
                 className="tb-col-dot"
-                style={{ background: groupColor(groupDefs || [], gVals[0]) }}
+                style={{ background: groupColor(defsOf(taskStore, 'group'), gVals[0]) }}
               />
             ) : null}
             <SinglePick
               cur={gVals.length > 0
                 ? <span className="tb-ltags">{gVals.map((v) => (
-                    <TagChip key={v} id={v} defs={groupDefs || []} noColor={!gColor} />
+                    <TagChip key={v} id={v} defs={defsOf(taskStore, 'group')} noColor={!gColor} />
                   ))}</span>
                 : <span className="tb-ldim">—</span>}
               /*
@@ -4927,7 +4909,7 @@ function ListView({
                 再叠一个圆点就成了"两个颜色指示器指着同一件事"。
               */
               dot={!gMulti && gVals.length === 1 && gColor
-                ? (groupDefs || []).find((d) => d.id === gVals[0])?.color || undefined
+                ? (defsOf(taskStore, 'group')).find((d) => d.id === gVals[0])?.color || undefined
                 : undefined}
               title={gVals.length > 0 ? gVals.join('、') : '点击设置分组'}
               options={groupOpts}
@@ -4942,13 +4924,13 @@ function ListView({
                 不会出现"在这儿建是蓝的、在那儿建也是蓝的、和已有分组撞色"。
               */
               onCreate={async (name) => {
-                await onCreateGroup(name, '');
+                await (opsCreate ? opsCreate(name, '') : undefined);
                 /* 分组的 id 就是名字，建完直接挂（与类型列同样"建完即挂"） */
                 onPatchField(t.id, { group: name });
               }}
-              onRename={onRenameGroup}
-              onColor={onGroupColor}
-              onRemove={onRemoveGroup}
+              onRename={opsRename}
+              onColor={opsColor}
+              onRemove={opsRemove}
               onPickColor={onPickColor}
             />
           </span>
@@ -5033,11 +5015,11 @@ function ListView({
             <SinglePick
               cur={vals.length > 0
                 ? <span className="tb-ltags">{vals.map((v) => (
-                    <TagChip key={v} id={v} defs={assigneeDefs || []} noColor={!showColor} />
+                    <TagChip key={v} id={v} defs={defsOf(taskStore, 'assignee') || []} noColor={!showColor} />
                   ))}</span>
                 : <span className="tb-ldim">未认领</span>}
               dot={!multi && vals.length === 1 && showColor
-                ? (assigneeDefs || []).find((d) => d.id === vals[0])?.color || undefined
+                ? (defsOf(taskStore, 'assignee') || []).find((d: TagDef) => d.id === vals[0])?.color || undefined
                 : undefined}
               title="点击改认领人"
               options={assigneeOpts}
@@ -5051,12 +5033,12 @@ function ListView({
                 与类型/分组同判据"建完即挂"，三列结果一致。
               */
               onCreate={async (name) => {
-                const nm = onCreateAssignee ? await onCreateAssignee(name) : name;
+                const nm = opsCreate ? await opsCreate(name, '') : name;
                 if (nm) onPatchField(t.id, { assignee: nm });
               }}
-              onRename={onRenameAssignee}
-              onColor={onAssigneeColor}
-              onRemove={onRemoveAssignee}
+              onRename={opsRename}
+              onColor={opsColor}
+              onRemove={opsRemove}
               onPickColor={onPickColor}
             />
           </span>
@@ -5076,10 +5058,10 @@ function ListView({
             <SinglePick
               cur={vals.length > 0
                 ? <span className="tb-ltags">{vals.map((v) => (
-                    <TagChip key={v} id={v} defs={typeDefs || []} noColor={!showColor} />
+                    <TagChip key={v} id={v} defs={defsOf(taskStore, 'type') || []} noColor={!showColor} />
                   ))}</span>
                 : <span className="tb-ldim">—</span>}
-              dot={!multi && vals.length === 1 && showColor ? typeColor(typeDefs || [], vals[0]) : undefined}
+              dot={!multi && vals.length === 1 && showColor ? typeColor(defsOf(taskStore, 'type') || [], vals[0]) : undefined}
               title="点击改任务类型"
               /*
                 候选 = **定义表 ∪ 数据**。两头都不能省：
@@ -5110,12 +5092,12 @@ function ListView({
                 明明是在这一行点的新建，却要操作两次。
               */
               onCreate={async (name) => {
-                const id = await onCreateType(name);
+                const id = await (opsCreate ? opsCreate(name, '') : undefined);
                 if (id) onToggleType(t.id, id);
               }}
-              onRename={onRenameType}
-              onColor={onTypeColor}
-              onRemove={onRemoveType}
+              onRename={opsRename}
+              onColor={opsColor}
+              onRemove={opsRemove}
               onPickColor={onPickColor}
             />
           </span>
@@ -5140,7 +5122,7 @@ function ListView({
             <SinglePick
               cur={vals.length > 0
                 ? <span className="tb-ltags">{vals.map((v) => (
-                    <TagChip key={v} id={v} defs={tagDefs || []} noColor={!showColor} />
+                    <TagChip key={v} id={v} defs={defsOf(taskStore, 'tags') || []} noColor={!showColor} />
                   ))}</span>
                 : <span className="tb-ldim">—</span>}
               title="点击改标签"
@@ -5151,13 +5133,13 @@ function ListView({
               onClear={vals.length > 0 ? () => clearVal(t, 'tags') : undefined}
               kindName="标签"
               onCreate={async (name) => {
-                const id = await onCreateTag(name, '');
+                const id = await (opsCreate ? opsCreate(name, '') : undefined);
                 if (id) pickVal(t, 'tags', id);
               }}
-              onRename={onRenameTag}
+              onRename={opsRename}
               /* 颜色关掉时不给改色入口：显示了也没用 */
-              onColor={showColor ? onTagColor : undefined}
-              onRemove={onRemoveTag}
+              onColor={showColor ? opsColor : undefined}
+              onRemove={opsRemove}
               onPickColor={showColor ? onPickColor : undefined}
             />
           </span>
@@ -5241,7 +5223,7 @@ function ListView({
               onChange={(e) => { if (e.target.value) onBatchType(picked, e.target.value); }}
             >
               <option value="">改类型…</option>
-              {(typeDefs || []).map((d) => (
+              {(defsOf(taskStore, 'type') || []).map((d) => (
                 <option key={d.id} value={d.id}>{d.name}</option>
               ))}
               <option value={NOTYPE}>未分类</option>
@@ -5347,32 +5329,15 @@ function ListView({
                   */
                   options={colFilterValues(
                     c.field, allRows, statusIds, typeIds,
-                    tagDefs.map((d) => d.id),
-                    (groupDefs || []).map((d) => d.id),
+                    defsOf(taskStore, 'tags').map((d) => d.id),
+                    (defsOf(taskStore, 'group')).map((d) => d.id),
                   )}
                   onChange={(nf) => onFilter(c.field, nf)}
                   onClear={() => onClearFilter(c.field)}
                   anchorRight={ci >= shown.length - 3}
-                  tagDefs={tagDefs}
-                  onCreateTag={onCreateTag}
-                  onTagColor={onTagColor}
-                  onRenameTag={onRenameTag}
-                  onRemoveTag={onRemoveTag}
-                  typeDefs={typeDefs}
-                  onCreateType={onCreateType}
-                  onTypeColor={onTypeColor}
-                  onRemoveType={onRemoveType}
-                  onRenameType={onRenameType}
-                  groupDefs={groupDefs}
-                  onCreateGroup={onCreateGroup}
-                  onGroupColor={onGroupColor}
-                  onRenameGroup={onRenameGroup}
-                  onRemoveGroup={onRemoveGroup}
-                  assigneeDefs={assigneeDefs}
-                  onCreateAssignee={onCreateAssignee}
-                  onAssigneeColor={onAssigneeColor}
-                  onRenameAssignee={onRenameAssignee}
-                  onRemoveAssignee={onRemoveAssignee}
+                  /* 这一列的定义表 + 一组操作。四列共用，不再逐个传 16 个回调 */
+                  defs={defsOf(taskStore, c.field)}
+                  defOps={defOpsFor(c.field)}
                   onPickColor={onPickColor}
                 />
               ) : null}
@@ -5446,8 +5411,7 @@ function GroupView({
   groups,
   groupKeys,
   me,
-  tagDefs,
-  groupDefs,
+  store,
   onOpen,
   onAction,
   onClaim,
@@ -5456,9 +5420,13 @@ function GroupView({
   groups: GroupNode[];
   groupKeys: GroupKey[];
   me: string;
-  tagDefs: TagDef[];
-  /** 分组定义：叶子卡片上的分组要显示名字而不是 id */
-  groupDefs: TagDef[];
+  /*
+    传整个 store：组名、类型名、标签名都从 defs 查（labelFor）。
+    ⛔ 不再逐列传定义表（defsOf(store, 'tags') / defsOf(store, 'group') 分开传）——
+    那正是"同一件事两个来源"的温床：加一列就要多加一个参数，
+    漏一个就是那一列显示原始 id。
+  */
+  store: unknown;
   onOpen: (id: string) => void;
   onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
   onClaim: (id: string) => void;
@@ -5473,8 +5441,7 @@ function GroupView({
           groupKeys={groupKeys}
           flow={flow}
           me={me}
-          tagDefs={tagDefs}
-              groupDefs={groupDefs}
+          store={store}
           onOpen={onOpen}
           onAction={onAction}
           onClaim={onClaim}
@@ -5485,16 +5452,14 @@ function GroupView({
 }
 
 function GroupNodeView({
-  node, flow, groupKeys, me, tagDefs,
-  groupDefs, onOpen, onAction, onClaim,
+  node, flow, groupKeys, me, store, onOpen, onAction, onClaim,
 }: {
   node: GroupNode;
   flow: FlowLike;
   groupKeys: GroupKey[];
   me: string;
-  tagDefs: TagDef[];
-  /** 分组定义：叶子卡片上的分组要显示名字而不是 id */
-  groupDefs: TagDef[];
+  /* 传 store：所有列的定义表都从 defs 查，不再逐列传 */
+  store: unknown;
   onOpen: (id: string) => void;
   onAction: (id: string, to: TaskStatus, needNote?: boolean) => void;
   onClaim: (id: string) => void;
@@ -5514,9 +5479,9 @@ function GroupNodeView({
           <span className="tb-col-dot" style={{ background: statusColor(flow, node.key) }} />
         ) : null}
         {by === 'type' && node.key !== NOTYPE ? (
-          <span className="tb-col-dot" style={{ background: typeColor(flow.typeDefs, node.key) }} />
+          <span className="tb-col-dot" style={{ background: typeColor(defsOf(store, 'type'), node.key) }} />
         ) : null}
-        <span className="tb-group-name">{groupLabel(node.key, by, flow, tagDefs)}</span>
+        <span className="tb-group-name">{groupLabel(node.key, by, flow, undefined, store)}</span>
         <span className="tb-col-num">{isLeaf ? node.tasks.length : node.count}</span>
       </header>
       <div className="tb-group-body">
@@ -5527,8 +5492,7 @@ function GroupNodeView({
               task={t}
               me={me}
               flow={flow}
-              tagDefs={tagDefs}
-              groupDefs={groupDefs}
+              store={store}
               onOpen={() => onOpen(t.id)}
               onAction={(to, needNote) => onAction(t.id, to, needNote)}
               onClaim={() => onClaim(t.id)}
@@ -5539,8 +5503,7 @@ function GroupNodeView({
             <GroupNodeView
               key={c.key}
               node={c}
-              tagDefs={tagDefs}
-              groupDefs={groupDefs}
+              store={store}
               groupKeys={groupKeys}
               flow={flow}
               me={me}
@@ -5590,15 +5553,11 @@ function BarRow({
   );
 }
 
-function StatsView({
-  stats, flow, typeDefs, tagDefs, onOpen,
-}: {
+function StatsView({ stats, flow, onOpen, store }: {
+  /** 传 store：所有列的定义表都从 defs 查（defsOf / labelFor），不再逐列传 */
+  store: unknown;
   stats: TbStats;
   flow: { statuses: { id: string; name: string; color: string }[] };
-  /** 类型定义表（显示类型名与颜色） */
-  typeDefs: TagDef[];
-  /** 标签定义表（热门标签面板要显示名字，不能显示 id） */
-  tagDefs: TagDef[];
   onOpen: (id: string) => void;
 }) {
   /*
@@ -5677,10 +5636,10 @@ function StatsView({
             {typeRows.map(([id, cnt]) => (
               <BarRow
                 key={id}
-                label={id === NOTYPE ? '未分类' : typeName(typeDefs, id)}
+                label={id === NOTYPE ? '未分类' : typeName(defsOf(store, 'type'), id)}
                 count={cnt}
                 max={maxType}
-                color={id === NOTYPE ? undefined : typeColor(typeDefs, id)}
+                color={id === NOTYPE ? undefined : typeColor(defsOf(store, 'type'), id)}
               />
             ))}
           </section>
@@ -5716,7 +5675,7 @@ function StatsView({
                  统计面板这一处一直漏着）。
               */
               <span key={x.tag} className="tb-stat-tagrow">
-                <TagChip id={x.tag} defs={tagDefs} />
+                <TagChip id={x.tag} defs={defsOf(store, 'tags')} />
                 <em className="tb-stat-hint">×{x.count}</em>
               </span>
             ))}
@@ -5764,18 +5723,11 @@ function StatsView({
   );
 }
 
-function NewTaskModal({
-  agents,
-  me,
-  typeDefs,
-  groups,
-  onClose,
-  onCreate,
-}: {
+function NewTaskModal({ agents, me, groups, onClose, onCreate, store }: {
+  /** 传 store：所有列的定义表都从 defs 查（defsOf / labelFor），不再逐列传 */
+  store: unknown;
   agents: { id: string }[];
   me: string;
-  /** 类型定义表（可在这建完就直接选上） */
-  typeDefs: TagDef[];
   /** 已有分组名（供下拉参考；分组是自由文本，也可以直接敲个新的） */
   groups: string[];
   onClose: () => void;
@@ -5788,7 +5740,7 @@ function NewTaskModal({
     tags: string[];
     assignee: string;
     estimate: string;
-    /** 任务类型（typeDefs 里的 id）。'' = 未分类 */
+    /** 任务类型（defsOf(store, 'type') 里的 id）。'' = 未分类 */
     type: string;
     /** 分组名。'' = 不分组 */
     group: string;
@@ -5873,7 +5825,7 @@ function NewTaskModal({
           <span>任务类型</span>
           <select value={type} onChange={(e) => setType(e.target.value)}>
             <option value="">未分类</option>
-            {(typeDefs || []).map((d) => (
+            {(defsOf(store, 'type') || []).map((d) => (
               <option key={d.id} value={d.id}>{d.name}</option>
             ))}
           </select>
@@ -6000,32 +5952,15 @@ function DraftInput({
   );
 }
 
-function DetailPanel({
-  task,
-  me,
-  tasks,
-  /** 完整 store（lockOf 需要它才能拿到 flow，见下方 lock 处） */
-  taskStore,
-  tagDefs,
-  typeDefs,
-  flow,
-  onClose,
-  onComment,
-  onDelete,
-  onAction,
-  onClaim,
-  onPatch,
-  onOpen,
-}: {
+function DetailPanel({ task, me, tasks, /** 完整 store（lockOf 需要它才能拿到 flow，见下方 lock 处） */   taskStore, flow, onClose, onComment, onDelete, onAction, onClaim, onPatch, onOpen, store }: {
+  /** 传 store：所有列的定义表都从 defs 查（defsOf / labelFor），不再逐列传 */
+  store: unknown;
   task: Task;
   me: string;
   /** 全量任务：算前置锁定要用 */
   tasks: Task[];
   /** 完整 store（含 flow）：算前置"是否已完成"要认自定义流程 */
   taskStore: TaskStore;
-  tagDefs: TagDef[];
-  /** 类型定义表（详情里可改这条的类型） */
-  typeDefs: TagDef[];
   /** 流程配置（状态名/颜色/可用操作都由它决定） */
   flow: FlowLike;
   onClose: () => void;
@@ -6149,7 +6084,7 @@ function DetailPanel({
         <span className="tb-dtag">更新：{fmtTime(task.updatedAt)}</span>
         <span className="tb-dtag">创建：{task.createdAt ? fmtTime(task.createdAt) : '—'}</span>
         {task.tags.map((tag) => (
-          <TagChip key={tag} id={tag} defs={tagDefs} />
+          <TagChip key={tag} id={tag} defs={defsOf(store, 'tags')} />
         ))}
       </div>
 
@@ -6171,9 +6106,17 @@ function DetailPanel({
       */}
       <div className="tb-dfield">
         <span className="tb-dlabel">认领人</span>
+        {/*
+          ⛔ value 不能直接给 task.assignee：勾了"多选"之后它是**数组**，
+          原生 select 收到数组 → React 警告，且没有任何 option 匹配得上
+          → 下拉静默显示成"未认领"，而列表同一行明明显示着两个人。
+          两处说法不一致，用户会以为详情里这条没认领人。
+
+          取第一个值当代表；多值时下面那行小字说明还有几个。
+        */}
         <select
           className="tb-dinput tb-dsel"
-          value={task.assignee || ''}
+          value={fieldVals(task, 'assignee')[0] || ''}
           onChange={(e) => onPatch({ assignee: e.target.value })}
         >
           <option value="">未认领</option>
@@ -6198,18 +6141,26 @@ function DetailPanel({
         <span className="tb-dlabel">任务类型</span>
         <select
           className="tb-dinput tb-dsel"
-          value={task.type || ''}
+          value={fieldVals(task, 'type')[0] || ''}
           onChange={(e) => onPatch({ type: e.target.value })}
         >
           <option value="">未分类</option>
-          {(typeDefs || []).map((d) => (
+          {(defsOf(store, 'type') || []).map((d) => (
             <option key={d.id} value={d.id}>{d.name}</option>
           ))}
-          {/* 值不在定义表里（AI 手写的 id）也要显示出来 —— 否则下拉会静默显示成"未分类" */}
-          {task.type && !(typeDefs || []).some((d) => d.id === task.type) ? (
-            <option value={task.type}>{task.type}（未在定义表）</option>
-          ) : null}
+          {/*
+            值不在定义表里（AI 手写的 id）也要显示出来 —— 否则下拉会静默显示成"未分类"。
+            ⛔ 判断要用 fieldVals 展开：多值时 task.type 是数组，
+            `.some(d => d.id === 数组)` 永远 false → 每个值都补一条 option；
+            而 value 给的是数组本身，React 直接警告。
+          */}
+          {fieldVals(task, 'type').filter((v) => !(defsOf(store, 'type') || []).some((d) => d.id === v)).map((v) => (
+            <option key={v} value={v}>{v}（未在定义表）</option>
+          ))}
         </select>
+        {fieldVals(task, 'type').length > 1 ? (
+          <span className="tb-dhint">这条有 {fieldVals(task, 'type').length} 个类型，下拉里改的是其中一个；要增删请到列表那一列</span>
+        ) : null}
 
         <span className="tb-dlabel">任务说明</span>
         <DraftInput

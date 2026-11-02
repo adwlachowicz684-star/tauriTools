@@ -67,6 +67,12 @@ const strip = (code) => ts.transpileModule(code.replace(/^export\s+/m, ''), {
 
 const PS_SRC = extractFn(src, 'function parseStoreText(');
 const MU_SRC = extractFn(src, 'export async function mutate(');
+/*
+  mutate 落盘时会调用同文件的 toDisk（把 defs 展开回四个老字段做跨端兼容）。
+  切 mutate 真身时必须把 toDisk 一起切出来 —— 否则 ReferenceError，
+  而这是**测试脚手架的缺口**，不是产品代码的问题。
+*/
+const TD_SRC = extractFn(src, 'function toDisk(');
 
 t('（前置）切得到 parseStoreText 真身', !!PS_SRC);
 t('（前置）切得到 mutate 真身', !!MU_SRC);
@@ -79,7 +85,7 @@ if (PS_SRC && MU_SRC) {
     放在同一个 Function 作用域里，让它们互为真实依赖 ——
     不是另行实现一份（另写一份就变成"测我写的替身"，没意义）。
   */
-  const factory = new Function('normalizeStore', `${strip(PS_SRC)}\n${strip(MU_SRC)}\nreturn { parseStoreText, mutate };`);
+  const factory = new Function('normalizeStore', `${strip(PS_SRC)}\n${strip(TD_SRC)}\n${strip(MU_SRC)}\nreturn { parseStoreText, mutate };`);
   const { parseStoreText, mutate } = factory(C.normalizeStore);
 
   /* ---------------- 1. 判据本身 ---------------- */
