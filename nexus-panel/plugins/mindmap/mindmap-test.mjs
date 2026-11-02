@@ -24072,6 +24072,102 @@ group('BUG 192 · 备注里的表格：单元格不能再粘成一团，两份�
   }
 }
 
+/* ------------------------------------------------------------------
+   BUG 194：导出 .xmind 时概要被降级成普通分支，却一句不说
+   ------------------------------------------------------------------ */
+group('BUG 194 · 概要写不回 .xmind 必须数出来且说出来');
+
+{
+  const X194 = await import('./xmind.js');
+  const idx194 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+  const xm194 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+
+  const N = (id, text, extra = {}) => ({ data: { id, text, ...extra }, children: [] });
+  const S194 = (kids) => ({ id: 'sh1', title: 'T', theme: null, layout: null,
+    content: JSON.stringify({ root: { data: { id: 'nR', text: '根' }, children: kids } }) });
+  const SUM = (range) => N('s', '小结', { xsummary: true,
+    ...(range !== undefined ? { xsummaryRange: range, xsummaryId: 'sm1' } : {}) });
+
+  // ① 统计：合法概要不虚报
+  eq(X194.xmindLossCount([S194([N('a', '甲'), N('b', '乙'), SUM('(0,1)')])]).summary, 0,
+    '★ 有可概括的兄弟 + 合法范围 → 0（不虚报）');
+  eq(X194.xmindLossCount([S194([N('a', '甲')])]).summary, 0, '没有概要 → 0');
+  eq(X194.xmindLossCount([S194([N('a', '甲'), SUM('(0,0)')])]).summary, 0,
+    '范围哪怕只概括一个兄弟也算合法');
+  eq(X194.xmindLossCount([S194([N('a', '甲'), N('b', '乙'), SUM('(0,9)')])]).summary, 0,
+    '范围越界会夹紧、不是降级 → 0（不虚报）');
+
+  // ② 统计：真的会降级
+  eq(X194.xmindLossCount([S194([SUM('(0,1)')])]).summary, 1,
+    '★ 删掉被概括的兄弟后只剩概要 → 1（修复前 xmindLossCount 全 0）');
+  eq(X194.xmindLossCount([S194([N('a', '甲'), SUM(undefined)])]).summary, 1,
+    '★ 有兄弟但范围读不到 → 1');
+  eq(X194.xmindLossCount([S194([N('a', '甲'), SUM('0-1')])]).summary, 1,
+    '范围格式不合法 → 1');
+  eq(X194.xmindLossCount([S194([SUM(undefined), SUM(undefined)])]).summary, 2,
+    '两个都写不回 → 2（概要之间不互为可概括兄弟）');
+  eq(X194.xmindLossCount([S194([N('a', '甲', { xcallout: true }), SUM(undefined)])]).summary, 1,
+    '★ 标注走 detached、不算可概括兄弟');
+  eq(X194.xmindLossCount([S194([N('a', '甲', { xcallout: true }), SUM('(0,0)')])]).summary, 1,
+    '★ 范围合法但兄弟是标注（detached）→ 仍算降级（attached 桶里一个都没有）');
+
+  // ③ 嵌套、多画布、坏内容
+  {
+    const nested = { data: { id: 'p', text: '父' }, children: [SUM(undefined)] };
+    eq(X194.xmindLossCount([S194([N('a', '甲'), nested])]).summary, 1,
+      '★ 子层里的概要降级也数得到（不能只扫根的直接子节点）');
+  }
+  eq(X194.xmindLossCount([S194([SUM(undefined)]), S194([N('a', '甲')])]).summary, 1,
+    '多画布按张累加');
+  eq(X194.xmindLossCount([{ id: 'x', content: '{坏' }]).summary, 0, '坏内容不算');
+
+  // ④ 行为实据：真的写一份 .xmind，剥掉无损快照再读回
+  const zenRoundTrip = async (sheets) => {
+    const blob = await X194.writeXMind(sheets, 'sh1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await X194.zipRead(buf);
+    const cj = JSON.parse(new TextDecoder().decode(entries.get('content.json')));
+    const zen = await X194.zipWrite([{ name: 'content.json',
+      data: new TextEncoder().encode(JSON.stringify(cj)) }]);
+    const r = await X194.readXMind(new Uint8Array(zen));
+    return { cj, data: JSON.parse(r.sheets[0].content).root.children.map((n) => n.data) };
+  };
+  {
+    const fallen = await zenRoundTrip([S194([SUM('(0,1)')])]);
+    ok(Array.isArray(fallen.cj[0].rootTopic.children.attached)
+      && fallen.cj[0].rootTopic.children.attached.some((t) => t.title === '小结'),
+      '★ 降级实据：概要话题真的落进 attached 桶', JSON.stringify(fallen.cj[0].rootTopic.children));
+    ok(!fallen.cj[0].rootTopic.summaries, '★ 降级实据：没有写 summaries 范围描述符');
+    ok(!fallen.data.find((d) => d.text === '小结')?.xsummary,
+      '★ 降级实据：zen 档导回后「这是概要」的性质没了（文字还在）');
+  }
+  {
+    const good = await zenRoundTrip([S194([N('a', '甲'), N('b', '乙'), SUM('(0,1)')])]);
+    ok(Array.isArray(good.cj[0].rootTopic.children.summary),
+      '★ 对照组：合法概要写进 summary 桶');
+    ok(!!good.cj[0].rootTopic.summaries, '★ 对照组：summaries 描述符也写了');
+    ok(!!good.data.find((d) => d.text === '小结')?.xsummary,
+      '★ 对照组：zen 档导回概要性质保住（所以不该虚报）');
+  }
+
+  // ⑤ 判据同源：不许另抄一份范围正则
+  ok(/export function summaryFallbackCount\(/.test(xm194), '★ 统计是独立导出的函数（测试能直接钉）');
+  {
+    const i = xm194.indexOf('export function summaryFallbackCount(');
+    const body = xm194.slice(i, i + 1400);
+    ok(/clampSummaryRange\(/.test(body), '★ 统计与写侧共用 clampSummaryRange（不另抄正则）');
+    ok(!/\(\\s\*\\d\+/.test(body), '★ 统计里没有第二份范围正则');
+  }
+  ok(/out\.summary\s*\+=\s*summaryFallbackCount\(km\)/.test(xm194),
+    '★ xmindLossCount 真的累加概要降级数');
+
+  // ⑥ 界面：数出来还得说出来（index.js 在 Node 里跑不起来，用源码断言）
+  ok(/\(loss\.summary \|\| 0\)/.test(idx194), '★ lossTotal 计入 summary（否则整段提示不出现）');
+  ok(/summary:\s*0/.test(idx194), '★ 老快照兜底里有 summary');
+  ok(/概要未能按概要写入/.test(idx194), '★ 提示说「未能按概要写入」（文字没丢，不能说「丢失」）');
+  ok(/概要缺少可概括的兄弟节点/.test(idx194), '★ 原因自成一档，说清为什么会降级');
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

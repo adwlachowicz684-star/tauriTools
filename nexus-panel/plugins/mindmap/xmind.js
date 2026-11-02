@@ -997,6 +997,47 @@ function clampSummaryRange(raw, n) {
   return `(${s},${e})`;
 }
 
+/**
+ * BUG 194：数一数导出 .xmind 时**会被降级成普通分支**的概要。
+ *
+ * 写侧 buildTopic 对每个 `xsummary` 子节点调 `clampSummaryRange(range,
+ * attached.length)`；拿不到范围就 `attached.push(item.child)` —— 概要话题
+ * 落进 attached 桶、`summaries` 描述符也不写，于是「这是概要」的性质与括注
+ * 范围一起没了，文字倒是还在。
+ *
+ * 这是写侧**主动**的降级（不写没有范围绑定的孤立概要，见 BUG 143 的注释），
+ * 本身是对的；错的是**一句都不说**：
+ *   · 导入别人的 .xmind 时状态栏明说「已原样保留，导出 .xmind 时会写回」
+ *     （unsupportedSummariesTip），用户删掉被概括的兄弟后再导出，这句承诺
+ *     就落空了 —— 写回去的是普通分支；
+ *   · 文件被别的 XMind 软件存过一遍（无损快照没了）再导回，概要变不回来；
+ *   · 而 xmindLossCount 早先只数附件 / 图片 / 外框 / 外观，这类降级一个
+ *     都不数 → lossTotal=0 → 界面只说「XMind 已导出」。
+ *
+ * 与 BUG 152 完全对称：那边是**交换格式**把概要写成普通分支却不提示
+ * （走 exchangeLoss），这边是 .xmind 这条路（走 xmindLossCount）漏了。
+ * 同一条规矩只修了一半。
+ *
+ * ⓘ **判据必须与写侧同源**：attached 数按 buildTopic 的口径算（非 xcallout、
+ *   非 xsummary 的子节点），范围能不能用直接问同一个 `clampSummaryRange`。
+ *   另抄一份正则必然只改一处（本项目反复付学费的模式）。
+ */
+export function summaryFallbackCount(km) {
+  let n = 0;
+  const walk = (node, depth) => {
+    if (!node || depth > MAX_DEPTH) return;
+    const kids = Array.isArray(node.children) ? node.children : [];
+    // 与 buildTopic 的 attached 桶同口径：标注走 detached，概要走 pendSummary
+    const attached = kids.filter((c) => c?.data && !c.data.xcallout && !c.data.xsummary).length;
+    for (const c of kids) {
+      if (c?.data?.xsummary && !clampSummaryRange(c.data.xsummaryRange, attached)) n++;
+      walk(c, depth + 1);
+    }
+  };
+  walk(km?.root, 0);
+  return n;
+}
+
 function buildLabels(node) {
   if (Array.isArray(node)) {
     const out = node.map(str).filter((s) => s && s.trim());
@@ -1899,10 +1940,18 @@ function applyXmlBoundaries(pairs, boundariesEl, counter = null) {
  */
 export function xmindLossCount(sheets) {
   const out = { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0,
-    theme: 0, layout: 0, valign: 0 };
+    theme: 0, layout: 0, valign: 0,
+    // BUG 194：概要因缺少可概括的兄弟被降级成普通分支
+    summary: 0 };
   for (const s of sheets || []) {
     const km = parseKm(s?.content);
     if (!km) continue;              // 坏内容不算 —— 它本来也导不出东西
+    /*
+     * BUG 194：概要能不能写成概要，取决于**它父节点有几个 attached 兄弟**，
+     * 而下面 walkKmNodes 的回调只给单个节点、拿不到兄弟 —— 所以单独走一遍。
+     * 判据在 summaryFallbackCount 里与写侧 buildTopic 共用 clampSummaryRange。
+     */
+    out.summary += summaryFallbackCount(km);
     /*
      * BUG 185：画布外观同样是"内容"，与 BUG 135 的 fmIcons / fmCloud 同一语义 ——
      * 本工具的无损快照认得，可**在别的 XMind 软件里打开**时没人认，于是静默回退：
