@@ -187,6 +187,29 @@ export function blankSecretNamed(data: unknown): unknown {
   }
   if (!data || typeof data !== 'object') return data;
   const src = data as Record<string, unknown>;
+  /*
+   * { name, value } 形态的卡片。
+   *
+   * 常量卡（items[]）与参数卡都是这个形状：**密钥写在 name 里、值在 value 里**。
+   * 而下面所有判据看的都是**键名**，键名恒为 'value' —— 永远匹配不上。
+   * 于是 `{ name: 'apiKey', value: 'sk-live' }` 会原样走完整个脱敏：
+   * 明文进画布存档、进模块、进预设、进导出的四种脚本。
+   *
+   * 与参数卡同口径（见 canvasStore 的 paramStoredValue）：
+   *   · 名字像密钥 → 清空（数字卡 / 布尔卡除外，那是 maxTokens 那类）
+   *   · 否则值若整串是个带凭据的地址 → 只挖凭据，留着地址本身
+   *
+   * 不用单独识别"这是不是常量卡"：名字不像密钥、值也不是带凭据的地址时，
+   * 这个分支什么都不做，照样落进下面的递归。
+   */
+  if (typeof src.name === 'string' && typeof src.value === 'string') {
+    const numish = src.valueType === 'num' || src.valueType === 'bool';
+    if (!numish && src.value !== '' && looksLikeSecretName(src.name)) {
+      return { ...src, value: '' };
+    }
+    const scrubbed = scrubUrlSecrets(src.value);
+    if (scrubbed !== src.value) return { ...src, value: scrubbed };
+  }
   let out: Record<string, unknown> | null = null;
   for (const [k, v] of Object.entries(src)) {
     if (typeof v === 'string' && v !== '' && looksLikeSecretName(k)) {

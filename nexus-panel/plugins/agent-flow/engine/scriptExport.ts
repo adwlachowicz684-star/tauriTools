@@ -1551,11 +1551,24 @@ function briefOf(d: Record<string, unknown>, kind: string): string {
 /* ------------------------------------------------------------------ */
 
 export function exportFlow(g: Graph, fmt: ExportFormat): ExportResult {
+  /*
+   * 四种格式一律先脱敏 —— 以前只有 toJson 调了 redactNodes，
+   * 于是 shell / python / markdown 拿到的是**原始节点数据**：
+   *   briefOf 那句 `${method} ${url}` 直接把 `?api_key=sk-live` 写进说明，
+   *   日志节点的 text 也原样进脚本。
+   * 而本文件那段注释写着「判据走 engine/sanitize 那一套，与工具栏导出、
+   * 存模块、设为默认、存预设、复制节点同一套 —— 不在这里另写一份」，
+   * 说的正是四个出口都要走 —— 实际只走了一个。
+   *
+   * 导出是"交给别人"的动作：脚本里留空令牌，对方自己填；
+   * 明文带出去等于把令牌贴给别人，且不报错。
+   */
+  const gg: Graph = { ...g, nodes: redactNodes(g.nodes) as Graph['nodes'] };
   switch (fmt) {
-    case 'shell': return toShell(g);
-    case 'python': return toPython(g);
-    case 'json': return toJson(g);
-    case 'markdown': return toMarkdown(g);
+    case 'shell': return toShell(gg);
+    case 'python': return toPython(gg);
+    case 'json': return toJson(gg);
+    case 'markdown': return toMarkdown(gg);
     default: return { text: '', skipped: [], count: 0 };
   }
 }
