@@ -534,15 +534,6 @@
 }
 
 /* 组自己的那一块：成员数 + 推导出来的状态 + 拆散 */
-.tb-dgroup {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  flex-wrap: wrap;
-  padding: var(--sp-2) 0;
-  border-block-end: 1px solid var(--divider);
-}
-
 /* 详情里的可编辑字段：说明 / 所属组 / 前置 */
 .tb-dfield {
   display: flex;
@@ -1168,12 +1159,6 @@
   flex-wrap: wrap;
   gap: 3px;
   padding: var(--sp-1) var(--sp-2);
-}
-
-.tb-ic-hint {
-  padding: var(--sp-1) var(--sp-2);
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
 }
 
 /* 拖宽把手：贴在列头单元格右缘 */
@@ -2177,11 +2162,6 @@ body.tb-col-resizing {
 }
 
 /* 详情里的数字输入 */
-.tb-dnum {
-  flex: 0 0 auto;
-  width: 8em;
-}
-
 /* 详情里选类型的下拉 */
 .tb-dsel {
   flex: 0 0 auto;

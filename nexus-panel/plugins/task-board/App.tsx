@@ -2,8 +2,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNexus } from '../../src/nexus-react';
 import * as S from './lib/store';
 import {
-  STATUS_ORDER,
-  STATUS_LABEL,
   PRIORITY_ORDER,
   PRIORITY_LABEL,
 } from './types';

@@ -10,31 +10,6 @@
 export type TaskStatus =
   | 'todo' | 'claimed' | 'doing' | 'hold' | 'review' | 'done' | 'cancelled';
 
-export const STATUS_ORDER: TaskStatus[] = [
-  'todo', 'claimed', 'doing', 'hold', 'review', 'done', 'cancelled',
-];
-
-export const STATUS_LABEL: Record<TaskStatus, string> = {
-  todo: '待办',
-  claimed: '已认领',
-  doing: '进行中',
-  hold: '挂起',
-  review: '待审查',
-  done: '已完成',
-  cancelled: '已取消',
-};
-
-/** 默认状态色。用户可在流程设置里改 —— 这里是初始值 */
-export const STATUS_COLOR: Record<TaskStatus, string> = {
-  todo: '#78716c',
-  claimed: '#0ea5e9',
-  doing: '#3b82f6',
-  hold: '#f59e0b',
-  review: '#a855f7',
-  done: '#22c55e',
-  cancelled: '#ef4444',
-};
-
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
 
 export const PRIORITY_ORDER: Priority[] = ['P0', 'P1', 'P2', 'P3'];
