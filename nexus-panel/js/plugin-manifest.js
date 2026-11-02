@@ -239,3 +239,23 @@ export function mergeInstalled(staticPlugins, installed) {
   }
   return { plugins: out, skipped };
 }
+
+/**
+ * 单个 id 是否合法 —— 与 validateManifest 共用**同一份**规则。
+ *
+ * 为什么单独导出：id 不只进 manifest，还进目录名、localStorage 键、
+ * IPC 参数（js/plugin-data-store.js 就按 id 分用户数据目录）。
+ * 各处各写一份正则 = 迟早有一处放宽，而放宽的表现是路径穿越或
+ * 两个插件数据互相覆盖，且都不报错。
+ *
+ * ⚠️ 这是**数据合法性**校验，不是路径校验。路径安全一律交给后端
+ * resolve_within / fpx::guard::must_be_under（见 js/plugin-fs-bridge.js
+ * 约束 1：前端不重复做路径校验，两套规则必然不一致）。
+ *
+ * @param {unknown} v
+ * @returns {boolean}
+ */
+export function isValidPluginId(v) {
+  if (typeof v !== 'string' || !v || v.length > ID_MAX) return false;
+  return ID_RE.test(v);
+}
