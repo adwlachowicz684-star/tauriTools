@@ -34,12 +34,89 @@ const pkgJson = (k) => join(ROOT, 'node_modules', k, 'package.json');
 const inPlace = (k) => existsSync(pkgJson(k));
 
 /**
+ * 删一个目录，失败**不崩**，只记下来。
+ *
+ * ⛔ 为什么不能让异常往外冒：实测（2026-11-02）`rmSync` 在慢盘上抛
+ * `ENOTEMPTY: rmdir .../@chevrotain/cst-dts-gen/lib/src`。
+ * 当时脚本直接崩在堆栈里 —— 后果有两层：
+ *   1. 后面的 `npm install` **根本没执行**，而屏幕上只有一堆栈，看不出"依赖没装"
+ *   2. 那个包被删成残骸（目录在、package.json 没了），下一轮又被判成"已装"
+ * 崩溃把这个脚本变成了"看着在跑、其实什么都没做"。删不掉要**说出来**，
+ * 让下一轮有机会重试；一声不吭地崩掉才是真正的失效。
+ */
+function safeRm(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+    return existsSync(dir) ? '删不掉' : null;
+  } catch (e) {
+    return e.code || e.message;
+  }
+}
+
+/**
+ * 把「删不掉的残骸」汇总喊出来，并让退出码非 0。
+ * ⛔ 静默吞掉 = 下一轮继续误判「已装」，然后构建崩在一个看起来毫不相干的包上
+ *    （实测：rollup 目录被删空 → vite 报 Cannot find module 'rollup/parseAst'，
+ *     而屏幕上看不出这两件事有任何关系）。
+ */
+function reportStuck(list) {
+  if (!list.length) return;
+  console.log(`\n⚠️ ${list.length} 处残骸没能清掉，需重跑本脚本：`);
+  for (const s of list) console.log('   - ' + s);
+}
+
+/**
+ * 清掉 npm 自己留下的临时目录：`node_modules/.<包名>-<8位随机>`。
+ *
+ * ⛔ 为什么单独写一条：`pruneEmptyPkgDirs()` 按约定跳过 `.` 开头的条目
+ * （要避开 `.bin` / `.package-lock.json`），所以这些残留**永远清不到**。
+ * 而它们会挡住下一次安装 —— 实测（2026-11-02）npm 直接崩：
+ *   npm error ENOTEMPTY: rename 'node_modules/entities'
+ *                     -> 'node_modules/.entities-ntRrCgLY'
+ * 屏幕上看是「npm 装不上」，真因是上一轮被杀时留下的临时目录还杵在那儿。
+ * 清掉这四个残留后同一条 `npm install` 立刻能跑。
+ */
+function pruneNpmTemp() {
+  const nm = join(ROOT, 'node_modules');
+  if (!existsSync(nm)) return 0;
+  /*
+   * ⛔ 不能只扫顶层：残骸也会长在**作用域包内部**。
+   * 实测（2026-11-02）npm 崩的是
+   *   npm error ENOTEMPTY: rename 'node_modules/@chevrotain/cst-dts-gen'
+   *                     -> 'node_modules/@chevrotain/.cst-dts-gen-DI70if6P'
+   * 而这一版当时只在顶层 readdir，所以**一个都没扫到** —— 屏幕上是
+   * 「清掉 npm 残留 ×0」紧接着「npm error ENOTEMPTY」，看着像两个无关现象。
+   * 同一组目录下躺着 5 个 `.xxx-8位随机`（cst-dts-gen / gast / regexp-to-ast /
+   * types / utils），手动清掉 16 个（含其他作用域包）后同一条命令立刻能跑。
+   * 注意 pruneEmptyPkgDirs() 早就知道要展开 `@` 前缀（见其 roots 处理），
+   * 两处写法不一致就是这次漏掉的根因。
+   */
+  const dirs = [nm];
+  for (const name of readdirSync(nm)) {
+    if (name.startsWith('@')) dirs.push(join(nm, name));
+  }
+  let n = 0;
+  for (const dir of dirs) {
+    let entries;
+    try { entries = readdirSync(dir); } catch { continue; }
+    for (const d of entries.filter((x) => /^\..+-[A-Za-z0-9]{8}$/.test(x))) {
+      const full = join(dir, d);
+      const why = safeRm(full);
+      const shown = full.replace(ROOT + '/', '');
+      if (why) console.log(`⚠️ npm 残留删不掉 ${shown}（${why}）`);
+      else { console.log(`清掉 npm 残留 ${shown}（会挡住下一次 rename）`); n++; }
+    }
+  }
+  return n;
+}
+
+/**
  * 清掉空包目录 —— 它们会让下一轮 install 也认为「已装」而跳过。
  * 判空不只看空目录：只有 .package-lock.json 之类残骸的同样算。
  */
 function pruneEmptyPkgDirs() {
   const nm = join(ROOT, 'node_modules');
-  if (!existsSync(nm)) return;
+  if (!existsSync(nm)) return { stuck: [], removed: 0 };
   const roots = readdirSync(nm).filter((n) => !n.startsWith('.'));
   const dead = [];
   for (const name of roots) {
@@ -50,10 +127,17 @@ function pruneEmptyPkgDirs() {
       if (!existsSync(join(nm, d, 'package.json'))) dead.push(join(nm, d));
     }
   }
+  const stuck = [];
   for (const dir of dead) {
-    console.log(`清掉空包目录 ${dir.replace(ROOT + '/', '')}（会让 npm 误判已装）`);
-    rmSync(dir, { recursive: true, force: true });
+    const why = safeRm(dir);
+    if (why) {
+      stuck.push(`${dir.replace(ROOT + '/', '')}（${why}）`);
+      console.log(`⚠️ 残骸删不掉 ${dir.replace(ROOT + '/', '')}（${why}）—— 需重跑本脚本`);
+    } else {
+      console.log(`清掉空包目录 ${dir.replace(ROOT + '/', '')}（会让 npm 误判已装）`);
+    }
   }
+  return { stuck, removed: dead.length - stuck.length };
 }
 
 /**
@@ -70,7 +154,18 @@ function pruneEmptyPkgDirs() {
 const NPM_FLAGS = ['--global=false', '--no-audit', '--no-fund'];
 
 const missing = Object.keys(all).filter((k) => !inPlace(k));
-pruneEmptyPkgDirs();
+/*
+ * ⛔ `--check` 必须是**只读**的：本脚本注释里写着「只核对并打印缺失，不安装」，
+ * 但清空包目录这一步有副作用 —— 实测（2026-11-02）跑一次 `--check`
+ * 就把 delaunator / dompurify / elkjs 等一批间接依赖目录删掉了。
+ * 在 CI 里跑只读检查却把依赖删掉，等于「检查」本身制造了故障，
+ * 而下一个人只会看到构建崩在一个毫不相干的包上。只读分支跳过这一步。
+ */
+const CHECK_ONLY = process.argv.includes('--check');
+const pruned = CHECK_ONLY
+  ? { stuck: [], removed: 0 }
+  : (pruneNpmTemp(), pruneEmptyPkgDirs());
+const stuck1 = pruned.stuck;
 function cleanNestedReact() {
   /*
    * ⛔ 光"装齐"不够：还要清掉 npm 顺手装出来的**嵌套 react 副本**。
@@ -93,28 +188,50 @@ function cleanNestedReact() {
       if (existsSync(join(inner, name))) nested.push(join(nm, scope, 'node_modules', name));
     }
   }
+  const stuck = [];
   for (const dir of nested) {
-    console.log(`清掉嵌套副本 ${dir.replace(ROOT + '/', '')}（混用会让 md 三套崩）`);
-    rmSync(dir, { recursive: true, force: true });
+    const why = safeRm(dir);
+    if (why) {
+      stuck.push(`${dir.replace(ROOT + '/', '')}（${why}）`);
+      console.log(`⚠️ 嵌套副本删不掉 ${dir.replace(ROOT + '/', '')}（${why}）—— 需重跑本脚本`);
+    } else {
+      console.log(`清掉嵌套副本 ${dir.replace(ROOT + '/', '')}（混用会让 md 三套崩）`);
+    }
   }
+  return stuck;
 }
 
 const installed = Object.keys(all).length - missing.length;
 
-if (!missing.length) {
-  console.log(`依赖齐备：${installed}/${Object.keys(all).length} 个声明包均在位`);
-  cleanNestedReact(); // ⛔ 齐了不等于能用：嵌套副本照样让 md 三套崩
-  process.exit(0);
+if (!missing.length) console.log(`依赖齐备：${installed}/${Object.keys(all).length} 个声明包均在位`);
+else console.log(`缺失 ${missing.length} 个：` + missing.join(' '));
+
+if (CHECK_ONLY) process.exit(missing.length || stuck1.length ? 1 : 0);
+
+/*
+ * ⛔ 只要清过残骸，就必须走**整树重装**，不能只补 missing 那几个。
+ *
+ * 实测（2026-11-02）：`node_modules/rollup` 被 npm 中断留成空目录，
+ * 于是 vite 报 `Cannot find module 'rollup/parseAst'` —— 而 rollup 是
+ * **vite 的间接依赖**，不在 package.json 里，本脚本的 `missing` 列表
+ * 根本看不见它：`--check` 报「缺失 4 个」里没有 rollup，屏幕上一片正常，
+ * 只有真去构建才会崩，且崩在一个和「依赖没装」毫无字面关系的地方。
+ * 只按 specs 装时 npm 会认为 vite 已在位、整棵树已满足 → 不补 rollup。
+ * 带 package.json 完整解析的 `npm install` 才会把整棵树补齐。
+ */
+const needFullInstall = pruned.removed > 0;
+
+if (needFullInstall) {
+  console.log(`清掉 ${pruned.removed} 个残骸目录 → 整树重装（间接依赖也要补齐）…`);
+  execFileSync('npm', ['install', ...NPM_FLAGS, '--no-save'],
+    { cwd: ROOT, stdio: 'inherit' });
+} else if (missing.length) {
+  // ⛔ 必须**一次性**装：分批会互相剪掉（npm 会把前一批当多余依赖移除）
+  const specs = missing.map((k) => `${k}@${all[k]}`);
+  console.log('一次性安装中…');
+  execFileSync('npm', ['install', ...NPM_FLAGS, '--no-save', ...specs],
+    { cwd: ROOT, stdio: 'inherit' });
 }
-console.log(`缺失 ${missing.length} 个：` + missing.join(' '));
-
-if (process.argv.includes('--check')) process.exit(1);
-
-// ⛔ 必须**一次性**装：分批会互相剪掉（npm 会把前一批当多余依赖移除）
-const specs = missing.map((k) => `${k}@${all[k]}`);
-console.log('一次性安装中…');
-execFileSync('npm', ['install', ...NPM_FLAGS, '--no-save', ...specs],
-  { cwd: ROOT, stdio: 'inherit' });
 
 // 回钉 react：npm 会按 ^ 顶到最新大版本，而项目锁的是 18
 // （版本漂移守卫会点名，这里先发制人）
@@ -138,7 +255,8 @@ const still = Object.keys(all).filter((k) => !inPlace(k));
 // ⛔ 必须放在安装**之后**：npm 装完会顺手在 react-markdown 下再放一份 react，
 //    那份副本混进来 md 三套必崩（两份 react 的元素符号不同族）。
 //    齐备分支里的那次调用只覆盖「本来就齐」的情况，装过包的情况靠这里。
-cleanNestedReact();
+const stuck2 = cleanNestedReact();
 
 console.log(still.length ? `仍缺失：${still.join(' ')}` : '✅ 全部就位');
-process.exit(still.length ? 1 : 0);
+reportStuck([...stuck1, ...stuck2]);
+process.exit(still.length || stuck1.length + stuck2.length ? 1 : 0);
