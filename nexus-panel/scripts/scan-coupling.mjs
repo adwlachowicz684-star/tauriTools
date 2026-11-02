@@ -21,6 +21,26 @@
  *      只是某个功能区域**一片空白** —— 与 build-plugins.mjs 里记的
  *      「插件能开、图标一片空白」是同一形状。
  *
+ * ⚠️ 2026-11-03 实测更正（此前这层定性是错的，别再照着它选解耦方案）
+ * ------------------------------------------------------------
+ *   上面那段「A 装了 B 没装就 404」只对 **动态字符串路径** 成立
+ *   （如 `const ICON_DIR = '../B/preseticons/'` —— Vite 不解析字符串，
+ *     原样带进产物，运行时才去请求那条路径）。
+ *
+ *   而 `import ... from '../B/x'` / `@import '../B/x.css'` / `export * from`
+ *   这类**静态导入在构建期就被内联打包**了，产物里根本不存在那条路径。
+ *   实测（project-group 产物，07:39 那次真实构建）：
+ *     · index.html 只引 `./assets/*`，全产物 0 个 `../` 相对引用
+ *     · color-picker/style.css 的 249 个 fpx-* 类已合并进产物 CSS
+ *     · 产物 JS 里的 `color-picker` 字样是**服务名** `call('color-picker',…)`，
+ *       来自 plugin-sdk.js，不是文件路径
+ *   所以这 4 条静态账**不阻断独立安装、运行时也不互相影响**；
+ *   它们阻断的是**拆成独立仓库后源码构建期找不到文件**——阶段完全不同，
+ *   解法也完全不同（构建期共享源码分发 / SDK 包，而不是运行时解耦）。
+ *
+ *   因此扫描器现在给每条命中打 `kind`，`runtimeRisk` 只对动态路径为真。
+ *   守卫据此把红线钉在「运行时风险必须为 0」，而不是一味要求清零所有账。
+ *
  * 判据（刻意保守，宁可漏报也不误报）：
  *   · 只认 `../<目录名>/` 且 <目录名> 恰好是某个插件 id —— 不猜
  *   · 剥注释后再扫：注释里的历史说明（`此前写的是 '../x/utils/color'`）
@@ -75,6 +95,35 @@ function insideUrl(line, idx) {
   return /:\/\/\S*$/.test(line.slice(Math.max(0, idx - 16), idx));
 }
 
+/**
+ * 这条引用是「构建期静态导入」还是「运行时动态路径」。
+ *
+ * ⛔ 顺序有讲究，调错会全判错：
+ *    `export * from '../b/x'` 的前缀里同时含 `from`，先判 export 才是 re-export，
+ *    否则会被下面的 import/from 吞成 static-import。
+ *    `import {x} from '../b/x'` 前缀里有 `import` → static-import。
+ *    `@import '../b/x.css'` 是 CSS 规则，单列一类（构建期同样内联）。
+ *
+ * ⛔ 为什么 dynamic-string 判据只看「命中前是不是引号开头」：
+ *    真动态的典型是 `const ICON_DIR = '../b/preseticons/'` —— Vite 不解析
+ *    字符串常量，路径原样进产物，运行时才发起请求。而静态导入的路径
+ *    前面也有引号（`from '`、`@import '`），所以必须先让 import/export 判据
+ *    吃掉它们，剩下的引号开头才是真动态。
+ *
+ * runtimeRisk 只对 dynamic-string / other 为真：只有它们会在运行时真去请求
+ * 一条落到别的插件目录的路径，独立安装后才 404。
+ */
+export function classifyHit(line, idx) {
+  const before = line.slice(0, idx);
+  if (/@import/.test(before)) return 'css-import';
+  if (/\bexport\b/.test(before)) return 're-export';
+  if (/\bimport\b|\bfrom\b/.test(before)) return 'static-import';
+  if (/["'`]\s*$/.test(before)) return 'dynamic-string';
+  return 'other';
+}
+
+export const RUNTIME_RISK_KINDS = new Set(['dynamic-string', 'other']);
+
 /** 列出 plugins/ 下的插件 id（有目录即算，manifest 另判） */
 export function listPluginIds(root) {
   const dir = join(root, 'plugins');
@@ -125,13 +174,18 @@ export function scanCrossPlugin(root) {
             const target = m[2];
             if (!idSet.has(target) || target === owner) continue;
             if (insideUrl(lines[i], m.index)) continue;
+            const kind = classifyHit(lines[i], m.index);
             out.push({
               file: f.replace(root + sep, '').split(sep).join('/'),
               line: i + 1,
               target,
               owner,
               raw: src.split(/\r?\n/)[i].trim().slice(0, 100),
-              /* 双方都要进市场 → 独立安装后必 404，是真阻断；
+              kind,
+              /* 只有动态路径会在运行时真去请求别的插件目录 → 独立安装才 404。
+                 静态导入在构建期内联，阻断的是「拆仓库后源码编译」，不是运行时。 */
+              runtimeRisk: RUNTIME_RISK_KINDS.has(kind),
+              /* 双方都要进市场 → 拆分时这条依赖要处理；
                  任一方不进市场（module 插件，随主程序构建）→ 不受拆分影响 */
               blocking: isMarketPlugin(root, owner) && isMarketPlugin(root, target),
             });
@@ -151,9 +205,11 @@ if (process.argv[1] && process.argv[1].endsWith('scan-coupling.mjs')) {
   const root = process.argv[2] || process.cwd();
   const hits = scanCrossPlugin(root);
   const blocking = hits.filter((h) => h.blocking);
-  console.log(`跨插件引用 ${hits.length} 处（阻断拆分的 ${blocking.length} 处）`);
+  const runtime = hits.filter((h) => h.runtimeRisk);
+  console.log(`跨插件引用 ${hits.length} 处（阻断拆分的 ${blocking.length} 处，其中运行时真会 404 的 ${runtime.length} 处）`);
   for (const h of hits) {
-    console.log(`  ${h.blocking ? '🔴' : '⚪'} ${h.file}:${h.line} → ${h.target}`);
+    const mark = h.runtimeRisk ? '🔴运行时' : h.blocking ? '🟡构建期' : '⚪';
+    console.log(`  ${mark} [${h.kind}] ${h.file}:${h.line} → ${h.target}`);
     console.log(`      ${h.raw}`);
   }
 }
