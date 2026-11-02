@@ -551,11 +551,10 @@ export default function App() {
     for (const t of store ? store.tasks : []) {
       /*
         ⛔ 分组可以是多值的（勾了多选），`(t.group || '').trim()` 在数组上
-        直接 TypeError —— 数组没有 .trim。汇总已有分组名时要把每个值都收进来。
+        直接 TypeError —— 数组没有 .trim。
+        走 fieldVals（唯一的一份展开实现），不再在这里手写 Array.isArray。
       */
-      const gv = t.group;
-      if (Array.isArray(gv)) { for (const x of gv) { const q = String(x || '').trim(); if (q) set.add(q); } }
-      else { const q = String(gv || '').trim(); if (q) set.add(q); }
+      for (const q of fieldVals(t, 'group')) if (q.trim()) set.add(q.trim());
     }
     return [...set].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
   }, [store]);
@@ -1092,12 +1091,18 @@ export default function App() {
         */
         if (hasVal(next, 'assignee', me) && next.status === cur.status) return null;
         /*
-          署名：多值列是**共同认领**，把我加进去而不是把别人挤掉 ——
-          挤掉的话"两个人一起负责这条"就变成了"只有我负责"，
-          而另一个人完全不知情。单值列仍是替换（这条只能有一个负责人）。
+          署名：多值列是**共同认领**，把我加进去而不是把别人挤掉。
+
+          ⛔ 判据必须是**列配置**（colMulti），不能是 `Array.isArray(cur.assignee)`：
+          实测（修前）：列设了多选、但这条任务是老数据（assignee 还是单值字符串
+          "张三"），按值形状判断走"替换"分支 → 变成 "我"，
+          **张三被挤掉了**，而列明明是"可多选/共同认领"。
+          反过来（单值列里 AI 写进数组）会走追加，界面只显示第一个、第二个成了隐藏数据。
+
+          值的形状是历史遗留，列的配置才是当下意图。
         */
-        next.assignee = Array.isArray(cur.assignee)
-          ? (hasVal(cur, 'assignee', me) ? cur.assignee : [...cur.assignee, me])
+        next.assignee = colMulti(colMeta, 'assignee')
+          ? [...fieldVals(cur, 'assignee'), me]
           : me;
         /*
           ⛔ 署名后**必须更新时间戳**，不能只在 applyTransition 那条路径上更新。
@@ -2690,8 +2695,7 @@ function TaskCard({ task, me, flow, onOpen, onAction, onClaim, store }: {
         typeColor 同理返回默认色 —— 卡片上会出现一个"dev,bug"的怪 chip。
       */}
       {(() => {
-        const tv = Array.isArray(task.type) ? task.type : (task.type ? [task.type] : []);
-        const shown = tv.filter((x) => x && typeName(defsOf(store, 'type'), x));
+        const shown = fieldVals(task, 'type').filter((x) => typeName(defsOf(store, 'type'), x));
         if (shown.length === 0) return null;
         return (
           <div className="tb-task-tags">
@@ -2717,8 +2721,7 @@ function TaskCard({ task, me, flow, onOpen, onAction, onClaim, store }: {
         （尤其是刚在列表里给一批任务填上分组、切到看板发现什么都没变）。
       */}
       {(() => {
-        const gvv = Array.isArray(task.group) ? task.group : (task.group ? [task.group] : []);
-        const gs = gvv.filter((x) => x);
+        const gs = fieldVals(task, 'group');
         if (gs.length === 0) return null;
         return (
         <div className="tb-task-tags">
@@ -6050,10 +6053,8 @@ function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAc
     const seen = new Set<string>();
     const out: string[] = [];
     for (const x of tasks || []) {
-      /* 认领人可以是多值的：每个值都要成为候选，且不能用 .trim（数组没有） */
-      const av = x.assignee;
-      const arr = Array.isArray(av) ? av : (av ? [av] : []);
-      for (const one of arr) {
+      /* 认领人可以是多值的：每个值都要成为候选，走 fieldVals 统一展开 */
+      for (const one of fieldVals(x, 'assignee')) {
         const a = String(one || '').trim();
         if (!a || seen.has(a)) continue;
         seen.add(a);
@@ -6241,7 +6242,7 @@ function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAc
           提交时按逗号拆开：多个就存数组，一个就存字符串（保持单值形态）。
         */}
         <DraftInput
-          value={Array.isArray(task.group) ? task.group.join('、') : (task.group || '')}
+          value={fieldVals(task, 'group').join('、')}
           placeholder="分组名（留空 = 不分组；多个用「、」分隔）"
           onCommit={(v) => {
             const parts = v.split(/[、,，]/).map((x) => x.trim()).filter(Boolean);

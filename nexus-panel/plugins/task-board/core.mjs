@@ -930,11 +930,30 @@ export function replaceVal(task, field, oldId, newId, multi) {
   return out;
 }
 
-/** 某一列当前选了哪些值（去哨兵、去空），用于多选单元格的 chip 渲染 */
-export function fieldVals(task, field) {
+/**
+ * 把"可能是单值、也可能是多值"的字段展开成数组 —— **唯一的一份展开实现**。
+ *
+ * ⛔ 之前各消费点各写 `Array.isArray(t.x) ? t.x : (t.x ? [t.x] : [])`，
+ * 六处六份。于是"多值"这件事每加一个消费点都可能漏一份：
+ * 搜索串漏了（搜「开发」0 条）、看板卡片漏了（显示"dev,bug"）、
+ * 详情元信息漏了（"张三李四"）、认领逻辑按值形状判断（挤掉共同认领人）……
+ *
+ * 保留空值/哨兵，供统计等需要"未分类单独计"的场景用。
+ * 显示/候选/搜索请用 fieldVals（在它基础上滤掉哨兵）。
+ */
+export function rawVals(task, field) {
   const raw = task && typeof task === 'object' ? task[field] : undefined;
-  const arr = Array.isArray(raw) ? raw : (raw === undefined || raw === null || raw === '' ? [] : [raw]);
-  return arr.map((x) => String(x)).filter((x) => x && x !== UNASSIGNED && x !== NOTYPE && x !== NOGROUP);
+  if (Array.isArray(raw)) {
+    return raw.filter((x) => x !== undefined && x !== null && x !== '');
+  }
+  return raw === undefined || raw === null || raw === '' ? [] : [raw];
+}
+
+/** 某一列当前选了哪些值（去哨兵、去空），用于显示 / 候选 / 搜索 / chip 渲染 */
+export function fieldVals(task, field) {
+  return rawVals(task, field)
+    .map((x) => String(x))
+    .filter((x) => x && x !== UNASSIGNED && x !== NOTYPE && x !== NOGROUP);
 }
 
 /** 某一列是否多选（缺省按默认表） */
@@ -1178,23 +1197,30 @@ export function filterTasksByColumns(rows, filters, q, typeDefs, tagDefs) {
 
         类型名要靠 typeDefs 查；没传就退回 id（至少老行为不变）。
       */
-      const typeLabel = typeDefs
-        ? typeName(typeDefs, t.type || '')
-        : (t.type || '');
       /*
-        标签名同样要进搜索串：任务上存的是 **id**（tg_xxxx），
-        而界面上显示的是名字。只搜 id 的话 ——
-        用户搜「重要」返回 0 条，而列表里明明有一排挂着「重要」的任务，
-        他会以为没有这类任务，而不是"搜索不搜标签"。
+        ⛔ 多值列（MULTI_OK）**一律用 fieldVals 展开**，不能裸拼 `t.type` / `t.assignee`：
 
-        （这和上面 typeLabel 是完全同一个问题，
-          上一轮补了认领人和类型，**标签漏了**。）
+        实测（修前）：type=['dev','bug'] 时
+          · typeName(typeDefs, t.type || '') 收到**数组**，find 永远不等 → 返回数组
+            本身 → 模板串变成 "dev,bug" → 搜「开发」**0 条**，
+            而列表里明明显示着「开发」。这正是"类型名进搜索"那个修复在多值下退化。
+          · `${t.group||''}` / `${t.assignee||''}` 碰巧能命中（数组转字符串是
+            "登录,支付"，含"登录"也含"支付"）—— 但那是**巧合**，不是设计：
+            靠逗号分隔，名字里带逗号就断，且与 type 的处理不一致。
+
+        现在逐个值走 labelFor 取显示名，再以空格拼进搜索串：
+          · 显示名与界面一致（id → 名字）
+          · 空数组 fieldVals 返回 []，不会拼出多余的 "[]" 或空段
+          · 字段清单取自 MULTI_OK —— 以后加新的多选列自动进搜索，不用再来改这里
       */
-      const tagLabels = (t.tags || [])
-        .map((id) => (tagDefs ? (tagDefs.find((d) => d.id === id)?.name || id) : id))
-        .join(' ');
-      const hay = `${t.id} ${t.title} ${t.detail} ${t.summary || ''} ${t.group || ''} ${t.assignee || ''} ${typeLabel} ${tagLabels}`
-        .toLowerCase();
+      const defsByField = { type: typeDefs || [], tags: tagDefs || [] };
+      const parts = [t.id, t.title, t.detail, t.summary || ''];
+      for (const field of MULTI_OK) {
+        for (const v of fieldVals(t, field)) {
+          parts.push(labelFor(field, v, defsByField[field] || [], null));
+        }
+      }
+      const hay = parts.join(' ').toLowerCase();
       if (hay.indexOf(kw) < 0) return false;
     }
     return true;
@@ -2149,12 +2175,19 @@ export function statsOf(store, now = Date.now()) {
       于是"按类型看工作量"整个失真，界面上还看不出为什么。
       标签那列本来就是多值（逐个计入），这里要与它同一判据。
     */
-    for (const tk of (Array.isArray(t.type) ? t.type : [t.type || NOTYPE])) {
+    /*
+      用 rawVals 而不是 fieldVals：统计要**保留哨兵**
+      （"未分类"是"还没归类的工作量"，得单独计一档，不能被滤掉）。
+      空任务按 NOTYPE 计，与单值时代一致。
+    */
+    const tvs = rawVals(t, 'type');
+    for (const tk of (tvs.length ? tvs : [NOTYPE])) {
       byType[tk] = (byType[tk] || 0) + 1;
     }
     byPriority[t.priority] = (byPriority[t.priority] || 0) + 1;
     /* 认领人分布：同样可以是多值（一条任务两个人一起做） */
-    for (const who of (Array.isArray(t.assignee) ? t.assignee : [t.assignee || UNASSIGNED])) {
+    const avs = rawVals(t, 'assignee');
+    for (const who of (avs.length ? avs : [UNASSIGNED])) {
       const ae = byAssignee.get(who) || { id: who, count: 0, est: 0 };
       ae.count += 1;
       ae.est = Math.round((ae.est + (Number(t.estimate) || 0)) * 100) / 100;

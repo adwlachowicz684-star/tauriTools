@@ -11,6 +11,7 @@ import {
   nextTaskId,
   pushHistory,
   applyTransitionIn,
+  fieldVals,
 } from '../core';
 import { DEFAULT_CONFIG } from '../types';
 import type { TbConfig, TaskStore, Task, Agent } from '../types';
@@ -610,7 +611,17 @@ export async function notifyWebhook(
       body: JSON.stringify({
         source: 'task-board',
         event: 'submit-review',
-        task: { id: task.id, title: task.title, status: task.status, assignee: task.assignee },
+        /*
+          ⛔ assignee 可以是**多值**（列设置里勾了"多选"）。
+          裸传 task.assignee 的话，对端有时拿到 "张三"（字符串）、
+          有时拿到 ["张三","李四"]（数组）—— 同一种事件两种形状，
+          对端按字符串处理就会显示成 "张三,李四" 或直接解析失败。
+
+          旧契约是**一个字符串**（没勾多选时一直如此），所以统一成
+          显示串（「、」连接），多值也不改契约形状。
+        */
+        task: { id: task.id, title: task.title, status: task.status,
+                assignee: fieldVals(task, 'assignee').join('、') },
       }),
     });
     if (!res.ok) return { sent: false, reason: `对端返回 ${res.status}` };

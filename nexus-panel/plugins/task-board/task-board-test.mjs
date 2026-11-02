@@ -2423,7 +2423,7 @@ t('审查：看板卡片会显示分组', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const i = app.indexOf('function TaskCard({');
   const body = app.slice(i, app.indexOf('<div className="tb-task-foot">', i));
-  return body.indexOf('task.group ?') >= 0 && body.indexOf('tb-tag-group') >= 0;
+  return body.indexOf("fieldVals(task, 'group')") >= 0 && body.indexOf('tb-tag-group') >= 0;
 })());
 
 /*
@@ -3312,8 +3312,15 @@ const MATRIX = [
     ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group']],
   ['详情面板', () => SEG(appSrc, 'function DetailPanel({', '\nfunction '),
     ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group', 'tags', 'assignee', 'deps']],
-  ['全局搜索', () => SEG(coreSrc, 'const hay = ', '\n    }'),
-    ['t.id', 't.title', 't.detail', 't.summary', 't.group', 't.assignee']],
+  /*
+    ⛔ 搜索串改成 **MULTI_OK 循环 + fieldVals + labelFor** 之后，
+    字段不再逐个写出来（`t.group` 等字面量消失）。
+    继续钉字段清单会**恒红，等于没有守卫**。
+    现在钉"清单一律来自 MULTI_OK、每个值走展开与显示名映射"这个结构本身 ——
+    以后新开多选的列自动进搜索，不用回来改这条矩阵。
+  */
+  ['全局搜索', () => SEG(coreSrc, 'const defsByField =', 'if (hay.indexOf'),
+    ['MULTI_OK', 'fieldVals', 'labelFor', 'defsByField']],
 ];
 
 for (const [name, get, fields] of MATRIX) {
@@ -4088,11 +4095,15 @@ t('守卫：保存流程时清掉指向已删状态的筛选', (() => {
  */
 t('守卫：全局搜索含标签显示名（任务上存的是 id）', (() => {
   const core = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
-  const i = core.indexOf('const hay = ');
+  /*
+    锚点跟着搜索串重构走：现在逐个值走 labelFor，
+    标签显示名由 defsByField.tags 提供，不再有单独的 tagLabels 变量。
+  */
+  const i = core.indexOf('const defsByField =');
   if (i < 0) return false;
-  /* 标签名要先算出来，再拼进 hay */
-  const before = core.slice(Math.max(0, i - 700), i);
-  return before.indexOf('tagLabels') >= 0 && core.slice(i, i + 200).indexOf('tagLabels') >= 0;
+  const seg = core.slice(i, core.indexOf('if (hay.indexOf', i));
+  return /tags:\s*tagDefs/.test(seg) && /labelFor\(field, v, defsByField\[field\]/.test(seg)
+    && /MULTI_OK/.test(seg);
 })());
 
 /* 调用点必须把 tagDefs 传进去，且要在 useMemo 依赖里（改了标签名结果要变） */
@@ -4401,7 +4412,7 @@ t('守卫：认领必须更新时间戳（两条路径都要）', (() => {
     （多值列要把我加进去而不是挤掉别人）。
     钉旧的锚点会恒红 → 守卫等于失效。
   */
-  return /next\.assignee = Array\.isArray\(cur\.assignee\)/.test(seg)
+  return /colMulti\(colMeta, 'assignee'\)/.test(seg)
     && /hasVal\(next, 'assignee', me\)/.test(seg)
     && /next\.updatedAt = Date\.now\(\);/.test(seg);
 })());
@@ -4994,16 +5005,20 @@ t('守卫：认领支持共同认领（多值列是加上我，不是替换）',
   const i = app.indexOf('const doClaim');
   if (i < 0) return false;
   const seg = app.slice(i, i + 2600);
+  /*
+    ⛔ 判据必须是**列配置**（colMulti），不能是 Array.isArray(cur.assignee)：
+    实测（修前）多选列 + 老数据单值字符串 → 走替换 → 把共同认领人挤掉。
+    守卫钉的是这个"按配置判断"的语义，不是某一种展开写法。
+  */
   return /hasVal\(next, 'assignee', me\)/.test(seg)
-    && /Array\.isArray\(cur\.assignee\)/.test(seg)
-    && /\[\.\.\.cur\.assignee, me\]/.test(seg);
+    && /colMulti\(colMeta, 'assignee'\)/.test(seg)
+    && /fieldVals\(cur, 'assignee'\)/.test(seg);
 })());
 
 /* 看板卡片：多值要逐个渲染（不能出一个 "dev,bug" 的怪 chip） */
 t('守卫：看板卡片逐个渲染多值（类型与分组）', (() => {
   const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
-  return /Array\.isArray\(task\.type\) \? task\.type : \(task\.type \? \[task\.type\] : \[\]\)/.test(app)
-    && /Array\.isArray\(task\.group\) \? task\.group : \(task\.group \? \[task\.group\] : \[\]\)/.test(app);
+  return /fieldVals\(task, 'type'\)/.test(app) && /fieldVals\(task, 'group'\)/.test(app);
 })());
 
 /* 详情面板：分组可多值（用「、」分隔，提交时拆分） */
@@ -5012,7 +5027,7 @@ t('守卫：详情面板的分组支持多值（逗号分隔提交）', (() => {
   const i = app.indexOf('onPatch({ group: parts.length > 1 ? parts');
   if (i < 0) return false;
   const seg = app.slice(i - 700, i + 300);
-  return /Array\.isArray\(task\.group\) \? task\.group\.join/.test(seg)
+  return /fieldVals\(task, 'group'\)\.join\('、'\)/.test(seg)
     && /split\(\/\[、,，\]\/\)/.test(seg);
 })());
 
@@ -5469,6 +5484,99 @@ t('守卫：不裸渲染 task.assignee（多值列要展开再连接）', (() =>
   return !/\{task\.assignee[^a-zA-Z_]/.test(app)
     && !/title=\{`认领人：\$\{task\.assignee\}`\}/.test(app)
     && app.indexOf('whoText') >= 0;
+})());
+
+/*
+ * ============================================================
+ * 通杀守卫：多值字段**一律不许当标量用**。
+ *
+ * ⛔ 之前每撞到一个消费点就修一个，同类问题分了五轮才清完：
+ *   搜索串（typeName 收到数组 → 搜「开发」0 条）
+ *   统计（byType[t.type] → 冒出合成键 "dev,bug"）
+ *   看板卡片（显示 "dev,bug" / "张三李四"）
+ *   详情元信息（空数组显示空白、"张三李四"）
+ *   认领（按值形状判断 → 挤掉共同认领人）
+ *
+ * 根因都是同一个：**"这列现在可以是数组了"没有传达到所有消费点**，
+ * 而且每个消费点各写一份 `Array.isArray(t.x) ? t.x : …` 展开。
+ *
+ * 这条守卫的字段清单**从 core.mjs 的 MULTI_OK 动态读**，不硬编码四个 ——
+ * 以后给某列开多选，它自动进检查范围。
+ *
+ * 判的是"把多值字段当标量"的具体写法，不是笼统搜 .field：
+ * JSX 裸渲染 / 模板插值 / .trim / 等值比较 / 当对象键 / truthy 判断。
+ * 允许的用法（fieldVals / rawVals / hasVal / 归一化 / 防御性 tags 数组）不算违规。
+ */
+t('守卫：多值字段不裸用（清单从 MULTI_OK 自动取，覆盖所有文件）', (() => {
+  const mjs = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  const mm = mjs.match(/export const MULTI_OK = \[([^\]]*)\]/);
+  if (!mm) return false;
+  const fields = [...mm[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  if (fields.length === 0) return false;
+
+  const files = ['App.tsx', 'Settings.tsx', 'core.mjs', 'lib/store.ts'];
+  const bad = [];
+  for (const f of files) {
+    const raw = fs.readFileSync(path.join(dir, f), 'utf8');
+    /* 先剥注释：注释里**必然要引用**被禁的旧写法作为反例 */
+    const src = STRIP(raw);
+    for (const field of fields) {
+      /* 只认明确是 Task 的变量。⛔ 不能带 d/x/r：会匹配 draft.* /
+         defs.* / 任意局部变量，而 draft 是**表单输入值**（恒为字符串），
+         不是 Task —— 误报会让真正的违规看不出来。 */
+      /* ⛔ 必须有词边界：没有的话 `t.assignee` 会匹配 `draf|t.assignee`
+         （draft 是表单输入，恒为字符串，不是 Task）→ 误报。 */
+      const v = '\\b(?:t|task|detail|cur|prev|next|row)\\.' + field;
+      const patterns = [
+        /* JSX 裸渲染：{t.x} / {task.x} */
+        new RegExp('\\{' + v + '\\s*\\}', 'g'),
+        /* 模板插值：${t.x} */
+        new RegExp('\\$\\{' + v + '\\s*\\}', 'g'),
+        /* 数组上不存在的方法 */
+        new RegExp(v + '\\.trim\\(', 'g'),
+        /* 等值比较（多值时永远不等） */
+        new RegExp(v + '\\s*[!=]==?', 'g'),
+        new RegExp('[!=]==?\\s*' + v + '\\b', 'g'),
+        /* 当对象键 */
+        new RegExp('\\w+\\[' + v + '\\]', 'g'),
+        /* truthy 判断（空数组是 truthy → 走不到"未设置"分支） */
+        new RegExp(v + '\\s*\\?', 'g'),
+        new RegExp(v + '\\s*\\|\\|', 'g'),
+        /* 手写展开（应统一走 fieldVals / rawVals） */
+        new RegExp('Array\\.isArray\\(\\s*' + v + '\\s*\\)', 'g'),
+      ];
+      for (const re of patterns) {
+        let m;
+        while ((m = re.exec(src))) {
+          const line = src.slice(0, m.index).split('\n').length;
+          const lineText = src.split('\n')[line - 1] || '';
+          /*
+            合法例外（不是"把多值字段当标量"）：
+              · 归一化：它面对的正是**任意形状的原始输入**，必须判断 Array.isArray
+              · tags 数组自身：归一化后恒为数组，.map / || [] 是防御而非标量用法
+          */
+          /*
+            合法例外（不是"把多值字段当标量"）：
+              · 归一化：面对的正是任意形状的原始输入，必须判断 Array.isArray
+              · tags：归一化后恒为数组，.map / || [] / Array.isArray 都是防御，
+                不是"把数组当标量"（tags 从来不是单选列）
+          */
+          if (f === 'core.mjs' && /Array\.isArray\(t\.(type|group|assignee)\)/.test(lineText)) continue;
+          if (field === 'tags' && /t\.tags\.map|for \(const tag of t\.tags\)|\(t\.tags \|\| \[\]\)|Array\.isArray\(t\.tags\)/.test(lineText)) continue;
+          bad.push(`${f}:${line} [${field}] ${lineText.trim().slice(0, 70)}`);
+        }
+      }
+    }
+  }
+  if (bad.length) console.log('  多值字段裸用：\n    ' + bad.slice(0, 8).join('\n    '));
+  return bad.length === 0;
+})());
+
+t('守卫：多值展开只有一份实现（rawVals / fieldVals）', (() => {
+  const mjs = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  return /export function rawVals\(/.test(mjs)
+    && /export function fieldVals\(/.test(mjs)
+    && /return rawVals\(task, field\)/.test(mjs);
 })());
 
 const readmeCount = (() => {

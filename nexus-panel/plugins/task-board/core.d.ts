@@ -170,6 +170,7 @@ export declare function addVal(task: Task, field: string, id: string, multi: boo
 export declare function hasVal(task: Task, field: string, id: string): boolean;
 export declare function replaceVal(task: Task | null | undefined, field: string, oldId: string | null, newId: string | null, multi: boolean): string | string[];
 export declare function toggleFieldVal(task: Task | null | undefined, field: string, id: string, multi: boolean): string | string[];
+export declare function rawVals(task: Task | null | undefined, field: string): string[];
 export declare function fieldVals(task: Task | null | undefined, field: string): string[];
 export declare function colMulti(meta: ColMeta | null | undefined, field: string): boolean;
 export declare function colColorOn(meta: ColMeta | null | undefined, field: string): boolean;
