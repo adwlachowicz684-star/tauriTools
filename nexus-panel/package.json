@@ -111,6 +111,7 @@
     "test:plugin-admit": "node plugin-admit-test.mjs",
     "test:plugin-config-save": "node plugin-config-save-test.mjs",
     "test:plugin-data-policy": "node plugin-data-policy-test.mjs",
+    "test:plugin-data-store": "node plugin-data-store-test.mjs",
     "test:plugin-installer": "node plugin-installer-test.mjs",
     "test:plugin-identity": "node plugin-identity-test.mjs",
     "test:plugin-panel-actions": "node plugin-panel-actions-test.mjs",
