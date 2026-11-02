@@ -2978,8 +2978,13 @@ t('审查：不传 store 时退回默认判据（不会一律解锁）', (() => 
 /* 两个调用点都要把 store 传下去 */
 t('审查：列表与详情都把 store 传给 lockOf', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  /*
+    锚点跟着改名走：DetailPanel 的 taskStore 形参已合并进 store，
+    所以这里钉的是 `lockOf(task, tasks, store)`。
+    继续钉 taskStore 会**恒红**，而恒红的守卫等于没有守卫。
+  */
   return app.indexOf('lockOf(t, allRows.map((r) => r.task), taskStore)') >= 0
-    && app.indexOf('lockOf(task, tasks, taskStore)') >= 0;
+    && app.indexOf('lockOf(task, tasks, store)') >= 0;
 })());
 
 
@@ -5438,6 +5443,33 @@ const readmeCount = (() => {
 t('守卫：types.ts 不含无人使用的写死状态常量', (() => {
   const ty = fs.readFileSync(path.join(dir, 'types.ts'), 'utf8');
   return !/export const STATUS_(ORDER|LABEL|COLOR)\b/.test(ty);
+})());
+
+/*
+ * **同一个组件不能同时收两个"长得极像"的 store 形参。**
+ *
+ * 实测抓到两处：
+ *   · DetailPanel 同时收 store 和 taskStore，而调用点传的是**同一个东西**
+ *   · ListView 收 store(Task[]) 与 taskStore(TaskStore)，而 store **函数体里一处都没用**
+ *
+ * 危害不是冗余：两个只差三个字母的名字摆在一起，写的人随手用错一个
+ * 会编译通过、看着也像对的，但 defsOf 拿到的是 Task[] 身上的 defs（undefined）
+ * → 四张定义表全空 → 单元格显示成原始 id（dev / tg_xxxx）。
+ * 这个 bug 实际发生过一次，只能靠实测发现。
+ */
+t('守卫：DetailPanel 不再同时收 store 与 taskStore', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('function DetailPanel(');
+  const sig = app.slice(i, app.indexOf('}: {', i));
+  return sig.indexOf('taskStore') < 0 && sig.indexOf('store') >= 0;
+})());
+
+t('守卫：ListView 不再收未使用的 store(Task[]) 形参', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('function ListView(');
+  const sig = app.slice(i, app.indexOf('}: {', i));
+  /* 只留 taskStore，不能有裸 store 形参 */
+  return !/[{,]\s*store\s*[,}]/.test(sig) && sig.indexOf('taskStore') >= 0;
 })());
 
 /* ---------------- 汇总 ---------------- */

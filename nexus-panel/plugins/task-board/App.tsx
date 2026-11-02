@@ -2422,7 +2422,6 @@ ${dir}
           <ListView
             rows={listRows}
             allRows={flatRows}
-            store={store.tasks}
             taskStore={store}
             flow={flow}
             statusIds={statusIds}
@@ -2465,7 +2464,6 @@ ${dir}
               task={detail}
               me={me}
               tasks={store.tasks}
-              taskStore={store}
               flow={flow}
               onClose={() => setDetailId(null)}
               onComment={(note) => doComment(detail.id, note)}
@@ -4603,12 +4601,20 @@ function ColFilterPop({
     </div>
   );
 }
-function ListView({ rows, allRows, store, /** 完整 store（含 flow）。形参里的 store 是 Task[]，拿不到 flow */   taskStore, flow, statusIds, typeIds, onToggleType, defOpsFor, onPickColor, checked, onCheck, onBatchStatus, onBatchType, onBatchPriority, onBatchDelete, colHidden, colMeta, onColFlag, colWidths, onSetStatus, onPatchField, onToggleTag, onToggleCol, onColWidth, onColResizeEnd, onResetWidths, sort, filters, onSort, onFilter, onClearFilter, onOpen }: {
+function ListView({ rows, allRows, /*
+    ⛔ 这里曾有一个 `store: Task[]` 形参，与 taskStore 只差三个字母，
+    而**函数体里一处都没用到它**（前置锁定用的是 allRows.map）。
+
+    留着的危害不是冗余：正是这个"两个长得极像的名字"引诱人写错。
+    实测踩过 —— 重构时写成 defsOf(store, …)，拿到的是 Task[] 身上的
+    defs（undefined），四张定义表全空，单元格显示成原始 id。
+    TypeScript 也不报错（入参类型放宽过），只能靠实测发现。
+
+    现在只剩 taskStore 一个，名字与内容对得上。
+  */   taskStore, flow, statusIds, typeIds, onToggleType, defOpsFor, onPickColor, checked, onCheck, onBatchStatus, onBatchType, onBatchPriority, onBatchDelete, colHidden, colMeta, onColFlag, colWidths, onSetStatus, onPatchField, onToggleTag, onToggleCol, onColWidth, onColResizeEnd, onResetWidths, sort, filters, onSort, onFilter, onClearFilter, onOpen }: {
   rows: FlatRow[];
   /** 全量（未筛）的行。筛选项从它去重 —— 用过滤后的会漏掉已被筛掉的值 */
   allRows: FlatRow[];
-  /** 全量任务，用于算前置锁定 */
-  store: Task[];
   /** 完整 store（含 flow）：算前置"是否已完成"要认自定义流程，不能写死 'done' */
   taskStore: TaskStore;
   flow: FlowLike;
@@ -5957,15 +5963,25 @@ function DraftInput({
   );
 }
 
-function DetailPanel({ task, me, tasks, /** 完整 store（lockOf 需要它才能拿到 flow，见下方 lock 处） */   taskStore, flow, onClose, onComment, onDelete, onAction, onClaim, onPatch, onOpen, store }: {
-  /** 传 store：所有列的定义表都从 defs 查（defsOf / labelFor），不再逐列传 */
-  store: unknown;
+function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAction, onClaim, onPatch, onOpen, store }: {
+  /*
+    完整 store（Task[] 是 tasks，这个是 TaskStore）。
+
+    ⛔ 原来同时收 store 和 taskStore 两个 prop，而调用点传的是**同一个东西**
+    （store={store} taskStore={store}）—— 两个形参指同一份数据。
+
+    危害不是冗余，是**引诱**：两个长得极像的名字摆在一起，
+    写的人随手用错一个（拿到 Task[] 去查 defs）会编译通过、看着也像对的，
+    但四张定义表全是 undefined，单元格显示成原始 id（dev / tg_xxxx）。
+    实测踩过一次（重构时写成 defsOf(store, …)，而那时的 store 是 Task[]）。
+
+    现在只留一个：叫 store，类型标注清楚。
+  */
+  store: TaskStore;
   task: Task;
   me: string;
   /** 全量任务：算前置锁定要用 */
   tasks: Task[];
-  /** 完整 store（含 flow）：算前置"是否已完成"要认自定义流程 */
-  taskStore: TaskStore;
   /** 流程配置（状态名/颜色/可用操作都由它决定） */
   flow: FlowLike;
   onClose: () => void;
@@ -6042,7 +6058,7 @@ function DetailPanel({ task, me, tasks, /** 完整 store（lockOf 需要它才�
     不传的话 lockOf 拿不到 flow → 退回默认判据 →
     自定义流程下**没有一条前置会解锁**（前置做完了也还是锁着）。
   */
-  const lock = lockOf(task, tasks, taskStore);
+  const lock = lockOf(task, tasks, store);
   /*
     可选的前置：排除自己，并**排除会成环的**。
 
