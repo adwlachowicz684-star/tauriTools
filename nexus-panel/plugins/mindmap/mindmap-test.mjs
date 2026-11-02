@@ -24168,6 +24168,131 @@ group('BUG 194 · 概要写不回 .xmind 必须数出来且说出来');
   ok(/概要缺少可概括的兄弟节点/.test(idx194), '★ 原因自成一档，说清为什么会降级');
 }
 
+/* ============================================================
+   BUG 195 · 备注首尾 / 行尾空白在 .mm / .opml 里被静默削掉
+   ============================================================
+   节点文字的首尾空白 BUG 173 已经保住，备注却还走 normalizeNoteText
+   （削首尾空白、削换行两侧空白、合并连续空行）。写侧 toOpml / 读侧
+   readOpmlNote / fromFreemind 那条路都过它，于是「  第一行  」导出 .opml
+   再导回变成「第一行」，而 exchangeLoss 五个字段全报 0 —— 界面只说「已保存」。
+
+   XMind 两档（native 快照 + zen content.json）实测**原样保住**同样的备注，
+   所以这不是「格式固有、谁都没办法」，是这两条路径独有的损失。
+   ============================================================ */
+group('BUG 195 · 备注首尾与行尾空白：.mm / .opml 削了必须说');
+{
+  const fmt2 = await import('./formats.js');
+  const mk = (note) => JSON.stringify({ root: { data: { id: 'r', text: '根', note },
+    children: [] } });
+  const noteOf = (s) => {
+    try { return JSON.parse(s).root.data.note; } catch (e) { return 'ERR ' + e.message; }
+  };
+  // [名称, 原备注, .opml 导回后] —— 第三列是修复前的事实，不是猜的
+  const CASES = [
+    ['首尾各两空格', '  第一行  ', '第一行'],
+    ['前置换行', '\n开头', '开头'],
+    ['尾随换行', '结尾\n', '结尾'],
+    ['行尾空格(中间行)', '第一行  \n第二行', '第一行\n第二行'],
+    ['连续空行被合并', '甲\n\n\n乙', '甲\n\n乙'],
+  ];
+
+  // ① 行为实据：真的导出再导回，内容确实被改掉
+  {
+    for (const [name, note, want] of CASES) {
+      eq(noteOf(fmt2.fromOpml(fmt2.toOpml(mk(note), '脑图'))), want,
+        `★ .opml 导回后备注被削：${name}`);
+      eq(noteOf(fmt2.fromFreemind(fmt2.toFreemind(mk(note)))), want,
+        `★ .mm 导回后备注被削：${name}`);
+    }
+  }
+
+  // ② 统计：带得走备注的两种格式必须数出来，且进 nodes / hasExchangeLoss
+  {
+    for (const [name, note] of CASES) {
+      for (const k of ['opml', 'freemind']) {
+        const l = fmt2.exchangeLoss(mk(note), k, null);
+        eq(l.noteEdge, 1, `★ ${k} 数出备注空白损失：${name}`);
+        ok(l.nodes > 0, `★ ${k} 进 nodes：${name}`);
+        eq(fmt2.hasExchangeLoss(l), true, `★ ${k} 提示会出现：${name}`);
+      }
+    }
+  }
+
+  // ③ 不重复计：其余格式整条备注都装不下，已报 note，不能再报一次
+  {
+    for (const k of ['mermaid', 'plantuml', 'markdown']) {
+      const l = fmt2.exchangeLoss(mk(CASES[0][1]), k, null);
+      eq(l.note, 1, `★ ${k} 整条备注记为丢失`);
+      eq(l.noteEdge, 0, `★ ${k} 不重复报备注空白（keep.note 判据）`);
+    }
+  }
+
+  // ④ 反向边界：干净备注一律不报 —— 否则每次导出都冒一句没意义的提示
+  {
+    for (const clean of ['第一行\n第二行', '', '普通备注']) {
+      eq(fmt2.exchangeLoss(mk(clean), 'opml', null).noteEdge, 0,
+        `★ 无首尾空白不报：${JSON.stringify(clean)}`);
+      eq(fmt2.exchangeLoss(mk(clean), 'freemind', null).noteEdge, 0,
+        `★ .mm 无首尾空白不报：${JSON.stringify(clean)}`);
+    }
+  }
+
+  // ⑤ 判据 == 真实往返：只有往返真的变了才报（不许恒真、也不许只认首尾）
+  {
+    const ALL = [...CASES.map((c) => c[1]), '第一行\n第二行', '', '普通备注',
+      '甲  \n乙', '\n\n甲', '甲\n\n\n\n乙'];
+    for (const note of ALL) {
+      // 空备注根本不写 _note（读回 undefined），那不是「内容被削」，别算变化
+      const changed = !!note && noteOf(fmt2.fromOpml(fmt2.toOpml(mk(note), '脑图'))) !== note;
+      eq(fmt2.exchangeLoss(mk(note), 'opml', null).noteEdge, changed ? 1 : 0,
+        `★ 判据与真实往返一致：${JSON.stringify(note)}`);
+    }
+  }
+
+  // ⑥ XMind 两档都保得住 —— 所以这不是格式固有
+  {
+    const X195 = await import('./xmind.js');
+    const note = CASES[0][1];
+    const blob = await X195.writeXMind([{ id: 's1', title: '甲', theme: null,
+      layout: null, content: mk(note) }], 's1');
+    const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    eq(JSON.parse((await X195.readXMind(buf)).sheets[0].content).root.data.note, note,
+      '★ XMind 原生档原样保住备注空白');
+    const entries = await X195.zipRead(buf);
+    const cj = entries.get('content.json');
+    const zen = await X195.zipWrite([{ name: 'content.json', data: cj }]);
+    eq(JSON.parse((await X195.readXMind(new Uint8Array(zen))).sheets[0].content).root.data.note,
+      note, '★ XMind zen 档原样保住备注空白');
+  }
+
+  // ⑦ 跨画布累加（LOSS_KEYS 带 noteEdge）
+  {
+    eq(fmt2.exchangeLossAll([{ id: 's1', content: mk(CASES[0][1]) },
+      { id: 's2', content: mk(CASES[0][1]) }], 'markdown').noteEdge, 0,
+      '★ markdown 不重复计');
+    eq(fmt2.exchangeLossAll([{ id: 's1', content: mk(CASES[0][1]) },
+      { id: 's2', content: mk(CASES[0][1]) }], 'opml').noteEdge, 2,
+      '★ .opml 两张各一处 → 合计 2');
+  }
+
+  // ⑧ 源码契约：判据复用写侧同一个函数、两处提示表都要说
+  {
+    const f2 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/noteEdge:\s*0/.test(f2), '★ exchangeLoss 的 out 里有 noteEdge');
+    ok(/normalizeNoteText\(rawNote\)\s*!==\s*rawNote/.test(f2),
+      '★ 判据直接复用 normalizeNoteText（不另抄一份正则）');
+    ok(/keep\.note\s*&&\s*rawNote/.test(f2), '★ 只在 keep.note 为真时数（不重复计）');
+    ok(/'noteEdge',/.test(f2), '★ LOSS_KEYS 带 noteEdge（跨画布累加）');
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const at = [];
+    for (let k = code.indexOf('const NAME = {'); k >= 0;
+      k = code.indexOf('const NAME = {', k + 1)) at.push(k);
+    ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
+    at.forEach((p, i) => ok(/noteEdge:\s*'备注首尾与行尾空白'/.test(code.slice(p, p + 600)),
+      `★ 第 ${i + 1} 张提示表带上备注空白这一项`, code.slice(p, p + 90)));
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');
