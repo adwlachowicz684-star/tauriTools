@@ -70,7 +70,7 @@ import {
 import ModuleLibrary, {
   MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
 } from './components/ModuleLibrary';
-import { expandCanvasRefs } from './engine/canvasRef';
+import { expandCanvasRefs, findCanvasCycles } from './engine/canvasRef';
 import { syncCanvasesRefNames, snapshotCanvasName } from './engine/canvasRefName';
 import {
   collectGlobalTriggers, activeTriggers, dedupeWatchDirs, isActiveTrigger,
@@ -757,6 +757,60 @@ export default function App() {
       + '（在「编辑内部」里删掉模块内那个即可）',
     );
   }, [buried, pushLog]);
+
+  /*
+   * 画布之间互相调用成环。
+   *
+   * findCanvasCycles 早就写好了，但**全项目没有任何地方调用它** ——
+   * 它上面那句注释写着「每次保存画布时跑一次最合适 —— 等到执行时才
+   * 发现在循环，用户已经在别的画布上改了半天」，而这句话一直没兑现。
+   *
+   * 执行侧其实是挡住的（expandCanvasRefs 里 stack.includes），
+   * 所以不会栈溢出；但那意味着**只有点了运行才知道**，
+   * 而且被跳过的是一整块，表现为下游没输出 —— 排查时会去查下游节点，
+   * 想不到是两张画布绕起来了。
+   *
+   * 这里在 canvases 变化时查一遍（持久化的时机），提前说出来。
+   */
+  const canvasCycles = useMemo<string[][]>(
+    () => findCanvasCycles(
+      canvases.map((c) => ({
+        id: c.id,
+        name: c.name,
+        nodes: (c.nodes ?? []) as never,
+        edges: (c.edges ?? []) as never,
+      })),
+    ),
+    [canvases],
+  );
+
+  /*
+   * 与埋藏触发器同一套：只在"这一批环"真的变了时说一次。
+   * canvases 每次编辑都变，直接 pushLog 会把日志刷成同一句话。
+   */
+  const cycleKeyRef = useRef('');
+  useEffect(() => {
+    if (canvasCycles.length === 0) {
+      cycleKeyRef.current = '';
+      return;
+    }
+    const key = canvasCycles.map((c) => c.join('\u2192')).sort().join('|');
+    if (key === cycleKeyRef.current) return;
+    cycleKeyRef.current = key;
+    /*
+     * 报**名字**而不是 id。
+     *
+     * id 是一串 md 开头的东西，用户在界面上从来没见过它 ——
+     * 「画布 md8f2c 与 md1a9b 成环」等于没说，他得先猜哪个是哪张。
+     */
+    const nameOf = (id: string): string => canvases.find((c) => c.id === id)?.name ?? id;
+    const one = canvasCycles[0].map(nameOf).join(' \u2192 ');
+    pushLog(
+      '\u26a0 ' + (canvasCycles.length > 1 ? `${canvasCycles.length} 处画布` : '画布')
+      + `互相调用成环（${one}${canvasCycles.length > 1 ? ' 等' : ''}）：`
+      + '执行时这些跨画布调用会被整块跳过，下游拿不到输出 —— 请断开其中一条引用',
+    );
+  }, [canvasCycles, canvases, pushLog]);
 
   /*
    * 工具栏那个计数只统计"真在监听的"，埋着的**一个都不算** ——
