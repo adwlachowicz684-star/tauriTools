@@ -2198,6 +2198,8 @@ export function exchangeLoss(content, kind, sheet) {
     newline: 0,
     // BUG 195：备注在 .mm / .opml 里被 normalizeNoteText 削掉的那部分空白
     noteEdge: 0,
+    // BUG 196：Markdown 的画布标题被 inlineText 摊平换行 / 削首尾空白
+    titleEdge: 0,
     // BUG 181：画布自己的主题与布局（画布级，不计进 nodes，见函数末尾）
     theme: 0, layout: 0 };
   const km = parseKm(content);
@@ -2346,6 +2348,33 @@ export function exchangeLoss(content, kind, sheet) {
   const ly = String(sheet?.layout ?? '').trim();
   out.theme = th && th !== SHEET_THEME_DEFAULT ? 1 : 0;
   out.layout = ly && ly !== SHEET_LAYOUT_DEFAULT ? 1 : 0;
+  /*
+   * BUG 196：画布标题「带得走」不等于「原样带得走」。
+   *
+   * Markdown 用 `## 画布：<标题>` 表达多画布（BUG 101），写侧
+   * `workbookToMarkdown` 把标题过一遍 `inlineText()`：换行类字符连同两侧
+   * 空白并成空格、首尾空白被 trim；导回侧 `markdownToWorkbook` 再 trim 一次。
+   * 实测「  项目 A  」→「项目 A」、「甲\n乙」→「甲 乙」，标题被静默改掉，
+   * 而 exchangeLoss 全报 0、hasExchangeLoss=false —— 那句「装不下…」整段
+   * 不出现，界面只说「已保存」。
+   *
+   * 画布标题是用户分辨几张画布的唯一依据，而 .md 又是最常被当成备份的格式，
+   * 导入是整体替换且不可撤销。XMind 两档（native 快照 + zen content.json）
+   * 实测**原样保住**同样的标题，所以这不是格式固有 —— 与 BUG 191（节点文字
+   * 换行）/ BUG 195（备注空白）是同一条线的画布级那一半。
+   *
+   * ⓘ 判据直接调写侧同一个 `inlineText()`，不另抄一份正则：写侧改了口径，
+   *   统计自动跟着变（各写一份必然只修一处，本项目反复撞的坑）。
+   * ⓘ 只认 Markdown：其余四种交换格式是单画布、不写画布标题 ——
+   *   .opml 把标题原样写进 `<head><title>`（escXml 不 trim，BUG 193 导回
+   *   也照用它），一律计就会对它们虚报。
+   * ⓘ 画布级，**不计进 nodes**：一句「共涉及 N 个节点」对「整本工作簿的
+   *   某张画布改了名字」不成立（同 BUG 181 对 theme / layout 的处理）。
+   */
+  if (kind === 'markdown') {
+    const title = String(sheet?.title ?? '');
+    if (title && inlineText(title) !== title) out.titleEdge = 1;
+  }
   out.nodes = touched.size;
   return out;
 }
@@ -2359,6 +2388,8 @@ const LOSS_KEYS = ['note', 'hyperlink', 'priority', 'progress', 'labels',
   'newline',
   // BUG 195：备注首尾/行尾空白同样是节点级
   'noteEdge',
+  // BUG 196：画布标题是**画布级**，多画布导出时逐张相加 = 有几张标题被改
+  'titleEdge',
   // BUG 181：主题 / 布局是**画布级**，多画布导出时逐张相加 = 有几张非默认
   'theme', 'layout'];
 

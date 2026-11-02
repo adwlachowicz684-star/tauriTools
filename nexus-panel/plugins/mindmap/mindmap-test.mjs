@@ -24293,6 +24293,125 @@ group('BUG 195 · 备注首尾与行尾空白：.mm / .opml 削了必须说');
   }
 }
 
+/* ============================================================
+   BUG 196 · 画布标题的空白 / 换行在 .md 里被静默改掉
+   ============================================================
+   Markdown 用 `## 画布：<标题>` 分块（BUG 101）。写侧 workbookToMarkdown
+   把标题过 inlineText()（换行连两侧空白并成空格 + trim），导回侧
+   markdownToWorkbook 再 trim —— 实测「  项目 A  」→「项目 A」、
+   「甲\n乙」→「甲 乙」。而 exchangeLoss 全报 0，界面只说「已保存」。
+
+   与 BUG 191（节点文字换行）/ BUG 195（备注空白）同一条线：
+   「带得走」不等于「原样带得走」，这里漏的是**画布级**那一半。
+   XMind 两档实测原样保住，所以不是格式固有。
+   ============================================================ */
+group('BUG 196 · 画布标题空白与换行：Markdown 改了必须说');
+{
+  const fmt3 = await import('./formats.js');
+  const wb3 = await import('./workbook.js');
+  const mkSheet = (title) => ({ id: 's1', title,
+    content: JSON.stringify({ root: { data: { id: 'r', text: '根' },
+      children: [{ data: { id: 'a', text: '子' }, children: [] }] } }),
+    theme: null, layout: null });
+  const backTitle = (title) => wb3.markdownToWorkbook(
+    wb3.workbookToMarkdown([mkSheet(title)]))[0]?.title;
+  // [名称, 原标题, 修复前 .md 往返后的标题] —— 第三列是实测事实，不是猜的
+  const CASES = [
+    ['首尾各两空格', '  项目 A  ', '项目 A'],
+    ['中间换行', '甲\n乙', '甲 乙'],
+    ['CR', '含\r回车', '含 回车'],
+    ['CRLF', '含\r\n换行', '含 换行'],
+    ['U+2028', '含\u2028X', '含 X'],
+    ['首尾 + 中间', '  甲\n乙  ', '甲 乙'],
+  ];
+
+  // ① 行为实据：真的导出再导回，标题确实被改掉
+  for (const [name, title, want] of CASES) {
+    eq(backTitle(title), want, `★ .md 导回后画布标题被改：${name}`);
+  }
+
+  // ② 统计：Markdown 必须数出来，且提示真的会出现
+  for (const [name, title] of CASES) {
+    const s = mkSheet(title);
+    const l = fmt3.exchangeLoss(s.content, 'markdown', s);
+    eq(l.titleEdge, 1, `★ markdown 数出画布标题损失：${name}`);
+    eq(fmt3.hasExchangeLoss(l), true, `★ markdown 提示会出现：${name}`);
+    eq(l.nodes, 0, `★ 画布级不计进 nodes：${name}`);
+  }
+
+  // ③ 反向边界：干净标题不报；其余四种格式不写画布标题，不许虚报
+  {
+    for (const clean of ['正常标题', '项目 A', '']) {
+      const s = mkSheet(clean);
+      eq(fmt3.exchangeLoss(s.content, 'markdown', s).titleEdge, 0,
+        `★ 干净标题不报：${JSON.stringify(clean)}`);
+    }
+    for (const k of ['freemind', 'opml', 'mermaid', 'plantuml']) {
+      const s = mkSheet('  项目 A  ');
+      eq(fmt3.exchangeLoss(s.content, k, s).titleEdge, 0,
+        `★ ${k} 不写画布标题，不许虚报`);
+    }
+    // .opml 真的把标题原样写进 <head><title>（escXml 不 trim）
+    const op = fmt3.toOpml(mkSheet('  项目 A  ').content, '  项目 A  ');
+    ok(/<title>\s*&?\s*项目 A/.test(op) || /  项目 A  /.test(op),
+      '★ .opml 的画布标题未被削（对照）');
+  }
+
+  // ④ 判据 == 真实往返：只有往返真的变了才报（不许恒真、也不许只认首尾）
+  {
+    const ALL = [...CASES.map((c) => c[1]), '正常标题', '', '   ',
+      '甲  \n乙', '\n\n甲', '甲\t乙', '\t甲\t'];
+    for (const title of ALL) {
+      const changed = !!title && backTitle(title) !== title;
+      const s = mkSheet(title);
+      eq(fmt3.exchangeLoss(s.content, 'markdown', s).titleEdge, changed ? 1 : 0,
+        `★ 判据与真实往返一致：${JSON.stringify(title)}`);
+    }
+  }
+
+  // ⑤ 跨画布累加（LOSS_KEYS 带 titleEdge）
+  {
+    const s = mkSheet('  项目 A  ');
+    eq(fmt3.exchangeLossAll([s, { ...s, id: 's2' }], 'markdown').titleEdge, 2,
+      '★ 两张画布标题都被改 → 合计 2');
+    eq(fmt3.exchangeLossAll([s, mkSheet('正常标题')], 'markdown').titleEdge, 1,
+      '★ 只有一张被改 → 合计 1');
+  }
+
+  // ⑥ XMind 两档都原样保住 —— 所以这不是格式固有
+  {
+    const X196 = await import('./xmind.js');
+    for (const [name, title] of [CASES[0], CASES[1]]) {
+      const blob = await X196.writeXMind([mkSheet(title)], 's1');
+      const buf = new Uint8Array(await new Blob([blob]).arrayBuffer());
+      eq((await X196.readXMind(buf)).sheets[0].title, title,
+        `★ XMind 原生档原样保住画布标题：${name}`);
+      const entries = await X196.zipRead(buf);
+      const cj = entries.get('content.json');
+      const zen = await X196.zipWrite([{ name: 'content.json', data: cj }]);
+      eq((await X196.readXMind(new Uint8Array(zen))).sheets[0].title, title,
+        `★ XMind zen 档原样保住画布标题：${name}`);
+    }
+  }
+
+  // ⑦ 源码契约：判据复用写侧同一函数、两处提示表都要说
+  {
+    const f3 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/titleEdge:\s*0/.test(f3), '★ exchangeLoss 的 out 里有 titleEdge');
+    ok(/inlineText\(title\)\s*!==\s*title/.test(f3),
+      '★ 判据直接复用 inlineText（不另抄一份正则）');
+    ok(/kind\s*===\s*'markdown'/.test(f3), '★ 判据只认 Markdown（其余格式不虚报）');
+    ok(/'titleEdge',/.test(f3), '★ LOSS_KEYS 带 titleEdge（跨画布累加）');
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const at = [];
+    for (let k = code.indexOf('const NAME = {'); k >= 0;
+      k = code.indexOf('const NAME = {', k + 1)) at.push(k);
+    ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
+    at.forEach((p, i) => ok(/titleEdge:\s*'画布标题的空白与换行'/.test(code.slice(p, p + 700)),
+      `★ 第 ${i + 1} 张提示表带上画布标题这一项`, code.slice(p, p + 90)));
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');
