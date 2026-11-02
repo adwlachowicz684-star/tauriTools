@@ -29,12 +29,13 @@ import { build } from 'vite';
 import react from '@vitejs/plugin-react';
 import {
   existsSync, readdirSync, mkdirSync, copyFileSync, statSync, readFileSync,
-  renameSync,
+  writeFileSync, renameSync,
 } from 'node:fs';
 import { resolve, dirname, relative, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PATHS } from '../config/nexus.config.mjs';
 import { STALE_ROOT } from './stale-root.mjs';
+import { inlineHtml, checkSingleFile } from './single-file.mjs';
 
 /**
  * 「不能交给 Vite 处理」的原生子目录，构建后原样补拷。
@@ -42,9 +43,17 @@ import { STALE_ROOT } from './stale-root.mjs';
  * 成因：这些文件靠相对 URL 在运行时直接引用，Vite 的 HTML/JS 管线不认识：
  *   · mindmap/editor —— kityminder 的 4 个原文件，靠 <script src> 加载
  *     （由编辑器 iframe 以 ./editor/index.html 直接加载，见 editor-bridge.js）
- *   · project-group/preseticons —— 122 个 .ico，靠 <img src> 加载；
- *     icon-picker 服务还以 ../project-group/preseticons/x.ico 跨插件引用，
- *     两者解析到同一个 runtime-plugins/ 路径，同 origin，都能访问。
+ *   · project-group/preseticons —— 122 个 .ico，靠 <img src> 加载
+ *   · icon-picker/preseticons —— 同一批图标的**第二份拷贝**（自带）。
+ *
+ *     为什么要两份：目标是每个插件一个 GitHub 仓库、独立安装、互不影响。
+ *     原先 icon-picker 以 `../project-group/preseticons/` 跨插件引用，
+ *     只装 icon-picker 而没装 project-group 时立刻 404，
+ *     且**构建期不响**（ICON_DIR 是字符串常量，Vite 不解析、原样进产物），
+ *     只表现为图标一片空白。多一份 747 KB 换掉这类静默失效，划算。
+ *
+ *     ⚠ 两份必须一致，由 cross-plugin-coupling-test.mjs 的
+ *       「共享资源一致性」一节守着。
  *
  * 少了它表现为「插件能开、画布/图标一片空白」—— index.html 正常产出，
  * 但 editor/index.html 或 .ico 404，且**看不出是构建配置问题**。
@@ -52,6 +61,7 @@ import { STALE_ROOT } from './stale-root.mjs';
 const NATIVE_SUBDIRS = [
   { plugin: 'mindmap', dir: 'editor' },
   { plugin: 'project-group', dir: 'preseticons' },
+  { plugin: 'icon-picker', dir: 'preseticons' },
 ];
 
 /** 拷贝一个文件 / 一棵目录树（不用 cpSync：Windows 上覆盖已存在文件会走
@@ -133,8 +143,60 @@ function restoreOutDir(outDir, stale) {
   }
 }
 
+/**
+ * 把构建产物内联成单文件 index.html（仅 --single-file 时执行）。
+ *
+ * 为什么单独一步：asset 协议加载时，页面里任何 ./assets/*.js 都会因路径
+ * %2F 编码解析到协议根而 403（清单阶段 0 的「坑①」）。内联是唯一不改 Rust、
+ * 不改 CSP 的绕法。详见 scripts/single-file.mjs 文件头。
+ *
+ * 判失败的口径（别放宽）：
+ *   · script / stylesheet 仍在 remaining → **抛错**。说明内联根本没生效，
+ *     写出去的是「能开但样式与脚本都缺」的残品，且没有任何报错。
+ *   · 图片类 remaining 与 warnings（动态 import、CSS url()）→ 只报告不抛错。
+ *     它们意味着「不算完全自包含」，但是否可接受由人判断（122 个 .ico
+ *     内联会让产物膨胀到不可接受）。
+ */
+function inlineOne(id, outDir, inlineImages) {
+  const htmlPath = resolve(outDir, 'index.html');
+  const before = readFileSync(htmlPath, 'utf8');
+  const r = inlineHtml(before, {
+    dir: outDir,
+    readFile: (p) => (existsSync(p) ? readFileSync(p) : null),
+    inlineImages,
+  });
+  const chk = checkSingleFile(r.html);
+
+  const blocking = chk.remaining.filter(
+    (x) => x.kind === 'script' || x.kind === 'stylesheet',
+  );
+  if (blocking.length) {
+    throw new Error(
+      `[build-plugins] ${id} 内联后仍残留阻塞类引用：`
+      + blocking.map((x) => x.url).join(', '),
+    );
+  }
+  writeFileSync(htmlPath, r.html);
+
+  const kb = (Buffer.byteLength(r.html, 'utf8') / 1024).toFixed(0);
+  const ok = chk.remaining.length === 0 && chk.warnings.length === 0;
+  console.log(
+    `   ${ok ? '📄' : '⚠️ '} 单文件 ${id}：${kb}KB，内联 ${r.inlined.length} 项`
+    + (r.removed.length ? `，删除预载 ${r.removed.length} 条` : '')
+    + (chk.remaining.length ? `，残留外部引用 ${chk.remaining.length} 条` : '')
+    + (chk.warnings.length ? `，告警 ${chk.warnings.length} 条` : ''),
+  );
+  for (const x of chk.remaining.slice(0, 5)) {
+    console.log(`      · 残留 ${x.kind} ${x.url}`);
+  }
+  for (const w of chk.warnings.slice(0, 5)) {
+    console.log(`      · 告警 ${w.kind} ${w.url}`);
+  }
+  return { ok, remaining: chk.remaining.length, warnings: chk.warnings.length, kb };
+}
+
 /** 构建单个插件到 runtime-plugins/<id>/ */
-async function buildOne(id) {
+async function buildOne(id, opts = {}) {
   const pluginDir = resolve(PATHS.plugins, id);
   const outDir = resolve(PATHS.runtimePlugins, id);
   const t0 = Date.now();
@@ -182,8 +244,13 @@ async function buildOne(id) {
     restoreOutDir(outDir, stashed);
     throw e;
   }
+
+  let sf = null;
+  if (opts.singleFile) sf = inlineOne(id, outDir, !!opts.singleFileImages);
+
   const ms = Date.now() - t0;
   console.log(`✅ ${id} → runtime-plugins/${id}/ （${ms}ms）`);
+  return sf;
 }
 
 /**
@@ -229,12 +296,33 @@ async function main() {
     return;
   }
   mkdirSync(PATHS.runtimePlugins, { recursive: true });
+  const singleFile = process.argv.includes('--single-file');
+  const singleFileImages = process.argv.includes('--single-file-images');
+  if (singleFile) {
+    console.log('[build-plugins] 单文件模式：子资源内联进 index.html'
+      + (singleFileImages ? '（含图片）' : '（图片不内联）'));
+  }
   console.log(`[build-plugins] 构建 ${ids.length} 个 iframe 插件 → runtime-plugins/`);
   const t0 = Date.now();
+  const reports = [];
   for (const id of ids) {
-    await buildOne(id);
+    const sf = await buildOne(id, { singleFile, singleFileImages });
+    if (sf) reports.push({ id, ...sf });
   }
   console.log(`[build-plugins] 完成，总耗时 ${Date.now() - t0}ms`);
+
+  /* 逐插件结论汇总：阶段 0 要的就是「哪些插件真能单文件」这份硬数据，
+     不是凭推测。完全自包含 = remaining 0 且 warnings 0。 */
+  if (reports.length) {
+    const full = reports.filter((r) => r.ok);
+    console.log(`\n[单文件] 完全自包含 ${full.length}/${reports.length}：`
+      + full.map((r) => r.id).join(', '));
+    const partial = reports.filter((r) => !r.ok);
+    if (partial.length) {
+      console.log(`[单文件] 非完全自包含 ${partial.length}：`
+        + partial.map((r) => `${r.id}(残留${r.remaining}/告警${r.warnings})`).join(', '));
+    }
+  }
 }
 
 /* 被 npm script 直接运行时才执行；被测试 import 时只暴露函数 */
