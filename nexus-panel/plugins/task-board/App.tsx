@@ -96,7 +96,7 @@ import { isComposing } from '../../js/ime.js';
 type TbView = 'board' | 'list' | 'group' | 'stats';
 
 const VIEWS: { key: TbView; label: string; title: string }[] = [
-  { key: 'board', label: '看板', title: '看板：按状态分五列' },
+  { key: 'board', label: '看板', title: '看板：按流程里的状态分列' },
   { key: 'list', label: '列表', title: '列表：平铺排序，表头可点' },
   { key: 'group', label: '分组', title: '分组：选一列（或几列）做分组依据，只改显示不改数据' },
   { key: 'stats', label: '统计', title: '统计：分布 / 负载 / 最近动态' },
@@ -655,14 +655,38 @@ export default function App() {
       }
     }
     return map;
-  }, [store, filtered, boardColumns, tagNames]);
+  /*
+    ⛔ sort 必须进依赖 —— 注释明明写着"看板也跟随用户点的排序"，
+    可依赖里没有 sort。实测（jsdom）：
+      默认 sort=priority，todo 列顺序 0002→0003→0001；
+      切到列表点「更新」改排序，再切回看板，顺序**纹丝不动**
+      （仍是 0002→0003→0001，而 updatedAt 应是 0001→0003→0002）。
+    原因：boardColumns / filtered / tagNames / store 都不随 sort 变，
+    useMemo 直接返回旧缓存；只有等 2s 轮询换了个 store 对象才"自己好了"。
+    于是在这 2 秒里，顶栏写着「排序：更新 ↓」而看板是另一套顺序 ——
+    而且用户会以为看板根本不支持排序（它其实支持，只是慢半拍）。
+
+    这与"过滤结果 useMemo 漏 typeDefs 依赖"是同一类：
+    函数体用的变量没列进依赖，改动不重算。
+  */
+  /*
+    flow 也显式列出：虽然 boardColumns 依赖 flow（间接会带动重算），
+    但"依赖了别人、别人恰好依赖 flow"这种链太脆 —— 哪天 boardColumns
+    不再依赖 flow，这里就悄悄退化成不重算了。显式列出才是契约。
+  */
+  }, [store, filtered, boardColumns, tagNames, sort, flow]);
   const listRows = useMemo(
     () => sortRowsBy(filteredRows, sort.field, sort.dir, tagNames, flow),
     /*
       ⛔ tagNames 必须进依赖：改了标签名之后排序结果会变，
       不重算的话列表还停在旧顺序上 —— 而改名明明已经生效了。
     */
-    [filteredRows, sort, tagNames],
+    /*
+      flow 也列进来：cmpTask 按状态排序时要查流程里的先后，
+      当前 flow 取自 store 所以改动会连带重算，但**显式列出**才不会
+      在以后 flow 换来源（比如独立配置）时悄悄退化成只读缓存。
+    */
+    [filteredRows, sort, tagNames, flow],
   );
 
   /* ---------- 列级筛选的操作 ---------- */

@@ -2192,7 +2192,13 @@ t('审查：标签排序按显示名而不是 id', (() => {
  */
 t('审查：排序的依赖里带 tagNames（改名后顺序要重算）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('[filteredRows, sort, tagNames]') >= 0;
+  /*
+    ⛔ 原来钉的是精确字面量 `[filteredRows, sort, tagNames]`，
+    加了 flow 之后恒红 —— 恒红的守卫等于没有守卫。
+    改成用 memoBlock 取真实依赖数组：listRows 同时含 tagNames/sort/flow。
+  */
+  const b = memoBlock(app, 'listRows');
+  return !!b && ['tagNames', 'sort', 'flow'].every((d) => b.deps.has(d));
 })());
 
 
@@ -5744,6 +5750,74 @@ t('守卫：通杀 —— 多值写回的 multi 实参必须走统一判据', ((
   if (bad.length) console.log('  绕过统一判据：' + bad.join(' | '));
   return bad.length === 0;
 })());
+
+/*
+ * ============================================================
+ * 历史类别反查（续二）：useMemo 依赖漏项。
+ * 之前修过「过滤结果漏 typeDefs」—— 这次在排序链上又撞到同一类：
+ * byColumn 函数体用了 sort，依赖里却没有，改排序后看板停在旧顺序。
+ * ============================================================
+ */
+
+/* ① 看板排序的 useMemo 必须把 sort 列进依赖 */
+t('守卫：看板 byColumn 的依赖含 sort（改排序立刻重算）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const b = memoBlock(app, 'byColumn');
+  return !!b && b.deps.has('sort') && b.deps.has('flow');
+})());
+
+/* ② 通杀：任何用 sort.field 或 flow 做排序的 useMemo，依赖必须含对应变量 */
+t('守卫：通杀 —— 排序类 useMemo 的依赖与函数体一致', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  /*
+    ⛔ 用按行切片 + `}, [deps])` 正则只能识别**块体**箭头函数，
+    会漏掉 `() => sortRowsBy(...)` 这种**表达式体**（listRows 正是），
+    于是真正的漏项检查不到 —— 守卫形同虚设。
+    改用括号平衡的 memoBlock，两种写法都能取到。
+  */
+  const names = [...app.matchAll(/^  const (\w+) = useMemo/gm)].map((m) => m[1]);
+  const bad = [];
+  let checked = 0;
+  for (const name of names) {
+    const b = memoBlock(app, name);
+    if (!b) continue;
+    const usesSort = /sortTasksBy\(|sortRowsBy\(/.test(b.body) && /sort\.field/.test(b.body);
+    const usesFlow = /sortTasksBy\(|sortRowsBy\(/.test(b.body) && /\bflow\s*\)/.test(b.body);
+    if (!usesSort && !usesFlow) continue;
+    checked += 1;
+    if (usesSort && !b.deps.has('sort')) bad.push(name + ' 漏 sort');
+    if (usesFlow && !b.deps.has('flow')) bad.push(name + ' 漏 flow');
+  }
+  if (bad.length) console.log('  排序 useMemo 依赖漏项：' + bad.join(' | '));
+  return checked > 0 && bad.length === 0;
+})());
+
+/* ③ 视图 tab 的文案不写死默认列数（自定义流程下是假话） */
+t('守卫：视图文案不写死「五列」', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return !/按状态分五列|看板分五列|五个状态/.test(app);
+})());
+
+/* 取某个 `const NAME = useMemo(` 的完整块与其依赖数组（括号平衡，兼容表达式体/块体两种写法） */
+function memoBlock(app, name) {
+  const i = app.indexOf('const ' + name + ' = useMemo');
+  if (i < 0) return null;
+  let d = 0, started = false, end = -1;
+  for (let k = i; k < app.length; k++) {
+    const ch = app[k];
+    if (ch === '(') { d += 1; started = true; }
+    else if (ch === ')') { d -= 1; if (started && d === 0) { end = k; break; } }
+  }
+  if (end < 0) return null;
+  const seg = app.slice(i, end + 1);
+  /* 依赖数组 = 块尾最后一个 [ ... ]，后面只允许 , 空白 */
+  const ms = [...seg.matchAll(/\[([^\[\]]*?)\]\s*,?\s*(?=\))/g)];
+  const m = ms[ms.length - 1];
+  const deps = new Set(m ? m[1].split(',').map((x) => x.trim()) : []);
+  /* 函数体 = 去掉依赖数组之后的部分 */
+  const body = m ? seg.slice(0, seg.lastIndexOf(m[0])) : seg;
+  return { seg, deps, body };
+}
 
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
