@@ -26,7 +26,7 @@
  * 因此第 5、6 节用构造样本反证：故意制造不一致，判据必须喊。
  */
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, copyFileSync, mkdtempSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -119,8 +119,12 @@ t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问�
  * 5. 元断言：一致性判据不能恒真
  * ------------------------------------------------------------------ */
 {
-  const tmp = join(HERE, '.tmp-manifest-sync');
-  rmSync(tmp, { recursive: true, force: true });
+  /* ⛔ 临时产物目录不许写死在项目里：
+     测试若被 502 打断，残留的 .tmp-* 会被 scope 判成 LOCAL_ONLY 噪声，
+     还可能被 installed-plugin-scan 当成候选插件目录扫进去。
+     用系统临时目录 + mkdtemp，进程被杀也不污染工作树。 */
+  const tmp = mkdtempSync(join(tmpdir(), 'manifest-sync-'));
+  try {
 
   /* A：目录名叫 agent-flow，manifest 却自称 ghost —— 顶替场景，必须拒 */
   mkdirSync(join(tmp, 'agent-flow'), { recursive: true });
@@ -143,7 +147,9 @@ t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问�
     !(r2.ok && r2.manifest.name === regName),
     `判据恒真（registry=${regName}）`);
 
-  rmSync(tmp, { recursive: true, force: true });
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 /* ------------------------------------------------------------------ *
