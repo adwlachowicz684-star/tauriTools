@@ -1019,7 +1019,16 @@ export default function App() {
         自定义流程里"审查"那一步可能叫别的，
         写死的话配了 notifyUrl 也**永远收不到通知**，而且没有提示。
       */
-      if (to === (cfg.notifyStatus || 'review')) await S.notifyWebhook(cfg, task);
+      if (to === (cfg.notifyStatus || 'review')) {
+        /*
+          ⛔ 不阻塞主流程（通知失败不该让流转失败），但**必须说出来**。
+          静默的话用户会在对端排查，而问题其实在这一侧。
+        */
+        const r = await S.notifyWebhook(cfg, task);
+        if (!r.sent && r.reason !== 'no-url') {
+          ctx.toast(`已流转，但通知没发出去（${r.reason}）`, 'err');
+        }
+      }
       /*
         ⛔ 状态名不能查写死的 STATUS_LABEL：
         那是**默认那五个**的名字表，自定义流程的 id（s2、'完工'…）在里面查不到，

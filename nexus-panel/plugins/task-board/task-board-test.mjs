@@ -2809,8 +2809,15 @@ t('审查：分组依据为空仍只得到一组且不抛错', (() => {
  */
 t('审查：流转后的 toast 用 statusName（不查写死的 STATUS_LABEL）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  /*
+    ⛔ 固定 900 字符的窗口太脆：doTransition 里后来加了通知提示那一段，
+    statusName 被推出窗口 → 守卫**恒红**，而恒红的守卫等于没有守卫。
+
+    改成切到下一个顶层 const（doClaim）为止 —— 与函数体长度无关。
+  */
   const i = app.indexOf('const doTransition =');
-  const seg = app.slice(i, i + 900);
+  const j = app.indexOf('\n  const doClaim =', i);
+  const seg = app.slice(i, j > 0 ? j : i + 2000);
   return seg.indexOf('${statusName(flow, to)}') >= 0
     && seg.indexOf('${STATUS_LABEL[to]}') < 0;
 })());
@@ -5423,6 +5430,29 @@ t('守卫：CSS 里没有无人使用的 tb- 类（死样式）', (() => {
  * 判据放在汇总前跑：此时 pass/fail 已定，能拿到**真实项数**去比对。
  * 放在前面跑的话只能静态数 t( 的调用次数，循环里生成的会数漏。
  */
+/*
+ * **通知发不出去必须说出来，不能静默。**
+ *
+ * ⛔ 原来的实现只 catch 网络异常，而 **fetch 只在网络失败时 reject** ——
+ * HTTP 404 / 500 / 502 都是正常返回，不进 catch，全被当成"发出去了"。
+ *
+ * 于是 URL 配错（404）、对端报错（500）全都一片安静，
+ * 用户只会在对端排查，而问题在这一侧。
+ * 与"通知状态写死 review 导致永远收不到"是同一类：**静默 + 查错方向反了**。
+ */
+t('守卫：notifyWebhook 检查响应状态（不能只 catch 网络异常）', (() => {
+  const st = fs.readFileSync(path.join(dir, 'lib/store.ts'), 'utf8');
+  const i = st.indexOf('export async function notifyWebhook');
+  const seg = st.slice(i, i + 1600);
+  return /if \(!res\.ok\)/.test(seg) && /return \{ sent: false/.test(seg);
+})());
+
+t('守卫：通知失败要提示（不阻塞主流程，但说出来）', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  return /if \(!r\.sent && r\.reason !== 'no-url'\)/.test(app)
+    && app.indexOf('通知没发出去') >= 0;
+})());
+
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
   const nums = [...rd.matchAll(/(\d+)\s*项/g)].map((m) => Number(m[1]));

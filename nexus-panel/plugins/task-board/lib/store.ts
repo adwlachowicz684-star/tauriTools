@@ -584,10 +584,27 @@ export function curlExample(cfg: TbConfig): string {
 }
 
 /** 任务提交审查时通知外部（agent-flow webhook 等），失败静默 */
-export async function notifyWebhook(cfg: TbConfig, task: Task): Promise<void> {
-  if (!cfg.notifyUrl) return;
+export async function notifyWebhook(
+  cfg: TbConfig,
+  task: Task,
+): Promise<{ sent: boolean; reason?: string }> {
+  if (!cfg.notifyUrl) return { sent: false, reason: 'no-url' };
+  /*
+    ⛔ 原来只 catch 网络异常 —— 而 **fetch 只在网络失败时 reject**，
+    HTTP 404 / 500 / 502 都是**正常返回**，不进 catch。
+
+    于是：URL 配错了（404）、对端接口报错（500）、网关挂了（502）——
+    全都当成"发出去了"，界面一片安静。
+    用户只会在对端排查（"怎么没收到？是不是地址错了？是不是服务挂了？"），
+    想不到是这边压根没发出去、或者发出去了却拿到了错误响应。
+
+    这与"通知状态写死 review 导致永远收不到"是同一类：
+    **静默失效，且用户查错方向完全反了**。
+
+    返回状态让调用方去说，而不是自己吞掉。
+  */
   try {
-    await fetch(cfg.notifyUrl, {
+    const res = await fetch(cfg.notifyUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -596,8 +613,10 @@ export async function notifyWebhook(cfg: TbConfig, task: Task): Promise<void> {
         task: { id: task.id, title: task.title, status: task.status, assignee: task.assignee },
       }),
     });
-  } catch {
-    /* 通知失败不阻塞主流程 */
+    if (!res.ok) return { sent: false, reason: `对端返回 ${res.status}` };
+    return { sent: true };
+  } catch (e) {
+    return { sent: false, reason: String((e as Error)?.message || e).slice(0, 60) };
   }
 }
 
