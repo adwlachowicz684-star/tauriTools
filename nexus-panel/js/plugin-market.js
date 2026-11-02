@@ -41,6 +41,7 @@ import { join } from 'node:path';
 import {
   parseRepoInput, fetchRelease, downloadAsset, pickAsset,
   assetNameFor, ASSET_PREFIX, ASSET_SUFFIX,
+  verifyAssetDigest, isUploadedAsset,
 } from './plugin-store-client.js';
 import { installPlugin, uninstallPlan, uninstallPlugin } from './plugin-installer.js';
 import {
@@ -162,6 +163,7 @@ export function createPluginMarket(p) {
      * 且**不产生半状态**：目录没落、台账没记、旧版本原样还在。
      */
     async install(input, opts = {}) {
+      const digestWarnings = [];
       const parsed = parseRepoInput(input);
       if (!parsed) return { ok: false, stage: 'parse', error: '仓库地址无法解析' };
       const repo = { owner: parsed.owner, repo: parsed.repo };
@@ -171,7 +173,7 @@ export function createPluginMarket(p) {
       if (!rel.ok) return { ok: false, stage: 'release', error: rel.error };
       const version = String(rel.release.tag_name || rel.release.name || '').replace(/^v/i, '');
       const assets = (Array.isArray(rel.release.assets) ? rel.release.assets : [])
-        .filter((a) => a && typeof a.name === 'string'
+        .filter((a) => a && typeof a.name === 'string' && isUploadedAsset(a)
           && a.name.startsWith(ASSET_PREFIX) && a.name.endsWith(ASSET_SUFFIX));
 
       let asset = null;
@@ -192,6 +194,14 @@ export function createPluginMarket(p) {
 
       const dl = await downloadAsset(asset, { fetch: fetchFn });
       if (!dl.ok) return { ok: false, stage: 'download', error: dl.error };
+
+      /* 下载完先校验产物完整性，再交给解包器。
+         校验放在解包之前：坏字节流若直接进 unpackTarGz，用户看到的是
+         一句「gzip 解压失败 / tar 头校验和不匹配」，指向一个不存在的问题，
+         真因其实是这一趟下载没下全。 */
+      const dv = verifyAssetDigest(dl.buffer, asset);
+      if (!dv.ok) return { ok: false, stage: 'digest', error: dv.reason };
+      if (!dv.checked) digestWarnings.push('该 release 产物没有 digest，跳过完整性校验（老 release 常见）');
 
       const unpacked = unpackTarGz(dl.buffer);
       if (!unpacked.ok) return { ok: false, stage: 'unpack', error: unpacked.error };
@@ -217,7 +227,7 @@ export function createPluginMarket(p) {
 
       /* 契约①：装成功就记台账。sha 取不到不阻断安装（只告警）——
          指纹比对依赖它，但缺 sha 不能让一个装好的插件变成"没装"。 */
-      const warnings = [...r.warnings, ...unpacked.warnings];
+      const warnings = [...r.warnings, ...unpacked.warnings, ...digestWarnings];
       for (const s of unpacked.skipped) warnings.push(`解包跳过条目 ${s.name}: ${s.reason}`);
       let sha = null;
       if (ref || version) {
@@ -234,7 +244,7 @@ export function createPluginMarket(p) {
       saveLedger(rec.ledger);
       warnings.push(...rec.warnings);
       return { ok: true, id, version: mf.manifest.version, replaced: r.replaced,
-        dir: r.dir, sha, warnings, errors: [] };
+        dir: r.dir, sha, digestChecked: dv.checked, warnings, errors: [] };
     },
 
     /**
