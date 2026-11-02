@@ -76,6 +76,13 @@ import {
   newDefId,
   DEFAULT_TYPES,
   UNESTIMATED,
+  defsOf,
+  withDefs,
+  colDef,
+  hasDefs,
+  labelFor,
+  normalizeGroupKey,
+  addVal,
 } from './core.mjs';
 
 let pass = 0;
@@ -980,30 +987,42 @@ t('自查：类型候选值里带「未分类」（否则筛不到没归类的�
  * 可选 props 漏传 TypeScript **一声不响**（类型是可选的），
  * 只能靠源码扫描钉住。
  */
-t('自查：类型列的下拉必须拿到 typeIds 与类型相关回调（漏传 = 自定义类型选不到）', (() => {
+/*
+ * 重构后不再是 16 个回调，而是**两个**：defs（这一列的定义表）+ defOps（一组操作）。
+ * 判据改成钉住这两个 —— 少传任何一个，这一列就选不到值或改不了色。
+ */
+t('自查：筛选面板必须拿到 defs 与 defOps（漏传 = 这一列选不到值/改不了色）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const i = app.indexOf('<ColFilterPop');
   const call = app.slice(i, app.indexOf('/>', i));
   return [
-    'statusIds, typeIds,',          // 现在还多传了 tagIds（换行写法）
-    'tagDefs.map((d) => d.id)',
-    'typeDefs={typeDefs}',
-    'onCreateType={onCreateType}',
-    'onTypeColor={onTypeColor}',
-    'onRemoveType={onRemoveType}',
-    'onRenameType={onRenameType}',
+    'defs={defsOf(taskStore, c.field)}',
+    'defOps={defOpsFor(c.field)}',
   ].every((needle) => call.indexOf(needle) >= 0);
 })());
 
 t('自查：「未分类 / 未分组」哨兵不给调色和删除按钮（摆着点不动 = 骗人）', (() => {
-  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  /*
+    ⛔ 必须剥注释再判：注释里**必然要引用**被禁掉的旧写法
+    （"⛔ 这里不能再写 const isType = col.field === 'type'"），
+    不剥的话守卫恒假/恒真，真正的回退抓不到。
+  */
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
   /*
     分组成为定义表列之后，它的「未分组」同样是哨兵 ——
     判据必须两个都认，只认 NOTYPE 的话未分组那一行会摆出删除按钮，
     点了弹确认框然后什么都没发生。
   */
-  return app.indexOf('const isSentinel = (id: string) => (isType && id === NOTYPE) || (isGroup && id === NOGROUP);') >= 0
-    && app.indexOf('!isSentinel(v)') >= 0;
+  /*
+    重构后哨兵由**列注册表**给（colDef(field).sentinel），不再有 isType/isGroup
+    三元链 —— 那条链只认类型与分组，**认领人和标签的哨兵不被当成哨兵**，
+    它们的「未认领」「无标签」那一行会长出删除按钮。
+    判据改为钉住"查表"+"没有按列标志"。
+  */
+  return app.indexOf('const sentinelOf = colDef(col.field)?.sentinel') >= 0
+    && app.indexOf('const isSentinel = (id: string) => !!sentinelOf && id === sentinelOf;') >= 0
+    && app.indexOf('!isSentinel(v)') >= 0
+    && app.indexOf('const isType = col.field') < 0;
 })());
 
 
@@ -1064,9 +1083,9 @@ t('端到端：老库升级（没有 typeDefs / 任务没有 type）不会炸', 
     nextId: 2,
     tasks: [{ id: 'tb-0001', title: '老任务', status: 'todo', priority: 'P2', tags: [] }],
   });
-  return st.typeDefs.length === 6
+  return defsOf(st, 'type').length === 6
     && st.tasks[0].type === ''
-    && colFilterValues('type', [], [], st.typeDefs.map((d) => d.id)).length === 7; // 六个 + 未分类
+    && colFilterValues('type', [], [], defsOf(st, 'type').map((d) => d.id)).length === 7; // 六个 + 未分类
 })());
 
 
@@ -1084,11 +1103,11 @@ t('端到端：老库升级（没有 typeDefs / 任务没有 type）不会炸', 
  */
 t('自查：用户把类型删空后，重载不该复活（空数组 ≠ 配置坏了）', (() => {
   return normalizeTypeDefs([]).length === 0
-    && normalizeStore({ tasks: [], typeDefs: [] }).typeDefs.length === 0;
+    && defsOf(normalizeStore({ tasks: [], typeDefs: [] }), 'type').length === 0;
 })());
 
 t('自查：老存档（没有 typeDefs 字段）仍补默认六个', (() => {
-  return normalizeStore({ tasks: [] }).typeDefs.length === 6;
+  return defsOf(normalizeStore({ tasks: [] }), 'type').length === 6;
 })());
 
 t('自查：字段坏成非数组时也补默认六个（不让整份文件打不开）', (() => {
@@ -1945,7 +1964,11 @@ t('标签筛选：定义表优先，且不重复', (() => {
     { task: normalizeTask({ id: '2', tags: ['tg_a'] }), depth: 0, path: [] },
   ];
   const v = colFilterValues('tags', rows, [], [], ['tg_a', 'tg_b']);
-  return v.join(',') === 'tg_a,tg_b';
+  /*
+    统一之后标签列也带「无标签」哨兵（与类型/分组/认领人同判据）——
+    "找没打标签的"和"找没归类的"一样是常见查询，以前唯独标签筛不到。
+  */
+  return v.join(',') === 'tg_a,tg_b,__notag__';
 })());
 
 /*
@@ -1955,7 +1978,14 @@ t('标签筛选：定义表优先，且不重复', (() => {
  */
 t('标签：筛选面板里显示名字而不是原始 id', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf("if (field === 'tags') return defs?.find((d) => d.id === v)?.name || v;") >= 0;
+  /*
+    重构后显示名统一走 labelFor（查列注册表），不再有按 field 的分支。
+    判据改为：optionLabel 内部没有 field 分支，只委托 labelFor。
+  */
+  const i = app.indexOf('function optionLabel(');
+  const seg = app.slice(i, app.indexOf('\n}\n', i));
+  return seg.indexOf('labelFor(') >= 0
+    && !/if \(field ===/.test(seg);
 })());
 
 /*
@@ -1965,8 +1995,13 @@ t('标签：筛选面板里显示名字而不是原始 id', (() => {
  */
 t('标签：筛选摘要用的是标签定义表（不是类型定义表）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf("col.field === 'tags' ? tagDefs : col.field === 'group' ? groupDefs : typeDefs") >= 0
-    && app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow, store ? store.groupDefs : [])') >= 0;
+  /*
+    重构后 filterSummary 只接 store，值名一律 labelFor（按列查注册表）——
+    "哪列用哪张表"不再需要手写三元链，也就不可能再写错。
+  */
+  return app.indexOf('filterSummary(c, f, store, flow)') >= 0
+    && app.indexOf("col.field === 'tags' ? tagDefs") < 0
+    && app.indexOf('labelFor(col.field as SortField') >= 0;
 })());
 
 /*
@@ -1980,7 +2015,7 @@ t('标签：删除会连带从任务上摘掉（否则显示成原始 id 且删�
   const i = app.indexOf('const doRemoveTag =');
   const seg = app.slice(i, app.indexOf('改字段（说明', i));
   return seg.indexOf('tags: t.tags.filter((x) => x !== id)') >= 0
-    && seg.indexOf('tagDefs: defs') >= 0;
+    && /withDefs\([^)]*'tags'/.test(seg);
 })());
 
 /*
@@ -1999,12 +2034,14 @@ t('标签：删掉正在筛选的标签会顺手清掉那个筛选', (() => {
 /* 增改删三件事在面板上都要有入口，且标签与类型同构 */
 t('标签：面板上有新建 / 改名 / 改色 / 删除四个入口', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('onCreateTag={onCreateTag}') >= 0
-    && app.indexOf('onRenameTag={onRenameTag}') >= 0
-    && app.indexOf('onRemoveTag={onRemoveTag}') >= 0
-    && app.indexOf('onTagColor={onTagColor}') >= 0
-    && app.indexOf('onRenameTag={doRenameTag}') >= 0
-    && app.indexOf('onRemoveTag={doRemoveTag}') >= 0;
+  /*
+    重构后四列共用一组 DefOps（create / rename / setColor / remove），
+    由 defOpsFor(field) 返回。判据改为钉住标签列那一项四个能力齐全。
+  */
+  const i = app.indexOf('case \'tags\':');
+  const seg = app.slice(i, app.indexOf("case 'type':", i));
+  return [['create', 'doAddTag'], ['setColor', 'doSetTagColor'], ['rename', 'doRenameTag'], ['remove', 'doRemoveTag']]
+    .every(([k, fn]) => new RegExp(k + ':\\s*' + fn + '\\b').test(seg));
 })());
 
 /*
@@ -2021,8 +2058,8 @@ t('标签：面板上有新建 / 改名 / 改色 / 删除四个入口', (() => {
 t('标签/类型/分组：哨兵值不显示改名与删除按钮', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const pop = app.slice(app.indexOf('function ColFilterPop'), app.indexOf("if (col.kind === 'text') {"));
-  return pop.indexOf('defCol && !isSentinel(v) && onRename') >= 0
-    && pop.indexOf('defCol && !isSentinel(v) && onRemove') >= 0;
+  return pop.indexOf('hasDefs(col.field) && !isSentinel(v) && onRename') >= 0
+    && pop.indexOf('hasDefs(col.field) && !isSentinel(v) && onRemove') >= 0;
 })());
 
 
@@ -2194,7 +2231,7 @@ t('审查：标签筛选候选不被 20 条上限截断', (() => {
   const tasks = [];
   for (let i = 0; i < 25; i += 1) tasks.push(normalizeTask({ id: `t${i}`, tags: [`tag${i}`] }));
   const rows = tasks.map((t) => ({ task: t, depth: 0, path: [] }));
-  return colFilterValues('tags', rows, [], [], []).length === 25;
+  return colFilterValues('tags', rows, [], [], []).length === 26;   // 25 个 + 「无标签」哨兵
 })());
 
 t('审查：allTags 传 limit 时仍按热门截断（统计语义未变）', (() => {
@@ -2364,14 +2401,15 @@ t('审查：看板卡片的标签走 TagChip（显示名字而不是 id）', (()
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const i = app.indexOf('function TaskCard({');
   const seg = app.slice(i, app.indexOf('const acts = actionsForIn', i));
-  return seg.indexOf('tagDefs: TagDef[];') >= 0;   // 组件拿到了定义表
+  return seg.indexOf('store: unknown;') >= 0          // 组件拿到 store（定义表都从 defs 查）
+    && seg.indexOf("defsOf(store, 'tags')") >= 0;
 })());
 
 t('审查：卡片里不再直接渲染裸标签值', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const i = app.indexOf('function TaskCard({');
   const body = app.slice(i, app.indexOf('<div className="tb-task-foot">', i));
-  return body.indexOf('<TagChip key={tag} id={tag} defs={tagDefs} />') >= 0
+  return body.indexOf("<TagChip key={tag} id={tag} defs={defsOf(store, 'tags')} />") >= 0
     && body.indexOf('<span key={tag} className="tb-tag">') < 0;
 })());
 
@@ -2395,8 +2433,9 @@ t('审查：看板卡片会显示分组', (() => {
 t('审查：tagDefs 贯通到看板与分组视图（含递归节点）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const gv = app.slice(app.indexOf('function GroupView({'), app.indexOf('function StatsView'));
-  return gv.indexOf('tagDefs={tagDefs}') >= 0
-    && app.indexOf('<GroupNodeView\n              key={c.key}\n              node={c}\n              tagDefs={tagDefs}') >= 0;
+  return gv.indexOf('store={store}') >= 0
+    && app.indexOf('store={store}') >= 0
+    && gv.indexOf("defsOf(store, 'tags')") >= 0;
 })());
 
 
@@ -2759,14 +2798,19 @@ t('审查：流转后的 toast 用 statusName（不查写死的 STATUS_LABEL）'
 
 t('审查：筛选项的状态名走 statusName(flow, …)', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  const i = app.indexOf('function optionLabel(');
-  const seg = app.slice(i, i + 700);
-  return seg.indexOf("return statusName(flow, v as TaskStatus)") >= 0;
+  /*
+    重构后状态名在 core 的 labelFor 里（查注册表 + 认 flow）。
+    判据改为钉住 labelFor 的 status 分支。
+  */
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const i = mjs.indexOf('export function labelFor(');
+  const seg = mjs.slice(i, i + 900);
+  return seg.indexOf('statusName(flow, v)') >= 0;
 })());
 
 t('审查：flow 贯通到筛选面板与摘要', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('filterSummary(c, f, typeDefs, store ? store.tagDefs : [], flow, store ? store.groupDefs : [])') >= 0
+  return app.indexOf('filterSummary(c, f, store, flow)') >= 0
     && app.indexOf('flow={flow}') >= 0;
 })());
 
@@ -3021,8 +3065,11 @@ t('审查：搜索仍能匹配标题（未破坏）', filterTasksByColumns(SROWS
 /* 调用点要把 typeDefs 传下去，且依赖里要带上 */
 t('审查：调用点传了 typeDefs 且在依赖里', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs, store ? store.tagDefs : [])') >= 0
-    && app.indexOf('[flatRows, colFilters, q, typeDefs, store ? store.tagDefs : []]') >= 0;
+  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs, tagDefs)') >= 0
+    && app.indexOf('[flatRows, colFilters, q, typeDefs, tagDefs]') >= 0
+    /* 且它们都来自 defsOf（不再有第二个来源） */
+    && app.indexOf("const typeDefs = defsOf(store, 'type');") >= 0
+    && app.indexOf("const tagDefs = defsOf(store, 'tags');") >= 0;
 })());
 
 
@@ -3086,14 +3133,19 @@ t('审查：调用点传了 flow 且在依赖里', (() => {
  */
 t('审查：按标签分组时组头查标签定义表', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  /*
+    重构后 groupLabel 委托 labelFor（按列查注册表），
+    且 'tag' 旧名由 normalizeGroupKey 归一到列名 'tags'。
+  */
   const i = app.indexOf('function groupLabel(');
   const seg = app.slice(i, i + 900);
-  return seg.indexOf("if (by === 'tag') {") >= 0;
+  return seg.indexOf('labelFor(normalizeGroupKey(by)') >= 0
+    && !/if \(by === '/.test(seg);
 })());
 
 t('审查：groupLabel 的调用点传了 tagDefs', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('groupLabel(node.key, by, flow, tagDefs)') >= 0;
+  return app.indexOf('groupLabel(node.key, by, flow, undefined, store)') >= 0;
 })());
 
 
@@ -3307,8 +3359,11 @@ t('守卫：没有把标签 id 当文本直接渲染的地方', (() => {
  */
 t('守卫：统计面板收到标签定义表', (() => {
   const src = stripComments(appSrc);
-  return src.indexOf('tagDefs={store.tagDefs}') >= 0
-    && src.indexOf('stats, flow, typeDefs, tagDefs, onOpen,') >= 0;
+  /*
+    StatsView 现在收 store（所有定义表都从 defs 查），不再逐列传。
+  */
+  return src.indexOf('store={store}') >= 0
+    && /stats, flow, onOpen, store/.test(src);
 })());
 
 
@@ -3499,13 +3554,13 @@ const GDEFS = [{ id: '登录', name: '登录', color: '#22c55e' }];
 
 t('审查：分组定义表能读出来（对象数组）', (() => {
   const st = normalizeStore({ groupDefs: [{ id: '登录', name: '登录', color: '#f00' }] });
-  return st.groupDefs.length === 1 && st.groupDefs[0].color === '#f00';
+  return defsOf(st, 'group').length === 1 && defsOf(st, 'group')[0].color === '#f00';
 })());
 
 /* 手写真省事的写法：{"groupDefs":["登录","支付"]} —— 也要认 */
 t('审查：分组定义表接受纯字符串数组', (() => {
   const st = normalizeStore({ groupDefs: ['登录', '支付'] });
-  return st.groupDefs.length === 2 && st.groupDefs[0].id === '登录';
+  return defsOf(st, 'group').length === 2 && defsOf(st, 'group')[0].id === '登录';
 })());
 
 t('审查：分组名没有定义时原样显示（不硬塞假名）', groupName(GDEFS, '支付') === '支付');
@@ -3560,10 +3615,15 @@ t('审查：分组列是 enum（定义表驱动，不再是自由文本）', (()
 t('守卫：三种定义列共用同一套交互（defCol，不是各自 isTag/isType）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
   const pop = app.slice(app.indexOf('function ColFilterPop'), app.indexOf("if (col.kind === 'text') {"));
-  return pop.indexOf('defCol && onCreate') >= 0
-    && pop.indexOf('defCol && !isSentinel(v) && onColor') >= 0
-    && pop.indexOf('defCol && !isSentinel(v) && onRename') >= 0
-    && pop.indexOf('defCol && !isSentinel(v) && onRemove') >= 0;
+  /*
+    defCol 已换成注册表的 hasDefs(col.field) —— 不再是每列一个 isXxx 标志。
+    四个入口现在都由 defOps 派生的 onColor/onRename/onRemove/onCreate 驱动。
+  */
+  return pop.indexOf('hasDefs(col.field) && onCreate') >= 0
+    && pop.indexOf('hasDefs(col.field) && !isSentinel(v) && onColor') >= 0
+    && pop.indexOf('hasDefs(col.field) && !isSentinel(v) && onRename') >= 0
+    && pop.indexOf('hasDefs(col.field) && !isSentinel(v) && onRemove') >= 0
+    && pop.indexOf('isType ? onCreateType') < 0;   // 不再有按列挑回调的三元链
 })());
 
 /* 取色器必须真的接上主面板的 color-picker（不是摆个按钮不干活） */
@@ -3595,7 +3655,15 @@ t('守卫：取色器取消（hex 为空）时不改色', (() => {
  */
 t('守卫：optionLabel 认「未分组」哨兵（不许显示 __nogroup__）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf("if (field === 'group') return v === NOGROUP ? '未分组'") >= 0;
+  /*
+    重构后哨兵 → 显示名由**列注册表**统一提供（sentinel / emptyLabel），
+    labelFor 查表即可，不再有按 field 的分支要逐个补。
+  */
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const i = mjs.indexOf('export function labelFor(');
+  const seg = mjs.slice(i, i + 500);
+  return seg.indexOf('c.sentinel && v === c.sentinel') >= 0
+    && seg.indexOf('return c.emptyLabel') >= 0;
 })());
 
 /*
@@ -3605,7 +3673,12 @@ t('守卫：optionLabel 认「未分组」哨兵（不许显示 __nogroup__）',
  */
 t('守卫：filterSummary 按列取定义表（含分组）', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf("col.field === 'tags' ? tagDefs : col.field === 'group' ? groupDefs : typeDefs") >= 0;
+  /*
+    重构后 filterSummary 只接 store，按列查注册表（labelFor），
+    "哪列用哪张表"不再需要手写 —— 也就不可能再写错。
+  */
+  return app.indexOf('labelFor(col.field as SortField') >= 0
+    && app.indexOf("col.field === 'tags' ? tagDefs") < 0;
 })());
 
 /* 端到端：四个操作都要真的落盘（用可变数据桩实跑） */
@@ -3992,10 +4065,12 @@ t('守卫：全局搜索含标签显示名（任务上存的是 id）', (() => {
 })());
 
 /* 调用点必须把 tagDefs 传进去，且要在 useMemo 依赖里（改了标签名结果要变） */
-t('守卫：搜索调用点传了 tagDefs 且在依赖里', (() => {
+t('守卫：搜索调用点传了定义表且在依赖里', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs, store ? store.tagDefs : [])') >= 0
-    && app.indexOf('[flatRows, colFilters, q, typeDefs, store ? store.tagDefs : []]') >= 0;
+  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs, tagDefs)') >= 0
+    && app.indexOf('[flatRows, colFilters, q, typeDefs, tagDefs]') >= 0
+    && app.indexOf("const typeDefs = defsOf(store, 'type');") >= 0
+    && app.indexOf("const tagDefs = defsOf(store, 'tags');") >= 0;
 })());
 
 /*
@@ -4459,7 +4534,15 @@ t('归一化要清掉指向自己的依赖', (() => {
 const FIVE = ['priority', 'status', 'type', 'group', 'assignee'];
 
 t('守卫：五列单选型都走同一个组件（SinglePick）', (() => {
-  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  /*
+    ⛔ 必须**先定位到 cellFor 再找 case**：
+    defOpsFor 里也有 `case 'type':` 等分支，直接 indexOf 会命中它 ——
+    于是切片里根本没有 <SinglePick，守卫恒红，
+    而真正的回归（某列改回自己写一套）反而看不出来。
+  */
+  const appAll = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const c0 = appAll.indexOf('const cellFor =');
+  const app = appAll.slice(c0);
   const bad = [];
   for (const f of FIVE) {
     const i = app.indexOf("case '" + f + "':");
@@ -4534,9 +4617,9 @@ t('守卫：新建类型/分组后立刻挂到当前行', (() => {
   const j = app.indexOf('kindName="分组"');
   const segG = app.slice(j, j + 900);
   /* 类型：await 拿到新 id 再挂；分组：建完直接 patch 名字（分组 id 就是名字） */
-  return /await onCreateType\(name\)/.test(segT)
+  return /await \(opsCreate \? opsCreate\(name, ''\) : undefined\)/.test(segT)
     && /onToggleType\(t\.id, id\)/.test(segT)
-    && /await onCreateGroup\(name, ''\)/.test(segG)
+    && /await \(opsCreate \? opsCreate\(name, ''\) : undefined\)/.test(segG)
     && /onPatchField\(t\.id, \{ group: name \}\)/.test(segG);
 })());
 
@@ -4596,16 +4679,26 @@ t('守卫：详情面板有认领人和优先级字段（都能改，不是只�
 t('守卫：认领人有定义表（与分组同构，id 就是名字）', (() => {
   const ts = fs.readFileSync(path.join(dir, 'types.ts'), 'utf8');
   const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
-  return ts.indexOf('assigneeDefs: TagDef[];') >= 0
-    && /assigneeDefs: normalizeGroupDefs\(s\.assigneeDefs\)/.test(mjs);
+  /*
+    重构后定义表是 store.defs[defKey]（列注册表里声明 defKey），
+    不再是四个平级字段。判据改为钉住注册表的 defKey + 迁移映射。
+  */
+  const i = mjs.indexOf('field: \'assignee\'');
+  const seg = mjs.slice(i, i + 260);
+  return seg.indexOf("defKey: 'assignee'") >= 0
+    /* 老字段 → defKey 的迁移映射仍在（老文件不能丢定义） */
+    && /assignee: s\.assigneeDefs/.test(mjs)
+    && /assignee: \(v\) => normalizeGroupDefs\(v\)/.test(mjs);
 })());
 
 t('守卫：认领人单元格与类型/分组一样带色点（dot）', (() => {
-  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const appAll = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  /* 先定位 cellFor：defOpsFor 里也有 case 'assignee':，直接找会命中错的那处 */
+  const app = appAll.slice(appAll.indexOf('const cellFor ='));
   const i = app.indexOf("case 'assignee':");
   if (i < 0) return false;
   const seg = app.slice(i, i + 2600);
-  return /dot=\{/.test(seg) && /onColor=\{onAssigneeColor\}/.test(seg)
+  return /dot=\{/.test(seg) && /onColor=\{opsColor\}/.test(seg)
     && /onPickColor=\{onPickColor\}/.test(seg);
 })());
 
@@ -4643,27 +4736,22 @@ t('守卫：删认领人时连定义一起删', (() => {
   const i = app.indexOf('const removeAssignee = (name: string) =>');
   if (i < 0) return false;
   const seg = app.slice(i, i + 2200);
-  return /assigneeDefs: defs/.test(seg) && /filter\(\(d\) => d\.id !== name\)/.test(seg);
+  return /withDefs\([^)]*'assignee'/.test(seg) && /filter\(\(d\) => d\.id !== name\)/.test(seg);
 })());
 
 /* 筛选面板里认领人也能增删改色（第四种定义表驱动的列） */
 t('守卫：筛选面板的认领人列与类型/分组同构', (() => {
   const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
-  const i = app.indexOf("const isGroup = col.field === 'group';");
-  if (i < 0) return false;
-  const seg = app.slice(i, i + 1400);
   /*
-    ⛔ 必须钉住**声明行本身**（isAssignee = col.field === 'assignee'），
-    不能只搜 'isAssignee' 出现没出现：
-    删掉声明行之后，下面的 defCol / defs / kindName 里照样有 isAssignee
-    字样 → 守卫全绿 → 真正的回退抓不到。
-    （删了声明行会是 ReferenceError，但源码扫描看不到运行时。）
-    这已经是第 13 个"判据太宽、靠反向验证才发现"了。
+    重构后不再有 isTag/isType/isGroup/isAssignee 四个标志 ——
+    列的能力由注册表 + defOps 决定。判据改为：
+    认领人在 defOpsFor 里有完整四项，且注册表里 colorOk 为真。
   */
-  return /const isAssignee = col\.field === 'assignee';/.test(seg)
-    && /isAssignee \? \(assigneeDefs \|\| \[\]\)/.test(seg)
-    && /isAssignee \? '认领人'/.test(seg)
-    && /isAssignee \? onAssigneeColor/.test(seg);
+  const mjs = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const ri = mjs.indexOf("field: 'assignee'");
+  return /case 'assignee':/.test(app)
+    && /remove: removeAssignee/.test(app)
+    && ri >= 0 && mjs.slice(ri, ri + 260).indexOf('defKey: \'assignee\'') >= 0;
 })());
 
 
@@ -4817,9 +4905,14 @@ t('守卫：分组时多值任务进多个组（不是只进第一个）', (() =
   const i = mjs.indexOf('export function groupValuesOf');
   if (i < 0) return false;
   const seg = mjs.slice(i, i + 1400);
-  return /if \(Array\.isArray\(v\)\) return v\.length > 0 \? v : \[UNASSIGNED\];/.test(seg)
-    && /if \(Array\.isArray\(v\)\) return v\.length > 0 \? v : \[NOTYPE\];/.test(seg)
-    && /if \(Array\.isArray\(v\)\) return v\.length > 0 \? v : \[NOGROUP\];/.test(seg);
+  /*
+    重构后是**一条**规则（摊平 + 取注册表的哨兵），不再按字段各写一遍 ——
+    所以判据改成钉住"没有按字段的分支"+"确实摊平了多值"。
+  */
+  return /const vals = flatVals\(t\[k\]\);/.test(seg)
+    && /return vals\.length > 0 \? vals : \(c\.sentinel/.test(seg)
+    /* 不再有**按字段**写死哨兵的分支（那正是会漏掉新列的写法） */
+    && !/\[UNASSIGNED\]/.test(seg) && !/\[NOTYPE\]/.test(seg) && !/\[NOGROUP\]/.test(seg);
 })());
 
 /*
@@ -5031,6 +5124,202 @@ t('守卫：筛选候选把多值展开成单值', (() => {
     && gs.indexOf('g1') >= 0 && gs.indexOf('g2') >= 0
     /* 不能有数组元素残留 */
     && !as.some((x) => Array.isArray(x)) && !gs.some((x) => Array.isArray(x));
+})());
+
+
+/* ============================================================ 重构后的结构守卫（本轮） */
+
+/*
+ * **每一列（只要注册表里有哨兵）的空值都必须落成哨兵。**
+ *
+ * 重构前 colRawValues 是 6 分支 switch，"加新列必须同步这里"靠人记 ——
+ * 2026-10-28 第 3 轮「任务类型」列就漏在这儿，该列筛选 100% 失效。
+ * 现在改成查表，但**查表本身也可能被改坏**（比如有人又加回按字段的分支）。
+ * 这个是行为判据：枚举每一列，空值必须得到哨兵。
+ */
+t('守卫：每一列的空值都落成哨兵（不是只有三列）', (() => {
+  const flow = normalizeFlow(undefined);
+  const t = normalizeTask({ id: 'x', title: 'x', status: 'todo', priority: 'P2', tags: [], deps: [], history: [] }, flow);
+  const need = ['type', 'group', 'assignee', 'tags'];
+  for (const f of need) {
+    const c = colDef(f);
+    if (!c || !c.sentinel) return false;
+    const raw = colRawValues(t, f);
+    if (raw.length !== 1 || raw[0] !== c.sentinel) return false;
+  }
+  return true;
+})());
+
+/*
+ * **四列的定义表操作必须四项齐全。**
+ *
+ * 合成 DefOps 之后，"某一列少了删除"这件事在类型上是**可选属性**，
+ * TS 一声不响 —— 只能靠扫源码钉住。
+ */
+t('守卫：四列定义表操作都齐全（create/rename/setColor/remove）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const defOpsFor =');
+  const seg = app.slice(i, app.indexOf('\n  };', i));
+  const want = {
+    tags: ['doAddTag', 'doSetTagColor', 'doRenameTag', 'doRemoveTag'],
+    type: ['createType', 'setTypeDef', 'setTypeDef', 'removeType'],
+    group: ['addGroup', 'setGroupColor', 'renameGroup', 'removeGroup'],
+    assignee: ['addAssignee', 'setAssigneeColor', 'renameAssignee', 'removeAssignee'],
+  };
+  for (const [field, fns] of Object.entries(want)) {
+    const j = seg.indexOf("case '" + field + "':");
+    if (j < 0) return false;
+    const one = seg.slice(j, j + 500);
+    for (const fn of new Set(fns)) {
+      if (one.indexOf(fn) < 0) return false;
+    }
+  }
+  return true;
+})());
+
+/*
+ * **ListView 里定义表必须从 taskStore 取，不能从 store 取。**
+ *
+ * ⛔ ListView 有两个长得极像的形参：`store` 是 **Task[]**（算前置锁定用），
+ * `taskStore` 才是 TaskStore（含 flow 与 defs）。
+ * 写成 defsOf(store, …) 拿到的是数组身上的 defs（undefined）→ 定义表全空
+ * → 单元格显示**原始 id**（dev / tg_xxxx 而不是"开发"/"重要"）。
+ *
+ * 而 TypeScript 一声不响：defsOf 的入参在重构后是 unknown，
+ * 传错对象类型上照样成立。只能靠扫源码钉住。
+ */
+t('守卫：ListView 内取定义表一律用 taskStore（不是 store）', (() => {
+  const appAll = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const lines = appAll.split('\n');
+  const start = lines.findIndex((l) => l.startsWith('function ListView({'));
+  const end = lines.findIndex((l, i) => i > start && /^function (GroupView|StatsView|BoardView)\(\{/.test(l));
+  if (start < 0 || end < 0) return false;
+  const body = STRIP(lines.slice(start, end).join('\n'));
+  return body.indexOf('defsOf(store,') < 0
+    && body.indexOf("defsOf(taskStore, 'type')") >= 0;
+})());
+
+/* ============================================================ 重构遗漏补测（本轮） */
+
+/*
+ * **按状态排序必须认自定义流程。**
+ *
+ * 之前修过"按状态**分组**顺序乱"（sortGroups 走 flow），
+ * 但**排序**这条链（cmpTask）还用写死的 STATUS_RANK ——
+ * 同一个写死表、两个入口，分两轮才清完。
+ *
+ * 实测修前：自定义流程 s1/s2/s3 升序得 s3 → s1 → s2，
+ * 而且**升序降序结果完全一样**（点列头纹丝不动，界面却写着"排序：状态 ↓"）。
+ */
+t('守卫：按状态排序认自定义流程（不是写死的 STATUS_RANK）', (() => {
+  const flow = { statuses: [{ id: 's1', name: '待办' }, { id: 's2', name: '开发中' }, { id: 's3', name: '完工' }], transitions: [] };
+  const mk = (id, st) => normalizeTask({ id, title: id, status: st, priority: 'P2', tags: [], deps: [], history: [] }, flow);
+  const ts = [mk('a', 's3'), mk('b', 's1'), mk('c', 's2')];
+  const asc = sortTasksBy([...ts], 'status', 'asc', null, flow).map((t) => t.status).join(',');
+  const desc = sortTasksBy([...ts], 'status', 'desc', null, flow).map((t) => t.status).join(',');
+  /* 升序降序必须互为逆序 —— 一样就说明压根没排序 */
+  return asc === 's1,s2,s3' && desc === 's3,s2,s1';
+})());
+
+/*
+ * **定义表驱动的列，删除文案要说自己的列、说自己的空值叫法。**
+ *
+ * 重构前是 isType / isGroup 三元链，认领人落到 else 分支 →
+ * 删认领人时提示"删除这个**标签**…"，用户以为自己要删标签。
+ * 文案必须来自注册表（kindName + emptyLabel），不能靠链。
+ */
+t('守卫：删除文案来自注册表（不是 isType/isGroup 三元链）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('function ColFilterPop');
+  const seg = app.slice(i, app.indexOf('\nfunction ', i + 10));
+  return seg.indexOf('emptyOf') >= 0
+    && seg.indexOf('const isType =') < 0
+    && seg.indexOf('const isGroup =') < 0;
+})());
+
+/*
+ * **defsOf 必须容忍旧名 'tag'。**
+ *
+ * 列名是 'tags'（存的是数组），而**分组依据**里历来叫 'tag'。
+ * normalizeGroupKey 负责归一，但只有分组那条链在调它 ——
+ * 其它入口传 'tag' 进来会拿到空定义表 → 标签显示成原始 id。
+ */
+t('守卫：defsOf / hasDefs 容忍旧名 tag', (() => {
+  const st = normalizeStore({ tagDefs: [{ id: 't1', name: '重要', color: '#f00' }], tasks: [] });
+  return defsOf(st, 'tags').length === 1
+    && defsOf(st, 'tag').length === 1
+    && hasDefs('tag') === true;
+})());
+
+/*
+ * **批量改类型不能覆盖掉多值。**
+ *
+ * ⛔ 原来写 `type: typeId` 直接赋值：这一列勾了"多选"之后任务上存的是数组
+ * （['dev','bug']），赋单值把原有的 dev/bug **静默丢掉** ——
+ * 用户从下拉挑一个值是"把这些任务归到这一类"，
+ * 不是"清掉它们原有的分类再归到这一类"（要清空另有"清成未分类"）。
+ */
+t('守卫：批量改类型走 addVal（多值列保留已有值）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const doBatchType');
+  const seg = app.slice(i, i + 2200);
+  return seg.indexOf('addVal(') >= 0
+    && seg.indexOf('multiOfTask(') >= 0
+    && seg.indexOf('type: typeId,') < 0;
+})());
+
+t('守卫：addVal 保留已有值且去重', (() => {
+  const t = { id: 'a', type: ['dev', 'bug'] };
+  const a = addVal(t, 'type', 'research', true);
+  const b = addVal(t, 'type', 'dev', true);
+  const c = addVal({ type: 'dev' }, 'type', 'bug', false);
+  return JSON.stringify(a) === '["dev","bug","research"]'
+    && JSON.stringify(b) === '["dev","bug"]'
+    && c === 'bug';
+})());
+
+/*
+ * **新建定义必须挡同名 —— 且按 name 判重，不能按 id。**
+ *
+ * 类型/标签的 id 是自动生成的（t_xxx / tg_xxx），与名字是两回事。
+ * 按 id 判重永远判不出来 → 下拉里出现两个「开发」，
+ * 用户分不清该选哪个，删一个另一个还在，看着像删不掉。
+ *
+ * 分组/认领人的 id 就是名字，按 id 判重恰好也挡住了同名 ——
+ * 所以这个坑**只在类型与标签上暴露**，很容易被当成"那两列没事"。
+ *
+ * 实测（修前）：类型列新建同名「开发」→ 落盘 ["开发","开发"]，且无任何提示。
+ */
+t('守卫：新建定义按 name 判重（四个入口都要）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const createType');
+  const seg = app.slice(i, i + 1400);
+  return seg.indexOf('defs.some((d) => d.name === nm)') >= 0
+    && app.indexOf('defs.some((d) => d.name === nm)') >= 0;   // 标签那边
+})());
+
+t('守卫：新建同名要说出来（不能静默返回）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  return app.indexOf('已经有同名的类型') >= 0
+    && app.indexOf('已经有同名标签') >= 0
+    && app.indexOf('已经有同名分组') >= 0
+    && app.indexOf('已经有叫') >= 0;
+})());
+
+/*
+ * **未来时间戳不能显示成"刚刚"。**
+ *
+ * diff 为负时下面每个判据都成立 → 任何未来时间都显示"刚刚"。
+ * 实测修前：now + 1 小时 → "刚刚"。
+ *
+ * 而按更新时间排序时它永远排最前 —— 两条线索互相矛盾，
+ * 用户无从怀疑时间本身有问题。
+ */
+t('守卫：未来时间戳显示「N 天后」（不是"刚刚"）', (() => {
+  const now = Date.now();
+  const a = relTime(now + 3600_000);
+  const b = relTime(now + 3 * 86400_000);
+  return /天后/.test(a) && /天后/.test(b) && relTime(now - 5000) === '刚刚';
 })());
 
 /* ---------------- 汇总 ---------------- */
