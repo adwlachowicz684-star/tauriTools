@@ -1511,6 +1511,29 @@ function freemindNote(el) {
  * ⓘ 本函数由 FreeMind 的 `<richcontent TYPE="NOTE">`（BUG 113）与 XMind 8
  *   的 `<notes>`（BUG 138）共用 —— 各写一份迟早只修一处。
  */
+/*
+ * XHTML → 纯文本时「结束后补一个换行」的块级标签，与「结束后补一个空格」
+ * 的单元格标签。
+ *
+ * ⓘ `elToPlain`（DOM 版，走 XMind 8 的 `<notes>` 与 FreeMind 的 richcontent）
+ *   与 `htmlToPlain`（正则版，走 zen 档 realHTML-only 的备注）**必须共用这一份
+ *   列表** —— 两边各写一份正则，历史上出过三次事故（BUG 90 / 101 / 102），
+ *   每次都是「一边认一边不认 → 同一个文件两种结果」。早先 DOM 版有
+ *   `ul|ol|table|pre` 而正则版没有，正是那个坑的原样复现。
+ *
+ * ⓘ `td` / `th` 不能并入块级：同一行的多个单元格会被拆成 N 行，表格就散了；
+ *   它们要的是**空格** —— 少了这一步，导入别处带表格的备注时两个单元格的
+ *   文字直接粘成一团（「单元格A单元格B」），字没丢但已经读不出原样
+ *   （BUG 192）。
+ */
+export const HTML_BLOCK_TAG_LIST = ['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'tr', 'blockquote', 'ul', 'ol', 'table', 'pre'];
+export const HTML_BLOCK_TAG_RE = new RegExp(`^(${HTML_BLOCK_TAG_LIST.join('|')})$`);
+export const HTML_BLOCK_CLOSE_RE = new RegExp(`</(${HTML_BLOCK_TAG_LIST.join('|')})\\s*>`, 'gi');
+export const HTML_CELL_TAG_LIST = ['td', 'th'];
+export const HTML_CELL_TAG_RE = new RegExp(`^(${HTML_CELL_TAG_LIST.join('|')})$`);
+export const HTML_CELL_CLOSE_RE = new RegExp(`</(${HTML_CELL_TAG_LIST.join('|')})\\s*>`, 'gi');
+
 export function elToPlain(el) {
   let out = '';
   for (const c of Array.from(el.childNodes || [])) {
@@ -1520,7 +1543,8 @@ export function elToPlain(el) {
     const tag = String(c.localName || raw.replace(/^.*:/, '') || '').toLowerCase();
     if (tag === 'br') { out += '\n'; continue; }
     out += elToPlain(c);
-    if (/^(p|div|li|h[1-6]|tr|blockquote|ul|ol|table|pre)$/.test(tag)) out += '\n';
+    if (HTML_BLOCK_TAG_RE.test(tag)) out += '\n';
+    else if (HTML_CELL_TAG_RE.test(tag)) out += ' ';   // BUG 192：同行多列要分开
   }
   return normalizeNoteText(out);
 }
@@ -2387,7 +2411,8 @@ export function htmlToPlain(html) {
   let s = String(html ?? '');
   if (!s) return '';
   s = s.replace(/<br\s*\/?>/gi, '\n');
-  s = s.replace(/<\/(p|div|li|h[1-6]|tr|blockquote)>/gi, '\n');
+  s = s.replace(HTML_BLOCK_CLOSE_RE, '\n');
+  s = s.replace(HTML_CELL_CLOSE_RE, ' ');           // BUG 192：同行多列要分开
   s = s.replace(/<[^>]*>/g, '');                    // 剩下的（含行内标签）直接去掉
   s = s.replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')

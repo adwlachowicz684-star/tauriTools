@@ -24009,6 +24009,69 @@ group('BUG 191 · 节点文字里的换行：交换格式丢了必须说');
 }
 
 
+group('BUG 192 · 备注里的表格：单元格不能再粘成一团，两份实现必须同源');
+{
+  const fmt2 = await import('./formats.js');
+  const TABLE = '<table><tr><td>单元格A</td><td>单元格B</td></tr>'
+    + '<tr><td>行2A</td><td>行2B</td></tr></table>';
+  const WANT = '单元格A 单元格B\n行2A 行2B';
+
+  // ① 修复前的事实：正则版把同一行的多列直接粘成一团（字没丢，读不出原样）
+  {
+    const p = fmt2.htmlToPlain(TABLE);
+    ok(/ /.test(p), '★ 同行多列之间有分隔', JSON.stringify(p));
+    eq(p, WANT, '★ 两行两列各自分开', JSON.stringify(p));
+  }
+
+  // ② DOM 版（XMind 原生档的 <notes> 与 FreeMind richcontent 走它）同样要分开
+  {
+    const d = new DOMParser().parseFromString(`<x>${TABLE}</x>`, 'application/xml');
+    const p = fmt2.elToPlain(d.documentElement);
+    eq(p, WANT, '★ elToPlain 同样分开', JSON.stringify(p));
+  }
+
+  // ③ 两份实现必须给出同一个结果 —— 各写一份判据是本项目的老坑
+  //    （早先 DOM 版有 ul|ol|table|pre 而正则版没有，同一个文件两种结果）
+  {
+    const d = new DOMParser().parseFromString(`<x>${TABLE}</x>`, 'application/xml');
+    eq(fmt2.elToPlain(d.documentElement), fmt2.htmlToPlain(TABLE),
+      '★ DOM 版与正则版结果一致');
+  }
+
+  // ④ 反向边界：非表格内容一个字节都不能变
+  {
+    const CASES = [
+      ['<p>一</p><p>二</p>', '一\n二'],
+      ['<ul><li>项1</li><li>项2</li></ul>', '项1\n项2'],
+      ['<ol><li>甲</li><li>乙</li></ol>', '甲\n乙'],
+      ['<p>a &lt; b &amp; c &gt; d</p>', 'a < b & c > d'],
+      ['<p>实体&nbsp;空格</p>', '实体 空格'],
+      ['<p>粗体<b>重点</b>尾</p>', '粗体重点尾'],
+      ['<pre>代码\n行2</pre>', '代码\n行2'],
+      ['<p>嵌套<ul><li>深层项</li></ul></p>', '嵌套深层项'],
+    ];
+    for (const [h, want] of CASES) {
+      eq(fmt2.htmlToPlain(h), want, `★ htmlToPlain 未变：${h}`);
+    }
+  }
+
+  // ⑤ 源码契约：两份实现必须共用同一份标签列表，不得各写一份正则
+  {
+    const f = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/HTML_BLOCK_TAG_LIST/.test(f) && /HTML_CELL_TAG_LIST/.test(f),
+      '★ 标签列表抽成常量');
+    ok(/HTML_BLOCK_TAG_RE\.test\(tag\)/.test(f), '★ elToPlain 走共用块级判据');
+    ok(/HTML_CELL_TAG_RE\.test\(tag\)/.test(f), '★ elToPlain 对单元格补空格');
+    ok(/replace\(HTML_BLOCK_CLOSE_RE/.test(f), '★ htmlToPlain 走共用块级判据');
+    ok(/replace\(HTML_CELL_CLOSE_RE/.test(f), '★ htmlToPlain 对单元格补空格');
+    ok(!/<\/\(p\|div\|li/.test(f), '★ 没有第二份手写的块级标签正则',
+      (f.match(/<\/\(p\|div[^)]*\)/g) || []).join(' | '));
+    // td / th 不能并入块级：那样每一行会被拆成 N 行，表格就散了
+    ok(!/(td|th)/.test(String(fmt2.HTML_BLOCK_TAG_LIST)),
+      '★ 单元格不在块级列表里（拆成 N 行会把表格打散）');
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

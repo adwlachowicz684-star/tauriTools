@@ -764,6 +764,49 @@ export function readSheetAppearance(content) {
   }
 }
 
+/**
+ * 取 OPML 文档**自己声明**的名字：`<head><title>`（BUG 193）。
+ *
+ * 写侧（`toOpml`）把画布标题写进了 `<head><title>`，读侧却一律拿文件名
+ * 当画布名（`baseTitle(f.name)`）—— 于是「导出 → 导入」往返一次，**画布
+ * 就被改了名**：
+ *
+ *   画布「产品规划」→ 落盘名「产品规划-20261102-1430.opml」
+ *                  → 导入后画布叫「产品规划-20261102-1430」
+ *
+ * 用户把文件另存成「备份1.opml」时更明显：画布直接跟着改叫「备份1」。
+ * 导入是**整体替换且不可撤销**的，画布名又是用户分辨几张画布的唯一依据
+ * （导入交换格式只带一张画布，全靠标题认）。
+ *
+ * 这不是格式限制 —— 名字就在文件里，只是没读。
+ *
+ * ⓘ **只认 `<head>` 里的 `<title>`**：OPML 的 `<outline>` 用 `text`
+ *   **属性**表达节点文字，但有些工具会额外塞一个 `<title>` **子元素**
+ *   （OPML 1.0 的写法）。取"文档里第一个 title"的话，节点的标题会盖掉
+ *   文档名 —— 那才是更离谱的误读。
+ * ⓘ 拿不到就返回空串，让调用方回落文件名（别处产出的 OPML 常常没有
+ *   `<title>`，那时文件名仍是唯一可用的名字）。
+ *
+ * @param {string} text OPML 文本
+ * @returns {string} 文档标题；没有则 ''
+ */
+export function opmlHeadTitle(text) {
+  const src = String(text ?? '');
+  if (!src.trim()) return '';
+  try {
+    const DP = globalThis.DOMParser;
+    if (!DP) return '';                       // 非浏览器环境（单测没注入时）
+    const doc = new DP().parseFromString(src, 'text/xml');
+    if (!doc || doc.getElementsByTagName('parsererror').length) return '';
+    const head = doc.getElementsByTagName('head')[0];
+    if (!head) return '';
+    const t = head.getElementsByTagName('title')[0];
+    return String(t?.textContent ?? '').trim();
+  } catch {
+    return '';                                // 坏 XML 回落文件名，不该拦住导入
+  }
+}
+
 /** 把 theme / template 写进画布 JSON 文本（导出时保留外观） */
 export function writeSheetAppearance(content, theme, layout) {
   try {
