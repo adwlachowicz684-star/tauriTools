@@ -55,6 +55,69 @@ export function looksLikeSecretName(name: string): boolean {
 }
 
 /**
+ * 地址里躺着的凭据。
+ *
+ * 请求头那一侧有 redactHeadersText 盯着，地址这一侧此前**什么都没有**：
+ *   `?api_key=sk-live-xxx`   → 原样落盘
+ *   `https://user:pw@host`   → 原样落盘
+ *
+ * 同一个密钥，写在 Authorization 头里会被挖掉，拼进地址里就明文进存档、
+ * 进导出的画布文件 —— 而"最顺手填凭据的地方"恰恰是把 API 服务商给的
+ * 那串完整 URL 直接粘进来（里面多半带 key / token 参数）。
+ *
+ * 只动**查询参数名**与 userinfo，不动路径：
+ * `https://api.x.com/v1/token/refresh` 里的 token 是路径不是凭据，
+ * 按字符串包含去挖会把正常接口地址改坏。
+ */
+export function scrubUrlSecrets(s: string): string {
+  const src = String(s ?? '');
+  if (!/^[a-z][a-z0-9+.\-]*:/.test(src)) return src;
+  let out = src;
+
+  /* userinfo：scheme://user:pass@host —— 冒号后面那截就是口令 */
+  const ui = /^([a-z][a-z0-9+.\-]*:\/\/)([^/@]*):([^/@]*)@/i.exec(out);
+  if (ui) out = ui[1] + ui[2] + ':@' + out.slice(ui[0].length);
+
+  const q = out.indexOf('?');
+  if (q < 0) return out === src ? src : out;
+
+  const fragAt = out.indexOf('#', q);
+  const end = fragAt < 0 ? out.length : fragAt;
+  const query = out.slice(q + 1, end);
+  const next = query
+    .split('&')
+    .map((seg) => {
+      const eq = seg.indexOf('=');
+      if (eq < 0) return seg;
+      const name = seg.slice(0, eq);
+      /*
+       * 空值不用挖（本来就没东西），挖了会让地址每次都"变一下"，
+       * 于是 hadInlineSecret 恒真、界面一直提示。
+       */
+      if (seg.length === eq + 1) return seg;
+      return looksLikeSecretName(name) ? name + '=' : seg;
+    })
+    .join('&');
+  const rebuilt = out.slice(0, q + 1) + next + (fragAt < 0 ? '' : out.slice(fragAt));
+  return rebuilt;
+}
+
+/**
+ * 这个字段是不是**装地址的**。
+ *
+ * 只在这类字段上跑 scrubUrlSecrets —— 不去扫 output / 生成的文本，
+ * 否则用户让 AI 写一段含 `https://x.com?token=` 的说明会被改掉
+ * （与 redactNodeSecrets 那条"不去递归扫 output"是同一条边界）。
+ *
+ * ⛔ 'curl' 也以 url 结尾，但那是命令名不是地址 —— 显式排除。
+ */
+export function looksLikeUrlKey(key: string): boolean {
+  const n = String(key ?? '').toLowerCase();
+  if (n === 'curl' || n === 'curls') return false;
+  return n.endsWith('url') || n.indexOf('_url') >= 0 || n.indexOf('url_') >= 0;
+}
+
+/**
  * 按**名字**挖掉任意深度的密钥（嵌套对象与数组都进）。
  *
  * SECRET_PATHS 是固定路径枚举，覆盖不到这两处真实存在的密钥：
@@ -89,6 +152,23 @@ export function blankSecretNamed(data: unknown): unknown {
       if (!out) out = { ...src };
       out[k] = '';
       continue;
+    }
+    /*
+     * 名字不像密钥、但**值里躺着密钥**：地址里的 ?api_key= / user:pw@。
+     *
+     * 加在 blankSecretNamed 而不是各出口，是因为它一处改动会同时落到三个地方：
+     *   · hadInlineSecret（下面那句"挖一遍看有没有变化"）→ 界面提示自动出现
+     *   · nodeDefaults 的 redacted 清单 → 存成默认时如实说"值里的密钥已挖掉"
+     *   · 画布 / 模块 / 变量 / 预设的脱敏 → 真正挖掉
+     * 各写一份必然各改各的（webhook token 那次已经见过）。
+     */
+    if (typeof v === 'string' && v !== '' && looksLikeUrlKey(k)) {
+      const scrubbed = scrubUrlSecrets(v);
+      if (scrubbed !== v) {
+        if (!out) out = { ...src };
+        out[k] = scrubbed;
+        continue;
+      }
     }
     /*
      * 名字像密钥的**数组**：里面每个字符串元素都是密钥本身。
