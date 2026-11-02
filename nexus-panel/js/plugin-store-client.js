@@ -18,7 +18,12 @@
  *
  * 网络可注入（opts.fetch）是刻意的：
  * 单元测试不能依赖 GitHub 活着，也不该真的发出请求。
+ *
+ * ⚠️ 本模块属**宿主 Node 侧逻辑层**（与 plugin-installer 同侧，后者要 fs）。
+ *    webview 里跑不了 node:crypto；接线走后端 IPC 时不要把它塞进前端 bundle。
  */
+
+import { createHash } from 'node:crypto';
 
 /* ------------------------------------------------------------------ *
  * 常量
@@ -133,9 +138,20 @@ export function assetNameFor(id, version) {
  *   真正权威的版本号在包内的 manifest 里 —— 落盘时由 installer 校验。
  *   这里只负责「挑对文件」，不负责「相信它的版本号」。
  */
+/**
+ * 产物是否已上传完成。真实 GitHub asset 带 `state: "uploaded"`，
+ * 上传中会是别的值；老 release / 测试夹具没有这个字段，按已上传处理。
+ *
+ * 单独导出而不是各写一份：install 里还有一处独立的 assets 过滤，
+ * 两边各判一次迟早只改一边（本仓库反复栽的"同一语义只做对一处"）。
+ */
+export function isUploadedAsset(a) {
+  return !a || a.state === undefined || a.state === null || a.state === 'uploaded';
+}
+
 export function pickAsset(assets, id, version) {
   if (!Array.isArray(assets) || !id) return null;
-  const list = assets.filter((a) => a && typeof a.name === 'string');
+  const list = assets.filter((a) => a && typeof a.name === 'string' && isUploadedAsset(a));
   const exact = version
     ? list.find((a) => a.name === assetNameFor(id, version))
     : null;
@@ -245,4 +261,49 @@ export async function downloadAsset(asset, opts = {}) {
   } catch (err) {
     return { ok: false, buffer: null, error: String(err && err.message), bytes: 0 };
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * 5. 产物完整性（真实 GitHub API 联调后补的）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 用 release asset 自带的 digest 校验下载到的字节流。
+ *
+ * 为什么需要它（2026-11-03 真实联调查出来的）：
+ *   真实 GitHub release 的 asset 带 `digest: "sha256:<64hex>"` 和
+ *   `state: "uploaded"`。此前链路只记 `id+size+updated_at` 做指纹，
+ *   能发现「同版本产物被换过」，但**发现不了下载途中字节流损坏**——
+ *   gzip 魔数可能还在，解包器却会报「坏包」，用户看到的是一句
+ *   莫名其妙的解析错误，而不是「下载不完整，重试一次」。
+ *
+ * @returns {{ok:boolean, checked:boolean, reason:string}}
+ *
+ * 三条口径（别改反）：
+ *   · digest 字段**完全没有** → checked:false, ok:true。老 release /
+ *     第三方 mock 常常没有，不能因此让插件装不上。
+ *   · 字段存在但格式不认识 → **拒绝放行**（checked:true, ok:false）。
+ *     若当成「没有 digest」跳过，等于给「塞个假 digest 绕过校验」
+ *     开了一道门。
+ *   · checked 单独返回，是为了让上层和测试能看见「这次到底验没验」。
+ *     只有一个 ok 的话，判据整条失效时依旧全绿 —— 本项目反复栽的形状。
+ */
+export function verifyAssetDigest(buf, asset) {
+  const raw = asset && asset.digest;
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, checked: false, reason: '产物没有 digest（老 release 常见），跳过完整性校验' };
+  }
+  if (typeof raw !== 'string' || !/^sha256:[0-9a-f]{64}$/i.test(raw)) {
+    return { ok: false, checked: true,
+      reason: `digest 格式不可识别，拒绝放行: ${String(raw).slice(0, 80)}` };
+  }
+  if (!Buffer.isBuffer(buf)) {
+    return { ok: false, checked: true, reason: '下载内容不是 Buffer，无法校验 digest' };
+  }
+  const actual = `sha256:${createHash('sha256').update(buf).digest('hex')}`;
+  if (actual !== raw.toLowerCase()) {
+    return { ok: false, checked: true,
+      reason: `产物 sha256 不匹配（期望 ${raw.slice(7, 19)}… 实际 ${actual.slice(7, 19)}…），可能下载不完整或被替换` };
+  }
+  return { ok: true, checked: true, reason: 'digest 校验通过' };
 }
