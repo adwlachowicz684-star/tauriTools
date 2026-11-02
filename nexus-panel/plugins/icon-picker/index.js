@@ -6,28 +6,34 @@ import { PRESET_ICON_NAMES } from './iconNames.js';
  * ------------------------------------------------------------
  * 把内置图标库（122 个 .ico）的浏览与选择抽成公共服务。
  *
- * 图标物理文件仍放在 project-group/preseticons/ 下 ——
- * 这里用相对路径 ../project-group/preseticons/ 引用，
- * 与宿主同 origin 的 iframe 可以直接访问。
+ * 图标物理文件**自带**在本服务目录下（preseticons/，122 个 .ico）。
  *
- * **为什么最终决定不把资源搬进本服务（N22 的处理结论）**
+ * **为什么搬进来了（翻案 N22 的结论）**
  *
- * 直觉上服务该自带资源、不依赖别的插件。但核实后不改，三个理由：
+ * N22 当初决定不搬，理由是「project-group 才是主用户、复制 747 KB 不划算」
+ * —— 在**单仓库、一起构建**的形态下这个判断是对的：两处引用解析到同一个
+ * runtime-plugins/ 路径，同 origin，本来就没有隔离问题。
  *
- *   1. **project-group 才是主用户**。它的 PresetIconGrid 用
- *      `./preseticons/x.ico` 显示同一批图标。搬走要么断它的引用，
- *      要么复制 122 个二进制（747 KB）—— 都不划算。
- *   2. **搬走解决不了真问题**。真正的风险是「Vite 构建后图标全部 404」
- *      （动态拼路径 Vite 分析不了，见 native-assets-test.mjs），
- *      而这与资源放在哪个插件目录下**无关**，靠 vite.config 的
- *      NATIVE_SUBDIRS 拷贝规则解决（已修，两条引用同一份拷贝）。
- *   3. 两处引用解析到**同一个** dist 路径，同 origin，本来就没有隔离问题。
+ * 但目标形态变了：**每个插件一个 GitHub 仓库、点安装即用、互不影响**。
+ * 一旦独立安装，用户可能只装了 icon-picker 而没装 project-group，
+ * 这时 `../project-group/preseticons/` 立刻 404。
  *
- * 结论：资源归属保持不变，等真的要独立分发（比如图标服务单独提供给
- * 第三方）时再搬 —— 那时应该连 project-group 的引用一起改成走服务。
+ * ⛔ 这条失效**构建期完全不响**：ICON_DIR 是字符串常量，Vite 不解析它，
+ *    产物里原样保留该路径，构建成功、插件能打开，
+ *    只有图标**一片空白** —— 与 build-plugins.mjs 里记的
+ *    「插件能开、图标一片空白」是同一形状，是最难查的那一类。
+ *    实测（第一百八十三轮）：构建产物 index.html 与 assets/*.js 里
+ *    都保留着 `../project-group/preseticons/` 原样字符串。
+ *
+ * 于是代价（多一份 747 KB 二进制）换掉的是一类静默失效，划算。
+ *
+ * ⚠ 现在有两份 preseticons（project-group 一份、本服务一份）。
+ *    两份必须保持一致 —— 由 `cross-plugin-coupling-test.mjs` 的
+ *    「共享资源一致性」一节守着（比对文件清单与逐字节内容）。
+ *    将来若抽成共享资源包，那个断言就是销账的凭据。
  */
 
-const ICON_DIR = '../project-group/preseticons/';
+const ICON_DIR = './preseticons/';
 const iconUrl = (name) => `${ICON_DIR}${encodeURIComponent(name)}.ico`;
 
 /** 打开图标浏览面板，返回 { name, url }；取消则 reject */
