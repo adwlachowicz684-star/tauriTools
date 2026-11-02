@@ -400,6 +400,14 @@
 .tb-pri.p-P1 { background: color-mix(in srgb, var(--accent) 38%, transparent); }
 .tb-pri.p-P2 { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .tb-pri.p-P3 { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tb-pri.p-P4 { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.tb-pri.p-P5 { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+
+/*
+  ⚠️ 上面六档只是**兜底**：正常路径下 PriorityBadge 会用
+  defs.priority 里的自定义色写 inline style（见 App.tsx），
+  颜色是数据、可改、落盘、随项目导入导出带回。
+*/
 
 /* ------------------------------------------------ 模态 */
 

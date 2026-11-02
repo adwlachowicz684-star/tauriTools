@@ -17,6 +17,11 @@ const testSrc = fs.readFileSync(path.join(dir, 'task-board-test.mjs'), 'utf8');
 import {
   duplicateDataDirs,
   STATUSES,
+  PRIORITIES,
+  statusColor,
+  PRIORITY_DEFS,
+  priorityLabel,
+  normalizePriorityDefs,
   canTransition,
   normalizeTask,
   normalizeStore,
@@ -384,7 +389,14 @@ t('colFilterValues：优先级/状态取全量；认领人从数据去重且未�
   const pri = colFilterValues('priority', TB_ROWS);
   const st = colFilterValues('status', TB_ROWS);
   const as = colFilterValues('assignee', TB_ROWS);
-  return pri.length === 4 && st.length === STATUSES.length
+  /*
+    ⛔ 原来写死 `pri.length === 4`。优先级扩到 P0~P5 后恒红 ——
+    恒红的守卫等于没有守卫。改成与 PRIORITIES 同长且逐项同序，
+    以后再增减档位也不会误报/漏报。
+  */
+  return pri.length === PRIORITIES.length
+    && pri.every((v, i) => v === PRIORITIES[i])
+    && st.length === STATUSES.length
     && as[as.length - 1] === UNASSIGNED && as.indexOf('w1') >= 0 && as.indexOf('w2') >= 0;
 })());
 
@@ -5902,6 +5914,163 @@ t('守卫：筛选面板有独立滚动的选项区', (() => {
   return /className="tb-lpop-list"/.test(pop)
     && /tb-lpop-foot/.test(pop)
     && pop.indexOf('className="tb-lpop-list"') < pop.indexOf('options.map(');
+})());
+
+/*
+ * ============================================================
+ * 优先级 P0~P5 + 改色落盘（本轮）
+ * 要求：六档、默认色互异且 P0 更红、颜色是数据（可改 / 落盘 / 导入带回）。
+ * ============================================================
+ */
+
+/* ① 六档，且三处清单逐项同序（core / 定义表 / types.ts） */
+t('守卫：优先级固定六档 P0~P5，三处清单同序', (() => {
+  const types = fs.readFileSync(path.join(dir, 'types.ts'), 'utf8');
+  const m = types.match(/export const PRIORITY_ORDER[^=]*=\s*\[([^\]]*)\]/);
+  if (!m) return false;
+  const order = m[1].split(',').map((x) => x.trim().replace(/['"]/g, '')).filter(Boolean);
+  const want = ['P0', 'P1', 'P2', 'P3', 'P4', 'P5'];
+  return PRIORITIES.length === 6
+    && PRIORITIES.every((v, i) => v === want[i])
+    && PRIORITY_DEFS.length === 6
+    && PRIORITY_DEFS.every((d, i) => d.id === want[i])
+    && order.length === 6 && order.every((v, i) => v === want[i]);
+})());
+
+/* ② 默认色互不相同，且 P0 明显更红 */
+t('守卫：六档默认色互异，P0 最红', (() => {
+  const hex = (c) => {
+    const m = /^#([0-9a-f]{6})$/i.exec(c || '');
+    if (!m) return null;
+    return { r: parseInt(m[1].slice(0, 2), 16), g: parseInt(m[1].slice(2, 4), 16), b: parseInt(m[1].slice(4, 6), 16) };
+  };
+  const cs = PRIORITY_DEFS.map((d) => hex(d.color));
+  if (cs.some((x) => !x)) return false;
+  if (new Set(PRIORITY_DEFS.map((d) => d.color)).size !== 6) return false;
+  const redness = (c) => c.r - Math.max(c.g, c.b);
+  const p0 = redness(cs[0]);
+  /* P0 的"红度"必须是全表最大，且确实是红的（不是灰） */
+  return p0 > 120 && cs.every((c, i) => i === 0 || redness(c) < p0);
+})());
+
+/* ③ 显示名只有一份真相：types.ts 的 LABEL 与 core 的 PRIORITY_DEFS.name 一致 */
+t('守卫：优先级显示名两处一致（不漂移）', (() => {
+  const types = fs.readFileSync(path.join(dir, 'types.ts'), 'utf8');
+  const i = types.indexOf('export const PRIORITY_LABEL');
+  const seg = types.slice(i, types.indexOf('};', i));
+  return PRIORITY_DEFS.every((d) => {
+    const m = new RegExp(d.id + "\\s*:\\s*'([^']+)'").exec(seg);
+    return m && m[1] === d.name;
+  }) && PRIORITY_DEFS.every((d) => priorityLabel(d.id) === d.name);
+})());
+
+/* ④ 归一化：老文件补 P4/P5、保留自定义色、忽略未知档 */
+t('归一化优先级定义表：补缺档 / 留自定义色 / 丢未知档', (() => {
+  const got = normalizePriorityDefs([
+    { id: 'P0', name: '紧急', color: '#ff0000' },
+    { id: 'P9', name: '乱写', color: '#000000' },
+  ]);
+  return got.length === 6
+    && got[0].color === '#ff0000'
+    && got[0].name === '紧急'
+    && got[4].id === 'P4' && got[5].id === 'P5'
+    && !got.some((d) => d.id === 'P9')
+    && new Set(got.map((d) => d.color)).size === 6;
+})());
+
+/* ⑤ 落盘/导入往返：颜色原样回来（用户明确要求"导入后原样加回来"） */
+t('守卫：优先级颜色落盘 → 导入读回，原样不变', (() => {
+  const custom = PRIORITY_DEFS.map((d) => ({ ...d, color: d.id === 'P2' ? '#123456' : d.color }));
+  /* 模拟 toDisk：defs 与平级 priorityDefs 一起写进 tasks.json */
+  const disk = JSON.parse(JSON.stringify({
+    v: 1, nextId: 1, tasks: [],
+    defs: { priority: custom },
+    priorityDefs: custom,
+  }));
+  const back = normalizeStore(disk);
+  const got = defsOf(back, 'priority');
+  return got.length === 6 && got.every((d, i) => d.color === custom[i].color);
+})());
+
+/* ⑥ 老文件（只有平级 priorityDefs）也能迁移回来 */
+t('守卫：老格式 priorityDefs 迁移进 defs', (() => {
+  const st = normalizeStore({
+    v: 1, nextId: 1, tasks: [],
+    priorityDefs: [{ id: 'P0', name: '紧急', color: '#abcdef' }],
+  });
+  const got = defsOf(st, 'priority');
+  return got.length === 6 && got[0].color === '#abcdef' && got[5].id === 'P5';
+})());
+
+/* ⑦ 源码：toDisk 与 mergeLegacyDefs 都认 priorityDefs */
+t('守卫：写盘展开 priorityDefs，读盘认 priorityDefs', (() => {
+  const store = fs.readFileSync(path.join(dir, 'lib/store.ts'), 'utf8');
+  const core = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  return /priorityDefs:\s*defs\.priority/.test(store)
+    && /priority:\s*s\.priorityDefs/.test(core);
+})());
+
+/* ⑧ 源码：优先级与状态都接上了改色（不再只读），且 ghost 状态挡掉 */
+t('守卫：优先级 / 状态都能改色，ghost 状态不给色板', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('const defOpsFor');
+  const seg = app.slice(i, app.indexOf('\n\n', i + 200) > 0 ? app.indexOf('\n\n', i + 200) : i + 2400);
+  return /case 'priority':/.test(seg) && /setColor: setPriorityColor/.test(seg)
+    && /case 'status':/.test(seg) && /setColor: setStatusColor/.test(seg)
+    && /canColor:\s*\(id: string\) => flow\.statuses\.some/.test(seg)
+    && /defOps\?\.canColor/.test(app)          /* 面板真的用了这个判据 */
+    && /setStatusColor/.test(app) && /setPriorityColor/.test(app);
+})());
+
+/* ⑨ 通杀：不许再有写死的优先级颜色表（颜色只能是数据） */
+t('守卫：通杀 —— 优先级颜色不写死在组件或样式里', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const core = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  /* 徽章必须查定义表 */
+  const i = app.indexOf('function PriorityBadge');
+  const badge = app.slice(i, app.indexOf('\nfunction ', i + 10));
+  const fromDefs = /defsOf\(store, 'priority'\)/.test(badge) && /style=/.test(badge);
+  /* 组件里不许再有 PRIORITY_DOT 之类硬编码表 */
+  const noHardcode = !/PRIORITY_DOT/.test(app)
+    && !/P0:\s*'#/.test(app)
+    && !/if \(col\.field === 'priority'\) return PRIORITY_DOT/.test(app);
+  /* 状态色来自 flow（本来就在 tasks.json 里） */
+  const statusFromFlow = /statusColor\(flow, v\)/.test(app);
+  return fromDefs && noHardcode && statusFromFlow
+    && /defKey: 'priority'/.test(core)
+    && /priority: \{ multi: false, color: true \}/.test(core);
+})());
+
+/* ⑩ 空库（既没 defs 也没老字段）也必须补齐六档，否则筛选面板没色点 */
+t('守卫：空库读盘自动补齐六档默认色', (() => {
+  const st = normalizeStore({ v: 1, nextId: 1, tasks: [] });
+  const got = defsOf(st, 'priority');
+  return got.length === 6
+    && got.every((d, i) => d.id === PRIORITIES[i] && d.color === PRIORITY_DEFS[i].color);
+})());
+
+/* ⑪ 颜色的展示点都查定义表（改完色，列表/统计/徽章一起变） */
+t('守卫：优先级展示点都查 defs.priority，不写死色', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const stats = app.slice(app.indexOf('function StatsView'), app.indexOf('function NewTaskModal'));
+  const list = app.slice(app.indexOf('  const cellFor ='), app.indexOf("      case 'id':"));
+  return /defsOf\(store, 'priority'\)/.test(stats)
+    && /defsOf\(taskStore, 'priority'\)/.test(list || app.slice(0, 10))
+    && /defsOf\(store, 'priority'\)/.test(app.slice(app.indexOf('function PriorityBadge'), app.indexOf('function TaskCard')));
+})());
+
+/* ⑫ 状态颜色在 flow 里，改完落盘 → 读回原样（导入带回） */
+t('守卫：状态颜色落盘 → 导入读回，原样不变', (() => {
+  const st = normalizeStore({
+    v: 1, nextId: 1, tasks: [],
+    flow: { statuses: [{ id: 'todo', name: '待办', color: '#111111', done: false }], transitions: {} },
+  });
+  const changed = {
+    ...st,
+    flow: { ...st.flow, statuses: [{ ...st.flow.statuses[0], color: '#22c55e' }] },
+  };
+  const back = normalizeStore(JSON.parse(JSON.stringify(changed)));
+  return statusColor(back.flow, 'todo') === '#22c55e';
 })());
 
 const readmeCount = (() => {

@@ -10,15 +10,25 @@
 export type TaskStatus =
   | 'todo' | 'claimed' | 'doing' | 'hold' | 'review' | 'done' | 'cancelled';
 
-export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
+/*
+  优先级 P0~P5 六档。⛔ 与 core.mjs 的 PRIORITIES **逐项同序**
+  （守卫第「优先级档位」节盯着，不一致时排序/统计/筛选会各说各话）。
 
-export const PRIORITY_ORDER: Priority[] = ['P0', 'P1', 'P2', 'P3'];
+  颜色不写在这儿，也不写死在 CSS 里：存在 tasks.json 的
+  `defs.priority`（同时展开成平级 `priorityDefs`），
+  由用户在筛选面板里改色 → 导出/导入项目后原样带回来。
+*/
+export type Priority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5';
+
+export const PRIORITY_ORDER: Priority[] = ['P0', 'P1', 'P2', 'P3', 'P4', 'P5'];
 
 export const PRIORITY_LABEL: Record<Priority, string> = {
   P0: '紧急',
   P1: '高',
   P2: '中',
   P3: '低',
+  P4: '较低',
+  P5: '最低',
 };
 
 export interface HistoryEntry {
@@ -134,7 +144,8 @@ export interface TaskStore {
     取用一律走 defsOf(store, field)。加一列 = 注册表加一项，类型不用动。
 
     defKey 与列的对应关系：
-      tag → tags 列，type → type 列，group → group 列，assignee → assignee 列
+      tag → tags 列，type → type 列，group → group 列，assignee → assignee 列，
+      priority → 优先级列（固定六档的定义表，只存颜色，不给增删改）
 
     ⚠️ 老文件里是四个平级字段，读盘时由 mergeLegacyDefs 迁移进来
     （新格式优先，不会被老字段冲掉）。

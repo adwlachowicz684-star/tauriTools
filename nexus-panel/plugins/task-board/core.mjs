@@ -4,8 +4,6 @@
 // （此前这条约定靠人记得同步 —— 实测 346 个测试里 0 个读 task_board.rs）。
 
 export const STATUSES = ['todo', 'claimed', 'doing', 'hold', 'review', 'done', 'cancelled'];
-export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
-
 /* ============================================================ 流程配置
  *
  * 状态与流转**由用户在界面上定**，不再写死。默认这一套只是初始值。
@@ -53,6 +51,61 @@ export const DEFAULT_FLOW = {
 const FLOW_COLORS = Object.fromEntries(
   DEFAULT_FLOW.statuses.map((s) => [s.id, s.color]),
 );
+
+/*
+  优先级六档 + **默认颜色**。
+
+  ⛔ 颜色以前写死在 CSS（.tb-pri.p-P0 用 accent 混色）和 App 的
+  PRIORITY_DOT 常量里 —— 两处都不是数据，改不了、导出也带不走。
+  现在它是**定义表**：存进 tasks.json 的 defs.priority，
+  用户在筛选面板里点色点改，导出/导入项目后原样加回来。
+
+  P0 用更正的红（#dc2626），往下逐档转橙/黄/蓝/靛/灰蓝 ——
+  六档默认色互不相同，一眼能读出轻重。
+*/
+export const PRIORITY_DEFS = [
+  { id: 'P0', name: '紧急', color: '#dc2626' },
+  { id: 'P1', name: '高',   color: '#ea580c' },
+  { id: 'P2', name: '中',   color: '#f59e0b' },
+  { id: 'P3', name: '低',   color: '#3b82f6' },
+  { id: 'P4', name: '较低', color: '#6366f1' },
+  { id: 'P5', name: '最低', color: '#64748b' },
+];
+
+/** 固定枚举：六档，与 types.ts 的 PRIORITY_ORDER 逐项同序（守卫盯着） */
+export const PRIORITIES = PRIORITY_DEFS.map((d) => d.id);
+
+/** 优先级的显示名（core 侧唯一一份，UI 的 PRIORITY_LABEL 与它同值） */
+export function priorityLabel(id) {
+  const d = PRIORITY_DEFS.find((x) => x.id === id);
+  return d ? d.name : '';
+}
+
+/**
+ * 归一化优先级定义表。
+ *
+ * 以默认六档为底、用文件里的同名项覆盖（保留用户改过的颜色/名字）：
+ *  · 老文件只有四档 / 根本没有这个字段 → 自动补齐 P4/P5，不会少两档色点
+ *  · 用户改过 P0 的颜色 → 保留，不被默认冲掉
+ *  · 出现未知 id（手写 JSON 写错）→ 忽略，不混进固定枚举
+ */
+export function normalizePriorityDefs(raw) {
+  const byId = new Map();
+  if (Array.isArray(raw)) {
+    for (const d of raw) {
+      if (!d || typeof d !== 'object') continue;
+      const id = typeof d.id === 'string' ? d.id.trim() : '';
+      if (!PRIORITY_DEFS.some((x) => x.id === id)) continue;
+      const base = PRIORITY_DEFS.find((x) => x.id === id);
+      byId.set(id, {
+        id,
+        name: typeof d.name === 'string' && d.name.trim() ? d.name.trim() : base.name,
+        color: typeof d.color === 'string' && d.color ? d.color : base.color,
+      });
+    }
+  }
+  return PRIORITY_DEFS.map((d) => byId.get(d.id) || { ...d });
+}
 
 /* 派生色板：只服务"没配色的裸值"，与定义表里的自定义色是两回事。
    ⛔ 不 import types.ts 的 TAG_COLORS（core.mjs 里没有它，运行时会
@@ -536,8 +589,10 @@ function mergeLegacyDefs(s) {
     type: normalizeTypeDefs,
     group: (v) => normalizeGroupDefs(v),
     assignee: (v) => normalizeGroupDefs(v),
+    priority: (v) => normalizePriorityDefs(v),
   };
-  const legacy = { tag: s.tagDefs, type: s.typeDefs, group: s.groupDefs, assignee: s.assigneeDefs };
+  const legacy = { tag: s.tagDefs, type: s.typeDefs, group: s.groupDefs, assignee: s.assigneeDefs,
+    priority: s.priorityDefs };
   for (const [key, val] of Object.entries(legacy)) {
     if (Object.prototype.hasOwnProperty.call(out, key)) continue;   // 新格式优先
     if (!Array.isArray(val)) continue;
@@ -555,6 +610,12 @@ function mergeLegacyDefs(s) {
   if (!Object.prototype.hasOwnProperty.call(out, 'type')) {
     out.type = normalizeTypeDefs(null);
   }
+  /*
+    优先级定义表**永远补齐六档**：老文件（四档）升级后不能少两档，
+    而 defs 里传来一份残缺的也要补 —— 否则筛选面板里 P4/P5 没有色点，
+    "勾了颜色却少两格"，看着像配色坏了。
+  */
+  out.priority = normalizePriorityDefs(out.priority);
   return out;
 }
 
@@ -621,7 +682,7 @@ export function normalizeStore(raw) {
   };
 }
 
-const PRIORITY_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
+const PRIORITY_RANK = Object.fromEntries(PRIORITY_DEFS.map((d, i) => [d.id, i]));
 
 /** 排序：优先级升序（紧急在前），同级按更新时间倒序 */
 export function sortTasks(tasks) {
@@ -696,12 +757,16 @@ export const NOGROUP = '__nogroup__';
  *            （曾出过 UNESTIMATED 与 UNASSIGNED 都是 '__none__'）
  * @emptyLabel 空值显示给人看的名字
  * @multiOk   允许勾「多选」（值可以是数组）
- * @colorOk   允许勾「颜色」（有定义表可落色）
+ * @colorOk   允许勾「颜色」（颜色来源按列查：定义表 / flow / 固定枚举）
  * @width     默认列宽
  */
 export const LIST_COLUMNS = [
-  { field: 'priority', label: '优先级', kind: 'enum', defKey: null,
-    sentinel: '', emptyLabel: '', multiOk: false, colorOk: false, width: 90 },
+  /*
+    优先级是**固定枚举**（不给新建/改名/删除），但颜色由定义表存 ——
+    所以 defKey 有值，setColor 能落盘；defOpsFor 只给它改色这一项能力。
+  */
+  { field: 'priority', label: '优先级', kind: 'enum', defKey: 'priority',
+    sentinel: '', emptyLabel: '', multiOk: false, colorOk: true, width: 90 },
   { field: 'id', label: 'ID', kind: 'text', defKey: null,
     sentinel: '', emptyLabel: '', multiOk: false, colorOk: false, width: 92 },
   { field: 'title', label: '标题', kind: 'text', defKey: null,
@@ -804,8 +869,8 @@ export function labelFor(field, v, storeOrDefs, flow) {
   const c = colDef(field);
   if (c && c.sentinel && v === c.sentinel) return c.emptyLabel || '';
   if (field === 'priority') {
-    const P = { P0: '紧急', P1: '高', P2: '中', P3: '低' };
-    return v ? `${v} ${P[v] || ''}`.trim() : '';
+    /* ⛔ 不在这里手抄一份 P0→紧急 的表：默认档位/显示名/颜色统一在 PRIORITY_DEFS */
+    return v ? `${v} ${priorityLabel(v)}`.trim() : '';
   }
   if (field === 'status') return statusName(flow, v);
   if (!c || !hasDefs(field)) return v || '';
@@ -853,7 +918,7 @@ export const COLOR_OK = ['priority', 'status', 'assignee', 'type', 'tags', 'grou
 
 /** 默认：标签多选；这几列默认带色（与改造前的行为一致，老用户无感） */
 export const DEFAULT_COL_META = {
-  priority: { multi: false, color: false },
+  priority: { multi: false, color: true },
   status: { multi: false, color: true },
   assignee: { multi: false, color: true },
   type: { multi: false, color: true },

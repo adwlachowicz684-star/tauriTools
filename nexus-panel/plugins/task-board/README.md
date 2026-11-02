@@ -2,6 +2,18 @@
 
 多 AI 窗口 + 人工 + agent-flow 流程共用的任务看板。**数据只有一份**：数据目录下的 `tasks.json`。
 
+## 优先级与颜色（可改、落盘、随项目带走）
+
+优先级固定 **P0~P5 六档**（P0 最紧急，默认色也最红）。优先级与状态的**颜色都是数据**，不是写死在样式里：
+
+- 在列头的筛选面板里点色点改色（固定调色板 + 主面板取色器）
+- 优先级颜色存 `tasks.json` 的 `defs.priority`，同时展开成平级 `priorityDefs`
+- 状态颜色存 `flow.statuses[].color`（本来就在 `tasks.json` 里）
+- 两处都随项目**导入 / 导出原样带回来**，不依赖插件偏好或全局配置
+- 老文件（四档）读进来自动补齐 P4/P5，用户改过的颜色不会被默认冲掉
+
+优先级是固定枚举，所以只给改色、不给新建/改名/删除；状态的增删改在「流程设置」里。处于「未配置状态」（配置里已删、任务上还留着）的项没有存储位置，不给色板。
+
 ## 四条通道，一份数据
 
 | 谁 | 怎么用 |
@@ -68,7 +80,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（516 项，含源码扫描类守卫）
+  task-board-test.mjs   core 单测（528 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -93,7 +105,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 516 项
+npm run test:tb-core        # core 纯逻辑 528 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描

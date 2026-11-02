@@ -2,6 +2,11 @@ import type { Task, TaskStore, HistoryEntry, Agent } from './types';
 
 export declare const STATUSES: string[];
 export declare const PRIORITIES: string[];
+/** 优先级默认定义表（固定六档，含可改的颜色） */
+export declare const PRIORITY_DEFS: { id: string; name: string; color: string }[];
+export declare function priorityLabel(id: string): string;
+/** 以默认六档为底、用文件里的同名项覆盖；老文件自动补齐 P4/P5 */
+export declare function normalizePriorityDefs(raw: unknown): { id: string; name: string; color: string }[];
 
 export declare function canTransition(from: string, to: string): boolean;
 /** 应用一次流转。**必须传 flow**：校验认用户的流程配置 */

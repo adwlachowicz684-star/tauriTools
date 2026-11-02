@@ -1731,10 +1731,28 @@ ${dir}
         return { kindName: '分组', create: addGroup, setColor: setGroupColor, rename: renameGroup, remove: removeGroup };
       case 'assignee':
         return { kindName: '认领人', create: addAssignee, setColor: setAssigneeColor, rename: renameAssignee, remove: removeAssignee };
+      /*
+        优先级：固定枚举，**只给改色**。
+        不给新建/改名/删除 —— 六档是排序语义，多一档就乱了；
+        但颜色是数据，存在 defs.priority 里，改完落盘、导出带回。
+      */
+      case 'priority':
+        return { kindName: '优先级', setColor: setPriorityColor };
+      /*
+        状态：颜色存在 flow.statuses[].color（本来就在 tasks.json 里），
+        只给改色，状态本身的增删改在「流程设置」里做。
+        ⛔ ghost 状态（配置里没有的）不在 flow.statuses 里，
+        给它摆色板会点了没反应，所以 canColor 挡掉。
+      */
+      case 'status':
+        return {
+          kindName: '状态',
+          setColor: setStatusColor,
+          canColor: (id: string) => flow.statuses.some((s) => s.id === id),
+        };
       default:
         /*
-          没有定义表的列（优先级 / 状态 / 文本 / 数值 / 时间）不返回 ops ——
-          面板里就不会出现增删改色按钮。
+          文本 / 数值 / 时间列不返回 ops —— 面板里就不会出现增删改色按钮。
           给它们摆上按钮是骗人：点了弹确认框然后什么都没发生。
         */
         return undefined;
@@ -1796,6 +1814,43 @@ ${dir}
     但按它筛不到任何东西（任务上根本没有这个值），
     而且旧名还会从数据里继续冒出来，看着像"改名没生效还多了一个"。
   */
+
+  /* ---------------------------------------------------------- 固定枚举的改色
+   *
+   * 优先级与状态都是**固定枚举**（不给增删改），但颜色是数据、要能改、
+   * 要落盘、要能随项目导出/导入原样带回来。两处各写自己那一份存储：
+   *   · 优先级 → defs.priority（toDisk 同时展开成平级 priorityDefs）
+   *   · 状态   → flow.statuses[].color
+   */
+  const setPriorityColor = (id: string, color: string) =>
+    withErr(async () => {
+      if (!cfg || !id) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const defs = defsOf(st, 'priority');
+        const idx = defs.findIndex((d) => d.id === id);
+        /* 老文件 / AI 手写的残缺定义表 → 补一条，不让它改了没处落 */
+        if (idx < 0) defs.push({ id, name: id, color });
+        else defs[idx] = { ...defs[idx], color };
+        return withDefs(st, 'priority', defs);
+      });
+      await refresh();
+    })();
+
+  const setStatusColor = (id: string, color: string) =>
+    withErr(async () => {
+      if (!cfg || !id) return;
+      await S.mutate(ctx, cfg.dataDir, (st) => {
+        const f = st.flow;
+        const idx = f.statuses.findIndex((x) => x.id === id);
+        /* 配置里没有这个状态（ghost）→ 无处可落，直接不改 */
+        if (idx < 0) return null;
+        const statuses = [...f.statuses];
+        statuses[idx] = { ...statuses[idx], color };
+        return { ...st, flow: { ...f, statuses } };
+      });
+      await refresh();
+    })();
+
   const renameGroup = (id: string, name: string) =>
     withErr(async () => {
       if (!cfg || !id || !name.trim()) return;
@@ -2744,8 +2799,23 @@ ${dir}
 
 /* ================================================================ 子组件 */
 
-function PriorityBadge({ p }: { p: Priority }) {
-  return <span className={'tb-pri p-' + p}>{p}</span>;
+/*
+  优先级徽章：颜色来自 **defs.priority**（tasks.json 里的数据），
+  用户在筛选面板改完色，列表/卡片/详情/统计四处一起变。
+
+  ⛔ 以前靠 CSS 的 .tb-pri.p-P0 ... 按档位混 accent —— 那是样式不是数据，
+  改不了色、导出也带不走。现在 CSS 只作"没拿到定义表"时的兜底。
+*/
+function PriorityBadge({ p, store }: { p: Priority; store?: unknown }) {
+  const c = (defsOf(store, 'priority') || []).find((d: TagDef) => d.id === p)?.color;
+  return (
+    <span
+      className={'tb-pri p-' + p}
+      style={c ? { background: c, borderColor: c } : undefined}
+    >
+      {p}
+    </span>
+  );
 }
 
 function TaskCard({ task, me, flow, onOpen, onAction, onClaim, store }: {
@@ -2767,7 +2837,7 @@ function TaskCard({ task, me, flow, onOpen, onAction, onClaim, store }: {
   return (
     <article className="tb-task">
       <div className="tb-task-top">
-        <PriorityBadge p={task.priority} />
+        <PriorityBadge p={task.priority} store={store} />
         <span className="tb-task-id">{task.id}</span>
         <span className="tb-task-time" title={fmtTime(task.updatedAt)}>
           {relTime(task.updatedAt)}
@@ -4266,6 +4336,12 @@ export interface DefOps {
   create?: (name: string, color: string) => Promise<string | undefined> | void;
   /** 改色 */
   setColor?: (id: string, color: string) => void;
+  /**
+    这个值能不能改色。缺省 = 都能改。
+    状态列用它挡住"未配置状态"：那些值不在 flow.statuses 里，
+    改色无处可落，摆个能点却存不下来的色板是骗人。
+  */
+  canColor?: (id: string) => boolean;
   /** 改名（改的是定义；连带改任务由实现负责） */
   rename?: (id: string, name: string) => void;
   /** 删除（连带摘任务、清筛选由实现负责） */
@@ -4358,14 +4434,12 @@ function ColFilterPop({
     统一后：勾了颜色 → 每列都有色点，位置/大小一致；
     只有"能不能点开色板改色"由 onColor 决定（固定枚举没有定义可存色）。
   */
-  const PRIORITY_DOT: Record<string, string> = {
-    P0: '#ef4444', P1: '#f59e0b', P2: '#3b82f6', P3: '#78716c',
-  };
   const dotColor = (v: string): string => {
     if (isSentinel(v)) return '#78716c';
+    /* priority 现在也有定义表（defs.priority），与类型/标签走同一条路 */
     if (hasDefs(col.field)) return colorOf(v) || derivedColor(v);
+    /* 状态没有定义表，颜色存在 flow.statuses[].color 里，同样落盘 */
     if (col.field === 'status') return statusColor(flow, v);
-    if (col.field === 'priority') return PRIORITY_DOT[v] || '#78716c';
     return '#78716c';
   };
   const onCreate = defOps && defOps.create;
@@ -4487,7 +4561,7 @@ function ColFilterPop({
                 */}
                 {showColor ? (
                   <span className={'tb-lpop-colors' + (colorFor === v ? ' open' : '')}>
-                    {onColor && !isSentinel(v) ? (
+                    {onColor && !isSentinel(v) && (!defOps?.canColor || defOps.canColor(v)) ? (
                       colorFor === v ? (
                         <>
                         {TAG_COLORS.map((c) => (
@@ -5068,11 +5142,13 @@ function ListView({ rows, allRows, /*
         return (
           <span className="tb-lc c-priority" key={field}>
             <SinglePick
-              cur={<PriorityBadge p={t.priority} />}
+              cur={<PriorityBadge p={t.priority} store={taskStore} />}
               title="点击改优先级"
               options={PRIORITY_ORDER.map((pr) => ({
                 id: pr,
                 label: `${pr} ${PRIORITY_LABEL[pr]}`,
+                /* 与状态下拉同一判据：颜色查定义表，改完四处一起变 */
+                color: (defsOf(taskStore, 'priority') || []).find((d: TagDef) => d.id === pr)?.color,
                 on: t.priority === pr,
               }))}
               onPick={(id) => onPatchField(t.id, { priority: id as Priority })}
@@ -5837,7 +5913,13 @@ function StatsView({ stats, flow, onOpen, store }: {
         <section className="tb-stat-panel">
           <header className="tb-stat-panel-head">优先级分布</header>
           {PRIORITY_ORDER.map((p) => (
-            <BarRow key={p} label={`${p} ${PRIORITY_LABEL[p]}`} count={stats.byPriority[p] || 0} max={maxPrio} />
+            <BarRow
+              key={p}
+              label={`${p} ${PRIORITY_LABEL[p]}`}
+              count={stats.byPriority[p] || 0}
+              max={maxPrio}
+              color={(defsOf(store, 'priority') || []).find((d: TagDef) => d.id === p)?.color}
+            />
           ))}
         </section>
         {/*
@@ -5924,7 +6006,7 @@ function StatsView({ stats, flow, onOpen, store }: {
           */}
           {stats.stale.map((t) => (
             <div key={t.id} className="tb-load-row">
-              <PriorityBadge p={t.priority} />
+              <PriorityBadge p={t.priority} store={store} />
               <span className="tb-load-id">{t.id}</span>
               <span className="tb-load-title">{t.title}</span>
               <span className="tb-load-time">{relTime(t.updatedAt)}</span>
@@ -6303,7 +6385,7 @@ function DetailPanel({ task, me, tasks, flow, onClose, onComment, onDelete, onAc
       </header>
       <div className="tb-dpanel-body">
       <div className="tb-dmeta">
-        <PriorityBadge p={task.priority} />
+        <PriorityBadge p={task.priority} store={store} />
         <span className="tb-dtag">状态：{statusName(flow, task.status)}</span>
         <span className="tb-dtag">报告人：{task.reporter}</span>
         <span className="tb-dtag">认领人：{whoText(task, store) || '未认领'}</span>

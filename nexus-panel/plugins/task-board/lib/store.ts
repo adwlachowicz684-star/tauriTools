@@ -325,6 +325,9 @@ function toDisk(store: TaskStore): unknown {
     typeDefs: defs.type || [],
     groupDefs: defs.group || [],
     assigneeDefs: defs.assignee || [],
+    /* 优先级颜色也展开成平级字段：导入/导出项目时原样带回来，
+       老程序与第三方读一份 tasks.json 就能拿到，不需要懂 defs 结构 */
+    priorityDefs: defs.priority || [],
   };
 }
 
