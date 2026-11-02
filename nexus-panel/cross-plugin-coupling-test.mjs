@@ -21,12 +21,15 @@
  *    两边一起对不上就红，任何一方单方面改动都会被抓。
  */
 
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { scanCrossPlugin, keyOf } from './scripts/scan-coupling.mjs';
 import { SUMMARY } from './test-scan-utils.mjs';
+
+const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
 /*
  * ⛔ ROOT 必须按**脚本自身位置**算，不能用 process.cwd()。
@@ -46,13 +49,6 @@ function t(name, ok, detail) {
 
 /** 已知欠账台账。每条必须写清 why（为什么现在这样）与 unblock（怎么销账）。 */
 const KNOWN = {
-  'plugins/icon-picker/index.js:30->project-group': {
-    blocking: true,
-    why: '122 个 .ico 物理文件在 project-group/preseticons/ 下，图标服务用相对路径跨插件引用。'
-       + '源码注释里已记录当初的决定：等真的独立分发时再搬。',
-    unblock: '把 preseticons 搬进 icon-picker 自带（约 760KB），并让 project-group 也走服务引用；'
-           + '两份并存时必须补"两份一致"的断言防漂移。',
-  },
   'plugins/project-group/components/dialogCards.tsx:5->color-picker': {
     blocking: true,
     why: '内嵌色盘组件直接引 color-picker 的 React 组件。',
@@ -118,6 +114,68 @@ const blockingNow = hits.filter((h) => h.blocking).length;
 t('④ 阻断项数量与台账一致',
   blockingNow === Object.values(KNOWN).filter((v) => v.blocking).length,
   `实测 ${blockingNow}`);
+
+/* ⑤ 共享资源一致性 —— 已销账那条的**后续风险**必须有人盯着
+ *
+ * 背景：icon-picker 原先跨插件引 project-group/preseticons/。
+ * 为了能独立安装，改成自带一份（122 个 .ico）。于是同一个逻辑资源
+ * 有了**两份物理拷贝** —— 这正是"解耦"的代价。
+ *
+ * ⛔ 两份拷贝的失效形状：改了 A 份忘了 B 份 → 同一个图标名在两个界面
+ *    显示不同的图，或者一边 404。不报错、不崩溃，只表现为"图标不对"。
+ *    与 utils/color.ts 历史上抄本漂移是同一形状（那份注释明确禁止再犯）。
+ *
+ * 所以"销账"不是终点：销掉跨插件引用之后，这里必须接管防漂移。
+ */
+const SHARED_RESOURCES = [
+  { a: 'plugins/project-group/preseticons', b: 'plugins/icon-picker/preseticons', what: '内置预设图标库' },
+];
+
+function listFiles(dir) {
+  const out = [];
+  const walk = (d, rel) => {
+    let ents;
+    try { ents = readdirSync(join(d, rel)); } catch { return; }
+    for (const e of ents) {
+      const p = join(d, rel, e);
+      let st;
+      try { st = statSync(p); } catch { continue; }
+      if (st.isDirectory()) walk(d, join(rel, e));
+      else out.push({ rel: join(rel, e), size: st.size });
+    }
+  };
+  walk(dir, '');
+  return out.sort((x, y) => (x.rel < y.rel ? -1 : 1));
+}
+
+for (const { a, b, what } of SHARED_RESOURCES) {
+  const da = resolve(ROOT, a);
+  const db = resolve(ROOT, b);
+  t(`⑤ ${what}：两份拷贝都存在`, isDir(da) && isDir(db), `${a} / ${b}`);
+  if (!isDir(da) || !isDir(db)) continue;
+
+  const fa = listFiles(da);
+  const fb = listFiles(db);
+  t(`⑤ ${what}：文件数量一致`, fa.length === fb.length && fa.length > 0,
+    `${a}=${fa.length} ${b}=${fb.length}`);
+
+  const na = fa.map((f) => f.rel);
+  const nb = fb.map((f) => f.rel);
+  const onlyA = na.filter((x) => !nb.includes(x));
+  const onlyB = nb.filter((x) => !na.includes(x));
+  t(`⑤ ${what}：文件清单一致`, onlyA.length === 0 && onlyB.length === 0,
+    `仅A有 ${onlyA.slice(0, 3).join(',')}；仅B有 ${onlyB.slice(0, 3).join(',')}`);
+
+  /* 逐字节比对：只比同名文件，避免清单不一致时刷屏 */
+  const diff = [];
+  for (const f of fa) {
+    if (!nb.includes(f.rel)) continue;
+    const ha = createHash('md5').update(readFileSync(join(da, f.rel))).digest('hex');
+    const hb = createHash('md5').update(readFileSync(join(db, f.rel))).digest('hex');
+    if (ha !== hb) diff.push(f.rel);
+  }
+  t(`⑤ ${what}：逐字节内容一致`, diff.length === 0, `不一致 ${diff.length} 个：${diff.slice(0, 3).join(',')}`);
+}
 
 /* ---- 元断言：证明扫描器真的在扫，而不是恒空 ---- */
 
