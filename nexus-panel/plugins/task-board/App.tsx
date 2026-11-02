@@ -962,14 +962,28 @@ export default function App() {
     所以必须先把影响面说出来再改 —— 静默丢数据是最难查的一类问题。
   */
   /*
-    这一列**在这条任务上**是不是多值形态。
+    这条任务在这一列上**该按多值处理吗** —— 全应用唯一的一份判据。
 
-    ⛔ 以**数据本身**为准，不查 colMeta：
-    用户关掉"多选"但数据还没压缩完（或压缩失败、或被别的端写回来）时，
-    值仍然是数组 —— 按单值处理就会漏摘，任务上残留一个已删除的 id。
+    ⛔ 原来是 `Array.isArray(值)`，只看**数据的形状**。
+    但值的形状是历史遗留，列的配置才是当下意图。实测两个真 bug：
+      · 列勾了「多选」、这条是老数据（单值字符串 "dev"）
+        → toggleType 点第二个值时走"替换"分支，**原有的 dev 被挤掉**
+      · 批量改类型走 addVal(multi=false) → 同样只留新值
+    这与上一轮 doClaim 修的那个（共同认领被挤掉）是**同一个根因**，
+    那次只修了 doClaim 一处，其余 8 个调用点没一起扫。
+
+    现在两个来源取**或**：
+      · colMulti(colMeta, field) —— 用户当下对这一列的设置（意图）
+      · Array.isArray(值)      —— 数据还没压缩完 / 别的端写回数组（兜底）
+    第二个不能丢：关掉多选但数据仍是数组时，按单值处理会**漏摘**，
+    任务上残留一个已删除的 id（"删了又复活"）。
+
+    改的是**定义本身**，8 个调用点一行都不用动 —— 这正是一次性
+    排查同类问题该有的做法，而不是等下一个入口再撞一次。
   */
   const multiOfTask = (t: Task, field: string) =>
-    Array.isArray((t as unknown as Record<string, unknown>)[field]);
+    colMulti(colMeta, field)
+    || Array.isArray((t as unknown as Record<string, unknown>)[field]);
 
   const setColMetaFlag = (field: string, key: 'multi' | 'color', on: boolean) => {
     const cur = colMeta[field] || { multi: false, color: false };

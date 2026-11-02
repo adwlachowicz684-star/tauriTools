@@ -5701,6 +5701,50 @@ t('守卫：批量改优先级的 toast 用显示名（不裸显示 P1）', (() 
   return /优先级改为 \$\{prio\} \$\{PRIORITY_LABEL\[/.test(app);
 })());
 
+/*
+ * ============================================================
+ * 历史类别反查（续）：上一轮 doClaim 修过"按数据形状判断多值"，
+ * 但只修了一处，其余 8 个调用点仍各按各的。这轮抓到批量改类型 /
+ * 新建即挂 / 改名 / 删除全部会在「多选列 + 单值老数据」下挤掉原值。
+ * 修法：改 multiOfTask 的定义本身（列配置 ∪ 数据形状），8 处自动生效。
+ * ============================================================
+ */
+
+/* ① 多值判据的定义必须同时认「列配置」与「数据形状」 */
+t('守卫：multiOfTask 同时认列配置与数据形状（两个来源取或）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const multiOfTask = ');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 420);
+  return /colMulti\(\s*colMeta,\s*field\s*\)/.test(seg)
+    && /Array\.isArray\(/.test(seg)
+    && /\|\|/.test(seg);
+})());
+
+/* ② 通杀：addVal / replaceVal / toggleFieldVal 的 multi 实参不许绕过判据 */
+t('守卫：通杀 —— 多值写回的 multi 实参必须走统一判据', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const bad = [];
+  /* 匹配 addVal(..., 最后实参) 与 replaceVal(..., 最后实参) */
+  const re = /\b(addVal|replaceVal|toggleFieldVal)\(([\s\S]{0,220}?)\)\s*[,;)}\]]/g;
+  let m;
+  while ((m = re.exec(app))) {
+    const args = m[2];
+    const last = args.split(',').slice(-1)[0].trim();
+    /*
+      违规：直接按数据形状判断、或写死 false（强制单值）。
+      ⚠️ `true` 是合法的：patchOneOf 只在「这条本来就有多个值」时走
+      replaceVal(..., true)，那里的数组形状是数据给定的，不是判据猜测。
+      把它也算违规会**恒红**，而恒红的守卫等于没有守卫。
+    */
+    if (/^Array\.isArray\(/.test(last) || /^false$/.test(last)) {
+      bad.push(m[1] + '(' + last.slice(0, 40) + ')');
+    }
+  }
+  if (bad.length) console.log('  绕过统一判据：' + bad.join(' | '));
+  return bad.length === 0;
+})());
+
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
   const nums = [...rd.matchAll(/(\d+)\s*项/g)].map((m) => Number(m[1]));
