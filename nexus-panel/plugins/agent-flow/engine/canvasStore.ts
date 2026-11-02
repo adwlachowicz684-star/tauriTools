@@ -14,6 +14,8 @@ import type { CanvasParam } from './canvasParams';
 import {
   SECRET_PATHS,
   looksLikeSecretName,
+  scrubUrlSecrets,
+  scrubCommandSecrets,
   redactNodes as redactNodesInSanitize,
 } from './sanitize';
 
@@ -349,15 +351,52 @@ function redactServerEnv(env: Record<string, string> | undefined): Record<string
 }
 
 /**
+ * 服务地址脱敏。
+ *
+ * 自建 MCP 服务把凭据拼在地址里是很常见的做法
+ * （`https://mcp.mycorp.com/sse?api_key=sk-live-xxx`），
+ * 而此前只脱了服务的 env —— 地址那一侧一个字都没挖。
+ *
+ * 与节点侧同一份判据（scrubUrlSecrets），不去另写一份。
+ */
+function redactServerUrl(url: string | undefined): string | undefined {
+  if (typeof url !== 'string' || url === '') return url;
+  return scrubUrlSecrets(url);
+}
+
+/**
+ * 启动命令脱敏。
+ *
+ * env 里的 GITHUB_TOKEN 会被挖掉，写在同一条命令里的
+ * `npx -y @mcp/server --api-key=sk-x` 此前不动 ——
+ * 同一个密钥换个位置就明文进存档。
+ */
+function redactServerCommand(command: string | undefined): string | undefined {
+  if (typeof command !== 'string' || command === '') return command;
+  return scrubCommandSecrets(command);
+}
+
+/**
  * 整份画布配置脱敏。
  *
  * 导出画布文件与写 localStorage 都走这一份 ——
- * 各脱各的必然漏一处（env.vars / params / 服务的 env 三处都要挡）。
+ * 各脱各的必然漏一处（env.vars / params / 服务的 env / 地址 / 命令都要挡）。
  */
 export function redactCanvasConfig(cfg: CanvasConfig | undefined): CanvasConfig {
   const base = normalizeCanvasConfig(cfg);
   return {
-    mcpServers: base.mcpServers.map((s) => ({ ...s, env: redactServerEnv(s.env) })),
+    mcpServers: base.mcpServers.map((s) => {
+      const next: McpServer = { ...s, env: redactServerEnv(s.env) };
+      /*
+       * 只在真改动时才写这两个键 —— 服务本来就没填 url/command 时
+       * 不该凭空多出两个 undefined（normalize 出来的形状要稳）。
+       */
+      const u = redactServerUrl(s.url);
+      if (u !== s.url) next.url = u;
+      const c = redactServerCommand(s.command);
+      if (c !== s.command) next.command = c;
+      return next;
+    }),
     env: { vars: redactEnv(base.env?.vars ?? {}) },
     params: redactParams(base.params),
   };

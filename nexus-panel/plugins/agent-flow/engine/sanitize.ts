@@ -103,6 +103,47 @@ export function scrubUrlSecrets(s: string): string {
 }
 
 /**
+ * 命令行里躺着的凭据。
+ *
+ * 与地址那一侧同源：env 里的 GITHUB_TOKEN 会被挖掉（redactServerEnv），
+ * 而写在同一条启动命令里的 `--api-key=sk-x` 此前**一个字都不挖** ——
+ * 同一个密钥，放在 env 里安全、写在参数里就明文进存档。
+ *
+ * 只认两种明确形态：
+ *   · `--flag=value`
+ *   · `--flag value`
+ * 且 flag 名像密钥（与参数名判据同一份 hint）。
+ *
+ * 值是**纯模板引用**（`--token {{login.token}}`）时不动 —— 与请求头那一侧
+ * 同一条边界：那是一句引用，真正的值运行时才从上游来，挖掉是静默破坏
+ * （存档里留下 `--token ` 空值，界面又不提示，用户以为这就是预期）。
+ *
+ * 混合值（`--token sk-{{x}}`）照挖：那个 sk- 是实打实的明文。
+ */
+export function scrubCommandSecrets(s: string): string {
+  const src = String(s ?? '');
+  if (!src.includes('-')) return src;
+  let out = src;
+
+  /* --flag=value */
+  out = out.replace(/(--[A-Za-z][A-Za-z0-9_-]*)=(?:"[^"]*"|\S*)/g, (m, flag) => {
+    if (!looksLikeSecretName(flag)) return m;
+    if (isTemplateOnlyHeaderValue(m.slice(flag.length + 1))) return m;
+    return flag + '=';
+  });
+
+  /* --flag value（值不是另一个 --flag） */
+  out = out.replace(/(--[A-Za-z][A-Za-z0-9_-]*)(\s+)(?!--)(?:"[^"]*"|\S*)/g, (m, flag, sp) => {
+    if (!looksLikeSecretName(flag)) return m;
+    const v = m.slice(flag.length + sp.length);
+    if (isTemplateOnlyHeaderValue(v)) return m;
+    return flag + sp;
+  });
+
+  return out;
+}
+
+/**
  * 这个字段是不是**装地址的**。
  *
  * 只在这类字段上跑 scrubUrlSecrets —— 不去扫 output / 生成的文本，
