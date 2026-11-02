@@ -2048,15 +2048,22 @@ ${dir}
       const dependents = (store ? store.tasks : []).filter(
         (t) => t.id !== id && (t.deps || []).indexOf(id) >= 0,
       );
-      if (dependents.length > 0) {
-        const ok = window.confirm(
-          `删除 ${id}？\n\n有 ${dependents.length} 条任务把它列为前置，`
-          + '删除后那些任务会永远卡住：\n'
-          + dependents.slice(0, 5).map((t) => `· ${t.id}`).join('\n')
-          + (dependents.length > 5 ? `\n…等 ${dependents.length} 条` : ''),
-        );
-        if (!ok) return;
-      }
+      /*
+        ⛔ 原来**只在有依赖时才确认** —— 没有依赖时点一下就没了。
+        而批量删除是**总是确认**的（"不可撤销"那句一直在）。
+
+        两条路判据不一致，结果是：删 1 条比删 10 条更容易误删 ——
+        批量那条有确认兜底，单条这条反而没有。
+        删除不可撤销，且与批量删除是同一件事，判据必须一致。
+      */
+      const msg = `删除 ${id}？\n\n不可撤销。`
+        + (dependents.length > 0
+          ? `\n\n有 ${dependents.length} 条任务把它列为前置，`
+            + '删除后那些任务会永远卡住：\n'
+            + dependents.slice(0, 5).map((t) => `· ${t.id}`).join('\n')
+            + (dependents.length > 5 ? `\n…等 ${dependents.length} 条` : '')
+          : '');
+      if (!window.confirm(msg)) return;
       await S.deleteTask(ctx, cfg.dataDir, id);
       setDetailId(null);
       await refresh();

@@ -1521,13 +1521,31 @@ export function dependsOn(tasks, aId, bId) {
 }
 
 export function lockOf(task, tasks, store) {
+  /*
+    第三个参数**两种传法都接受**：store（含 .flow）或直接的 flow（含 .statuses）。
+
+    ⛔ 只认 store 的话，传成 flow 会静默退化成**默认流程**：
+      `store.flow` 是 undefined → flowOf(undefined) → 默认七个状态
+      → 自定义流程的完成态（'s3'）不被认成"已完成"
+      → 前置永远解锁不了，而界面只说"被前置任务卡住"。
+
+    实测（修前）：自定义流程 s1/s3(done=true)，b 处于 s3、a 依赖 b
+      → lockOf(a, tasks, flow) 返回 locked:true（错）
+      → lockOf(a, tasks, store) 返回 locked:false（对）
+
+    "传错类型不报错、静默用默认值"正是这几轮反复出现的坑的模式 ——
+    接口应当容错，而不是退化。
+  */
+  const flow = flowOf(
+    store && store.flow !== undefined ? store.flow : (store && store.statuses ? store : undefined),
+  );
   const ctx = indexTasks(tasks || []);
   const deps = task?.deps || [];
   const pending = [];
   const missing = [];
   for (const d of deps) {
     if (!ctx.byId[d]) { missing.push(d); continue; }
-    if (!isDone(d, tasks, ctx, flowOf(store && store.flow))) pending.push(d);
+    if (!isDone(d, tasks, ctx, flow)) pending.push(d);
   }
   /* 成环检测：只在有前置时才跑 —— 没有依赖的任务不可能成环，
      几百条任务时这笔开销全白花 */
