@@ -100,12 +100,23 @@ export function canvasPorts(view: CanvasView): CanvasPorts {
   const explicitIn = ids.filter((id) => kindOf(nodes.find((n) => n.id === id) as AnyNode) === KIND_CANVAS_IN);
   const explicitOut = ids.filter((id) => kindOf(nodes.find((n) => n.id === id) as AnyNode) === KIND_CANVAS_OUT);
 
+  /*
+   * 显式端口只做它声明的那一侧。
+   *
+   * 一个「画布输入」还没接下游时，它在图里就是"没有下游的节点"，
+   * 会被自动推导成出口；「画布输出」没接上游同理会被当成入口。
+   * 于是同一个节点既进又出 —— 展开后外部数据从它进来、又从它出去，
+   * 中间的节点一件没跑，而接口检查看到的是「1 入 1 出、健康」。
+   * 这类直通不报错，表现为被引用的子画布被整块跳过。
+   */
+  const isExplicitIn = new Set(explicitIn);
+  const isExplicitOut = new Set(explicitOut);
   const entries = explicitIn.length > 0
     ? explicitIn
-    : ids.filter((id) => !hasUp.has(id));
+    : ids.filter((id) => !hasUp.has(id) && !isExplicitOut.has(id));
   const exits = explicitOut.length > 0
     ? explicitOut
-    : ids.filter((id) => !hasDown.has(id));
+    : ids.filter((id) => !hasDown.has(id) && !isExplicitIn.has(id));
 
   return { entries, exits, explicitIn, explicitOut };
 }
@@ -118,25 +129,55 @@ export function canvasPorts(view: CanvasView): CanvasPorts {
  */
 export type PortIssue = { level: 'warn' | 'block'; message: string };
 
+/**
+ * 接口缺哪一侧 —— checkPorts 与展开时的问题收集共用这一份判据。
+ * 两处各写一遍 `length === 0` 就是各改各的：一侧加"引用节点不算"，
+ * 另一侧不会跟着变，而两边都说自己在做"接口检查"。
+ */
+export function portBlockers(p: CanvasPorts): { noEntries: boolean; noExits: boolean } {
+  return { noEntries: p.entries.length === 0, noExits: p.exits.length === 0 };
+}
+
+/**
+ * 显式端口节点「放了却没连线」。
+ *
+ * 这不是接口为空（节点还在），而是接了一半：展开后数据流在端口处
+ * 断开或绕过去，里面的节点一件不跑。输入侧与输出侧对称检查 ——
+ * 只查输入、漏掉输出时，「画布输出」没接上游会被当成入口，
+ * 整张画布变成一根导线而 checkPorts 一声不吭。
+ */
+export function portWarnings(view: CanvasView): string[] {
+  const p = canvasPorts(view);
+  const edges = view.edges ?? [];
+  const hasDown = new Set(edges.map((e) => String(e?.source ?? '')));
+  const hasUp = new Set(edges.map((e) => String(e?.target ?? '')));
+  const name = view.name || view.id;
+  const out: string[] = [];
+  // 任一没接就说，不能只查"全部都没接"：三个端口漏接一个照样断流
+  const looseIn = p.explicitIn.filter((id) => !hasDown.has(id));
+  const looseOut = p.explicitOut.filter((id) => !hasUp.has(id));
+  if (looseIn.length > 0) {
+    out.push(`画布「${name}」的 ${looseIn.length} 个画布输入节点还没接下游`);
+  }
+  if (looseOut.length > 0) {
+    out.push(`画布「${name}」的 ${looseOut.length} 个画布输出节点还没接上游`);
+  }
+  return out;
+}
+
 export function checkPorts(view: CanvasView): PortIssue[] {
   const p = canvasPorts(view);
   const out: PortIssue[] = [];
   const name = view.name || view.id;
+  const blockers = portBlockers(p);
 
-  if (p.entries.length === 0) {
+  if (blockers.noEntries) {
     out.push({ level: 'block', message: `画布「${name}」没有入口（没有画布输入节点，也没有无上游的节点）` });
   }
-  if (p.exits.length === 0) {
+  if (blockers.noExits) {
     out.push({ level: 'block', message: `画布「${name}」没有出口（没有画布输出节点，也没有无下游的节点）` });
   }
-  // 显式标了但没接 —— 多半是刚拖出来还没连线
-  if (p.explicitIn.length > 0 && p.entries.length === p.explicitIn.length) {
-    const hasUp = new Set((view.edges ?? []).map((e) => String(e?.source ?? '')));
-    const unlinked = p.explicitIn.filter((id) => !hasUp.has(id));
-    if (unlinked.length === p.explicitIn.length && p.explicitIn.length > 0) {
-      out.push({ level: 'warn', message: `画布「${name}」的画布输入节点还没接下游` });
-    }
-  }
+  for (const w of portWarnings(view)) out.push({ level: 'warn', message: w });
 
   /*
    * 画布里只有「调用别的画布」的节点 —— 接口推导不出来。
@@ -250,12 +291,18 @@ export function expandCanvasRefs(
     for (const p of inner.problems) problems.push(p);
 
     const p = canvasPorts({ ...view, nodes: inner.nodes, edges: inner.edges });
-    if (p.entries.length === 0 || p.exits.length === 0) {
+    const blockers = portBlockers(p);
+    if (blockers.noEntries || blockers.noExits) {
       problems.push({
         instanceId: id,
         reason: `画布「${view.name}」接口不完整（入口 ${p.entries.length} 个、出口 ${p.exits.length} 个）`,
       });
     }
+    /*
+     * 显式端口放了没连线 —— 运行时也要说。
+     * checkPorts 早就报这类 warn，但全项目没人调它，等于只写在注释里。
+     */
+    for (const w of portWarnings(view)) problems.push({ instanceId: id, reason: w });
 
     /* 内部节点加前缀后并入 */
     const idMap = new Map<string, string>();
