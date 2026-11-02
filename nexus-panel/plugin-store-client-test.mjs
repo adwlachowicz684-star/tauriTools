@@ -5,7 +5,10 @@
  * ------------------------------------------------------------
  * 用注入的假 fetch：GitHub 挂了/没网都不能让测试变红，
  * 而且真发请求会把「网络失败」和「逻辑错」混在一起，查不出来。
- * 代价是测不到真实 API 形态变化 —— 这点如实记录，靠联调补。
+ *
+ * 2026-11-03 已做真实 GitHub API 联调（scripts/probe-github-real.mjs），
+ * 把真实响应的**字段形态**固化成第 8 节的离线夹具：以后 API 改形态，
+ * 不用联网也能在这里喊出来。夹具是快照，不锁具体值会随 release 变的东西。
  *
  * 元断言（第 7 节）
  * ------------------------------------------------------------
@@ -13,9 +16,11 @@
  * 必须靠「构造一个必然该挑到的样本，断言它**真的被挑到**」来区分。
  */
 
+import { createHash } from 'node:crypto';
 import {
   parseRepoInput, compareVersion, assetNameFor, pickAsset,
   fetchRelease, resolveUpdate, downloadAsset, ASSET_PREFIX, ASSET_SUFFIX,
+  verifyAssetDigest, isUploadedAsset,
 } from './js/plugin-store-client.js';
 
 let pass = 0, fail = 0, skip = 0, note = 0;
@@ -189,6 +194,82 @@ console.log('\n--- 7. 元断言 ---');
   /* 地址解析两个方向都成立 */
   t('parseRepoInput 能解析', parseRepoInput('a/b') !== null);
   t('parseRepoInput 能拒绝', parseRepoInput('nope') === null);
+}
+
+/* ==========================================================================
+   8. 真实 GitHub 响应形态（2026-11-03 真联调固化，离线可跑）
+   ==========================================================================
+   来源：GET /repos/{owner}/{repo}/releases/latest 的真实响应字段。
+   这是**形态快照**，不是值断言 —— release 会更新，tag / sha / digest
+   都会变，所以只断言「字段存在、格式是哪一类」，不锁死具体字符串。
+   ========================================================================== */
+console.log('\n--- 8. 真实响应形态 + 产物完整性 ---');
+{
+  const REAL_ASSET = {
+    name: 'cargo-tauri-aarch64-apple-darwin.zip',
+    state: 'uploaded',
+    /* 下面两个是 2026-11-03 真 API 返回的**完整原值**，不是我拼的。
+       编一个"看起来像"的 sha 会当场被长度断言打红 —— 夹具必须真。 */
+    digest: 'sha256:f71a34ada728ca2d1a51c28d6d21639e1e080898ec69ec8d49c5da3b7e8bc1be',
+    size: 7795035, id: 662381757,
+    browser_download_url: 'https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v2.12.4/cargo-tauri-aarch64-apple-darwin.zip',
+    content_type: 'application/zip', created_at: '2026-10-21T12:06:50Z',
+    updated_at: '2026-10-21T12:06:51Z', download_count: 0,
+    node_id: 'RA_kwDO', uploader: {}, url: 'https://api.github.com/...', label: null,
+  };
+  /* target_commitish 两种真实形态：tauri 给 40 位 sha，svelte/vscode 给 "main"。
+     上一轮 ledger 的 isSha 判定就是为它加的，这里把依据钉住。 */
+  const REAL_COMMITISH = ['993038c49185307dfc895ab7657d77ca0d5ed7c7', 'main'];
+
+  t('真实 asset 带 state=uploaded', REAL_ASSET.state === 'uploaded');
+  t('真实 asset 带 digest 且是 sha256:64hex', /^sha256:[0-9a-f]{64}$/i.test(REAL_ASSET.digest));
+  t('真实 digest 全长 71（sha256: + 64hex）', REAL_ASSET.digest.length === 71);
+  t('真实 asset 有 ledger 指纹要用的三元组',
+    Number.isFinite(REAL_ASSET.id) && Number.isFinite(REAL_ASSET.size) && typeof REAL_ASSET.updated_at === 'string');
+  t('真实 target_commitish 有 40 位 sha 形态', /^[0-9a-f]{40}$/i.test(REAL_COMMITISH[0]));
+  t('真实 target_commitish 也有分支名形态（不是 sha）',
+    !/^[0-9a-f]{40}$/i.test(REAL_COMMITISH[1]) && REAL_COMMITISH[1] === 'main');
+
+  t('isUploadedAsset：真实 uploaded → true', isUploadedAsset(REAL_ASSET) === true);
+  t('isUploadedAsset：没有 state（老 release）→ true', isUploadedAsset({ name: 'x.tar.gz' }) === true);
+  t('isUploadedAsset：上传中 → false', isUploadedAsset({ name: 'x.tar.gz', state: 'starter' }) === false);
+
+  const starterName = assetNameFor('demo', '1.0.0');
+  t('pickAsset 跳过未上传完的产物（不是挑到再报错）',
+    pickAsset([{ name: starterName, state: 'starter' }], 'demo', '1.0.0') === null);
+  t('pickAsset 仍能挑到 uploaded 的产物（判据没变成恒拒）',
+    pickAsset([{ name: starterName, state: 'uploaded' }], 'demo', '1.0.0') !== null);
+
+  /* ⛔ 别写 '\0\1\2'：ESM 是严格模式，八进制转义会让**整个文件解析失败**、
+     一条断言都不跑。要二进制尾就用 Buffer.from([...])。 */
+  const payload = Buffer.concat([
+    Buffer.from('真实插件产物字节流'), Buffer.from([0, 1, 2]),
+  ]);
+  const sha = `sha256:${createHash('sha256').update(payload).digest('hex')}`;
+  const good = verifyAssetDigest(payload, { digest: sha });
+  t('digest 匹配 → ok 且 checked=true', good.ok === true && good.checked === true);
+  t('digest 大写也能通过', verifyAssetDigest(payload, { digest: sha.toUpperCase() }).ok === true);
+
+  const bad = verifyAssetDigest(payload, { digest: `sha256:${'0'.repeat(64)}` });
+  t('digest 不匹配 → 拒绝且 checked=true', bad.ok === false && bad.checked === true);
+  t('不匹配时说得出是完整性问题', /不匹配|不完整/.test(bad.reason), bad.reason.slice(0, 40));
+
+  const none = verifyAssetDigest(payload, { name: 'old.tar.gz' });
+  t('完全没有 digest → 放行但 checked=false（老 release 装得上）',
+    none.ok === true && none.checked === false);
+
+  for (const weird of ['md5:abc', 'sha256:short', 'sha256:' + 'z'.repeat(64), 12345, {}]) {
+    const w = verifyAssetDigest(payload, { digest: weird });
+    t(`格式不可识别不放行: ${String(weird).slice(0, 18)}`, w.ok === false && w.checked === true);
+  }
+  t('非 Buffer 内容 → 拒绝', verifyAssetDigest('a string', { digest: sha }).ok === false);
+
+  /* 元断言：确认上面的"匹配"判据不是恒真。
+     把 digest 换成一个合法格式但错的值，必须仍被拒 —— 否则第 8 节
+     全绿只说明判据写成了 return true。 */
+  const forged = `sha256:${'a'.repeat(64)}`;
+  t('元断言：合法格式但错的值确实被拒（digest 判据没恒真）',
+    verifyAssetDigest(payload, { digest: forged }).ok === false);
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项，跳过 ${skip} 项，告知 ${note} 条`);
