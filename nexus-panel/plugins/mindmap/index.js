@@ -2939,7 +2939,9 @@ async function gcOrphanAssets(quiet = false) {
       const lost = wanted - packed;
       const loss = xmind.xmindLossCount(workbook.sheets)
         || { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0,
-          theme: 0, layout: 0, valign: 0 };
+          theme: 0, layout: 0, valign: 0,
+          // BUG 194：老快照里 xmindLossCount 可能不返回 summary
+          summary: 0 };
       /*
        * BUG 135：FreeMind 的标记图标 / 外框（data.fmIcons / data.fmCloud，
        * BUG 127 起从别人的 .mm 收进来）在 XMind 里**没有对应字段** ——
@@ -2957,8 +2959,11 @@ async function gcOrphanAssets(quiet = false) {
        * ⓘ 用 `|| 0` 兜底：老快照里 xmindLossCount 可能不返回 valign，
        *   直接相加会让 lossTotal 变成 NaN，提示照样不出现。
        */
+      // BUG 194：概要降级同样要进总数 —— 否则一张「只有概要、没挂任何附件」
+      // 的画布 lossTotal 是 0，整段提示都不出现，界面只说「XMind 已导出」。
       const lossTotal = loss.blocked + loss.unlinked + loss.images
-        + loss.fmIcons + loss.fmCloud + loss.theme + loss.layout + (loss.valign || 0);
+        + loss.fmIcons + loss.fmCloud + loss.theme + loss.layout + (loss.valign || 0)
+        + (loss.summary || 0);
       if (lost > 0 || lossTotal > 0) {
         const seg = [];
         if (lost > 0) seg.push(`${lost} 个附件未能打包`);
@@ -2975,6 +2980,12 @@ async function gcOrphanAssets(quiet = false) {
          * 键被忽略 → 文字回居中，用户设的「靠上 / 靠下」看不见。
          */
         if (loss.valign > 0) seg.push(`${loss.valign} 个节点的垂直对齐未能写入`);
+        /*
+         * BUG 194：概要（XMind 的 summary）写不回去时**文字还在、性质没了** ——
+         * 所以措辞要说「未能按概要写入」，不能说「概要丢失」（文字没丢）。
+         * 导入时那句「已原样保留，导出 .xmind 时会写回」正是被这条降级架空。
+         */
+        if (loss.summary > 0) seg.push(`${loss.summary} 个概要未能按概要写入（会变成普通分支）`);
         const why = [];
         if (lost + loss.blocked + loss.unlinked + loss.images > 0) {
           why.push('XMind 每个节点只能挂 1 个附件、1 张图片');
@@ -2995,6 +3006,8 @@ async function gcOrphanAssets(quiet = false) {
          * 以为节点内容被改坏了 —— 实际内容一字未动，只是对齐回居中。
          */
         if (loss.valign > 0) why.push('垂直对齐是本工具的私有属性，别的 XMind 软件打开会回居中');
+        // BUG 194：原因自成一档 —— 不是"节点内容丢了"，是"没有可概括的兄弟，写不回概要括注"
+        if (loss.summary > 0) why.push('概要缺少可概括的兄弟节点或范围无效，只能写成普通分支');
         status(`XMind 已导出，但有 ${seg.join('、')}（${why.join('；')}）`, true);
       } else if (packed > 0) status(`XMind 已导出（含 ${packed} 个附件）`);
     } catch (e) {
