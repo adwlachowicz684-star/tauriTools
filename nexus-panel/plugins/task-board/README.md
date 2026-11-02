@@ -32,7 +32,11 @@ todo ─认领→ claimed ─开始→ doing ─提交审查→ review ─通过
                                       └────打回──┘
 ```
 
-`done` 只能由审查窗口打；开发窗口最多送到 `review`。认领必须署名（`assignee` = 窗口 ID）。
+上图是**默认流程**。状态流转图用户可自定义（⚙ 流程设置里增删改状态与流转边），
+自定义之后：状态名、完成态、通知触发态全部跟着配置走，
+界面上不会出现写死默认状态的判据（有守卫盯着）。
+
+默认流程下：`done` 只能由审查窗口打；开发窗口最多送到 `review`。认领必须署名（`assignee` = 窗口 ID）。
 
 ## 四种视图
 
@@ -40,16 +44,16 @@ todo ─认领→ claimed ─开始→ doing ─提交审查→ review ─通过
 
 | 视图 | 形态 |
 |---|---|
-| 看板 | 按状态分五列，列内优先级升序 + 更新时间倒序 |
-| 列表 | 平铺表格，八列（优先级 / ID / 标题 / 状态 / 认领人 / 标签 / 创建 / 更新）**每列都能筛选和排序** |
-| 分组 | 按状态 / 优先级 / 认领人 / 标签聚合；未认领置顶、标签用并集语义（一个任务可同时进多个标签组） |
+| 看板 | 按状态分列（列数 = 流程里配置的状态数；处于配置里没有的状态的任务会多出一列标「未配置」），列内优先级升序 + 更新时间倒序 |
+| 列表 | 平铺表格，12 列（优先级 / ID / 标题 / 分组 / 状态 / 认领人 / 任务类型 / 标签 / 说明 / 预估 / 创建 / 更新）**每列都能筛选和排序**；列可隐藏、可拖宽，偏好持久化 |
+| 分组 | 按状态 / 优先级 / 认领人 / 任务类型 / 标签 / 分组聚合，可多级；未认领置顶、标签用并集语义。多选列（标签/类型/分组/认领人，可在列设置里勾）的任务会**同时出现在每个所属的组** |
 | 统计 | 数字卡（总数 / 未完成 / 进行中 / 已完成 / 超 7 天未动）+ 状态与优先级分布条 + 认领人负载 + 热门标签 + 最近动态（点击可跳详情） |
 
 四视图共用同一份筛选结果；统计视图看全量，不受筛选影响。
 
 **筛选在列上**：点列头的漏斗开面板（enum 列多选、text 列关键词、time 列起止日期），
 点列头文字排序（升序 ⇄ 降序）。已生效的筛选在筛选条上列成 chip，可逐个摘掉或一键重置。
-顶栏只留一个全局搜索（跨 id / 标题 / 详情）—— 那是"找某一条"的入口，不属于按列筛。
+顶栏只留一个全局搜索（跨 id / 标题 / 详情 / 说明 / 分组 / 认领人 / 类型名 / 标签名）—— 那是"找某一条"的入口，不属于按列筛。
 筛选入口在列表视图；其它视图消费同一份结果，筛选条上有跳转按钮。
 
 ## 文件清单
@@ -64,7 +68,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（89 项）
+  task-board-test.mjs   core 单测（493 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -76,10 +80,10 @@ Rust 侧：`src-tauri/src/task_board.rs`（HTTP 服务 + 文件读写 + 目录�
 
 ```
 GET    /api/health             探活
-GET    /api/tasks              全量任务 + 窗口身份
+GET    /api/tasks              全量任务 + 窗口身份 + defs（定义表与生效状态清单）
 GET    /api/tasks/{id}         单条
-POST   /api/tasks              新建 {title, detail?, priority?, tags?, reporter?}
-PATCH  /api/tasks/{id}         流转/改字段 {status?, assignee?, priority?, title?, detail?, tags?, by?, note?}
+POST   /api/tasks              新建 {title, detail?, summary?, priority?, tags?, type?, group?, assignee?, estimate?, reporter?}
+PATCH  /api/tasks/{id}         流转/改字段 {status?, assignee?, priority?, title?, detail?, summary?, type?, group?, tags?, estimate?, deps?, by?, note?}
 POST   /api/tasks/{id}/events  追加事件 {by, action, note?}
 POST   /api/agents             注册窗口身份 {id, name?, role?}
 ```
@@ -89,7 +93,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 89 项
+npm run test:tb-core        # core 纯逻辑 493 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描

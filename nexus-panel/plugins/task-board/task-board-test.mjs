@@ -2657,6 +2657,25 @@ t('审查：恢复的隐藏列有上限（不会只剩一列）', (() => {
 const RS = path.join(dir, '../../src-tauri/src/task_board.rs');
 const rsSrc = fs.existsSync(RS) ? fs.readFileSync(RS, 'utf8') : '';
 t('（前置）Rust 源码可达：拼错会让整节静默空转', rsSrc.length > 0, `RS=${RS}`);
+
+/*
+ * **跨端共用的常量必须在两边取值相同。**
+ *
+ * HISTORY_CAP 是最典型的一份：前端写侧截断、读侧截断、Rust 侧也截断。
+ * 任一侧改成别的值都不会报错 —— 只是表现出来的是
+ * "历史条目数在不同入口不一样"（界面 100 条、AI 通道 50 条），
+ * 而没人会去数，更不会想到是常量没对齐。
+ *
+ * 这类"两份真相"与"两个函数说同一件事"是同一类问题，
+ * 只是发生在**常量**而不是函数上。
+ */
+t('守卫：跨端常量对齐（HISTORY_CAP 两边同值）', (() => {
+  const mjs = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  const fm = mjs.match(/export const HISTORY_CAP = (\d+);/);
+  const rm = rsSrc.match(/const HISTORY_CAP: usize = (\d+);/);
+  return !!fm && !!rm && fm[1] === rm[1];
+})());
+
 /* 环境缺 Rust 源码目录时这几条跳过（不算失败），原因同上方那条分组的 */
 /** 剥离块注释与行注释 —— 源码扫描类判据都要先过一遍，避免被注释里的引文误伤 */
 function STRIP(src) {
@@ -5370,6 +5389,62 @@ t('守卫：单条删除也要无条件确认（与批量删除同判据）', ((
     && !/dependents\.length\s*>\s*0\s*&&/.test(seg);
 })());
 
+/*
+ * **CSS 里不能留下没人用的类。**
+ *
+ * 已有的守卫是反方向的（代码用到的类必须在 CSS 里有定义）。
+ * 这一条补反向：CSS 里定义了、但代码里没人引用的类也是负担 ——
+ * 改它没反应、看着却像在生效，与"死代码"是同一回事。
+ *
+ * 实测抓到 3 个：.tb-dgroup / .tb-ic-hint / .tb-dnum（重构后没人用了）。
+ */
+t('守卫：CSS 里没有无人使用的 tb- 类（死样式）', (() => {
+  const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
+  const src = ['App.tsx', 'Settings.tsx', 'main.tsx']
+    .map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+  /* 只取行首定义：注释里引用的类名不算"定义了" */
+  const defined = [...css.matchAll(/^\.(tb-[a-zA-Z0-9_-]+)/gm)].map((m) => m[1]);
+  const unused = defined.filter((c) => !new RegExp('\\b' + c + '\\b').test(src));
+  return unused.length === 0;
+})());
+
+/*
+ * **README 里写死的测试项数不能落后于实际 —— 汇总时比对真值。**
+ *
+ * ⛔ 实测：README 两处写着"89 项"，而实际已经 492 项。
+ * 它是手工写死的，不会自己更新；新人（和 AI）照它判断测试规模会得到错的结论，
+ * 而且这个数字越往后错得越离谱。
+ *
+ * 判据放在汇总前跑：此时 pass/fail 已定，能拿到**真实项数**去比对。
+ * 放在前面跑的话只能静态数 t( 的调用次数，循环里生成的会数漏。
+ */
+const readmeCount = (() => {
+  const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
+  const nums = [...rd.matchAll(/(\d+)\s*项/g)].map((m) => Number(m[1]));
+  return nums.length > 0 ? nums : [];
+})();
+
+/*
+ * **types.ts 里不能留写死默认状态的常量。**
+ *
+ * STATUS_ORDER / STATUS_LABEL / STATUS_COLOR 三个都**无人使用**（实测：
+ * 只在 import 里出现过），而它们是"默认那七个状态"的写死清单。
+ *
+ * ⛔ 留着的危害不是"占地方"，而是**引诱**：
+ * 下次谁要显示状态名，顺手 import STATUS_LABEL 就能编译通过、看起来也对，
+ * 于是"自定义流程下显示原始 id"这个已经修过的 bug 又回来了。
+ * 死代码里藏着的是**错误做法的模板**。
+ */
+t('守卫：types.ts 不含无人使用的写死状态常量', (() => {
+  const ty = fs.readFileSync(path.join(dir, 'types.ts'), 'utf8');
+  return !/export const STATUS_(ORDER|LABEL|COLOR)\b/.test(ty);
+})());
+
 /* ---------------- 汇总 ---------------- */
+const total = pass + fail;
+if (readmeCount.length > 0 && !readmeCount.every((n) => n === total)) {
+  console.log(`✗ README 里写死的测试项数与实际的 ${total} 项不符：${readmeCount.join(' / ')}`);
+  fail += 1;
+}
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
