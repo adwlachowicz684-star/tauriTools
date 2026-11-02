@@ -301,8 +301,34 @@ export async function readStore(ctx: PluginContext, dataDir: string): Promise<Ta
   return normalizeStore(parseStoreText(text));
 }
 
+/*
+  落盘时的**兼容展开**。
+
+  ⛔ 重构后定义表合成了一张 `defs`，但**跨端那边读的是四个老字段**
+  （Rust 侧给 AI 的 schema 里写着"先看 defs.typeDefs / tagDefs / groupDefs"）。
+
+  前端不写老字段的话：AI 通道拿到的定义表是空的，
+  于是它建任务时**不知道有哪些可选值** —— 而界面上定义表好好的，
+  表现为"AI 建的任务类型/分组全是自造的裸值"。静默，且不报错。
+
+  所以落盘时把 defs 展开回四个老字段一起写：
+    · 老程序 / Rust 侧照旧能读
+    · 新程序读盘时 defs 优先（mergeLegacyDefs 里新格式优先），不会互相冲
+  代价只是 JSON 上多四份同内容，换来的是**不需要跨端同步改**。
+*/
+function toDisk(store: TaskStore): unknown {
+  const defs = store.defs || {};
+  return {
+    ...store,
+    tagDefs: defs.tag || [],
+    typeDefs: defs.type || [],
+    groupDefs: defs.group || [],
+    assigneeDefs: defs.assignee || [],
+  };
+}
+
 export async function writeStore(ctx: PluginContext, dataDir: string, store: TaskStore): Promise<void> {
-  await ctx.invoke('tb_write_store', { dir: dataDir, json: JSON.stringify(store, null, 2) });
+  await ctx.invoke('tb_write_store', { dir: dataDir, json: JSON.stringify(toDisk(store), null, 2) });
 }
 
 /**
@@ -324,7 +350,8 @@ export async function mutate(
     try {
       await ctx.invoke('tb_write_store', {
         dir: dataDir,
-        json: JSON.stringify(next, null, 2),
+        /* 同样走 toDisk：界面上每一次改动都从这里落盘（writeStore 只在少数入口用） */
+        json: JSON.stringify(toDisk(next), null, 2),
         expectText: raw,
       });
       return next;

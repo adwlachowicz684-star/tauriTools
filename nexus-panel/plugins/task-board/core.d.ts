@@ -166,7 +166,8 @@ export declare type ColMeta = Record<string, { multi: boolean; color: boolean }>
 export declare const DEFAULT_COL_META: ColMeta;
 export declare function normalizeColMeta(raw: unknown): ColMeta;
 export declare function sortKey(task: Task | null | undefined, field: string, nameOf?: ((id: string) => string) | null): string;
-export declare function hasVal(task: Task | null | undefined, field: string, id: string | null): boolean;
+export declare function addVal(task: Task, field: string, id: string, multi: boolean): string | string[];
+export declare function hasVal(task: Task, field: string, id: string): boolean;
 export declare function replaceVal(task: Task | null | undefined, field: string, oldId: string | null, newId: string | null, multi: boolean): string | string[];
 export declare function toggleFieldVal(task: Task | null | undefined, field: string, id: string, multi: boolean): string | string[];
 export declare function fieldVals(task: Task | null | undefined, field: string): string[];
@@ -251,6 +252,24 @@ export interface GroupNode {
 }
 
 /** 按多列分组，列顺序 = 层级（第一个最外层） */
+export interface ColDef {
+  field: string;
+  label: string;
+  kind: 'enum' | 'text' | 'num' | 'time';
+  defKey: string | null;
+  sentinel: string;
+  emptyLabel: string;
+  multiOk: boolean;
+  colorOk: boolean;
+  width: number;
+}
+export declare function colDef(field: string): ColDef | null;
+export declare function hasDefs(field: string): boolean;
+export declare function defsOf(store: unknown, field: string): TagDef[];
+export declare function withDefs(store: any, field: string, list: TagDef[]): any;
+export declare function labelFor(field: string, v: string, storeOrDefs: any, flow?: any): string;
+export declare function defIdsOf(store: unknown, field: string): string[];
+export declare function normalizeGroupKey(key: string): string;
 export declare function groupTasksBy(tasks: Task[], keys: GroupKey[], flow?: unknown): GroupNode[];
 export type GroupKey = 'status' | 'priority' | 'assignee' | 'type' | 'tag' | 'group';
 
@@ -267,14 +286,10 @@ export type SortField =
   | 'updatedAt' | 'createdAt' | 'title' | 'id' | 'group';
 
 /** 多字段排序；assignee 未认领恒排最后；同级按 updatedAt 倒序兜底 */
-export declare function sortTasksBy(
-  tasks: Task[], field: SortField, dir?: 'asc' | 'desc', tagNames?: Record<string, string> | null,
-): Task[];
+export declare function sortTasksBy(tasks: Task[], field: SortField, dir?: 'asc' | 'desc', tagNames?: Record<string, string> | null, flow?: FlowLike | null): Task[];
 
 /** 按列排序（作用在摊平行上）：认 groupPath，且同组的挨在一起 */
-export declare function sortRowsBy(
-  rows: FlatRow[], field: SortField, dir?: 'asc' | 'desc', tagNames?: Record<string, string> | null,
-): FlatRow[];
+export declare function sortRowsBy(rows: FlatRow[], field: SortField, dir?: 'asc' | 'desc', tagNames?: Record<string, string> | null, flow?: FlowLike | null): FlatRow[];
 
 export interface RecentEntry extends HistoryEntry {
   taskId: string;

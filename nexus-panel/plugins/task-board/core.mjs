@@ -467,6 +467,52 @@ export function normalizeGroupDefs(raw) {
   return out;
 }
 
+/**
+ * 把老格式的四个平级定义表字段归并进新的 `defs`。
+ *
+ * 新格式优先：defs 里已有这个键就保留（用户在新格式下的改动不能被老字段冲掉）。
+ */
+function mergeLegacyDefs(s) {
+  const out = {};
+  const raw = s && typeof s.defs === 'object' && s.defs ? s.defs : {};
+  for (const k of Object.keys(raw)) {
+    if (Array.isArray(raw[k])) out[k] = normalizeTagDefs(raw[k]);
+  }
+  /* 老字段 → defKey 的映射。这是**唯一的**迁移映射表 */
+  /*
+    ⛔ 每种定义表有自己的归一化规则，**不能一律用 normalizeTagDefs**：
+      · 分组/认领人接受**纯字符串数组**（{"groupDefs":["登录","支付"]} —— 手写 JSON 图省事）
+      · 类型在缺失时补默认六个，其它列不补
+    一律按标签处理的话，老数据里的裸字符串分组会整批丢掉 ——
+    界面上表现为"分组全没了"，而用户什么都没做。
+  */
+  const NORMALIZER = {
+    tag: normalizeTagDefs,
+    type: normalizeTypeDefs,
+    group: (v) => normalizeGroupDefs(v),
+    assignee: (v) => normalizeGroupDefs(v),
+  };
+  const legacy = { tag: s.tagDefs, type: s.typeDefs, group: s.groupDefs, assignee: s.assigneeDefs };
+  for (const [key, val] of Object.entries(legacy)) {
+    if (Object.prototype.hasOwnProperty.call(out, key)) continue;   // 新格式优先
+    if (!Array.isArray(val)) continue;
+    out[key] = NORMALIZER[key](val);
+  }
+  /*
+    ⛔ 类型有**默认六个**（开发/BUG/优化/调研/审查/规划），其它列没有。
+
+    老文件里没有 typeDefs 字段时，归一化要补上默认六个 ——
+    否则一升级就"类型列空了"，而界面上看不出为什么
+    （下拉里只剩「未分类」，用户只会以为类型被删了）。
+    之前 normalizeStore 直接调 normalizeTypeDefs(s.typeDefs) 就有这个行为，
+    合成 defs 之后**不能把它丢掉**。
+  */
+  if (!Object.prototype.hasOwnProperty.call(out, 'type')) {
+    out.type = normalizeTypeDefs(null);
+  }
+  return out;
+}
+
 export function normalizeStore(raw) {
   const s = raw && typeof raw === 'object' ? raw : {};
   /*
@@ -510,11 +556,17 @@ export function normalizeStore(raw) {
             lastSeen: numOr(a.lastSeen, 0),
           }))
       : [],
-    tagDefs: normalizeTagDefs(s.tagDefs),
-    typeDefs: normalizeTypeDefs(s.typeDefs),
-    groupDefs: normalizeGroupDefs(s.groupDefs),
-    /* 认领人定义表。与分组同构（id 就是名字） */
-    assigneeDefs: normalizeGroupDefs(s.assigneeDefs),
+    /*
+      定义表合成一张 `defs: { defKey: TagDef[] }`（见"定义表"那一节）。
+
+      ⚠️ **迁移**：老文件里是四个平级字段（tagDefs / typeDefs / groupDefs / assigneeDefs）。
+      读进来时按 defKey 归并进 defs；defs 里已存在的键**不覆盖**
+      （新格式优先 —— 用户在新格式下改过的定义不能被老字段冲掉）。
+
+      不迁移的话，老用户一升级就"所有类型/分组的颜色和名字全没了"，
+      而界面上看不出原因（候选还在，只是没了颜色和显示名）。
+    */
+    defs: mergeLegacyDefs(s),
     /*
       流程配置（自定义状态与流转）。
       没配过 → normalizeFlow 给默认那套，行为与以前完全一致 ——
@@ -550,11 +602,65 @@ export function sortTasks(tasks) {
  *   time → 起止日期（创建 / 更新）
  */
 
-/** 列表视图的列。顺序即界面上的列序 */
+/*
+  "空值"哨兵。**每一列必须不同** ——
+  两个列共用同一个哨兵的话，跨列比较会误判
+  （曾出过 UNESTIMATED 与 UNASSIGNED 都是 '__none__'：
+    哪天把"预估"加进分组依据，"没估"那组会被标成"未认领"）。
+*/
+export const UNESTIMATED = '__noestimate__';
+/** 未认领任务的哨兵 key（与 filterTasks 的 '__none__' 约定一致） */
+export const UNASSIGNED = '__none__';
+/** 无标签任务的哨兵 key（仅 tag 分组时使用） */
+export const NOTAG = '__notag__';
+/** 未填类型的哨兵 key（仅 type 分组时使用） */
+export const NOTYPE = '__notype__';
+export const NOGROUP = '__nogroup__';
+
+/*
+  ================================================================ 列注册表
+ *
+ * 这是**唯一的列定义来源**：一列长什么样、能做什么、值怎么取/怎么显示，
+ * 全部写在这一张表里。
+ *
+ * ⛔ 重构前这是一堆**按 field 分支的 switch / if 链**，散在五六个函数里：
+ *   · cellFor        339 行、12 个 case（渲染单元格）
+ *   · optionLabel    7 个 if（候选值的显示名）
+ *   · colFilterValues 7 个 case（这一列有哪些候选值）
+ *   · groupValuesOf  6 个分支（分组时这一列取哪些值）
+ *   · 以及候选来源、哨兵、默认元数据的三张独立小表
+ *
+ * 于是"加一列"要在 5 处各写一遍，"改一个能力"（比如让某列支持多值）
+ * 要在每一处各改一遍 —— 漏一处就是"那列显示原始 id""那列筛不到"。
+ * 前面十几轮审查里反复出现的**"新判据没在所有入口落实"**，
+ * 根因就在这个结构：入口是手工枚举的，不是从定义派生的。
+ *
+ * 现在每个消费方都**查表**，分支只存在于这一处。
+ */
+
+/**
+ * 列定义。
+ *
+ * @field     字段名（也是 Task 上的键）
+ * @label     列头文字
+ * @kind      enum（枚举，有候选）/ text / num / time
+ * @defKey    这一列的定义表在 store.defs 里的键；null = 这一列没有定义表
+ *            （优先级/状态是固定枚举或走 flow，不是用户维护的定义表）
+ * @sentinel  "空值"的哨兵。每一列**必须不同** ——
+ *            两个列共用同一个哨兵的话，跨列比较会误判
+ *            （曾出过 UNESTIMATED 与 UNASSIGNED 都是 '__none__'）
+ * @emptyLabel 空值显示给人看的名字
+ * @multiOk   允许勾「多选」（值可以是数组）
+ * @colorOk   允许勾「颜色」（有定义表可落色）
+ * @width     默认列宽
+ */
 export const LIST_COLUMNS = [
-  { field: 'priority', label: '优先级', kind: 'enum' },
-  { field: 'id', label: 'ID', kind: 'text' },
-  { field: 'title', label: '标题', kind: 'text' },
+  { field: 'priority', label: '优先级', kind: 'enum', defKey: null,
+    sentinel: '', emptyLabel: '', multiOk: false, colorOk: false, width: 90 },
+  { field: 'id', label: 'ID', kind: 'text', defKey: null,
+    sentinel: '', emptyLabel: '', multiOk: false, colorOk: false, width: 92 },
+  { field: 'title', label: '标题', kind: 'text', defKey: null,
+    sentinel: '', emptyLabel: '', multiOk: false, colorOk: false, width: 240 },
   /*
     分组**定义表驱动**（'enum'），不再当自由文本。
 
@@ -563,16 +669,110 @@ export const LIST_COLUMNS = [
     而分组恰恰是最需要"从已有项里挑一个"的字段
     （同一批任务要归到同一个组，靠手打必然打出 '登录' / '登陆' 两种写法）。
   */
-  { field: 'group', label: '分组', kind: 'enum' },
-  { field: 'status', label: '状态', kind: 'enum' },
-  { field: 'assignee', label: '认领人', kind: 'enum' },
-  { field: 'type', label: '任务类型', kind: 'enum' },
-  { field: 'tags', label: '标签', kind: 'enum' },
-  { field: 'summary', label: '说明', kind: 'text' },
-  { field: 'estimate', label: '预估(人日)', kind: 'num' },
-  { field: 'createdAt', label: '创建', kind: 'time' },
-  { field: 'updatedAt', label: '更新', kind: 'time' },
+  { field: 'group', label: '分组', kind: 'enum', defKey: 'group',
+    sentinel: NOGROUP, emptyLabel: '未分组', multiOk: true, colorOk: true, width: 100 },
+  { field: 'status', label: '状态', kind: 'enum', defKey: null,
+    sentinel: '', emptyLabel: '', multiOk: false, colorOk: true, width: 100 },
+  { field: 'assignee', label: '认领人', kind: 'enum', defKey: 'assignee',
+    sentinel: UNASSIGNED, emptyLabel: '未认领', multiOk: true, colorOk: true, width: 100 },
+  { field: 'type', label: '任务类型', kind: 'enum', defKey: 'type',
+    sentinel: NOTYPE, emptyLabel: '未分类', multiOk: true, colorOk: true, width: 110 },
+  { field: 'tags', label: '标签', kind: 'enum', defKey: 'tag',
+    sentinel: NOTAG, emptyLabel: '无标签', multiOk: true, colorOk: true, width: 160 },
+  { field: 'summary', label: '说明', kind: 'text', defKey: null,
+    sentinel: '', emptyLabel: '', multiOk: false, colorOk: false, width: 180 },
+  { field: 'estimate', label: '预估(人日)', kind: 'num', defKey: null,
+    sentinel: UNESTIMATED, emptyLabel: '未估', multiOk: false, colorOk: false, width: 100 },
+  { field: 'createdAt', label: '创建', kind: 'time', defKey: null,
+    sentinel: '', emptyLabel: '', multiOk: false, colorOk: false, width: 110 },
+  { field: 'updatedAt', label: '更新', kind: 'time', defKey: null,
+    sentinel: '', emptyLabel: '', multiOk: false, colorOk: false, width: 110 },
 ];
+
+/** 按 field 取列定义。取不到返回 null（调用方要判空，不能假设列一定存在） */
+export function colDef(field) {
+  for (const c of LIST_COLUMNS) if (c.field === field) return c;
+  return null;
+}
+
+/** 这一列有没有定义表（有才谈得上增删改色、才有色块） */
+export function hasDefs(field) {
+  const c = colDef(normalizeGroupKey(field));   // 同 defsOf：容忍旧名 'tag'
+  return !!(c && c.defKey);
+}
+
+/*
+  ================================================================ 定义表（defs）
+ *
+ * ⛔ 重构前是 **四个平级的字段**：tagDefs / typeDefs / groupDefs / assigneeDefs。
+ *
+ * 于是"给某一列的定义表加个能力"要在四处各做一遍，
+ * 而"新增一个带定义表的列"要改类型、改归一化、改候选、改 UI —— 同样四处。
+ * 这就是代码混乱的来源：**列是无限的，而它们是按列硬编码的四份**。
+ *
+ * 现在合成一张 `defs: { [defKey]: TagDef[] }`，列注册表里声明 defKey，
+ * 消费方一律 `defsOf(store, field)` 取 —— 加一列只改注册表。
+ */
+
+/** 读某一列的定义表（没有就是空数组，永远返回数组） */
+export function defsOf(store, field) {
+  /*
+    ⛔ 必须容忍**旧名 'tag'**：分组依据里这一列历来叫 'tag'（列名是 'tags'），
+    两个名字指同一列。normalizeGroupKey 负责归一，但**只有分组那条链在调它** ——
+    其它入口传 'tag' 进来会拿到空定义表，表现为"标签显示成原始 id"。
+
+    归一放在这里（最靠近取值的地方）而不是要求每个调用点记得归一：
+    "调之前先转一下"这类要求，靠人记就一定会漏。
+  */
+  const c = colDef(normalizeGroupKey(field));
+  if (!c || !c.defKey) return [];
+  const d = store && typeof store === 'object' ? store.defs : null;
+  const list = d && typeof d === 'object' ? d[c.defKey] : null;
+  return Array.isArray(list) ? list : [];
+}
+
+/** 写某一列的定义表（返回新的 store，不改原对象） */
+export function withDefs(store, field, list) {
+  const c = colDef(normalizeGroupKey(field));   // 同 defsOf：容忍旧名 'tag'
+  if (!c || !c.defKey) return store;
+  const cur = (store && typeof store.defs === 'object' && store.defs) || {};
+  return { ...store, defs: { ...cur, [c.defKey]: Array.isArray(list) ? list : [] } };
+}
+
+/** 取某一列的定义表里所有 id（候选来源之一） */
+export function defIdsOf(store, field) {
+  return defsOf(store, field).map((d) => (d && d.id) || '').filter(Boolean);
+}
+
+/**
+ * **某一列上某个值的显示名** —— 重构前散在 optionLabel / groupLabel /
+ * filterSummary 三处，各写一遍按 field 的 if 链，且来源不一致
+ * （类型从 flow.typeDefs 取、标签从参数取、分组又是一处）。
+ *
+ * 漏一处就是"这一列显示原始 id"，而另外两列显示名字 ——
+ * 同一个值在界面上两个样子，看着像两个不同的东西。
+ *
+ * 现在统一：哨兵 → 注册表的 emptyLabel；有定义表 → 查表；
+ * 状态 → 认 flow；认不出来 → 退回原值（至少看得见这里挂了东西）。
+ */
+export function labelFor(field, v, storeOrDefs, flow) {
+  const c = colDef(field);
+  if (c && c.sentinel && v === c.sentinel) return c.emptyLabel || '';
+  if (field === 'priority') {
+    const P = { P0: '紧急', P1: '高', P2: '中', P3: '低' };
+    return v ? `${v} ${P[v] || ''}`.trim() : '';
+  }
+  if (field === 'status') return statusName(flow, v);
+  if (!c || !hasDefs(field)) return v || '';
+  /*
+    兼容两种传法：直接传定义数组，或传 store（推荐）。
+    迁移完成后统一成 store —— 见 REFACTOR 待办。
+  */
+  const list = Array.isArray(storeOrDefs) ? storeOrDefs : defsOf(storeOrDefs, field);
+  const d = list.find((x) => x && x.id === v);
+  return (d && d.name) || v || '';
+}
+
 
 /*
   **列的"多选 / 颜色"开关**（腾讯文档同款：由用户勾选决定这一列长什么样）。
@@ -681,6 +881,23 @@ export function sortKey(task, field, nameOf) {
  *   · 改名：多值的任务不同步，界面上显示一个已经不存在的旧值
  * 所以匹配一律走这里，不写 `===`。
  */
+/**
+ * 给这一列**加**一个值（保留已有值）。
+ *
+ * 与 replaceVal 的区别：replaceVal 是"把 A 换成 B"，addVal 是"再加上 B"。
+ * 批量操作用 addVal —— 从下拉里挑一个值是"把这些任务归到这一类"，
+ * 不是"清掉它们原有的分类再归到这一类"。
+ *
+ * @returns 新的值（单选列返回单值，多选列返回数组）
+ */
+export function addVal(task, field, id, multi) {
+  const cur = fieldVals(task, field);
+  if (!id) return multi ? cur : '';
+  if (cur.indexOf(id) >= 0) return multi ? cur : id;
+  const out = cur.concat([id]);
+  return multi ? out : out[out.length - 1];
+}
+
 export function hasVal(task, field, id) {
   const v = task && typeof task === 'object' ? task[field] : undefined;
   const arr = Array.isArray(v) ? v : (v === null || v === undefined || v === '' ? [] : [v]);
@@ -767,8 +984,6 @@ function dayEnd(s) {
   目前 estimate 不在分组依据里所以还没触发，但这是个等着踩的坑。
 
   筛选不持久化，改值不会影响存档。
-*/
-export const UNESTIMATED = '__noestimate__';
 
 /** 区间输入框里的东西是不是个数。空串**不算**数（那是"没填"） */
 export function numOrNull(v) {
@@ -815,53 +1030,40 @@ export function colFilterActive(col, f) {
     只显示"没有符合条件的任务"，用户会以为真的没有。
   （2026-10-28 自查第 3 轮：「任务类型」列就漏在这儿，筛选 100% 失效。）
 */
+/*
+  任务在某个列上的**原始值**（多值列返回多个）。
+
+  ⛔ 重构前是一段 6 分支的 switch，每列各写一遍"取哪个字段、
+  空值用什么哨兵、多值怎么办"。注释里那句"加新列时必须同步这里"
+  正是问题所在 —— **靠人记得同步，就一定会漏**：
+  2026-10-28 自查第 3 轮「任务类型」列就漏在这儿，该列筛选 100% 失效
+  （候选为空、勾了也不命中，界面只显示"没有符合条件的任务"）。
+
+  现在**没有 switch**：一律从注册表取哨兵，值一律摊平。
+  加一列只改注册表，这里不需要动。
+
+  哨兵的必要性：空值若不落成哨兵，那些任务在任何 enum 筛选下都不命中 ——
+  "未分类/未分组/未认领/无标签"是排期时最常见的一次查询
+  （"把没归类的找出来集中处理"），筛不到就得一条条翻。
+*/
 export function colRawValues(task, field) {
-  switch (field) {
-    case 'priority': return [task.priority];
-    case 'status': return [task.status];
-    /*
-      未认领统一用 **UNASSIGNED 哨兵**，不用空串。
-
-      ⛔ 空串不行：分组那条路径上 `key === ''` 已经被
-      "没选任何分组依据 → 全部任务"占用了（见 groupLabel），
-      两个含义撞在同一个值上，分不清是"没人认领"还是"没分组依据"。
-
-      而筛选这边原来用 ''、分组那边用 '__none__' ——
-      同一件事两个哨兵，各改一处就会错（筛得到但分组分不出，或反之）。
-    */
-    case 'assignee': {
-      const v = task.assignee;
-      if (Array.isArray(v)) return v.length > 0 ? v : [task.assignee || UNASSIGNED];
-      return [task.assignee || UNASSIGNED];
-    }
-    /* 空类型落到 NOTYPE 哨兵，这样"未分类"才筛得到 */
-    case 'type': {
-      const v = task.type;
-      if (Array.isArray(v)) return v.length > 0 ? v : [task.type || NOTYPE];
-      return [task.type || NOTYPE];
-    }
-    /*
-      标签**以及任何被设成多选的列**存的是数组。
-
-      ⛔ 不能只给 tags 开这个口子：把"类型"设成多选之后，
-      task.type 也会变成数组，这里若还当单值处理，
-      那条任务在这一列会显示成一串逗号、筛选也命中不了。
-    */
-    case 'tags': return Array.isArray(task.tags) ? task.tags : (task.tags ? [task.tags] : []);
-    /*
-      分组改成 enum 之后**必须**在这里返回值。
-      漏掉的话该列筛选 100% 失效（候选为空、勾了也不命中），
-      而界面只显示"没有符合条件的任务"——看着像真的没有。
-      未分组落 NOGROUP 哨兵，这样"没归类的"能筛出来集中处理。
-    */
-    case 'group': {
-      const v = task.group;
-      if (Array.isArray(v)) return v.length > 0 ? v : [task.group || NOGROUP];
-      return [task.group || NOGROUP];
-    }
-    default: return [];
+  const c = colDef(field);
+  if (!c) return [];
+  /* 状态与优先级恒有值，且没有空值哨兵 */
+  if (field === 'status' || field === 'priority') return [task[field]];
+  /*
+    数值列：0 与"没填"同义（"0 人日"就是没估），所以 0 也落哨兵。
+    ⛔ 不这么处理的话，"只要没估的"这个勾选项永远命中不到 ——
+    而它本来就是为了筛这批任务才存在的。
+  */
+  if (c.kind === 'num') {
+    const n = Number(task[field]) || 0;
+    return n > 0 ? [String(n)] : (c.sentinel ? [c.sentinel] : []);
   }
+  const vals = flatVals(task[field]);
+  return vals.length > 0 ? vals : (c.sentinel ? [c.sentinel] : []);
 }
+
 
 /**
  * 一行在某个字段上的值。
@@ -1015,140 +1217,97 @@ export function activeColFilters(filters) {
  * 表里没有、但任务上写着的名字（外部 API 写的）照样要能筛；
  * 反过来表里有、但没人领过任务的名字，列出来选中就是零行。
  */
+/**
+ * 某一列的候选值（列头筛选面板里能勾的项）。
+ *
+ * ⛔ 重构前是一个 7 分支的 switch，每个 case 各自决定"从哪取候选"、
+ * 各自处理"多值要不要展开"、各自决定是否追加哨兵 ——
+ * 于是"多值展开"这个判据漏了两处（认领人、分组没展开，
+ * 下拉里出现「张三,李四」这种合成项）。
+ *
+ * 现在只有**两条规则**，所有列共用：
+ *   1. 候选 = 定义表 ∪ 数据里实际出现的值（两头都不能省，理由见下）
+ *   2. 值一律展开成单值（多值列上数组要摊平）
+ * 差异只来自注册表（defKey / sentinel / kind）。
+ */
 export function colFilterValues(field, rows, statusIds, typeIds, tagIds, groupIds) {
   const tasks = (rows || []).map((r) => (r && r.task ? r.task : r));
-  switch (field) {
-    case 'priority': return [...PRIORITIES];
-    /*
-      状态取**用户配的**那份（statusIds），不是写死的清单 ——
-      否则用户在界面上新增了状态，筛选下拉里却选不到它，
-      而列表里明明能看到那个状态的任务。
-    */
-    case 'status': return statusIds && statusIds.length ? [...statusIds] : [...STATUSES];
-    case 'assignee': {
-      /*
-        ⛔ 认领人**可以是多值的**（"多选"勾上之后）。
+  const c = colDef(field);
 
-        原来 `tasks.map(t => t.assignee)` —— 多值时数组整个进 Set，
-        下拉里出现一个「张三,李四」的怪项，而张三、李四作为
-        单独的候选反而没了（只有一条多值任务时尤其明显）。
-        展开成单值，与标签列同一判据。
-      */
-      const names = [...new Set(tasks.flatMap((t) => (Array.isArray(t.assignee) ? t.assignee : [t.assignee])).filter(Boolean))];
-      names.sort((a, b) => a.localeCompare(b));
-      // 未认领置尾：它是"没人"，不该顶在名单前面。哨兵与 colRawValues 一致
-      return [...names, UNASSIGNED];
-    }
-    /*
-      类型取**定义表**（用户增删改过）。从数据里去重的话，
-      用户刚新建、还没挂到任何任务上的类型在下拉里就选不到，
-      那个类型等于建不出来。
-    */
-    /*
-      类型候选 = 定义表 + 「未分类」。
-      未分类必须能筛：一堆任务没归类是常态，
-      而"把它们找出来补上归类"是刚建完类型紧接着要做的事 ——
-      筛不到它就得一条条翻。
-    */
-    /*
-      ⛔ 判据是"有没有传这个数组"，不是"数组空不空"。
-      用户把类型全删了时 typeIds 是 [] —— 那是合法状态，
-      按"空就退回默认六个"处理的话，下拉里会冒出六个已经不存在的类型，
-      勾了永远筛不到东西，而界面上看不出它们从哪来。
-    */
-    case 'type': return (Array.isArray(typeIds) ? [...typeIds] : TYPE_WORDS.slice()).concat([NOTYPE]);
-    /*
-      标签候选 = **定义表 + 数据里出现的**。
+  /* 固定枚举：优先级 */
+  if (field === 'priority') return [...PRIORITIES];
+  /*
+    状态取**用户配的**那份（statusIds），不是写死的清单 ——
+    否则用户在界面上新增了状态，筛选下拉里却选不到它，
+    而列表里明明能看到那个状态的任务。
+  */
+  if (field === 'status') return statusIds && statusIds.length ? [...statusIds] : [...STATUSES];
+  /*
+    数值列没有"候选值"可枚举，但**"没估"是个要能筛的选项** ——
+    "找那些还没估工作量的"是排期前最常见的一次查询。
+    它不是 0，是缺失，所以必须单列，不能混进区间里。
+  */
+  if (field === 'estimate') return [UNESTIMATED];
 
-      ⛔ 只从数据里去重是不够的（原来是 allTasks）：
-      用户刚新建、还没挂到任何任务上的标签在下拉里就选不到 ——
-      那个标签等于建不出来（而它明明已经在定义表里了）。
+  /* 没有定义表的列（id / title / summary / 时间）没有候选可枚举 */
+  if (!c || c.kind !== 'enum' || !hasDefs(field)) return [];
 
-      ⛔ 反过来也不能只取定义表：任务上的标签可能是个裸名字
-      （老数据、或 AI 直接写进 JSON 的），没建过定义 ——
-      只取定义表的话那些任务就永远筛不到，且无从看出漏了谁。
-    */
-    case 'tags': {
-      const fromData = allTags(tasks || []);   // 不限量：筛选候选要完整
-      const fromDefs = Array.isArray(tagIds) ? [...tagIds] : [];
-      const out = [];
-      const seen = new Set();
-      for (const id of [...fromDefs, ...fromData]) {
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        out.push(id);
-      }
-      return out;
-    }
-    /*
-      数值列没有"候选值"可枚举，但**"没估"是个要能筛的选项** ——
-      "找那些还没估工作量的"是排期前最常见的一次查询。
-      它不是 0，是缺失，所以必须单列，不能混进区间里。
-    */
-    /*
-      分组候选 = **定义表 + 数据里出现的** + 「未分组」。
+  /*
+    候选 = **定义表 ∪ 数据里出现的**。
 
-      与标签同规则：只取一边都会漏。
-      · 只取数据 → 刚"添加一项"、还没任何任务归进去的分组选不到，
-        那一项等于白加
-      · 只取定义表 → 老数据里没建定义的裸分组名永远筛不到
-
-      未分组必须能筛：把没归类的找出来集中处理，是建完分组紧接着要做的事。
-    */
-    case 'group': {
-      /* 同上：分组也可以是多值，展开成单值再并集 */
-      const fromData = (tasks || [])
-        .flatMap((t) => (Array.isArray(t.group) ? t.group : [t.group]))
-        .filter(Boolean);
-      const fromDefs = Array.isArray(groupIds) ? [...groupIds] : [];
-      const out = [];
-      const seen = new Set();
-      for (const id of [...fromDefs, ...fromData]) {
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        out.push(id);
-      }
-      return out.concat([NOGROUP]);
-    }
-    case 'estimate': return [UNESTIMATED];
-    default: return [];
+    ⛔ 只从数据去重是不够的：用户刚新建、还没挂到任何任务上的
+    类型/分组在下拉里就选不到 —— 那一项等于建不出来。
+    ⛔ 反过来也不能只取定义表：任务上的值可能是个裸名字
+    （老数据、或 AI 直接写进 JSON 的），没建过定义 ——
+    只取定义表的话那些任务永远筛不到，且无从看出漏了谁。
+  */
+  /*
+    ⚠️ 迁移期：调用点还在传**四个散装 id 数组**（typeIds / tagIds / groupIds）。
+    它们本来就是 id 数组，直接用；等 App 侧全改成传 store 之后
+    这里就剩 `defIdsOf(store, field)` 一行（见 REFACTOR 待办）。
+  */
+  const legacyIds = pickLegacy(field, typeIds, tagIds, groupIds);
+  const fromDefs = Array.isArray(legacyIds) ? legacyIds.filter(Boolean) : [];
+  /*
+    ⛔ 判据是"有没有传这个数组"，不是"数组空不空"。
+    用户把定义全删了时是 [] —— 那是合法状态，
+    按"空就退回默认值"处理的话，下拉里会冒出六个已经不存在的项，
+    勾了永远筛不到东西，而界面上看不出它们从哪来。
+  */
+  const fromData = tasks
+    .flatMap((t) => flatVals(t[field]))
+    .filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  for (const id of [...fromDefs, ...fromData]) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
   }
+  /*
+    哨兵（未分类 / 未分组 / 未认领 / 无标签）必须能筛：
+    一堆任务没归类是常态，而"把它们找出来集中处理"
+    是刚建完定义紧接着要做的事 —— 筛不到它就得一条条翻。
+  */
+  return c.sentinel ? out.concat([c.sentinel]) : out;
 }
 
-/* ============================================================ 组（平铺迁移）
- *
- * 「任务组」从**数据结构**改成了**视图概念**：
- * 现在是"选一列作为分组依据，按那一列的值聚合显示"，
- * 数据里不再有 kind='group' 的记录，也不再有父子层级。
- *
- * 之前是手动建组（新建组 / 合并成组 / 拆分），那套东西的问题是：
- * 层级要人维护，而人维护的层级和"我现在想按状态看"这类临时视角
- * 是两件事 —— 前者改数据，后者只是换个看法。混在一起的结果是
- * 想换个看法时不得不去改数据，而改完数据又回不到原来的看法。
+/**
+ * 调用点传进来的旧式定义表数组（App 侧还没全部改成 defsOf）。
+ * 迁移完成后这个参数就没用了 —— 见 REFACTOR 待办。
  */
+function pickLegacy(field, typeIds, tagIds, groupIds) {
+  if (field === 'type') return typeIds;
+  if (field === 'tags') return tagIds;
+  if (field === 'group') return groupIds;
+  return null;
+}
 
-/**
- * 把**所有手动组一次性平铺**：组记录删掉，下面的任务上提到顶层，
- * 依赖"整个组"的地方改指到组里的具体任务。
- *
- * ⛔ 依赖不能简单丢掉：deps 指向组 g 的语义是"等 g 里全部完成"，
- * 而 g 删掉之后那条依赖会变成指向一个不存在的 id ——
- * 界面上会显示成"前置已被删除"，任务永远解锁不了。
- * 所以把它展开成组内的**全部叶子任务**，语义完全等价
- * （原来"等 g 全部完成"，展开后"等 a、b、c 全部完成"）。
- *
- * @returns {{tasks, removed:number, remapped:number}}
- */
-/**
- * id → 任务的索引。
- *
- * 顺带**认领**父子关系：一个 id 被两条记录同时指为 parent 时，
- * 只认第一个。不认的话同一个任务会在两处各显示一遍，
- * 状态还各自独立 —— 改了一处另一处不动。
- *
- * 顺带**截断环**：A 的父是 B、B 的父是 A 这种（AI 拼 JSON 时不校验全局唯一，
- * 很容易写出），不截断会让下面的路径构造永远退不出去。
- */
+/** 把一个可能是多值的值摊平成数组（多值列上数组要展开，不能整个当一项） */
+function flatVals(v) {
+  return Array.isArray(v) ? v.filter(Boolean) : (v === null || v === undefined || v === '' ? [] : [v]);
+}
+
 export function indexTasks(tasks) {
   const byId = Object.create(null);
   for (const t of tasks || []) byId[t.id] = t;
@@ -1403,7 +1562,7 @@ export function lockOf(task, tasks, store) {
  * 与 sortTasksBy 的区别：它认 groupPath，且排序后同组的挨在一起
  * （groupPath 相同则按深度、再按 id），不会把同一个组下的任务打散。
  */
-export function sortRowsBy(rows, field, dir = 'asc', tagNames = null) {
+export function sortRowsBy(rows, field, dir = 'asc', tagNames = null, flow = null) {
   const sign = dir === 'desc' ? -1 : 1;
   const cmp = (ra, rb) => {
     let r = 0;
@@ -1415,21 +1574,37 @@ export function sortRowsBy(rows, field, dir = 'asc', tagNames = null) {
         r = 0;
     }
     if (r !== 0) return r * sign;
-    return cmpTask(ra.task, rb.task, field, sign, tagNames);
+    return cmpTask(ra.task, rb.task, field, sign, tagNames, flow);
   };
   return [...rows].sort(cmp);
 }
 
 /** 落到任务字段上的比较（sortTasksBy 与 sortRowsBy 共用，不写两遍） */
-function cmpTask(a, b, field, sign, tagNames = null) {
+function cmpTask(a, b, field, sign, tagNames = null, flow = null) {
   let r = 0;
   switch (field) {
     case 'priority':
       r = (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9);
       break;
-    case 'status':
-      r = (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
+    case 'status': {
+      /*
+        ⛔ 必须按**流程里配置的先后**排，不能按写死的 STATUS_RANK。
+
+        STATUS_RANK 是默认那七个状态的顺序表，自定义流程的 id（s1/s2/s3）
+        在里面查不到 → 全部落到 9 → 顺序退化成数据在文件里的先后
+        （实测 s3 → s1 → s2，而且**升序降序结果一样**，点了列头纹丝不动，
+        界面上却写着"排序：状态 ↓"）。
+
+        这和之前修过的"按状态分组顺序乱"是同一个根因，
+        但那条链（sortGroups）修了、**排序这条链（cmpTask）漏了** ——
+        同一个写死表，两个入口，分两轮才清完。
+      */
+      const ord = (flow && Array.isArray(flow.statuses))
+        ? Object.fromEntries(flow.statuses.map((x, i) => [x.id, i]))
+        : STATUS_RANK;
+      r = (ord[a.status] ?? 99) - (ord[b.status] ?? 99);
       break;
+    }
     case 'assignee': {
       /*
         ⛔ 必须走 sortKey：**多值列上 a.assignee 是个数组**，
@@ -1685,19 +1860,21 @@ export function fmtTime(ms) {
 export function relTime(ms) {
   if (!ms) return '—';
   const diff = Date.now() - ms;
+  /*
+    ⛔ 未来时间戳不能落进"刚刚"：diff 为负时下面每个判据都成立，
+    于是**任何未来时间都显示成"刚刚"**（实测 now+1h → "刚刚"）。
+
+    未来时间来自：手改 JSON 写错、AI 写入算错、跨时区导入。
+    显示成"刚刚"比显示时间戳更糟 —— 用户看到"刚刚"会以为这条刚更新过，
+    而按更新时间排序时它永远排最前，两条线索互相矛盾，无从怀疑时间本身有问题。
+  */
+  if (diff < 0) return `${Math.floor(-diff / (24 * 3600_000)) + 1} 天后`;
   if (diff < 60_000) return '刚刚';
   if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
   if (diff < 24 * 3600_000) return `${Math.floor(diff / 3600_000)} 小时前`;
   return `${Math.floor(diff / (24 * 3600_000))} 天前`;
 }
 
-/** 未认领任务的哨兵 key（与 filterTasks 的 '__none__' 约定一致） */
-export const UNASSIGNED = '__none__';
-/** 无标签任务的哨兵 key（仅 tag 分组时使用） */
-export const NOTAG = '__notag__';
-/** 未填类型的哨兵 key（仅 type 分组时使用） */
-export const NOTYPE = '__notype__';
-export const NOGROUP = '__nogroup__';
 
 const STATUS_RANK = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
 /*
@@ -1717,39 +1894,42 @@ const TYPE_RANK = Object.fromEntries(TYPE_WORDS.map((t, i) => [t, i]));
  * STATUS_LABEL / PRIORITY_LABEL，避免同一份映射抄两处后漂移。
  */
 /** 一条任务在某个分组依据下属于哪些组（标签是多值的，会同时进多个组） */
+/**
+ * 分组时这一条任务取哪些值（多值列上会返回多个 → 同时进多个组）。
+ *
+ * ⛔ 重构前是六个 if 分支，各自决定"取哪个字段、多值怎么办、空值用什么哨兵"——
+ * 于是 assignee / type / group 三个字段的"多值"处理是分别补的，
+ * 补的时候漏了 group（分组改名/删除漏掉多值任务）。
+ *
+ * 现在统一走注册表：哨兵从 colDef 取，多值一律摊平。
+ */
 export function groupValuesOf(t, key) {
-  if (key === 'status') return [t.status];
-  if (key === 'priority') return [t.priority];
   /*
-    ⛔ 这几列**可以是多值的**（用户把"多选"勾上之后）。
+    分组依据的 key 与列的 field **必须是同一个名字**。
 
-    原来一律返回单值 `[t.assignee]` —— 多值时这个"组名"就是个数组，
-    groupName 拿数组去查定义表查不到 → 组头显示成一串逗号连接的原始值，
-    而且这条任务**只出现在其中一个组里**。
-
-    多选的语义本来就是"同时属于多个"，所以应该返回**全部值**，
-    让它同时进每一个组（和标签列一样）。
+    ⛔ 原来分组用 'tag' 而列叫 'tags' —— 两个名字指同一列，
+    于是"取这一列的值"要写两遍（一遍按 'tag' 硬编码 `t.tags`，
+    另一遍按 'tags'），加别名映射就是给这种不一致打补丁。
+    现在统一成 'tags'；老存档里存的 'tag' 在 normalizeGroupKey 里迁移。
   */
-  if (key === 'assignee') {
-    const v = t.assignee;
-    if (Array.isArray(v)) return v.length > 0 ? v : [UNASSIGNED];
-    return [v || UNASSIGNED];
-  }
-  if (key === 'type') {
-    const v = t.type;
-    if (Array.isArray(v)) return v.length > 0 ? v : [NOTYPE];
-    return [v || NOTYPE];
-  }
-  if (key === 'group') {
-    const v = t.group;
-    if (Array.isArray(v)) return v.length > 0 ? v : [NOGROUP];
-    return [v || NOGROUP];
-  }
-  if (key === 'tag') return t.tags.length > 0 ? t.tags : [NOTAG];
-  return [''];
+  const k = normalizeGroupKey(key);
+  const c = colDef(k);
+  if (k === 'status') return [t.status];
+  if (k === 'priority') return [t.priority];
+  if (!c) return [''];
+  const vals = flatVals(t[k]);
+  return vals.length > 0 ? vals : (c.sentinel ? [c.sentinel] : ['']);
 }
 
-function sortGroups(groups, key, flow) {
+/** 分组依据 key 的旧名 → 新名（'tag' → 'tags'） */
+export function normalizeGroupKey(key) {
+  return key === 'tag' ? 'tags' : key;
+}
+
+
+function sortGroups(groups, key0, flow) {
+  /* 同样把旧名 'tag' 归一到列名 'tags' */
+  const key = normalizeGroupKey(key0);
   if (key === 'status') {
     /*
       ⛔ 不能查写死的 STATUS_RANK（默认那七个）：
@@ -1794,7 +1974,7 @@ function sortGroups(groups, key, flow) {
       if (b.key === NOGROUP) return -1;
       return b.count - a.count || a.key.localeCompare(b.key, 'zh-Hans-CN');
     });
-  } else if (key === 'tag') {
+  } else if (key === 'tags') {
     // __notag__ 是伪分组，显式置尾 —— 不能靠 '__' 碰 collation 运气
     groups.sort((a, b) => {
       if (a.key === NOTAG) return 1;
@@ -1875,7 +2055,7 @@ export function groupTasks(tasks, key) {
  * 于是同一列在列表里能排、在看板里排不动，而界面上看不出差别。
  * 两份排序逻辑迟早要分叉，这是必然的，不是"小心点就行"。
  */
-export function sortTasksBy(tasks, field, dir = 'asc', tagNames = null) {
+export function sortTasksBy(tasks, field, dir = 'asc', tagNames = null, flow = null) {
   const sign = dir === 'desc' ? -1 : 1;
   return [...tasks].sort((a, b) => {
     /*
@@ -1883,7 +2063,7 @@ export function sortTasksBy(tasks, field, dir = 'asc', tagNames = null) {
       cmpTask 里"未认领恒排最后"是提前 return（刻意不带 sign）——
       外面再乘一次就会在降序时把它翻到最前面，那条保证就没了。
     */
-    const r = cmpTask(a, b, field, sign, tagNames);
+    const r = cmpTask(a, b, field, sign, tagNames, flow);
     if (r !== 0) return r;
     /*
       兜底保持看板原有的手感：同分时更新时间新的在前，再同分按优先级。
