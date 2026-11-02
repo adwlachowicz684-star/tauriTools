@@ -2793,7 +2793,9 @@ async function gcOrphanAssets(quiet = false) {
         // BUG 184：画布主题 / 布局 —— 导回一律回落默认（与交换格式那一路同口径）
         theme: '画布主题', layout: '画布布局',
         // BUG 191：节点文字里的换行 —— 写侧并成空格，导回就找不回来了
-        newline: '节点文字内的换行' };
+        newline: '节点文字内的换行',
+        // BUG 195：.mm / .opml 带得走备注，却会削掉首尾与行尾空白
+        noteEdge: '备注首尾与行尾空白' };
       const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
         .map((k) => `${NAME[k]} ${loss[k]} 处`);
       // 关系线按「条」说。它挂在画布上，"共涉及 N 个节点"对它不成立
@@ -2864,7 +2866,9 @@ async function gcOrphanAssets(quiet = false) {
       // BUG 181：画布主题 / 布局 —— 五种格式都没有画布级外观属性，导回一律回落默认
       theme: '画布主题', layout: '画布布局',
       // BUG 191：节点文字里的换行 —— 写侧并成空格，导回就找不回来了
-      newline: '节点文字内的换行' };
+      newline: '节点文字内的换行',
+      // BUG 195：.mm / .opml 带得走备注，却会削掉首尾与行尾空白
+      noteEdge: '备注首尾与行尾空白' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);
     /*

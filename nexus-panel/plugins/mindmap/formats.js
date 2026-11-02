@@ -2196,6 +2196,8 @@ export function exchangeLoss(content, kind, sheet) {
     summary: 0, callout: 0,
     // BUG 191：节点文字里的换行（写侧一律并成空格，见 nodeText / inlineText）
     newline: 0,
+    // BUG 195：备注在 .mm / .opml 里被 normalizeNoteText 削掉的那部分空白
+    noteEdge: 0,
     // BUG 181：画布自己的主题与布局（画布级，不计进 nodes，见函数末尾）
     theme: 0, layout: 0 };
   const km = parseKm(content);
@@ -2234,6 +2236,28 @@ export function exchangeLoss(content, kind, sheet) {
      */
     const rawText = String(d.text ?? '');
     if (rawText.trim() && LINE_BREAK_ONLY.test(rawText)) bump(n, 'newline');
+    /*
+     * BUG 195：备注「带得走」不等于「原样带得走」。
+     *
+     * .mm / .opml 声称 note 带得走（EXCHANGE_KEEP 里 note: true），可写侧
+     * toOpml / 读侧 readOpmlNote / fromFreemind 那条路都过 normalizeNoteText：
+     * 它削首尾空白、削换行两侧的空白、把 3 个以上连续空行并成 2 个。
+     * 实测「  第一行  」导出 .opml 再导回变成「第一行」，「第一行  \n第二行」
+     * 变成「第一行\n第二行」—— 内容被静默改掉，而 exchangeLoss 五个字段全报 0，
+     * 界面只说「已保存」。
+     *
+     * 而 XMind 两档（native 快照 + zen content.json）**原样保住**同样的备注
+     * （实测首尾空格 / 前置换行 / 行尾空格全 ok），所以这不是格式固有。
+     *
+     * ⓘ 判据直接调 normalizeNoteText 本身，不另抄一份正则 —— 写侧改了口径，
+     *   统计自动跟着变（各写一份必然只修一处，本项目反复撞的坑）。
+     * ⓘ 只在 keep.note 为真时数：其余格式整条备注都装不下，已经报 note，
+     *   再报一次就是同一份内容数两遍。
+     */
+    const rawNote = String(d.note ?? '');
+    if (keep.note && rawNote && normalizeNoteText(rawNote) !== rawNote) {
+      bump(n, 'noteEdge');
+    }
     if (!keep.note && String(d.note || '').trim()) bump(n, 'note');
     if (!keep.hyperlink && String(d.hyperlink || '').trim()) bump(n, 'hyperlink');
     const pri = Number(d.priority);
@@ -2333,6 +2357,8 @@ const LOSS_KEYS = ['note', 'hyperlink', 'priority', 'progress', 'labels',
   'relationships', 'nodes', 'summary', 'callout',
   // BUG 191：文字里的换行是节点级，同样要跨画布累加
   'newline',
+  // BUG 195：备注首尾/行尾空白同样是节点级
+  'noteEdge',
   // BUG 181：主题 / 布局是**画布级**，多画布导出时逐张相加 = 有几张非默认
   'theme', 'layout'];
 
