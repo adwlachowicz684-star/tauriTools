@@ -5322,6 +5322,54 @@ t('守卫：未来时间戳显示「N 天后」（不是"刚刚"）', (() => {
   return /天后/.test(a) && /天后/.test(b) && relTime(now - 5000) === '刚刚';
 })());
 
+/*
+ * **lockOf 的第三个参数两种传法都要认（store 或 flow）。**
+ *
+ * 只认 store 时，传成 flow 会静默退化成默认流程 →
+ * 自定义流程的完成态不被认成"已完成" → 前置永远解锁不了。
+ *
+ * 实测（修前）：自定义流程 s1/s3(done)，b 在 s3、a 依赖 b
+ *   · lockOf(a, tasks, flow)  → locked:true  （错）
+ *   · lockOf(a, tasks, store) → locked:false （对）
+ */
+t('守卫：lockOf 第三参数传 store 或 flow 结果一致', (() => {
+  const st = normalizeStore({
+    flow: { statuses: [{ id: 's1', name: '待办' }, { id: 's3', name: '完工', done: true }], transitions: [] },
+    tasks: [
+      { id: 'a', title: 't', status: 's1', priority: 'P2', tags: [], deps: ['b'], history: [] },
+      { id: 'b', title: 't', status: 's3', priority: 'P2', tags: [], deps: [], history: [] },
+    ],
+  });
+  const f = normalizeFlow(st.flow);
+  const a = lockOf(st.tasks[0], st.tasks, st);
+  const b = lockOf(st.tasks[0], st.tasks, f);
+  return a.locked === false && b.locked === false;
+})());
+
+/*
+ * **单条删除与批量删除的确认判据必须一致。**
+ *
+ * 原来单条只在"有依赖"时才确认，没有依赖时点一下就没了；
+ * 而批量删除总是确认 —— 结果是删 1 条比删 10 条更容易误删。
+ * 删除不可撤销，两条路是同一件事。
+ */
+t('守卫：单条删除也要无条件确认（与批量删除同判据）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const doDelete = (id: string) =>');
+  const seg = app.slice(i, i + 1600);
+  /* 必须有"不可撤销"那句无条件确认，且 confirm 不在 if(dependents.length>0) 里 */
+  /*
+    ⛔ 只判"没有 if (dependents.length > 0) {"是不够的 ——
+    注入成 `if (dependents.length > 0 && !window.confirm(msg)) return;`
+    就绕过去了（没有那个花括号形式的 if），守卫照样绿。
+    必须同时禁止"把 confirm 挂进任何 dependents 条件"的写法。
+  */
+  return seg.indexOf('不可撤销。') >= 0
+    && /if \(!window\.confirm\(msg\)\) return;/.test(seg)
+    && seg.indexOf('if (dependents.length > 0) {') < 0
+    && !/dependents\.length\s*>\s*0\s*&&/.test(seg);
+})());
+
 /* ---------------- 汇总 ---------------- */
 console.log(`task-board core: 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);
