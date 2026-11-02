@@ -297,7 +297,34 @@ export function redactEnv(vars: Record<string, string>): Record<string, string> 
 export function blankEnvVars(vars: Record<string, string> | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(vars ?? {})) {
-    out[k] = looksLikeSecretName(k) ? '' : v;
+    /*
+     * 名字不像密钥时再看**值本身** —— 与参数卡同口径（paramStoredValue）。
+     *
+     * 只按名字判是不够的：变量名由用户随便起，中文名里一个 token 字样都没有，
+     * 而值里明文躺着 `?api_key=` / `user:pw@`。实测（改之前）：
+     *
+     *   redactParams([{name:'接口地址', value:'https://x.y/v1?token=sk-env-url'}])
+     *     → 'https://x.y/v1?token='        ✅ 挖了
+     *   redactEnv({ 接口地址: 'https://x.y/v1?token=sk-env-url' })
+     *     → 'https://x.y/v1?token=sk-env-url'   ❌ 原样
+     *
+     * 于是界面（validateCanvasConfig → paramIssues）照常说
+     * 「值里含凭据 —— 存盘与导出时会被挖掉」，而 env.vars 那份**一个字没挖**：
+     * 明文进 localStorage、进工具栏导出的画布文件。说了没做。
+     *
+     * env.vars 是旧称（界面早已不再往里写），但老存档里填过的值还在，
+     * 且读取时 migrateEnvVars 会把它搬进 params —— 搬过去之后是要挖的。
+     * 也就是说同一份值，在 params 里挖、留在 env.vars 里不挖。
+     *
+     * scrubUrlSecrets 只认以 scheme 开头的整串，所以
+     * `{{login.token}}` 这类模板引用不会被改动。
+     */
+    if (looksLikeSecretName(k)) {
+      out[k] = '';
+      continue;
+    }
+    const scrubbed = scrubUrlSecrets(String(v ?? ''));
+    out[k] = scrubbed;
   }
   return out;
 }
