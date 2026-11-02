@@ -1449,11 +1449,21 @@ t('矮画布：列表内容区有最小高度（画布不随任务条数塌陷�
   return /min-height:\s*\d+px/.test(seg);
 })());
 
-t('矮画布：面板限高且内部可滚（选项多时不会溢出画布）', (() => {
+t('矮画布：面板限高且选项区内部可滚（选项多时不会溢出画布）', (() => {
   const css = fs.readFileSync(path.join(dir, 'styles.css'), 'utf8');
-  const i = css.indexOf('.tb-lpop {');
-  const seg = css.slice(i, css.indexOf('}', i));
-  return /max-height:/.test(seg) && /overflow-y:\s*auto/.test(seg);
+  const pop = css.slice(css.indexOf('.tb-lpop {'));
+  const popBody = pop.slice(0, pop.indexOf('}'));
+  const i = css.indexOf('.tb-lpop-list {');
+  if (i < 0) return false;
+  const listBody = css.slice(i, css.indexOf('}', i));
+  /*
+    ⛔ 原来钉的是 `.tb-lpop { overflow-y:auto }`。
+    改成「选项区独立滚动」后恒红 —— 恒红的守卫等于没有守卫。
+    现在：父级限高、选项区 overflow-y:auto 且 min-height:0（flex 子项真能收缩）。
+  */
+  return /max-height:/.test(popBody)
+    && /overflow-y:\s*auto/.test(listBody)
+    && /min-height:\s*0/.test(listBody);
 })());
 
 t('矮画布：下方空间不够时向上翻（有 is-up 样式与翻转判断）', (() => {
@@ -3663,10 +3673,17 @@ t('守卫：三种定义列共用同一套交互（defCol，不是各自 isTag/i
     defCol 已换成注册表的 hasDefs(col.field) —— 不再是每列一个 isXxx 标志。
     四个入口现在都由 defOps 派生的 onColor/onRename/onRemove/onCreate 驱动。
   */
+  /*
+    ⛔ 色点的渲染条件已从 `hasDefs && onColor` 换成 `showColor`：
+    勾了「颜色」的**每一列**都要有色点（含没有定义表的状态/优先级），
+    否则列设置里那个开关就是勾了没效果。守卫跟着改钉语义：
+    四列仍共用同一组 defOps 派生的回调，且色点判据不分列。
+  */
   return pop.indexOf('hasDefs(col.field) && onCreate') >= 0
-    && pop.indexOf('hasDefs(col.field) && !isSentinel(v) && onColor') >= 0
     && pop.indexOf('hasDefs(col.field) && !isSentinel(v) && onRename') >= 0
     && pop.indexOf('hasDefs(col.field) && !isSentinel(v) && onRemove') >= 0
+    && pop.indexOf('showColor ? (') >= 0
+    && pop.indexOf('onColor && !isSentinel(v)') >= 0
     && pop.indexOf('isType ? onCreateType') < 0;   // 不再有按列挑回调的三元链
 })());
 
@@ -5818,6 +5835,74 @@ function memoBlock(app, name) {
   const body = m ? seg.slice(0, seg.lastIndexOf(m[0])) : seg;
   return { seg, deps, body };
 }
+
+/*
+ * ============================================================
+ * 筛选面板一致性（截图反馈）：五列勾了「颜色」都该有色点；
+ * 选项多了面板内部滚动不能把自己关掉。
+ * ============================================================
+ */
+
+/* ① 通杀：色点的渲染条件必须是 showColor，不能只认有定义表的列 */
+t('守卫：筛选面板色点由「颜色」开关决定，与有没有定义表无关', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('function ColFilterPop(');
+  const j = app.indexOf("if (col.kind === 'text') {", i);
+  if (i < 0 || j < 0) return false;
+  const pop = app.slice(i, j);
+  return /showColor\s*\?\s*\(/.test(pop)              /* 色点由开关驱动 */
+    && /onColor && !isSentinel\(v\)/.test(pop)        /* 改色仍只给有定义的列 */
+    && /tb-lpop-dot is-static/.test(pop)              /* 固定枚举有只读色点 */
+    && !/hasDefs\(col\.field\) && !isSentinel\(v\) && onColor/.test(pop);
+})());
+
+/* ② 「颜色」开关对没有定义表的列也开放（勾了必须生效） */
+t('守卫：COLOR_OK 含 priority 与 status（无定义表列也能配色）', (() => {
+  const c = fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8');
+  const m = c.match(/export const COLOR_OK = \[([^\]]*)\]/);
+  if (!m) return false;
+  const set = new Set(m[1].split(',').map((x) => x.trim().replace(/['"]/g, '')));
+  return set.has('priority') && set.has('status');
+})());
+
+/* ③ 通杀：定义表归一化不许把「没配色」全填成同一个固定灰 */
+t('守卫：通杀 —— 定义表没自定义色时按值派生稳定色', (() => {
+  const c = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const fns = ['normalizeTagDefs', 'normalizeGroupDefs', 'normalizeTypeDefs'];
+  const bad = [];
+  for (const fn of fns) {
+    const i = c.indexOf('function ' + fn + '(');
+    if (i < 0) { bad.push(fn + ' 缺失'); continue; }
+    /* 取到下一个顶层函数/注释块 */
+    const nxt = c.indexOf('\nfunction ', i + 10);
+    const seg = c.slice(i, nxt > 0 ? nxt : i + 2200);
+    if (!/derivedColor\(/.test(seg)) bad.push(fn + ' 仍填固定色');
+    if (/:\s*'#78716c'/.test(seg) || /color:\s*'#78716c'/.test(seg)) bad.push(fn + ' 含固定灰');
+  }
+  if (bad.length) console.log('  归一化配色：' + bad.join(' | '));
+  return bad.length === 0;
+})());
+
+/* ④ 面板内部滚动不能触发关闭（滚一下就"退出窗口"） */
+t('守卫：滚动关闭要排除面板内部（选项多时能滚到底）', (() => {
+  const app = STRIP(fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8'));
+  const i = app.indexOf('const close = (e: Event) => {');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 420);
+  return /e\.target/.test(seg) && /el\.contains\(/.test(seg)
+    && /return;/.test(seg) && /setOpenCol\(''\)/.test(seg);
+})());
+
+/* ⑤ 选项区独立滚动（标题与「清除」不跟着滚走） */
+t('守卫：筛选面板有独立滚动的选项区', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('function ColFilterPop(');
+  const j = app.indexOf("if (col.kind === 'text') {", i);
+  const pop = app.slice(i, j);
+  return /className="tb-lpop-list"/.test(pop)
+    && /tb-lpop-foot/.test(pop)
+    && pop.indexOf('className="tb-lpop-list"') < pop.indexOf('options.map(');
+})());
 
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');

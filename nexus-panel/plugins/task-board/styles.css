@@ -1836,12 +1836,14 @@ body.tb-col-resizing {
   left: 0;
   z-index: var(--z-pop);
   /*
-    限高 + 内部滚动：选项多（状态/认领人/标签可能有几十个）时，
-    面板会长到超出画布，底部那些选项永远点不到。
-    与其让它溢出被裁，不如在面板内部滚。
+    限高：选项多（标签可能有几十个）时面板会长到超出画布。
+    ⛔ 滚动交给内部的 .tb-lpop-list —— 原来是整个面板一起滚，
+    滚到下面后标题和「清除」按钮也跟着滚出视野，
+    用户不知道自己在看哪一列、也没法一键清除。
+    这里 overflow:hidden 是为了只留一层滚动条。
   */
-  max-height: min(60vh, 320px);
-  overflow-y: auto;
+  max-height: min(70vh, 420px);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
@@ -1868,8 +1870,22 @@ body.tb-col-resizing {
   bottom: calc(100% + var(--sp-1));
 }
 .tb-lpop-title {
+  flex: none;
   font-size: var(--fs-micro);
   color: var(--text-dim);
+}
+/*
+  选项区独立滚动。flex:1 + min-height:0 是让 flex 子项**真的能收缩**
+  的关键 —— 少了 min-height:0 它会撑到内容高度，父级的限高就失效了。
+*/
+.tb-lpop-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  scrollbar-width: thin;
 }
 .tb-lpop-item {
   font-size: var(--fs-micro);
@@ -1918,6 +1934,7 @@ body.tb-col-resizing {
 }
 /* 新建标签：名字输入 + 一排色块 */
 .tb-lpop-new {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
@@ -1966,6 +1983,12 @@ body.tb-col-resizing {
   border-radius: var(--r-xs);
   cursor: pointer;
   flex: none;
+}
+/* 只读色点（固定枚举 / 哨兵项）：不是按钮，不弹色板，但占同样位置 */
+.tb-lpop-dot.is-static {
+  display: inline-block;
+  box-sizing: border-box;
+  cursor: default;
 }
 
 /* 色板展开时该行允许换行（否则色板挤不进 190px 的面板） */
@@ -2017,6 +2040,7 @@ body.tb-col-resizing {
   color: var(--text-mute);
 }
 .tb-lpop-foot {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;

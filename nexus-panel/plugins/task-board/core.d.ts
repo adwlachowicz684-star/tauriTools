@@ -175,6 +175,8 @@ export declare function rawVals(task: Task | null | undefined, field: string): s
 export declare function fieldVals(task: Task | null | undefined, field: string): string[];
 export declare function colMulti(meta: ColMeta | null | undefined, field: string): boolean;
 export declare function colColorOn(meta: ColMeta | null | undefined, field: string): boolean;
+/** 没配色的值按名字派生一个稳定色，避免一排全是同一个灰 */
+export declare function derivedColor(v: unknown): string;
 
 /*
   取某一行的某个字段值（用于文本筛选 / 排序取原始值）。

@@ -54,6 +54,25 @@ const FLOW_COLORS = Object.fromEntries(
   DEFAULT_FLOW.statuses.map((s) => [s.id, s.color]),
 );
 
+/* 派生色板：只服务"没配色的裸值"，与定义表里的自定义色是两回事。
+   ⛔ 不 import types.ts 的 TAG_COLORS（core.mjs 里没有它，运行时会
+   ReferenceError）；也不用 hsl() 字符串 —— jsdom 与部分老 WebView 的
+   CSS 解析器不认，色点会**静默变成无色**，比全灰更难查。
+   直接用 hex，写进 style.background 一定能生效。 */
+const DERIVED_PALETTE = [
+  '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e',
+  '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6',
+  '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#10b981', '#65a30d',
+  '#0891b2', '#7c3aed', '#c026d3', '#e11d48', '#059669', '#4f46e5',
+];
+export function derivedColor(v) {
+  const key = String(v || '');
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  return DERIVED_PALETTE[Math.abs(h) % DERIVED_PALETTE.length];
+}
+
+
 /**
  * 解析流程配置。
  *
@@ -435,7 +454,10 @@ function normalizeTagDefs(raw) {
     out.push({
       id,
       name: typeof d.name === 'string' && d.name ? d.name : id,
-      color: typeof d.color === 'string' && d.color ? d.color : '#78716c',
+      /* ⛔ 不能全填同一个灰：截图里「按标签筛选」是一排一模一样的
+         灰褐色圆点，而「按类型筛选」是一排彩色 —— 用户勾了「颜色」
+         却看不出效果。没自定义色就按 id 派生一个稳定的区分色。 */
+      color: typeof d.color === 'string' && d.color ? d.color : derivedColor(id),
     });
   }
   return out;
@@ -474,7 +496,7 @@ export function normalizeGroupDefs(raw) {
       const nm = d.trim();
       if (!nm || seen.has(nm)) continue;
       seen.add(nm);
-      out.push({ id: nm, name: nm, color: '#78716c' });
+      out.push({ id: nm, name: nm, color: derivedColor(nm) });
       continue;
     }
     if (!d || typeof d !== 'object') continue;
@@ -484,7 +506,7 @@ export function normalizeGroupDefs(raw) {
     out.push({
       id,
       name: typeof d.name === 'string' && d.name.trim() ? d.name.trim() : id,
-      color: typeof d.color === 'string' && d.color ? d.color : '#78716c',
+      color: typeof d.color === 'string' && d.color ? d.color : derivedColor(id),
     });
   }
   return out;
@@ -820,8 +842,14 @@ export function labelFor(field, v, storeOrDefs, flow) {
  */
 export const MULTI_OK = ['assignee', 'type', 'tags', 'group'];
 
-/** 允许配色的列（这些列有定义表，颜色落在定义上） */
-export const COLOR_OK = ['status', 'assignee', 'type', 'tags', 'group'];
+/** 允许配色的列：勾了「颜色」就该有色块，**与有没有定义表无关**。
+  ⛔ 原来注释写"这些列有定义表"，可 status 本来就不在定义表列里 ——
+  于是列设置里状态那行的「颜色」默认勾着、筛选面板却一个色块都没有：
+  **勾了没效果的开关，比没有开关更骗人**。priority 同理（原来连开关都没给）。
+  颜色来源按列查：定义表列取 def.color、状态取 flow.statuses[].color、
+  优先级取固定档位色。
+*/
+export const COLOR_OK = ['priority', 'status', 'assignee', 'type', 'tags', 'group'];
 
 /** 默认：标签多选；这几列默认带色（与改造前的行为一致，老用户无感） */
 export const DEFAULT_COL_META = {
@@ -986,6 +1014,18 @@ export function colMulti(meta, field) {
   return (DEFAULT_COL_META[field] || {}).multi === true;
 }
 
+/**
+ * 没配色的值也要有**能区分**的颜色。
+ *
+ * ⛔ 原来 `colorOf(v) || '#78716c'`：AI 手写进 JSON 的裸标签名、
+ * 或从旧文件带过来没建定义的值，全部退回同一个灰褐色。
+ * 于是「按标签筛选」里几十个标签是一排一模一样的灰点，
+ * 而「按任务类型筛选」是一排彩色 —— 用户勾了「颜色」却看不出效果，
+ * 看着像配色功能坏了。
+ *
+ * 按值做字符串哈希，取调色板里**稳定**的一档：同名永远同色、
+ * 不同名尽量不同色；不写进定义表（用户一改色就以定义为准）。
+ */
 /** 某一列是否带色（缺省按默认表） */
 export function colColorOn(meta, field) {
   const m = meta && typeof meta === 'object' ? meta[field] : null;
@@ -1796,7 +1836,7 @@ export function normalizeTypeDefs(raw) {
     out.push({
       id,
       name: o && typeof o.name === 'string' && o.name ? o.name : id,
-      color: o && typeof o.color === 'string' && o.color ? o.color : (TYPE_COLORS[id] || '#78716c'),
+      color: o && typeof o.color === 'string' && o.color ? o.color : (TYPE_COLORS[id] || derivedColor(id)),
     });
   }
   /*

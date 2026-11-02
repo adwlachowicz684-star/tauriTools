@@ -24,6 +24,7 @@ import {
   addVal,
   colMulti,
   colColorOn,
+  derivedColor,
   activeColFilters,
   applyTransitionIn,
   colFilterActive,
@@ -4099,13 +4100,17 @@ function ColSettingsPop({
             {/*
               多选 / 颜色：**只对能配的列显示**（有定义表的那几列）。
 
-              ⛔ 给所有列都摆上开关是骗人：
-              给"标题"勾颜色没有任何效果（它没有定义表），
-              点了没反应比没有这个开关更让人困惑 ——
-              而用户分不清"不支持"和"坏了"。
+              ⛔ 只给 COLOR_OK 里的列摆开关：给"标题"勾颜色没有任何效果
+              （它没有可配的颜色来源），点了没反应比没有开关更让人困惑。
 
-              状态和优先级**只给颜色、不给多选**：
-              状态走状态机、优先级是排序枚举，一条任务有两个值在语义上就是错的。
+              ⛔ 但 COLOR_OK **不能只含有定义表的列**：
+              状态 / 优先级没有定义表，颜色来自流程配置 / 固定档位，
+              一样能显示色块。原来把「有定义表」当成「能配色」，
+              于是状态那行「颜色」默认勾着、筛选面板却一个色块都没有 ——
+              勾了没效果的开关比没有更骗人。
+
+              多选仍只对 MULTI_OK 开放：状态走状态机、优先级是排序枚举，
+              一条任务有两个值在语义上就是错的。
             */}
             {show && COLOR_OK.indexOf(c.field) >= 0 ? (
               <span className="tb-colset-flags" onClick={(e) => e.preventDefault()}>
@@ -4286,6 +4291,8 @@ function ColFilterPop({
   onPickColor,
   /** 流程配置（状态名认自定义流程，不能查写死的默认表） */
   flow,
+  /** 列设置里「颜色」有没有勾上。勾了就**必须**有色块，与有没有定义表无关 */
+  showColor,
 }: {
   col: ListColumn;
   filter: ColFilter;
@@ -4297,6 +4304,7 @@ function ColFilterPop({
   defOps?: DefOps;
   onPickColor?: (initial: string) => Promise<string>;
   flow?: FlowLike;
+  showColor: boolean;
 }) {
   const set = (patch: Partial<ColFilter>) => onChange({ ...filter, ...patch });
   const [newName, setNewName] = useState('');
@@ -4338,6 +4346,28 @@ function ColFilterPop({
     if (free) setNewColor(free);
   }, [defs, newColor]);
   const colorOf = (id: string) => (defs || []).find((d) => d.id === id)?.color || '';
+  /*
+    ⛔ 色点的颜色**按列查表**，不能只认定义表。
+
+    原来整块色点的渲染条件是 `hasDefs(col.field) && onColor` ——
+    于是「状态」列很荒唐：列设置里「颜色」默认勾着（COLOR_OK 里有它），
+    筛选面板里却一个色块都没有，因为状态没有定义表、也没有 setColor 操作。
+    **勾了没效果的开关，比没有开关更骗人**，用户会以为配色坏了。
+    优先级同理（原来连开关都没给）。
+
+    统一后：勾了颜色 → 每列都有色点，位置/大小一致；
+    只有"能不能点开色板改色"由 onColor 决定（固定枚举没有定义可存色）。
+  */
+  const PRIORITY_DOT: Record<string, string> = {
+    P0: '#ef4444', P1: '#f59e0b', P2: '#3b82f6', P3: '#78716c',
+  };
+  const dotColor = (v: string): string => {
+    if (isSentinel(v)) return '#78716c';
+    if (hasDefs(col.field)) return colorOf(v) || derivedColor(v);
+    if (col.field === 'status') return statusColor(flow, v);
+    if (col.field === 'priority') return PRIORITY_DOT[v] || '#78716c';
+    return '#78716c';
+  };
   const onCreate = defOps && defOps.create;
   const onColor = defOps && defOps.setColor;
   const onRename = defOps && defOps.rename;
@@ -4411,6 +4441,13 @@ function ColFilterPop({
     return (
       <div ref={popRef} className={cls} onClick={(e) => e.stopPropagation()}>
         <div className="tb-lpop-title">按{col.label}筛选</div>
+        {/*
+          选项区**单独滚动**，标题 / 新建 / 底部「清除」不跟着滚走。
+          ⛔ 原来是整个 .tb-lpop 一起 overflow-y:auto：标签几十项时
+          滚到下面，标题和「清除」按钮已经滚出视野，用户不知道自己
+          在看哪一列的筛选、也没法一键清除 —— 只能重新点开。
+        */}
+        <div className="tb-lpop-list">
         {options.length === 0 ? (
           <div className="tb-lpop-hint">这一列当前没有可选的值</div>
         ) : (
@@ -4438,59 +4475,74 @@ function ColFilterPop({
                   做成逐行改色的话同一个标签在不同行颜色不同，
                   那就丢掉了"一眼分类"这个作用。
                 */}
-                {hasDefs(col.field) && !isSentinel(v) && onColor ? (
-                  <span className={'tb-lpop-colors' + (colorFor === v ? ' open' : '')}>
-                    {colorFor === v ? (
-                      <>
-                      {TAG_COLORS.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        className={'tb-swatch' + (colorOf(v) === c ? ' on' : '')}
-                        style={{ background: c }}
-                        title={`把「${optionLabel(col.field, v, defs, flow)}」改成这个颜色`}
-                        onClick={() => {
-                          onColor!(v, c);
-                          /* 改完就收起：色板占一整行，不收起来会一直挡着下一项 */
-                          setColorFor('');
-                        }}
-                      />
-                      ))}
-                      {/*
-                        取色器入口：固定调色板只有那几个色，
-                        要一个板子里没有的颜色（比如跟公司色号对齐）就只能靠它。
-                        拿到空串 = 用户取消，不改。
+                {/*
+                  色点：**勾了「颜色」的每一列都渲染**，位置与大小一致。
+                  ⛔ 原来只有 hasDefs && onColor 的列才有 —— 于是同一个筛选入口，
+                  优先级/状态空一格、类型/标签有点、认领人没定义时又空一格。
+                  "还是不一致"指的就是这个，不是颜色好不好看。
 
-                        ⛔ 它必须在**展开态**里：折叠态下也渲染的话，
-                        每个候选行都会挂一个"＋"，既没有意义（点开才知道能选什么）
-                        又把行挤得更窄。
-                      */}
-                      {onPickColor ? (
+                  只有「能不能点开色板改色」继续由 onColor 决定：
+                  固定枚举（优先级 / 状态）没有定义表可以存色，摆个能点却
+                  存不下来的色板是骗人。它们给只读色点，视觉对齐即可。
+                */}
+                {showColor ? (
+                  <span className={'tb-lpop-colors' + (colorFor === v ? ' open' : '')}>
+                    {onColor && !isSentinel(v) ? (
+                      colorFor === v ? (
+                        <>
+                        {TAG_COLORS.map((c) => (
                         <button
+                          key={c}
                           type="button"
-                          className="tb-swatch tb-swatch-more"
-                          title="用取色器选一个其他颜色"
-                          onClick={async () => {
-                            const hex = await onPickColor!(colorOf(v));
-                            if (hex) onColor!(v, hex);
+                          className={'tb-swatch' + (dotColor(v) === c ? ' on' : '')}
+                          style={{ background: c }}
+                          title={`把「${optionLabel(col.field, v, defs, flow)}」改成这个颜色`}
+                          onClick={() => {
+                            onColor!(v, c);
+                            /* 改完就收起：色板占一整行，不收起来会一直挡着下一项 */
                             setColorFor('');
                           }}
-                        >
-                          ＋
-                        </button>
-                      ) : null}
-                      </>
+                        />
+                        ))}
+                        {/*
+                          取色器入口：固定调色板只有那几个色，
+                          要一个板子里没有的颜色（比如跟公司色号对齐）就只能靠它。
+                          拿到空串 = 用户取消，不改。
+                        */}
+                        {onPickColor ? (
+                          <button
+                            type="button"
+                            className="tb-swatch tb-swatch-more"
+                            title="用取色器选一个其他颜色"
+                            onClick={async () => {
+                              const hex = await onPickColor!(dotColor(v));
+                              if (hex) onColor!(v, hex);
+                              setColorFor('');
+                            }}
+                          >
+                            ＋
+                          </button>
+                        ) : null}
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="tb-lpop-dot"
+                          style={{ background: dotColor(v) }}
+                          title={`给「${optionLabel(col.field, v, defs, flow)}」改颜色`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            /* 再点一次收起（toggle），否则想取消展开只能去点别的地方 */
+                            setColorFor(colorFor === v ? '' : v);
+                          }}
+                        />
+                      )
                     ) : (
-                      <button
-                        type="button"
-                        className="tb-lpop-dot"
-                        style={{ background: colorOf(v) || '#78716c' }}
-                        title={`给「${optionLabel(col.field, v, defs, flow)}」改颜色`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          /* 再点一次收起（toggle），否则想取消展开只能去点别的地方 */
-                          setColorFor(colorFor === v ? '' : v);
-                        }}
+                      /* 只读色点：不是按钮，不弹色板，但和别的列对齐 */
+                      <span
+                        className="tb-lpop-dot is-static"
+                        style={{ background: dotColor(v) }}
+                        title={isSentinel(v) ? emptyOf : `${optionLabel(col.field, v, defs, flow)} 的颜色`}
                       />
                     )}
                   </span>
@@ -4550,6 +4602,7 @@ function ColFilterPop({
             );
           })
         )}
+        </div>
         {hasDefs(col.field) && onCreate ? (
           <div className="tb-lpop-new">
             <input
@@ -4829,7 +4882,22 @@ function ListView({ rows, allRows, /*
       点错了选项却毫不知情，比"面板自动关掉要重新点一次"糟得多，
       所以这里选关掉。
     */
-    const close = () => setOpenCol('');
+    /*
+      ⛔ 滚动事件要**看是谁在滚**。
+
+      原来一刀切 `scroll → setOpenCol('')`：而面板在选项多时是
+      自己内部滚动的（.tb-lpop-list overflow-y:auto），滚一下就把自己关掉了。
+      用户拖动左键/滚轮想往下够标签，面板"很快退出窗口" ——
+      根本够不到列表下半部分，更别说点它。
+
+      现在：滚动发生在面板内部（host 的后代）就不关；
+      只有列表容器/页面的滚动才关（那时列头动了，面板确实会飘）。
+    */
+    const close = (e: Event) => {
+      const el = document.getElementById('tb-lpop-host-' + openCol);
+      if (el && e.target instanceof Node && el.contains(e.target)) return;
+      setOpenCol('');
+    };
     window.addEventListener('resize', close);
     /* 捕获阶段：滚动可能发生在任意内层容器上，冒泡阶段收不全 */
     window.addEventListener('scroll', close, true);
@@ -5483,6 +5551,8 @@ function ListView({ rows, allRows, /*
                   defs={defsOf(taskStore, c.field)}
                   defOps={defOpsFor(c.field)}
                   onPickColor={onPickColor}
+                  /* 列设置里「颜色」的开关：勾了就必须有色块，五列同一判据 */
+                  showColor={colorOfField(c.field)}
                 />
               ) : null}
               {/*
