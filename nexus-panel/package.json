@@ -115,6 +115,7 @@
     "test:plugin-identity": "node plugin-identity-test.mjs",
     "test:plugin-panel-actions": "node plugin-panel-actions-test.mjs",
     "test:plugin-singlefile": "node plugin-singlefile-test.mjs",
+    "test:single-file-report": "node single-file-report-test.mjs",
     "test:plugin-store-client": "node plugin-store-client-test.mjs",
     "test:plugin-theme": "node plugin-theme-test.mjs",
     "test:react": "node smoke-react.mjs",
