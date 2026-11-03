@@ -274,6 +274,27 @@ export const inlineTextKeepEdges = (v) => String(v ?? '')
 export const inlineText = (v) => inlineTextKeepEdges(v).trim();
 
 /**
+ * 「节点文字的**首尾空白**会不会被读侧的 trim 削掉」—— 只判首尾，不掺换行。
+ *
+ * BUG 200：早先 textEdge 判据是 `inlineText(raw) !== raw` 再加一条
+ * 「含换行就整条跳过」（为了不把换行数两遍）。后者把**同时**带首尾空白和
+ * 换行的文字也一起跳过了：实测「  甲\n乙  」导回成「甲 乙」，提示只说
+ * 「节点文字内的换行 1 处」，首尾空白那部分一句没提。而 BUG 198 的普查用
+ * `hasExchangeLoss()` 判「有没有提示」，newline 已经让它为真 → 全绿却漏一类。
+ *
+ * ⓘ 口径与读侧同源：`inlineText()` = `inlineTextKeepEdges(v).trim()`，末尾
+ *   那次 `.trim()` 就是这里用的；换行类字符按 `LINE_BREAK_ONLY` 的口径摘掉
+ *   （不另抄字符类），让换行归 newline 桶、首尾空白归 textEdge 桶 ——
+ *   两条互不排斥，也互不重复。
+ */
+const LINE_BREAK_ALL = new RegExp(LINE_BREAK_ONLY.source, 'g');
+export function inlineTextEdgeChanged(raw) {
+  const s = String(raw ?? '');
+  const noBreaks = s.replace(LINE_BREAK_ALL, '');
+  return noBreaks !== noBreaks.trim();
+}
+
+/**
  * OPML `<head><title>` **读回来**时的规范化 —— 写侧 `toOpml` 用 `escXml`
  * 原样写（不 trim），读侧 `workbook.opmlHeadTitle` 取 textContent 后在这里
  * 削掉首尾空白：XML 元素内容周围的空白通常是排版缩进，不该混进画布名。
@@ -2299,11 +2320,13 @@ export function exchangeLoss(content, kind, sheet) {
      * 格式（BUG 173 / 178 / 179）都保住了首尾空白，唯独 .md 静默削掉，
      * 而 exchangeLoss 五个字段全报 0 → 界面只说「已保存」。
      *
-     * ⓘ 判据复用读侧同一个 `inlineText()`（不另抄正则）。
+     * ⓘ 判据复用读侧同一个 `.trim()` 口径（inlineTextEdgeChanged，不另抄正则）。
      * ⓘ 换行归 newline、纯空白走占位（BUG 100），都不在这里重复数。
+     * ⓘ BUG 200：换行与首尾空白**可以同时存在**，旧判据「含换行就整条跳过」
+     *   会把后者一起瞒掉，且普查的总判据因 newline 已为真而假绿。现在两桶
+     *   各判各的：newline 数换行，textEdge 只数首尾的非换行空白。
      */
-    if (kind === 'markdown' && rawText.trim()
-      && !LINE_BREAK_ONLY.test(rawText) && inlineText(rawText) !== rawText) {
+    if (kind === 'markdown' && rawText.trim() && inlineTextEdgeChanged(rawText)) {
       bump(n, 'textEdge');
     }
     /*

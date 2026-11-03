@@ -24658,6 +24658,33 @@ group('BUG 198 · 交换格式标量值的静默改写（全矩阵一次性普�
     eq(F198.exchangeLoss(s, 'opml', { title: 'T', content: s }).textEdge, 0,
       '★ 其余四种格式保住了首尾空白，不虚报');
   }
+  /*
+   * BUG 200 · 首尾空白 + 换行同时存在
+   * ------------------------------------------------------------
+   * 旧判据「含换行就整条跳过 textEdge」让提示只说换行、不说首尾空白；
+   * 而普查循环用 hasExchangeLoss() 判「有没有提示」，newline 已经让它为真，
+   * 于是全绿却漏了一类。「总判据为真」不等于「该说的都说了」。
+   */
+  {
+    const raw = '  甲\n乙  ';
+    const s = mk198({ text: raw });
+    const back = W198.markdownToSheet(W198.sheetToMarkdown(s));
+    eq(get198(back, 'text'), '甲 乙', '★ 组合样本：首尾空白被削、换行被并成空格');
+    const l = F198.exchangeLoss(s, 'markdown', { title: 'T', content: s });
+    eq(l.newline, 1, '★ 换行归 newline 桶');
+    eq(l.textEdge, 1, '★ 首尾空白归 textEdge 桶（两桶互不排斥）');
+    // 反证：只报别的桶时，普查用的总判据照样为真 —— 这就是假绿通道
+    ok(F198.hasExchangeLoss({ newline: 1, textEdge: 0 }),
+      '★ 反证：只报别的桶时 hasExchangeLoss 仍为真（普查循环会假绿）');
+    const c1 = mk198({ text: '甲\n乙' }), c2 = mk198({ text: '\n甲' });
+    eq(F198.exchangeLoss(c1, 'markdown', { title: 'T', content: c1 }).textEdge, 0,
+      '★ 纯中间换行不虚报 textEdge');
+    eq(F198.exchangeLoss(c2, 'markdown', { title: 'T', content: c2 }).textEdge, 0,
+      '★ 首部换行归 newline，不虚报 textEdge');
+    ok(F198.inlineTextEdgeChanged('  甲\n乙  '), '★ 判据：组合样本认首尾空白');
+    ok(!F198.inlineTextEdgeChanged('甲\n乙'), '★ 判据：纯换行不算');
+    ok(F198.inlineTextEdgeChanged('  甲  '), '★ 判据：纯首尾空白算');
+  }
   {
     const s = mk198({ note: 'X\rY' });
     ok(F198.exchangeLoss(s, 'freemind', { title: 'T', content: s }).noteEdge === 1,
@@ -24699,6 +24726,8 @@ group('BUG 198 · 交换格式标量值的静默改写（全矩阵一次性普�
     ok(/exchangeScalarTrim\(n\?\.data\?\.hyperlink/.test(f)
       && /exchangeScalarTrim\(links\[i\]/.test(f),
       '★ .mm / .opml 写侧与读侧都改调同一个 trim');
+    ok(/function inlineTextEdgeChanged\(/.test(f) && /inlineTextEdgeChanged\(rawText\)/.test(f),
+      '★ textEdge 判据只认首尾空白（组合样本不再被换行排除）');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
     const at = [];
     for (let p = code.indexOf('const NAME = {'); p >= 0;
