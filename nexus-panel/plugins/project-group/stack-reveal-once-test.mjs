@@ -12,11 +12,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsFlat } from '../../test-scan-utils.mjs';
 import { makeT } from './testkit.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { t, done } = makeT();
-const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+const strip = stripCommentsFlat;
 const SRC = strip(fs.readFileSync(path.join(HERE, 'components/StackedGroups.tsx'), 'utf8'));
 
 /* ── 把 reveal 那个 effect 的回调与依赖数组挖出来 ──────────────────────── */
