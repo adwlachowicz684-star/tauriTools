@@ -1,0 +1,233 @@
+# 插件独立仓库 · 发版工作流模板
+#
+# 用法：复制到每个插件仓库的 .github/workflows/release.yml，
+#       按文末「插件仓库最低文件清单」补齐文件后即可用。
+#
+# 实证依据（2026-11-03 读取，非推测）：
+#   - ErgeAIA/ErgeMD .github/workflows/release.yml：TAG_NAME 的 dispatch 坑、
+#     artifact 配额跨仓库累加、回读校验的必要性
+#   - ErgeMD v0.5.0 / v0.4.4 / v0.4.3 的 15 个 release asset：
+#     全部带 digest: sha256:<64hex> 与 state: uploaded
+#   - nexus-panel js/plugin-store-client.js（pickAsset / verifyAssetDigest / isUploadedAsset）
+#     js/plugin-ledger.js（isSha / 产物指纹）
+#     js/plugin-tarball.js（gzip + USTAR 解析，不支持 zip）
+#     js/plugin-installer.js（normalizeRelPath / safeJoin / verifyPluginDir）
+#
+# 设计前提：构建发生在 CI，不在用户机器上。
+#   用户点「安装」= 下载本工作流产出的 tar.gz → 校验 → 解压即用，
+#   不需要 node / npm / vite，也不会执行陌生仓库的安装脚本。
+
+name: Plugin Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag to build and publish (e.g. v1.2.0)'
+        required: true
+
+permissions:
+  contents: write
+  actions: write
+
+# ErgeMD 实证：workflow_dispatch 时 github.ref_name 是**分支名**，
+# 用它会把产物命名成 "ErgeMD-main-setup.exe" 且 release 定位错。
+# 产物命名与 release 定位必须统一走这个变量，不要在各步里分别写 github.ref_name。
+env:
+  TAG_NAME: ${{ inputs.tag_name || github.ref_name }}
+
+jobs:
+  # 发版前清过期 artifact。GitHub 的 artifact 配额按**账号**计、跨仓库累加，
+  # ErgeMD 曾因三轮重试留下的 485 MB 把另一个仓库的 v0.5.0 发版一起堵死。
+  # 不挂 needs，与 build 并行；按 14 天过滤不会碰到本次产物；失败不阻断发布。
+  cleanup-artifacts:
+    name: Purge stale artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete artifacts older than 14 days
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+          gh api --paginate "repos/${REPO}/actions/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.created_at < \"${cutoff}\") | .id" |
+          while read -r id; do
+            [ -n "${id}" ] || continue
+            gh api -X DELETE "repos/${REPO}/actions/artifacts/${id}" || true
+          done
+
+  build:
+    name: Build & publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: 安装依赖（仅在 CI，用户侧不需要）
+        run: npm ci
+
+      # ① tag 与 manifest.version 必须一致。
+      #    ledger 的更新检测读 manifest.version + release tag；两者错开会出现
+      #    「装了 v1.2.0，却永远查不到更新」或「同版本被反复提示升级」。
+      #    这类不一致不报错、不崩，只静默漏报。
+      - name: 版本一致性
+        run: |
+          set -euo pipefail
+          VER="${TAG_NAME#v}"
+          MANIFEST_VER="$(node -p "require('./nexus.plugin.json').version")"
+          if [ "$VER" != "$MANIFEST_VER" ]; then
+            echo "::error::tag=$TAG_NAME 解析出 $VER，manifest.version=$MANIFEST_VER，不一致"
+            exit 1
+          fi
+          echo "version=$VER"
+
+      # ② 产物 id 与仓库名/产物名必须一致。
+      #    store-client 的 pickAsset 用命名规范挑产物，install 再校验产物名 ↔ manifest.id；
+      #    release 里若躺着别的插件的 tarball，兜底规则会装错包。
+      - name: 解析插件 id
+        id: meta
+        run: |
+          set -euo pipefail
+          ID="$(node -p "require('./nexus.plugin.json').id")"
+          VER="${TAG_NAME#v}"
+          case "$ID" in
+            *[!a-zA-Z0-9_-]*|'') echo "::error::非法插件 id: $ID"; exit 1 ;;
+          esac
+          echo "id=$ID"   >> "$GITHUB_OUTPUT"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "tarball=nexus-plugin-${ID}-${VER}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: 构建插件产物
+        run: npm run build:plugin
+
+      # ③ 产物自包含性校验：入口必须在、条目里不得有跳出插件目录的相对路径。
+      #    实测教训（两条独立来源，同一形状）：
+      #      - WPF/kityminder：dist/index.html 用 ../bower_components/ ../node_modules/
+      #        引用，单拷 dist 必失败，必须整包；
+      #      - nexus-panel/icon-picker：ICON_DIR 是动态字符串拼出的 ../project-group/preseticons/，
+      #        Vite 不解析它 → 构建成功、插件能开，只有 122 个图标全空白。
+      #    静态 import 会被构建期内联，动态字符串路径不会；只查 index.html 外部引用查不出来。
+      - name: 产物自包含性
+        env:
+          OUT: ${{ vars.PLUGIN_OUT_DIR || 'dist' }}
+        run: |
+          set -euo pipefail
+          ENTRY="$(node -p "require('./nexus.plugin.json').entry || 'index.html'")"
+          if [ ! -f "$OUT/$ENTRY" ]; then
+            echo "::error::入口不存在: $OUT/$ENTRY"; exit 1
+          fi
+          # 只允许 index.html 引用同目录树内的 ./assets/ 等；出现 ../ 即判整包不完整
+          if grep -RInE '(src|href)=["'"'"']\.\./|\.\./[A-Za-z_-]+/' "$OUT" --include='*.html' --include='*.js' --include='*.css'; then
+            echo "::error::产物内仍有跳出插件目录的相对路径（见上），需内联或随包带上"
+            exit 1
+          fi
+          # 二进制/字体等资源目录必须随包带上，不要只发一个单文件
+          echo "产物文件数: $(find "$OUT" -type f | wc -l)"
+
+      # ④ 打成 tar.gz，不是 zip。
+      #    plugin-tarball.js 用 node:zlib gzipSync + USTAR 解析，只认 tar.gz。
+      #    USTAR 名字字段 100 字节，长名走 PAX 扩展——解包器实测能还原
+      #    （真实仓库 8215 条目、8048 个超长名、0 skipped）。
+      #    条目路径一律为纯相对路径、无顶层目录、无 ./ 前缀、无 ..：
+      #    installer 会把它们直接落到 installed-plugins/<id>/ 下。
+      - name: 打包 tarball
+        env:
+          OUT: ${{ vars.PLUGIN_OUT_DIR || 'dist' }}
+          TARBALL: ${{ steps.meta.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          python3 - "$OUT" "$TARBALL" <<'PY'
+          import os, sys, tarfile
+          root, out = sys.argv[1], sys.argv[2]
+          n = 0
+          with tarfile.open(out, 'w:gz', format=tarfile.USTAR_FORMAT) as tf:
+              for dp, dns, fns in os.walk(root):
+                  dns.sort()
+                  for f in sorted(fns):
+                      p = os.path.join(dp, f)
+                      rel = os.path.relpath(p, root).replace(os.sep, '/')
+                      assert not rel.startswith('..') and not os.path.isabs(rel), rel
+                      if os.path.islink(p):
+                          raise SystemExit(f'软链不允许进包: {rel}')
+                      tf.add(p, arcname=rel)
+                      n += 1
+          if n == 0:
+              raise SystemExit('产物目录为空，拒绝发布空包')
+          print(f'tarball entries: {n}')
+          PY
+          # 回读一次：打包器写出的东西必须能被自己的解包口径读回来
+          python3 - "$TARBALL" <<'PY'
+          import tarfile, sys
+          with tarfile.open(sys.argv[1], 'r:gz') as tf:
+              names = tf.getnames()
+          bad = [x for x in names if x.startswith('..') or x.startswith('/') or '\\' in x]
+          assert not bad, bad
+          assert any(x == 'index.html' or x.endswith('/index.html') for x in names), '包内无 index.html'
+          print(f'回读通过: {len(names)} 条目')
+          PY
+          sha256sum "$TARBALL" | tee SHA256SUMS
+
+      # ⑤ 建 release 并上传。**禁止 --clobber**。
+      #    ledger 用 asset.id + size + updated_at 做产物指纹，专门防
+      #    「同一个 tag 的产物被替换、版本号不变、页面上看不出变化」。
+      #    允许覆盖上传等于亲手制造这个最难查的场景。
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARBALL: ${{ steps.meta.outputs.tarball }}
+          ID: ${{ steps.meta.outputs.id }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG_NAME" \
+            --title "$ID $TAG_NAME" \
+            --generate-notes \
+            "$TARBALL" SHA256SUMS
+
+      # ⑥ 回读 asset 状态：state 必须是 uploaded，digest 必须存在。
+      #    ErgeMD 三个 release 共 15 个 asset 全部带 digest + uploaded，
+      #    对应 store-client 的 isUploadedAsset / verifyAssetDigest。
+      #    上传中途的半成品 state 不是 uploaded，此时装了会拿到半个包。
+      - name: 回读产物完整性
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARBALL: ${{ steps.meta.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG_NAME}" \
+            --jq ".assets[] | select(.name == \"${TARBALL}\") | \"\(.state) \(.digest) \(.size)\"" \
+            > asset-info.txt
+          cat asset-info.txt
+          read -r STATE DIGEST SIZE < asset-info.txt
+          [ "$STATE" = "uploaded" ] || { echo "::error::asset state=$STATE"; exit 1; }
+          case "$DIGEST" in
+            sha256:[0-9a-fA-F]*) : ;;
+            *) echo "::error::缺 digest（=$DIGEST），用户侧无法做字节级校验"; exit 1 ;;
+          esac
+
+# ─────────────────────────────────────────────────────────────
+# 插件仓库最低文件清单
+#   nexus.plugin.json        id / name / version / entry / kind / permissions
+#   package.json             build:plugin 脚本；@nexus/plugin-sdk 作为 devDependency
+#   src/                     插件源码
+#   .github/workflows/release.yml   本文件
+#
+# 硬阻塞（未解前不要真拆 12 个仓库）：
+#   产物侧实测 10 个市场插件引用 js/plugin-sdk.js、7 个引用 src/nexus-react、
+#   6 个引用 js/dialog.js，另加 4 份 css。独立仓库里这些文件不存在，构建期会一起断。
+#   → 阶段 7 的 SDK 包（类型声明 + 本地 mock host）是拆仓库的前置，不是可选项。
+#
+# 不要做的事：
+#   - 不要发源码让用户本地 npm install（会执行陌生仓库的 postinstall 脚本）
+#   - 不要发 zip（解包器不认）
+#   - 不要只发一个 index.html（icon-picker 的 122 个 .ico、kityminder 的整包教训）
+#   - 不要 --clobber / 同 tag 重传（ledger 的 fingerprintChanged 就是为此设的）
+#   - 不要在各步里另写 github.ref_name（dispatch 时是分支名）
