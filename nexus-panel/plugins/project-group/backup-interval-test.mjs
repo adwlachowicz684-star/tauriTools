@@ -10,12 +10,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsFlat } from '../../test-scan-utils.mjs';
 import { makeT } from './testkit.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RS = path.join(HERE, '..', '..', 'src-tauri', 'src', 'fpx');
 const { t, done } = makeT();
-const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+const strip = stripCommentsFlat;
 const dlg = strip(fs.readFileSync(path.join(HERE, 'components/SettingsDialog.tsx'), 'utf8'));
 const model = strip(fs.readFileSync(path.join(RS, 'model.rs'), 'utf8'));
 
