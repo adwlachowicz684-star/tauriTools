@@ -99,18 +99,21 @@ test('反例：prefailed 里的 id 不在图上时不误伤，也不影响整轮
   assert.deepEqual(r.failed, []);
 });
 
-test('（前置）成功展开的实例不再留在图里 —— App 侧的过滤判据成立', () => {
+test('（前置）成功展开的实例不再留在图里；这类 problems 是 warn 不是 fail', () => {
   const B = {
     id: 'B', name: 'B',
-    nodes: [N('a', 'task'), N('b', 'log')], edges: [E('a', 'b')],
+    /* 显式输入节点没接下游：展开成功，但要报一条接口 warn */
+    nodes: [N('a', 'task'), N('in1', 'canvasIn'), N('b', 'log')], edges: [E('a', 'b')],
   };
   const g = { nodes: [N('cr1', KIND_CANVAS_REF, { canvasId: 'B' })], edges: [] };
   const ex = expandCanvasRefs(g, (id) => (id === 'B' ? B : null));
   assert.ok(!ex.nodes.some((n) => n.id === 'cr1'), '实例已被内部节点替换');
+  assert.ok(ex.problems.length > 0, '这条守卫要真读到 warn，否则下面的 every 恒绿');
   for (const p of ex.problems) {
+    assert.equal(p.level, 'warn', `「${p.reason}」已经展开了，不该判失败`);
     assert.ok(
       !ex.nodes.some((n) => n.id === p.instanceId),
-      `提示「${p.reason}」指向的实例 ${p.instanceId} 不该被当成要失败的节点`,
+      `提示「${p.reason}」指向的实例 ${p.instanceId} 已被替换，不该被当成要失败的节点`,
     );
   }
 });
@@ -134,14 +137,16 @@ test('内层 problems 的 instanceId 带前缀，且与展开后的节点对得�
 
 /* ================= 源码守卫 ================= */
 
-test('源码守卫：App 把 prefailed 传给 runGraph，且日志不再说「被跳过」', () => {
+test('源码守卫：App 把 prefailed 传给 runGraph，两档日志分开说', () => {
   const s = readSrc('App.tsx');
   assert.match(s, /prefailed,/, 'runGraph 的 opts 里必须带 prefailed');
   assert.match(
-    s, /if \(expandNodeIds\.has\(p\.instanceId\)\)/,
-    '必须按「id 是否真的在图里」过滤，否则接口/端口那类提示会让整块失败',
+    s, /splitCanvasProblems\(canvasExpanded\.problems\)/,
+    '必须用显式的 fail/warn 分类，别再靠「id 是否在图里」猜语义',
   );
-  assert.match(s, /未能展开/, '日志文案要与「节点仍在图里」这个事实一致');
+  assert.match(s, /未能展开/, 'fail 档要说未能展开');
+  assert.match(s, /已展开，但接口需检查/, 'warn 档不许再说未能展开');
+  assert.ok(!s.includes('expandNodeIds'), '别退回「id 是否真的在图里」那套巧合判据');
   assert.ok(!s.includes('被跳过：'), 'readSrc 剥了注释，若还出现「被跳过：」就是日志又在说假话');
 });
 

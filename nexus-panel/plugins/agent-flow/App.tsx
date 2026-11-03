@@ -70,7 +70,7 @@ import {
 import ModuleLibrary, {
   MODULE_DRAG_MIME, decodeModuleDrag, askCreateModule,
 } from './components/ModuleLibrary';
-import { expandCanvasRefs, findCanvasCycles } from './engine/canvasRef';
+import { expandCanvasRefs, findCanvasCycles, splitCanvasProblems } from './engine/canvasRef';
 import { syncCanvasesRefNames, snapshotCanvasName } from './engine/canvasRefName';
 import {
   collectGlobalTriggers, activeTriggers, dedupeWatchDirs, isActiveTrigger,
@@ -2725,19 +2725,20 @@ function reportSkipped(
      * 下游拿着空值继续跑、整轮还报成功，排查方向全指向下游。
      * 现在把这些节点预置成失败（见 RunOptions.prefailed），
      * 下游按既有规则跳过，日志说的与发生的事才对得上。
+     *
+     * problems 分两档（见 ExpandOutcome.level）：fail 是没展开、要判失败；
+     * warn 是已经展开、只是接口配置有问题。以前靠「instanceId 是否还
+     * 在图里」猜语义，并对两档一律说「未能展开」—— warn 那档明明展开了，
+     * 日志却把人指向「画布是不是被删了」，而真正要做的是去连端口。
      */
-    const expandNodeIds = new Set(
-      (canvasExpanded.nodes ?? []).map((n) => String(n?.id ?? '')),
-    );
+    const { failed, warned } = splitCanvasProblems(canvasExpanded.problems);
     const prefailed: Record<string, string> = {};
-    for (const p of canvasExpanded.problems) {
+    for (const p of failed) {
       pushLog(`⚠ 跨画布调用「${p.instanceId}」未能展开：${p.reason}`);
-      /*
-       * 只对确实还在图里的节点判失败。
-       * 「接口不完整 / 端口没连线」那几条的 instanceId 指向已被内部
-       * 节点替换掉的实例，不该让一个不存在的节点（或整块）失败。
-       */
-      if (expandNodeIds.has(p.instanceId)) prefailed[p.instanceId] = p.reason;
+      prefailed[p.instanceId] = p.reason;
+    }
+    for (const p of warned) {
+      pushLog(`⚠ 跨画布调用「${p.instanceId}」已展开，但接口需检查：${p.reason}`);
     }
     const graph = canvasExpanded as unknown as Graph;
 

@@ -212,12 +212,46 @@ export type ExpandOutcome = {
   edges: AnyEdge[];
   /** 每个画布引用实例 → 它的入口/出口（展开后的 id） */
   ports: Map<string, { entries: string[]; exits: string[] }>;
-  /** 展开失败/跳过的实例及原因。不静默丢弃 */
-  problems: { instanceId: string; reason: string }[];
+  /**
+   * 展开过程中发现的问题，按「要不要让这个实例判失败」分两档。
+   *
+   *   fail —— 引用节点没展开、原样留在图里（找不到画布、成环、没填 id…）。
+   *           它没有执行器，必须由调用方预置成失败，否则直通 + 空输出。
+   *   warn —— 已经展开成内部节点了，但接口配置有问题（端口没连线、
+   *           没有入口/出口）。只是提示，绝不能让节点失败。
+   *
+   * 以前两档混在一个数组里，调用方靠「instanceId 是否还在图里」去猜
+   * 语义：那只是结构上的巧合，不是契约。而且日志对两档一律说
+   * 「未能展开」—— warn 那档明明展开了，还带着只有展开后才算得出来的
+   * 端口诊断，排查方向直接被指到「画布是不是被删了」。
+   */
+  problems: { instanceId: string; reason: string; level: 'fail' | 'warn' }[];
 };
 
 /** 解析函数：由调用方提供「画布 id → 内容」，找不到返回 null */
 export type CanvasResolver = (canvasId: string) => CanvasView | null;
+
+/**
+ * 把 problems 按档分开 —— 调用方据此决定「谁判失败、谁只提示」。
+ *
+ * 单独收成一个函数而不是让调用方各写一遍 `p.level === 'fail'`：
+ * 那正是"同一件事两份实现"最容易长出来的地方。而判错的代价不是报错，
+ * 是把一条"已展开、只是端口没接"的提示当成节点失败，或反过来让一个
+ * 没展开的节点直通成功。
+ */
+export function splitCanvasProblems(problems: ExpandOutcome['problems']): {
+  failed: { instanceId: string; reason: string }[];
+  warned: { instanceId: string; reason: string }[];
+} {
+  const failed: { instanceId: string; reason: string }[] = [];
+  const warned: { instanceId: string; reason: string }[] = [];
+  for (const p of problems) {
+    const item = { instanceId: p.instanceId, reason: p.reason };
+    if (p.level === 'fail') failed.push(item);
+    else warned.push(item);
+  }
+  return { failed, warned };
+}
 
 /**
  * 展开图里所有画布引用节点。
@@ -248,7 +282,7 @@ export function expandCanvasRefs(
 
     const canvasId = String(d.canvasId ?? '').trim();
     if (!canvasId) {
-      problems.push({ instanceId: id, reason: '没有指定要调用哪张画布' });
+      problems.push({ instanceId: id, reason: '没有指定要调用哪张画布', level: 'fail' });
       outNodes.push(n);
       continue;
     }
@@ -262,6 +296,7 @@ export function expandCanvasRefs(
       problems.push({
         instanceId: id,
         reason: `画布之间存在循环调用（${[...stack, canvasId].join(' → ')}）`,
+        level: 'fail',
       });
       outNodes.push(n);
       continue;
@@ -270,6 +305,7 @@ export function expandCanvasRefs(
       problems.push({
         instanceId: id,
         reason: `跨画布调用层数超过 ${maxDepth} 层，太深了`,
+        level: 'fail',
       });
       outNodes.push(n);
       continue;
@@ -277,7 +313,7 @@ export function expandCanvasRefs(
 
     const view = resolve(canvasId);
     if (!view) {
-      problems.push({ instanceId: id, reason: `找不到画布「${canvasId}」（可能已被删除）` });
+      problems.push({ instanceId: id, reason: `找不到画布「${canvasId}」（可能已被删除）`, level: 'fail' });
       outNodes.push(n);
       continue;
     }
@@ -292,10 +328,8 @@ export function expandCanvasRefs(
      * 内层 problems 的 id 是子画布里的节点 id，而这些节点马上要加前缀
      * 并入 outNodes。原样带上去的话，日志指向一个展开后的图里
      * 根本不存在的 id —— 也没法据此把那个节点预置成失败。
-     *
-     * 「接口不完整 / 端口没连线」那几条指向的是已被内部节点替换掉的
-     * 实例；加前缀后它们依然只是提示，不该让任何节点失败（App 侧按
-     * 「id 是否真的在图里」过滤）。
+     * level 跟着 ...p 一起透传：内层「找不到画布」仍是 fail，加前缀后
+     * 那个节点确实在图里，预置失败落得到实处。
      */
     for (const p of inner.problems) {
       problems.push({ ...p, instanceId: canvasInnerId(id, p.instanceId) });
@@ -307,13 +341,16 @@ export function expandCanvasRefs(
       problems.push({
         instanceId: id,
         reason: `画布「${view.name}」接口不完整（入口 ${p.entries.length} 个、出口 ${p.exits.length} 个）`,
+        level: 'warn',
       });
     }
     /*
      * 显式端口放了没连线 —— 运行时也要说。
      * checkPorts 早就报这类 warn，但全项目没人调它，等于只写在注释里。
+     * 这两处都是"已经展开、只是接口配置有问题"，标 warn 而不是 fail：
+     * 引用节点已被内部节点替换，让它失败会落到一个不存在的 id 上。
      */
-    for (const w of portWarnings(view)) problems.push({ instanceId: id, reason: w });
+    for (const w of portWarnings(view)) problems.push({ instanceId: id, reason: w, level: 'warn' });
 
     /* 内部节点加前缀后并入 */
     const idMap = new Map<string, string>();
