@@ -2717,11 +2717,27 @@ function reportSkipped(
     });
     /*
      * 跨画布展开的问题**必须说出来** ——
-     * 找不到画布或成环时，被跳过的是一个整块，
-     * 静默跳过会让用户看到"下游没输出"却毫无线索。
+     * 找不到画布或成环时，引用节点会**原样留在图里**，
+     * 静默略过会让用户看到"下游没输出"却毫无线索。
+     *
+     * 更要紧的是「被跳过」这三个字以前是假的：节点其实没被跳过。
+     * 它没有执行器，dispatchNode 的兜底是直通 + success + 输出空串，
+     * 下游拿着空值继续跑、整轮还报成功，排查方向全指向下游。
+     * 现在把这些节点预置成失败（见 RunOptions.prefailed），
+     * 下游按既有规则跳过，日志说的与发生的事才对得上。
      */
+    const expandNodeIds = new Set(
+      (canvasExpanded.nodes ?? []).map((n) => String(n?.id ?? '')),
+    );
+    const prefailed: Record<string, string> = {};
     for (const p of canvasExpanded.problems) {
-      pushLog(`⚠ 跨画布调用「${p.instanceId}」被跳过：${p.reason}`);
+      pushLog(`⚠ 跨画布调用「${p.instanceId}」未能展开：${p.reason}`);
+      /*
+       * 只对确实还在图里的节点判失败。
+       * 「接口不完整 / 端口没连线」那几条的 instanceId 指向已被内部
+       * 节点替换掉的实例，不该让一个不存在的节点（或整块）失败。
+       */
+      if (expandNodeIds.has(p.instanceId)) prefailed[p.instanceId] = p.reason;
     }
     const graph = canvasExpanded as unknown as Graph;
 
@@ -2973,6 +2989,8 @@ function reportSkipped(
        * 用同一句 {{params.输出目录}}，各取各的。
        */
       params: paramsForRun,
+      /* 跨画布展开失败的实例：明确判失败，别让下游拿空值继续跑 */
+      prefailed,
     });
     setSummary(result);
     const finishedId = currentTaskRef.current;

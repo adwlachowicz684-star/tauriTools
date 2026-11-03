@@ -257,6 +257,22 @@ export type RunOptions = {
    * 那些语义在 triggerRegistry 里，不归 runner 管。
    */
   entry?: string;
+  /**
+   * 执行前就已确定要失败的节点：id → 原因。
+   *
+   * 由调用方（App）从跨画布展开的 problems 生成。展开失败的引用节点
+   * 会被**原样留在图里**，而它没有执行器，dispatchNode 的兜底是
+   * 「直通 + success + 输出空串」—— 于是下游拿着空值继续跑、
+   * 整轮还报成功，排查方向指向下游节点，想不到是画布调用没展开。
+   *
+   * 这与 tableReader / askHuman 那几处是同一条原则：
+   * **假装成功产出空，比明确失败难查得多**。
+   * 走 withNodeRun 的失败路径，markFailed 会让下游按既有规则跳过。
+   *
+   * 只收「展开后确实还在图里」的 id：接口不完整 / 端口没连线那类
+   * 提示指向的是已被内部节点替换掉的实例，不该让节点失败。
+   */
+  prefailed?: Record<string, string>;
   onEvent: (e: RunEvent) => void;
   signal?: AbortSignal;
 };

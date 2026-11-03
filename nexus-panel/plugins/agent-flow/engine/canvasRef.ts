@@ -288,7 +288,18 @@ export function expandCanvasRefs(
       resolve,
       { stack: [...stack, canvasId], maxDepth },
     );
-    for (const p of inner.problems) problems.push(p);
+    /*
+     * 内层 problems 的 id 是子画布里的节点 id，而这些节点马上要加前缀
+     * 并入 outNodes。原样带上去的话，日志指向一个展开后的图里
+     * 根本不存在的 id —— 也没法据此把那个节点预置成失败。
+     *
+     * 「接口不完整 / 端口没连线」那几条指向的是已被内部节点替换掉的
+     * 实例；加前缀后它们依然只是提示，不该让任何节点失败（App 侧按
+     * 「id 是否真的在图里」过滤）。
+     */
+    for (const p of inner.problems) {
+      problems.push({ ...p, instanceId: canvasInnerId(id, p.instanceId) });
+    }
 
     const p = canvasPorts({ ...view, nodes: inner.nodes, edges: inner.edges });
     const blockers = portBlockers(p);

@@ -15,6 +15,7 @@ import {
 } from './paramLinks';
 import { entryScopeOf } from './triggerScope';
 import { getRunner } from './runnerRegistry';
+import { withNodeRun, NodeFailError } from './runnerKit';
 import { nodeTimeoutMsOf, timeoutMessageOf } from './nodeTimeout';
 import type { RunContext } from './runContext';
 import { renderTemplate } from './template';
@@ -761,6 +762,22 @@ export async function runGraph(graph: Graph, opts: RunOptions): Promise<RunSumma
      * 并且执行逻辑也得写进本文件的闭包里（本文件一度 1100 行）。
      * 现在每种节点的执行器由它自己的节点定义提供，本文件只负责组装上下文。
      * ================================================================ */
+    /*
+     * 展开前就已判定失败的节点（见 RunOptions.prefailed）。
+     *
+     * 这类节点没有执行器 —— 若落到下面的「直通」兜底，会显示绿色成功
+     * 且输出空串，下游拿着空值继续跑。走 withNodeRun 的失败路径，
+     * node-done ok:false / markFailed / failed 一条不漏，
+     * 下游于是按「上游失败」的既有规则跳过。
+     */
+    const pre = opts.prefailed?.[id];
+    if (pre !== undefined) {
+      const msg = `跨画布调用未能展开：${pre}`;
+      await withNodeRun(makeCtx(id, node, scope, signal), async () => {
+        throw new NodeFailError(msg, msg);
+      });
+      return;
+    }
     const run = getRunner(node.data);
     if (run) {
       await run(makeCtx(id, node, scope, signal));
