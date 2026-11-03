@@ -56,17 +56,45 @@ const KEY_ENV = 'nexus:env-color';
  *
  * 所以这里不再各自 catch，而是统一记录，由调用方 takePersistError()
  * 决定怎么说 —— 落盘失败不代表这次改动没生效，两者必须分开讲。
+ *
+ * 还有一层：一次操作常常写好几个键（见下面 beginPersist 的说明），
+ * 「最近一次写入」不够用，中间失败会被后面的成功抹掉。
  * ------------------------------------------------------------------ */
 let lastPersistError = null;
 
+/* ------------------------------------------------------------------
+ * 一个「用户操作」往往对应**多次**写入：applyTheme 一次写 6 个键，
+ * setAccent 也会经 applyTo 先写 3 个首屏防闪键、再写自己的键。
+ * 判据原本只记「最近一次」，于是中间那次失败会被后面的成功抹掉 ——
+ * 界面照样 toast「已应用」，重启后只有那一个键悄悄回到旧值，
+ * 比整份没存下更难查（有的记住了、有的没记住）。
+ *
+ * beginPersist() 在每个顶层入口开头划一道边界：批次内成功不清零，
+ * 任一失败都留到 takePersistError() 一次取走。内部函数（applyTo /
+ * resetOne / clearShift …）不划边界，导出函数互相调用时用 depth 保住
+ * 外层已经记下的失败。
+ * ------------------------------------------------------------------ */
+let persistDepth = 0;
+
+export function beginPersist() {
+  if (persistDepth === 0) lastPersistError = null; // 新操作：清掉跨操作残留
+  persistDepth += 1;
+}
+
 export function writeLS(key, val) {
-  try { localStorage.setItem(key, val); lastPersistError = null; return true; }
-  catch (e) { lastPersistError = e; return false; }
+  try {
+    localStorage.setItem(key, val);
+    if (persistDepth === 0) lastPersistError = null; // 批次内成功不许抹掉前面的失败
+    return true;
+  } catch (e) { lastPersistError = e; return false; }
 }
 
 export function removeLS(key) {
-  try { localStorage.removeItem(key); lastPersistError = null; return true; }
-  catch (e) { lastPersistError = e; return false; }
+  try {
+    localStorage.removeItem(key);
+    if (persistDepth === 0) lastPersistError = null;
+    return true;
+  } catch (e) { lastPersistError = e; return false; }
 }
 
 /**
@@ -79,6 +107,7 @@ export function removeLS(key) {
 export function takePersistError() {
   const e = lastPersistError;
   lastPersistError = null;
+  persistDepth = 0; // 取走即结束本次操作
   return e;
 }
 /*
@@ -566,6 +595,7 @@ export function getBaseOverride(themeId) {
 }
 
 export function setBaseOverride(base, themeId) {
+  beginPersist();
   const id = themeId || current?.id || getThemeId();
   try {
     if (!base) removeLS(KEY_BASE_OVR + ':' + id);
@@ -580,6 +610,7 @@ export function getStyleOverride(themeId) {
 }
 
 export function setStyleOverride(style, themeId) {
+  beginPersist();
   const id = themeId || current?.id || getThemeId();
   try {
     if (!style) removeLS(KEY_STYLE_OVR + ':' + id);
@@ -728,6 +759,7 @@ export function saveCustomTheme(theme) {
   return theme;
 }
 export function deleteCustomTheme(id) {
+  beginPersist();
   saveCustomThemes(getCustomThemes().filter((t) => t.id !== id));
   /*
    * 一并清掉这套主题留下的所有覆盖：变量 / 基调 / 风格 / 风格参数。
@@ -829,6 +861,7 @@ export function getCustomColors(slot) {
  * 塞进来的怪值会让面板渲染出非法色。过滤掉比带着跑更安全。
  */
 export function saveCustomColors(slot, list) {
+  beginPersist();
   const key = slot === 'env' ? KEY_CUSTOM_ENV : KEY_CUSTOM_ACCENT;
   const seen = new Set();
   const clean = (Array.isArray(list) ? list : [])
@@ -905,6 +938,7 @@ export function getStyleParam(paramKey, themeId) {
 
 /** 设置风格参数并立即重绘。改的不是当前主题时不重绘，等切过去自然读新值 */
 export function setStyleParam(paramKey, value, themeId) {
+  beginPersist();
   const id = themeId || current?.id || getThemeId();
   try { writeLS(styleKey(paramKey, id), String(Number(value))); } catch {}
   if (id !== (current?.id || getThemeId())) return getCurrent();
@@ -918,6 +952,7 @@ export function setStyleParam(paramKey, value, themeId) {
 
 /** 复位某个风格参数到主题自带强度 */
 export function resetStyleParam(paramKey, themeId) {
+  beginPersist();
   const id = themeId || current?.id || getThemeId();
   try { removeLS(styleKey(paramKey, id)); } catch {}
   if (id !== (current?.id || getThemeId())) return getCurrent();
@@ -1085,6 +1120,7 @@ export function getLightShift(themeId) {
  * 只作用于**当前主题**。
  */
 export function setThemeShift(hue, light, themeId) {
+  beginPersist();
   const h = Math.max(-180, Math.min(180, Math.round(Number(hue) || 0)));
   const l = Math.max(-50, Math.min(50, Math.round(Number(light) || 0)));
   const id = themeId || current?.id || getThemeId();
@@ -1331,6 +1367,7 @@ function applyTo(rawTheme, accent, envColor) {
 }
 
 export function applyTheme(id, accent, envColor, opts = {}) {
+  beginPersist();
   const theme = findTheme(id);
   /*
    * ⚠️ 强调色适配必须用**实际**基调，不能用 theme.base 自带值。
@@ -1367,6 +1404,7 @@ export function applyTheme(id, accent, envColor, opts = {}) {
 
 /** 只改强调色，保持当前主题 */
 export function setAccent(accent) {
+  beginPersist();
   const theme = current || findTheme(getThemeId());
   /* 同 applyTheme：必须按**实际**基调适配，不能用 theme.base 自带值 */
   const a = adaptSwatchToBase(accent, applyMetaOverride(theme).base);
@@ -1380,6 +1418,7 @@ export function setAccent(accent) {
 
 /** 只改环境色，保持当前主题与强调色 */
 export function setEnvColor(envColor) {
+  beginPersist();
   const theme = current || findTheme(getThemeId());
   /* 同 applyTheme：必须按**实际**基调适配，不能用 theme.base 自带值 */
   const e = adaptSwatchToBase(envColor, applyMetaOverride(theme).base);
@@ -1464,6 +1503,7 @@ export function getBgPreset() {
  * 预设永远不生效（applyTo 里自定义图优先），用户点了没反应。
  */
 export function setBgPreset(id) {
+  beginPersist();
   if (!supportsBgImage()) return false;
   try {
     if (id) writeLS(KEY_BG_PRESET, id);
@@ -1486,6 +1526,7 @@ function escapeCssUrl(u) {
 
 /** 设置背景图并立即生效。返回 false 表示主题不支持（调用方应提示） */
 export function setBgImage(url) {
+  beginPersist();
   if (!supportsBgImage()) return false;
   try {
     if (url) writeLS(KEY_BG_IMAGE, url);
@@ -1498,6 +1539,7 @@ export function setBgImage(url) {
 
 /** 恢复主题自带的背景图 */
 export function resetBgImage() {
+  beginPersist();
   /* 预设也要一起清 —— 否则点"恢复默认"后底色变回来了，
      渐变还挂在上面，用户会以为按钮坏了。 */
   try { removeLS(KEY_BG_PRESET); } catch {}
@@ -1532,6 +1574,7 @@ export function resetLightShift() {
 
 /** 清除自定义的强调色与环境色，回到主题自带配色 */
 export function resetColors() {
+  beginPersist();
   const id = current?.id || getThemeId();
   try {
     removeLS(KEY_ACCENT);

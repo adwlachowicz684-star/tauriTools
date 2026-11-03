@@ -54,6 +54,11 @@ const LEDGER = {
     why: '同 mm-export-name，(^|[^:]) 判据语义不同',
     unblock: '同上，两个文件一起改、一起验证',
   },
+  'plugins/task-board/task-board-test.mjs': {
+    kinds: ['flat', 'line-colon'],
+    why: '第 2711 行 src.replace 用 (^|[^:]) 行注释判据，与公共 (^|\\s) 不同：a//b 会被吞掉后半截',
+    unblock: '实测被扫内容里无此形态后，改为 stripCommentsFlatJs 并逐项比对断言结果',
+  },
   'plugins/project-group/saveguard-test.mjs': {
     kinds: ['flat', 'line-safe'],
     why: 'strip 定义本身等价于 stripCommentsFlatJs，但第 4 节还有一处 strip(lm).replace(/\\/\\/[^\\n]*/g, \'\') 的裸行注释二次剥离',
