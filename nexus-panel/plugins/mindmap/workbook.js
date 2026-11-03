@@ -18,7 +18,7 @@ import { decodeRefList } from './io.js';
  * 两处必须用同一个值：各写一份的话，改了一处不改另一处，
  * Markdown 往返就会凭空多出/少掉「未命名」。
  */
-import { EMPTY_NODE_TEXT, inlineText, flattenBreaks, ROOT_TEXT, rowsWithVirtualRoot, stripBom, skipYamlFrontmatter } from './formats.js';
+import { EMPTY_NODE_TEXT, inlineText, flattenBreaks, ROOT_TEXT, rowsWithVirtualRoot, stripBom, skipYamlFrontmatter, opmlTitleNorm } from './formats.js';
 
 /*
  * 中心主题文案住在 formats.js（那边导入侧插虚拟根要用，而它不能反过来
@@ -801,7 +801,10 @@ export function opmlHeadTitle(text) {
     const head = doc.getElementsByTagName('head')[0];
     if (!head) return '';
     const t = head.getElementsByTagName('title')[0];
-    return String(t?.textContent ?? '').trim();
+    // BUG 197：这个 trim 会削掉画布标题的首尾空白（纯空白时更会让画布名
+    // 整条回落成文件名）。导出侧的丢失统计必须知道这件事 —— 所以口径
+    // 抽到 formats.opmlTitleNorm，判据与这里共用同一份，不各写一遍。
+    return opmlTitleNorm(t?.textContent);
   } catch {
     return '';                                // 坏 XML 回落文件名，不该拦住导入
   }

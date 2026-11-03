@@ -24346,15 +24346,21 @@ group('BUG 196 · 画布标题空白与换行：Markdown 改了必须说');
       eq(fmt3.exchangeLoss(s.content, 'markdown', s).titleEdge, 0,
         `★ 干净标题不报：${JSON.stringify(clean)}`);
     }
-    for (const k of ['freemind', 'opml', 'mermaid', 'plantuml']) {
+    // 这三种格式根本不写画布标题，一律计就是虚报
+    for (const k of ['freemind', 'mermaid', 'plantuml']) {
       const s = mkSheet('  项目 A  ');
       eq(fmt3.exchangeLoss(s.content, k, s).titleEdge, 0,
         `★ ${k} 不写画布标题，不许虚报`);
     }
-    // .opml 真的把标题原样写进 <head><title>（escXml 不 trim）
+    // .opml 写侧确实原样写进 <head><title>（escXml 不 trim）……
     const op = fmt3.toOpml(mkSheet('  项目 A  ').content, '  项目 A  ');
-    ok(/<title>\s*&?\s*项目 A/.test(op) || /  项目 A  /.test(op),
-      '★ .opml 的画布标题未被削（对照）');
+    ok(/<title>  项目 A  <\/title>/.test(op),
+      '★ .opml 写侧原样写画布标题（对照）');
+    // ……但导回侧 opmlHeadTitle 会 trim，所以它**必须**报（BUG 197）。
+    // 早先这里把 opml 也钉成 0，依据的注释只看了写侧、漏了读侧那个 trim。
+    const sOp = mkSheet('  项目 A  ');
+    eq(fmt3.exchangeLoss(sOp.content, 'opml', sOp).titleEdge, 1,
+      '★ .opml 导回侧削首尾空白，必须报（BUG 197）');
   }
 
   // ④ 判据 == 真实往返：只有往返真的变了才报（不许恒真、也不许只认首尾）
@@ -24400,7 +24406,10 @@ group('BUG 196 · 画布标题空白与换行：Markdown 改了必须说');
     ok(/titleEdge:\s*0/.test(f3), '★ exchangeLoss 的 out 里有 titleEdge');
     ok(/inlineText\(title\)\s*!==\s*title/.test(f3),
       '★ 判据直接复用 inlineText（不另抄一份正则）');
-    ok(/kind\s*===\s*'markdown'/.test(f3), '★ 判据只认 Markdown（其余格式不虚报）');
+    ok(/kind\s*===\s*'markdown'/.test(f3) && /kind\s*===\s*'opml'/.test(f3),
+      '★ 判据按格式分口径：markdown 与 opml 各自判');
+    ok(/opmlTitleNorm\(title\)\s*!==\s*title/.test(f3),
+      '★ .opml 判据复用读侧同一个 opmlTitleNorm（不另抄 trim）');
     ok(/'titleEdge',/.test(f3), '★ LOSS_KEYS 带 titleEdge（跨画布累加）');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
     const at = [];
@@ -24409,6 +24418,120 @@ group('BUG 196 · 画布标题空白与换行：Markdown 改了必须说');
     ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
     at.forEach((p, i) => ok(/titleEdge:\s*'画布标题的空白与换行'/.test(code.slice(p, p + 700)),
       `★ 第 ${i + 1} 张提示表带上画布标题这一项`, code.slice(p, p + 90)));
+  }
+}
+
+/* ============================================================
+   BUG 197 · .opml 的画布标题首尾空白被导回侧静默削掉却不提示
+   ============================================================
+   BUG 193 让 .opml 的 `<head><title>` 参与画布命名，往返不再被文件名改掉。
+   但写侧 `toOpml` 用 escXml **原样**写标题，读侧 `opmlHeadTitle` 取
+   textContent 后还要 `.trim()` —— 实测：
+     「  项目 A  」→「项目 A」
+     「   」      → '' → `if (docTitle)` 不成立 → 画布名回落**文件名**
+   而 BUG 196 的 titleEdge 判据只认 markdown，.opml 恒 0、提示整段不出现。
+
+   ⓘ 两种格式口径不同：XML 元素内容里的换行在 textContent 里原样保留，
+     「甲\n乙」导回仍是「甲\n乙」；照搬 inlineText 会把保得住的标题虚报。
+   ============================================================ */
+group('BUG 197 · OPML 画布标题：读侧 trim 改了名字必须说');
+{
+  const F = await import('./formats.js');
+  const W = await import('./workbook.js');
+  const mk = (title) => ({ id: 's1', title,
+    content: JSON.stringify({ root: { data: { id: 'r', text: '根' }, children: [] } }),
+    theme: null, layout: null });
+  // 真的导出再导回：toOpml 原样写，opmlHeadTitle 读侧 trim
+  const roundTrip = (title) => {
+    const text = F.toOpml(mk(title).content, title);
+    const docTitle = W.opmlHeadTitle(text);
+    // 与 index.js 导入侧同一句：取不到就回落文件名
+    return docTitle || '（回落文件名）';
+  };
+
+  // ① 行为实据（修复前就存在，不是猜的）
+  const CASES = [
+    ['首尾各两空格', '  项目 A  ', '项目 A'],
+    ['首尾制表符', '\t项目 A\t', '项目 A'],
+    ['纯空白', '   ', '（回落文件名）'],
+    ['前置换行', '\n项目 A', '项目 A'],
+  ];
+  for (const [name, title, want] of CASES) {
+    eq(roundTrip(title), want, `★ .opml 导回后画布名被改：${name}`);
+  }
+  for (const clean of ['正常标题', '含\n中间换行', '甲 & 乙 <丙>']) {
+    eq(roundTrip(clean), clean, `★ .opml 原样保住：${JSON.stringify(clean)}`);
+  }
+
+  // ② 统计：必须数出来，且提示真的会出现（只有画布级损失时也要弹）
+  for (const [name, title] of CASES) {
+    const s = mk(title);
+    const l = F.exchangeLoss(s.content, 'opml', s);
+    eq(l.titleEdge, 1, `★ opml 数出画布标题损失：${name}`);
+    eq(F.hasExchangeLoss(l), true, `★ opml 提示会出现：${name}`);
+    eq(l.nodes, 0, `★ 画布级不计进 nodes：${name}`);
+  }
+  for (const clean of ['正常标题', '含\n中间换行', '']) {
+    const s = mk(clean);
+    eq(F.exchangeLoss(s.content, 'opml', s).titleEdge, 0,
+      `★ 干净标题不报：${JSON.stringify(clean)}`);
+  }
+
+  // ③ 判据 == 真实往返（不许恒真、也不许把中间换行虚报成丢失）
+  for (const title of [...CASES.map((c) => c[1]), '正常标题', '',
+    '含\n中间换行', '\t甲\t', '  ', '甲  \n乙']) {
+    const s = mk(title);
+    const changed = !!title && roundTrip(title) !== title;
+    eq(F.exchangeLoss(s.content, 'opml', s).titleEdge, changed ? 1 : 0,
+      `★ 判据与真实往返一致：${JSON.stringify(title)}`);
+  }
+
+  // ④ 其余三种格式不写画布标题，不许虚报
+  for (const k of ['freemind', 'mermaid', 'plantuml']) {
+    const s = mk('  项目 A  ');
+    eq(F.exchangeLoss(s.content, k, s).titleEdge, 0,
+      `★ ${k} 不写画布标题，不许虚报`);
+  }
+
+  // ⑤ 跨画布累加（LOSS_KEYS 带 titleEdge）
+  {
+    const s = mk('  项目 A  ');
+    eq(F.exchangeLossAll([s, { ...s, id: 's2' }], 'opml').titleEdge, 2,
+      '★ 两张画布标题都被改 → 合计 2');
+    eq(F.exchangeLossAll([s, mk('正常标题')], 'opml').titleEdge, 1,
+      '★ 只有一张被改 → 合计 1');
+  }
+
+  // ⑥ 两种格式口径不同，且 BUG 196 的 .md 行为不受影响
+  {
+    const a = mk('甲\n乙');
+    eq(F.exchangeLoss(a.content, 'markdown', a).titleEdge, 1,
+      '★ BUG 196 的 .md 换行损失仍在');
+    const b = mk('含\n中间换行');
+    eq(F.exchangeLoss(b.content, 'opml', b).titleEdge, 0,
+      '★ 同一个含换行标题 .opml 保得住、不虚报');
+  }
+
+  // ⑦ 源码契约：读侧与统计共用一份规范化，两处提示表都要说
+  {
+    const f = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    const w = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'workbook.js'), 'utf8'));
+    ok(/export const opmlTitleNorm/.test(f), '★ 共享规范化函数存在');
+    ok(/opmlTitleNorm\(t\?\.textContent\)/.test(w),
+      '★ 读侧 opmlHeadTitle 复用共享函数（不另抄 trim）');
+    ok(!/String\(t\?\.textContent\s*\?\?\s*''\)\.trim\(\)/.test(w),
+      '★ 读侧没有第二份手写 trim');
+    ok(/opmlTitleNorm\(title\)\s*!==\s*title/.test(f),
+      '★ 统计复用读侧同一个函数');
+    ok(/kind\s*===\s*'opml'/.test(f), '★ 判据覆盖 opml');
+    ok(/'titleEdge',/.test(f), '★ LOSS_KEYS 带 titleEdge');
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const at = [];
+    for (let k = code.indexOf('const NAME = {'); k >= 0;
+      k = code.indexOf('const NAME = {', k + 1)) at.push(k);
+    ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
+    at.forEach((p, i) => ok(/titleEdge:\s*'画布标题的空白与换行'/.test(code.slice(p, p + 700)),
+      `★ 第 ${i + 1} 张提示表带上画布标题这一项`));
   }
 }
 

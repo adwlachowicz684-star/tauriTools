@@ -2796,7 +2796,7 @@ async function gcOrphanAssets(quiet = false) {
         newline: '节点文字内的换行',
         // BUG 195：.mm / .opml 带得走备注，却会削掉首尾与行尾空白
         noteEdge: '备注首尾与行尾空白',
-        // BUG 196：Markdown 的画布标题被摊平换行 / 削首尾空白
+        // BUG 196 / 197：.md 摊平换行 / 削首尾空白；.opml 导回侧削首尾空白
         titleEdge: '画布标题的空白与换行' };
       const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
         .map((k) => `${NAME[k]} ${loss[k]} 处`);
@@ -2871,7 +2871,7 @@ async function gcOrphanAssets(quiet = false) {
       newline: '节点文字内的换行',
       // BUG 195：.mm / .opml 带得走备注，却会削掉首尾与行尾空白
       noteEdge: '备注首尾与行尾空白',
-      // BUG 196：Markdown 的画布标题被摊平换行 / 削首尾空白
+      // BUG 196 / 197：.md 摊平换行 / 削首尾空白；.opml 导回侧削首尾空白
       titleEdge: '画布标题的空白与换行' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);

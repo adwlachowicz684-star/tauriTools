@@ -274,6 +274,21 @@ export const inlineTextKeepEdges = (v) => String(v ?? '')
 export const inlineText = (v) => inlineTextKeepEdges(v).trim();
 
 /**
+ * OPML `<head><title>` **读回来**时的规范化 —— 写侧 `toOpml` 用 `escXml`
+ * 原样写（不 trim），读侧 `workbook.opmlHeadTitle` 取 textContent 后在这里
+ * 削掉首尾空白：XML 元素内容周围的空白通常是排版缩进，不该混进画布名。
+ *
+ * ⓘ 为什么单独抽一个函数、且放在 formats.js：BUG 197 的丢失统计要判
+ *   「写出去再读回来，画布名变没变」，必须与读侧**同一个口径**。各写一份
+ *   `.trim()` 就会出现读侧改了口径、统计还在按老样子数（本项目反复撞的坑）。
+ *   workbook.js 已经依赖本文件，反向不会成环。
+ * ⓘ 只削首尾，**不摊平中间换行**：XML 元素内容里的 LF 在 DOMParser 的
+ *   textContent 里原样保留（实测「含\n换行」导回仍是「含\n换行」），
+ *   所以 .opml 比 .md 强 —— 判据不能照搬 `inlineText()`，否则会虚报。
+ */
+export const opmlTitleNorm = (v) => String(v ?? '').trim();
+
+/**
  * 字号取**数字部分**：`"20pt"` / `"20px"` / `"1.2em"` 一律 → `"20"` / `"20"` / `"1.2"`。
  * 拿不到数字（`'large'` 之类）返回 null（不是 0）—— 让调用方**不设**这个键、
  * 回落主题默认字号，比塞一个 NaN 进内核好（BUG 117：带单位的值会让
@@ -2198,7 +2213,8 @@ export function exchangeLoss(content, kind, sheet) {
     newline: 0,
     // BUG 195：备注在 .mm / .opml 里被 normalizeNoteText 削掉的那部分空白
     noteEdge: 0,
-    // BUG 196：Markdown 的画布标题被 inlineText 摊平换行 / 削首尾空白
+    // BUG 196 / 197：画布标题「带得走」但「没原样带得走」——
+    //   .md 被 inlineText 摊平换行 / 削首尾空白，.opml 读侧削首尾空白
     titleEdge: 0,
     // BUG 181：画布自己的主题与布局（画布级，不计进 nodes，见函数末尾）
     theme: 0, layout: 0 };
@@ -2365,15 +2381,33 @@ export function exchangeLoss(content, kind, sheet) {
    *
    * ⓘ 判据直接调写侧同一个 `inlineText()`，不另抄一份正则：写侧改了口径，
    *   统计自动跟着变（各写一份必然只修一处，本项目反复撞的坑）。
-   * ⓘ 只认 Markdown：其余四种交换格式是单画布、不写画布标题 ——
-   *   .opml 把标题原样写进 `<head><title>`（escXml 不 trim，BUG 193 导回
-   *   也照用它），一律计就会对它们虚报。
    * ⓘ 画布级，**不计进 nodes**：一句「共涉及 N 个节点」对「整本工作簿的
    *   某张画布改了名字」不成立（同 BUG 181 对 theme / layout 的处理）。
+   *
+   * BUG 197：上面那句「只认 Markdown、.opml 原样带得走」是**错的** ——
+   * 它只看了写侧。`.opml` 写侧 `toOpml` 确实把 `s.title` 原样交给
+   * `escXml`（不 trim），但导回侧 `workbook.opmlHeadTitle` 取 `<title>` 的
+   * textContent 后**还要 `.trim()`**：
+   *     「  项目 A  」→ <title>  项目 A  </title> → 导回「项目 A」
+   *     「   」（纯空白）→ 导回 '' → `if (docTitle)` 不成立
+   *                     → 画布名回落**文件名**（带时间戳），彻底换了个名字
+   * 而 BUG 196 的判据只认 markdown，.opml 恒 0 → 提示整段不出现，
+   * 界面只说「OPML 已保存」。BUG 193 专门做了「.opml 往返不改画布名」，
+   * 这条边界正是它的漏网处。
+   *
+   * ⓘ 两种格式**各按自己读侧的口径**判，不能合并成一个 `inlineText`：
+   *   XML 元素内容里的换行在 textContent 里原样保留，「甲\n乙」导回仍是
+   *   「甲\n乙」；照搬 inlineText 会把这个保得住的标题虚报成丢失。
+   * ⓘ 判据复用读侧同一个 `opmlTitleNorm()`，不另抄 `.trim()`。
+   * ⓘ 其余三种（freemind / mermaid / plantuml）根本不写画布标题，
+   *   一律计就会虚报 —— 它们仍保持 0。
    */
   if (kind === 'markdown') {
     const title = String(sheet?.title ?? '');
     if (title && inlineText(title) !== title) out.titleEdge = 1;
+  } else if (kind === 'opml') {
+    const title = String(sheet?.title ?? '');
+    if (title && opmlTitleNorm(title) !== title) out.titleEdge = 1;
   }
   out.nodes = touched.size;
   return out;
