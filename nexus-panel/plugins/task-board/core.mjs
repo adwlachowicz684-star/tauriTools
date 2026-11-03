@@ -1293,7 +1293,7 @@ function matchesCol(row, col, f) {
  * 全局搜索也刻意**不搜组标题**：那会让"找一条任务"变成
  * "找出一整个组下面所有东西"，与搜索的语义相反。
  */
-export function filterTasksByColumns(rows, filters, q, typeDefs, tagDefs) {
+export function filterTasksByColumns(rows, filters, q, typeDefs, tagDefs, store) {
   const active = LIST_COLUMNS.filter((c) => colFilterActive(c, filters[c.field]));
   const kw = (q || '').trim().toLowerCase();
   if (active.length === 0 && !kw) return rows;
@@ -1341,11 +1341,32 @@ export function filterTasksByColumns(rows, filters, q, typeDefs, tagDefs) {
           · 空数组 fieldVals 返回 []，不会拼出多余的 "[]" 或空段
           · 字段清单取自 MULTI_OK —— 以后加新的多选列自动进搜索，不用再来改这里
       */
+      /*
+        ⛔ 搜索串必须覆盖**所有 enum 列**，不能只遍历 MULTI_OK。
+
+        实测（修前）：状态列显示「待办」、优先级列显示「P4 较低」，
+        在顶栏搜「待办」或「较低」都是 0 条 —— 而列表里明明看得见。
+        这正是「认领人/类型/标签的显示名要进搜索」那个修复的**第三、第四次漏网**：
+        每修一次都只补当时撞见的那一列，状态与优先级一直没进清单。
+
+        ⛔ 也不能裸拼 `t.status` / `t.priority`：
+          · status 存的是 id（'s2'），自定义流程下显示的是「开发中」
+          · priority 存的是档位（'P4'），显示名是「较低」
+        搜 id 用户看不见、搜名字又搜不到，两头不靠。一律走 labelFor 取显示名。
+
+        定义表与 flow 从 **store** 取（调用点传 TaskStore）：
+        以前只零散传 typeDefs/tagDefs，于是 group/assignee 改名后
+        搜索仍按旧 id 命中，与列表显示的新名对不上。
+        老调用点没传 store 时退回原参数，行为不变（守卫与既有测试都依赖这点）。
+      */
       const defsByField = { type: typeDefs || [], tags: tagDefs || [] };
+      const flow = store ? store.flow : null;
       const parts = [t.id, t.title, t.detail, t.summary || ''];
-      for (const field of MULTI_OK) {
-        for (const v of fieldVals(t, field)) {
-          parts.push(labelFor(field, v, defsByField[field] || [], null));
+      for (const c of LIST_COLUMNS) {
+        if (c.kind !== 'enum') continue;
+        const defs = store ? defsOf(store, c.field) : (defsByField[c.field] || []);
+        for (const v of fieldVals(t, c.field)) {
+          parts.push(labelFor(c.field, v, defs, flow));
         }
       }
       const hay = parts.join(' ').toLowerCase();

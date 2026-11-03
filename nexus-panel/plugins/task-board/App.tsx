@@ -599,8 +599,13 @@ export default function App() {
       ⛔ defsOf(store, 'tags') 必须传：搜「重要」要能命中挂着那个标签的任务，
       而任务上存的是 id。不传的话退回按 id 搜（老行为），等于标签搜不到。
     */
-    () => filterTasksByColumns(flatRows, colFilters, q, typeDefs, tagDefs),
-    [flatRows, colFilters, q, typeDefs, tagDefs],
+    () => filterTasksByColumns(flatRows, colFilters, q, typeDefs, tagDefs, store),
+    /*
+      ⛔ 依赖里必须带 store：状态名认自定义流程、优先级认显示名、
+      分组/认领人认改名后的新名 —— 都从它来。
+      漏了依赖就停在旧结果上（改完名字搜索仍旧命中，看着像搜索坏了）。
+    */
+    [flatRows, colFilters, q, typeDefs, tagDefs, store],
   );
   const filtered = useMemo(() => filteredRows.map((r) => r.task), [filteredRows]);
   /*
@@ -2358,13 +2363,17 @@ ${dir}
             而没摆上去的列（创建时间、ID）就永远筛不了。
           */}
           {/*
-            搜索范围：id / 标题 / 详情 / 说明 / 分组 / 认领人 / 类型名 / 标签名。
+            搜索范围：id / 标题 / 详情 / 说明 / 所有 enum 列的显示名
+            （状态 / 优先级 / 分组 / 认领人 / 类型名 / 标签名）。
 
             ⛔ placeholder 不能还写"搜索标题 / 详情 / id"：
             实际能搜的东西比这三样多得多，而用户**照着提示来判断** ——
             写在提示里的他会去搜，没写的他不会试。
-            于是"搜标签名"这种明明支持的操作，用户永远发现不了，
-            只会得出"搜索不支持标签"的结论。
+
+            ⛔ 状态与优先级是**第三次**补进来的：前两轮分别补了分组、
+            认领人/类型/标签，每轮都只改了核心逻辑，没回头改提示。
+            于是搜索明明支持"待办""较低"，提示却一直没写，用户不会去试。
+            现在提示与实际范围由同一条守卫盯着，漏一处就报红。
 
             注意类型与标签存的是 **id**（t1 / tg_xxxx），
             搜的是它们的**显示名** —— 这也是要在提示里说清楚的，
@@ -2372,8 +2381,8 @@ ${dir}
           */}
           <input
             className="tb-search"
-            placeholder="搜标题 / 说明 / 分组 / 认领人 / 类型 / 标签"
-            title="搜索范围：id、标题、详情、说明、分组、认领人、任务类型名、标签名（后两者按显示名匹配，不是内部 id）"
+            placeholder="搜标题 / 说明 / 状态 / 优先级 / 分组 / 认领人 / 类型 / 标签"
+            title="搜索范围：id、标题、详情、说明、状态名、优先级档位与名称、分组、认领人、任务类型名、标签名（按显示名匹配，不是内部 id；定义表改名后按新名搜）"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />

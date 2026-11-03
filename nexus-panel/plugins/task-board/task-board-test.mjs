@@ -3124,8 +3124,12 @@ t('审查：搜索仍能匹配标题（未破坏）', filterTasksByColumns(SROWS
 /* 调用点要把 typeDefs 传下去，且依赖里要带上 */
 t('审查：调用点传了 typeDefs 且在依赖里', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs, tagDefs)') >= 0
-    && app.indexOf('[flatRows, colFilters, q, typeDefs, tagDefs]') >= 0
+  /*
+    ⛔ 原来钉的是精确的五参调用串。加了 store 第 6 参后恒红 ——
+    恒红的守卫等于没有守卫。改成钉「确实传了 store 且依赖里有它」。
+  */
+  return /filterTasksByColumns\(flatRows, colFilters, q, typeDefs, tagDefs, store\)/.test(app)
+    && /\[flatRows, colFilters, q, typeDefs, tagDefs, store\]/.test(app)
     /* 且它们都来自 defsOf（不再有第二个来源） */
     && app.indexOf("const typeDefs = defsOf(store, 'type');") >= 0
     && app.indexOf("const tagDefs = defsOf(store, 'tags');") >= 0;
@@ -3341,14 +3345,13 @@ const MATRIX = [
   ['详情面板', () => SEG(appSrc, 'function DetailPanel({', '\nfunction '),
     ['title', 'detail', 'summary', 'priority', 'estimate', 'type', 'group', 'tags', 'assignee', 'deps']],
   /*
-    ⛔ 搜索串改成 **MULTI_OK 循环 + fieldVals + labelFor** 之后，
-    字段不再逐个写出来（`t.group` 等字面量消失）。
-    继续钉字段清单会**恒红，等于没有守卫**。
-    现在钉"清单一律来自 MULTI_OK、每个值走展开与显示名映射"这个结构本身 ——
-    以后新开多选的列自动进搜索，不用回来改这条矩阵。
+    ⛔ 再改一次：搜索串现在遍历 **LIST_COLUMNS 里所有 enum 列**，
+    不再只遍历 MULTI_OK —— 状态/优先级以前一直没进搜索串，
+    搜「待办」「较低」都是 0 条，而列表里明明看得见。
+    现在钉「所有 enum 列」这个结构，以后加列自动进搜索。
   */
   ['全局搜索', () => SEG(coreSrc, 'const defsByField =', 'if (hay.indexOf'),
-    ['MULTI_OK', 'fieldVals', 'labelFor', 'defsByField']],
+    ['LIST_COLUMNS', "c.kind !== 'enum'", 'fieldVals', 'labelFor', 'defsByField']],
 ];
 
 for (const [name, get, fields] of MATRIX) {
@@ -4137,15 +4140,21 @@ t('守卫：全局搜索含标签显示名（任务上存的是 id）', (() => {
   const i = core.indexOf('const defsByField =');
   if (i < 0) return false;
   const seg = core.slice(i, core.indexOf('if (hay.indexOf', i));
-  return /tags:\s*tagDefs/.test(seg) && /labelFor\(field, v, defsByField\[field\]/.test(seg)
-    && /MULTI_OK/.test(seg);
+  /*
+    ⛔ 原来钉 `labelFor(field, v, defsByField[field])`：改成所有 enum 列
+    统一从 store 取定义表后恒红。现在钉语义：
+      标签定义表仍进串、每个值走 labelFor 取显示名、
+      清单来自 LIST_COLUMNS 的 enum 列（含 tags）。
+  */
+  return /tags:\s*tagDefs/.test(seg) && /labelFor\(c\.field, v, defs, flow\)/.test(seg)
+    && /LIST_COLUMNS/.test(seg) && /defsOf\(store, c\.field\)/.test(seg);
 })());
 
 /* 调用点必须把 tagDefs 传进去，且要在 useMemo 依赖里（改了标签名结果要变） */
 t('守卫：搜索调用点传了定义表且在依赖里', (() => {
   const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
-  return app.indexOf('filterTasksByColumns(flatRows, colFilters, q, typeDefs, tagDefs)') >= 0
-    && app.indexOf('[flatRows, colFilters, q, typeDefs, tagDefs]') >= 0
+  return /filterTasksByColumns\(flatRows, colFilters, q, typeDefs, tagDefs, store\)/.test(app)
+    && /\[flatRows, colFilters, q, typeDefs, tagDefs, store\]/.test(app)
     && app.indexOf("const typeDefs = defsOf(store, 'type');") >= 0
     && app.indexOf("const tagDefs = defsOf(store, 'tags');") >= 0;
 })());
@@ -4163,7 +4172,20 @@ t('守卫：搜索框提示与实际范围一致（不能还写"标题 / 详情 
     **必然要引用那句旧文案**，不剥离的话守卫恒红 ——
     而恒红的守卫和没有守卫一样，真正的回归反而看不出来。
   */
-  return app.indexOf('搜索标题 / 详情 / id') < 0;
+  /*
+    ⛔ 只查"不含旧文案"太弱：状态/优先级补进搜索后提示一直没跟着改，
+    它照样通过。现在钉住 **placeholder 与 title 都要列出全部 enum 列** ——
+    用户照着提示判断，漏写一列就等于那一列不支持搜索。
+  */
+  const i = app.indexOf('className="tb-search"');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 420);
+  const ph = /placeholder="([^"]*)"/.exec(seg);
+  const ti = /title="([^"]*)"/.exec(seg);
+  return app.indexOf('搜索标题 / 详情 / id') < 0
+    && !!ph && !!ti
+    && [ph[1], ti[1]].every((x) => x.includes('状态') && x.includes('优先级')
+      && x.includes('分组') && x.includes('认领人') && x.includes('标签'));
 })());
 
 /* ============================================================ 深度审查：行内编辑被轮询冲掉（本轮） */
@@ -6071,6 +6093,132 @@ t('守卫：状态颜色落盘 → 导入读回，原样不变', (() => {
   };
   const back = normalizeStore(JSON.parse(JSON.stringify(changed)));
   return statusColor(back.flow, 'todo') === '#22c55e';
+})());
+
+/*
+ * ============================================================
+ * 本轮：全局搜索漏了状态/优先级/改名后的名字；
+ *       跨端 Rust 仍写死四档优先级，AI 建不了 P4/P5 任务。
+ * ============================================================
+ */
+
+const SEARCH_ROWS = (() => {
+  const t = {
+    id: 'tb-0001', title: '登录重构', status: 'todo', priority: 'P4',
+    type: 'dev', group: '登录', assignee: '张三', tags: ['tg1'], deps: [],
+    estimate: 1, createdAt: 1, updatedAt: Date.now(), history: [],
+    summary: '', detail: '改一下',
+  };
+  const st = normalizeStore({
+    v: 1, nextId: 2, tasks: [t],
+    defs: {
+      type: [{ id: 'dev', name: '开发', color: '#111111' }],
+      tag: [{ id: 'tg1', name: '重要', color: '#222222' }],
+      group: [{ id: '登录', name: '登录改', color: '#333333' }],
+      assignee: [{ id: '张三', name: '张三丰', color: '#444444' }],
+    },
+  });
+  return { rows: [{ task: st.tasks[0], depth: 0, path: [] }], st };
+})();
+const SEARCH = (q, withStore = true) => {
+  const { rows, st } = SEARCH_ROWS;
+  return filterTasksByColumns(
+    rows, {}, q, defsOf(st, 'type'), defsOf(st, 'tags'), withStore ? st : undefined,
+  ).length;
+};
+
+/* ① 状态显示名（默认值）能搜到 */
+t('守卫：全局搜索能搜到状态显示名（不只是 id）', SEARCH('待办') === 1);
+
+/* ② 自定义流程的状态名也能搜到 */
+t('守卫：全局搜索认自定义流程的状态名', (() => {
+  const { rows, st } = SEARCH_ROWS;
+  const flow = { ...st.flow, statuses: [{ id: 's2', name: '开发中', color: '#111111', done: false }] };
+  const st2 = { ...st, flow, tasks: [{ ...st.tasks[0], status: 's2' }] };
+  const rows2 = [{ task: st2.tasks[0], depth: 0, path: [] }];
+  /*
+    ⛔ 别要求「搜 s2 也命中」：搜索串刻意只放**显示名**不放内部 id
+    （用户看不见 id，标签那边的注释早就写明了）。
+    我第一版把这个写进断言，得到的是假失败。
+  */
+  return filterTasksByColumns(rows2, {}, '开发中', defsOf(st, 'type'), defsOf(st, 'tags'), st2).length === 1
+    && filterTasksByColumns(rows2, {}, '待办', defsOf(st, 'type'), defsOf(st, 'tags'), st2).length === 0;
+})());
+
+/* ③ 优先级：档位与显示名都能搜到 */
+t('守卫：全局搜索能搜到优先级档位与显示名', SEARCH('P4') === 1 && SEARCH('较低') === 1);
+
+/* ④ 改名后的分组/认领人：按新名也能搜到（以前只有旧 id 进串） */
+t('守卫：全局搜索认改名后的分组/认领人新名', (() => {
+  /*
+    ⛔ 别要求「搜旧名 0 条」：「张三」是「张三丰」的子串，indexOf 命中是对的
+    （用户敲旧名也能找到改过名的人，这正是想要的）。
+    我第一版把它写成 === 0，得到的是假失败。
+  */
+  return SEARCH('登录改') === 1 && SEARCH('张三丰') === 1;
+})());
+
+/* ⑤ 老调用点（不传 store）行为不变：不认新名，但也不炸 */
+t('守卫：不传 store 的老调用点仍兼容（退回按 id 搜）',
+  SEARCH('重构', false) === 1 && SEARCH('张三丰', false) === 0);
+
+/* ⑥ 通杀：搜索串必须遍历所有 enum 列，不许退回 MULTI_OK 清单 */
+t('守卫：通杀 —— 搜索串遍历 LIST_COLUMNS 的 enum 列', (() => {
+  const core = STRIP(fs.readFileSync(path.join(dir, 'core.mjs'), 'utf8'));
+  const i = core.indexOf('const defsByField =');
+  if (i < 0) return false;
+  const seg = core.slice(i, core.indexOf('if (hay.indexOf', i));
+  return /for \(const c of LIST_COLUMNS\)/.test(seg)
+    && /c\.kind !== 'enum'/.test(seg)
+    && !/for \(const field of MULTI_OK\)/.test(seg);
+})());
+
+/* ⑦ 调用点传 store 且依赖里有 store（漏依赖会停在旧结果） */
+t('守卫：搜索调用点传 store 且在 useMemo 依赖里', (() => {
+  const app = fs.readFileSync(path.join(dir, 'App.tsx'), 'utf8');
+  const i = app.indexOf('filterTasksByColumns(flatRows');
+  if (i < 0) return false;
+  const seg = app.slice(i, i + 420);
+  return /filterTasksByColumns\(flatRows, colFilters, q, typeDefs, tagDefs, store\)/.test(seg)
+    && /\[flatRows, colFilters, q, typeDefs, tagDefs, store\]/.test(seg);
+})());
+
+/* ⑧ 跨端：前端六档与 Rust PRIORITIES 逐项同序 */
+t('守卫：跨端优先级档位一致（types.ts ↔ task_board.rs）', (() => {
+  if (!rsSrc) return false;      /* 前置守卫已确保它非空，这里不许静默放行 */
+  const types = fs.readFileSync(path.join(dir, 'types.ts'), 'utf8');
+  const m = types.match(/export const PRIORITY_ORDER[^=]*=\s*\[([^\]]*)\]/);
+  const r = rsSrc.match(/const PRIORITIES:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]*)\]/);
+  if (!m || !r) return false;
+  const clean = (x) => x.split(',').map((v) => v.trim().replace(/['"]/g, '')).filter(Boolean);
+  const front = clean(m[1]), back = clean(r[1]);
+  return front.length === 6 && back.length === 6 && front.every((v, i) => v === back[i]);
+})());
+
+/* ⑨ Rust 三处 schema 共用常量，不许再各写字面量 */
+t('守卫：Rust 三处 priority schema 共用 PRIORITIES 常量', (() => {
+  if (!rsSrc) return false;
+  const hits = (rsSrc.match(/"enum":\s*PRIORITIES/g) || []).length;
+  /* 剥掉注释再找写死的四档/六档数组，避免注释里的历史说明误报 */
+  const code = STRIP(rsSrc);
+  return hits === 3 && !/\["P0",\s*"P1",\s*"P2",\s*"P3"\]/.test(code);
+})());
+
+/* ⑩ Rust create 与 update 判据一致（两处都校验），且 defs_of 带两张表 */
+t('守卫：Rust create/update 同一判据，defs_of 带 priorityDefs/assigneeDefs', (() => {
+  if (!rsSrc) return false;
+  const checks = (rsSrc.match(/PRIORITIES\.contains\(/g) || []).length;
+  const i = rsSrc.indexOf('fn defs_of(');
+  const seg = i < 0 ? '' : rsSrc.slice(i, i + 1800);
+  return checks === 2
+    && /"assigneeDefs":/.test(seg) && /"priorityDefs":/.test(seg);
+})());
+
+/* ⑪ README 的搜索范围说明含状态与优先级 */
+t('守卫：README 搜索范围说明含状态/优先级（不误导用户）', (() => {
+  const md = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
+  const line = md.split('\n').find((l) => l.includes('全局搜索（跨'));
+  return !!line && line.includes('状态') && line.includes('优先级');
 })());
 
 const readmeCount = (() => {

@@ -36,11 +36,18 @@ use tauri::{Manager, State};
 
 /// 每个任务保留的历史事件上限（防无限增长）。
 const HISTORY_CAP: usize = 100;
-/// 合法任务状态（前端状态机与此一致，双端各自校验）。
 /// 合法任务状态（**默认值**；用户可在界面上改，改后存在 tasks.json 的 flow 里）。
-///
 /// 前端 core.mjs 的 STATUSES 与本行逐项同序（守卫第 22 节盯着）。
 const STATUSES: [&str; 7] = ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"];
+
+/// 合法优先级 **P0~P5 六档**，与前端 types.ts 的 PRIORITY_ORDER 逐项同序
+/// （守卫钉着，不一致时 AI 通道会拒掉界面上明明能选的档位）。
+///
+/// ⛔ 以前这里写死四档，且 create_task 会**硬拒** P4/P5：
+/// 界面扩到六档之后，AI 经 HTTP/MCP 建一条 P4 任务直接得到
+/// 「非法优先级 P4（合法值: P0/P1/P2/P3）」—— 前端能选、后端不认。
+/// schema、create、update 三处共用这一份，不再各写各的字面量。
+const PRIORITIES: [&str; 6] = ["P0", "P1", "P2", "P3", "P4", "P5"];
 
 /// 文件级全局锁：看板 UI 与 HTTP 服务两条写通道都要过它，
 /// 否则「读-改-写」序列会被对方插在半途。
@@ -808,13 +815,13 @@ pub fn mcp_tools() -> Vec<Value> {
     vec![
         tool(
             "tb_list_tasks",
-            "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）。响应里的 defs 带了三张定义表（groupDefs/typeDefs/tagDefs）——建任务或改字段前先读它，才知道分组与类型有哪些可选值",
+            "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）与生效状态清单（statuses）——建任务或改字段前先读它，才知道分组、类型、认领人、优先级各有哪些可选值",
             json!({
                 "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部。这个 enum 只是**默认值**——用户可能自定义过流程，实际生效的状态看响应里的 defs.statuses" },
-                "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "按优先级过滤" },
+                "priority": { "type": "string", "enum": PRIORITIES, "description": "按优先级过滤" },
                 "tag":      { "type": "string", "description": "按标签过滤" },
                 "assignee": { "type": "string", "description": "按认领人过滤；传 \"__none__\" 查未认领" },
-                "q":        { "type": "string", "description": "关键词，匹配标题/详情/id" },
+                "q":        { "type": "string", "description": "关键词，匹配标题/详情/说明/id，以及状态/优先级/分组/认领人/类型/标签的显示名" },
             }),
             vec![],
         ),
@@ -825,7 +832,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "title":    { "type": "string", "description": "一句话说清问题" },
                 "detail":   { "type": "string", "description": "复现步骤/期望行为，可选" },
                 "summary":  { "type": "string", "description": "任务说明（与详情分开：说明是要做什么，详情是复现/期望行为）" },
-                "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "默认 P2" },
+                "priority": { "type": "string", "enum": PRIORITIES, "description": "默认 P2" },
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "标签；先调 tb_list_tasks 看 defs.tagDefs 里已有哪些（用已有项的 id，不要自造裸名字——裸名字没有定义、没有颜色）" },
                 "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些（默认 dev/bug/opt/research/review/plan，用户可能自定义过）；缺省=未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；缺省 0=没估" },
@@ -847,7 +854,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "id":       { "type": "string", "description": "任务 id" },
                 "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）。enum 只是默认值，实际生效的状态看 tb_list_tasks 返回的 defs.statuses" },
                 "assignee": { "type": "string", "description": "认领人；已被他人认领会被拒绝；空串=释放认领" },
-                "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"], "description": "改优先级" },
+                "priority": { "type": "string", "enum": PRIORITIES, "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
                 "detail":   { "type": "string", "description": "改详情" },
                 "summary":  { "type": "string", "description": "改任务说明" },
@@ -1166,6 +1173,14 @@ fn defs_of(store: &Value) -> Value {
         "groupDefs": store.get("groupDefs").cloned().unwrap_or(json!([])),
         "typeDefs":  store.get("typeDefs").cloned().unwrap_or(json!([])),
         "tagDefs":   store.get("tagDefs").cloned().unwrap_or(json!([])),
+        /*
+          ⛔ 这两张表不能省：defs 的目的是「让 AI 看见有哪些可选值」，
+          而认领人与优先级同样是可枚举的列。缺了它们，AI 建任务时
+          只能自造裸名字（没颜色、不在候选里），或按写死的四档猜优先级。
+          两者都由 toDisk 展开成平级字段，随 tasks.json 导入导出原样带回。
+        */
+        "assigneeDefs": store.get("assigneeDefs").cloned().unwrap_or(json!([])),
+        "priorityDefs": store.get("priorityDefs").cloned().unwrap_or(json!([])),
         "statuses":  statuses_for(store),
     })
 }
@@ -1294,8 +1309,8 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
         return Err("title 不能为空".to_string());
     }
     let priority = str_field(body, "priority").unwrap_or_else(|| "P2".to_string());
-    if !["P0", "P1", "P2", "P3"].contains(&priority.as_str()) {
-        return Err(format!("非法优先级 {}（合法值: P0/P1/P2/P3）", priority));
+    if !PRIORITIES.contains(&priority.as_str()) {
+        return Err(format!("非法优先级 {}（合法值: {}）", priority, PRIORITIES.join("/")));
     }
     let mut store = load_tasks(dir)?;
     /*
@@ -1416,6 +1431,18 @@ fn patch_task(
         // 「本次是否从别处进入 review」：进过的不再算（见下方 became 处的注释），
         // 初值 false，由下方 status 流转段置位。此前漏了声明，编译不过（已补）。
         let mut entered_review = false;
+        /*
+          ⛔ priority 与 create_task **必须同一判据**。
+          原来 PATCH 直接把任意字符串塞进 obj，create 却校验 ——
+          于是「新建时 P4 被拒、改优先级时乱写却成功」，
+          同一份数据两条路说法不一致，而前端 normalizeTask 会把乱写的
+          静默归到 P2，用户看到的是"改了又变回去"。
+        */
+        if let Some(v) = str_field(body, "priority") {
+            if !PRIORITIES.contains(&v.as_str()) {
+                return Err(format!("非法优先级 {}（合法值: {}）", v, PRIORITIES.join("/")));
+            }
+        }
         // ⛔ summary 必须在这里：任务说明是显式写进文件的字段，
         // AI 看得见却改不了，等于这个字段对 AI 通道只读。
         for key in ["title", "detail", "summary", "priority", "reporter"] {

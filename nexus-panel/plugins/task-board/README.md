@@ -65,7 +65,7 @@ todo ─认领→ claimed ─开始→ doing ─提交审查→ review ─通过
 
 **筛选在列上**：点列头的漏斗开面板（enum 列多选、text 列关键词、time 列起止日期），
 点列头文字排序（升序 ⇄ 降序）。已生效的筛选在筛选条上列成 chip，可逐个摘掉或一键重置。
-顶栏只留一个全局搜索（跨 id / 标题 / 详情 / 说明 / 分组 / 认领人 / 类型名 / 标签名）—— 那是"找某一条"的入口，不属于按列筛。
+顶栏只留一个全局搜索（跨 id / 标题 / 详情 / 说明 / 状态名 / 优先级档位与名称 / 分组 / 认领人 / 类型名 / 标签名；定义表改名后按新名搜）—— 那是"找某一条"的入口，不属于按列筛。
 筛选入口在列表视图；其它视图消费同一份结果，筛选条上有跳转按钮。
 
 ## 文件清单
@@ -80,7 +80,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（528 项，含源码扫描类守卫）
+  task-board-test.mjs   core 单测（539 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -105,7 +105,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 528 项
+npm run test:tb-core        # core 纯逻辑 539 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描
