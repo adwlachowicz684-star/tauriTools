@@ -71,6 +71,7 @@
     "test:handshake": "node handshake-test.mjs",
     "test:ime-guard-cross": "node ime-guard-cross-plugin-test.mjs",
     "test:ime-esc-guard": "node ime-esc-guard-test.mjs",
+    "test:inline-strip-audit": "node inline-strip-audit-test.mjs",
     "test:inspector": "node inspector-test.mjs",
     "test:invoke-policy": "node invoke-policy-test.mjs",
     "test:invoke-scan": "node scripts/scan-invoke.mjs",
