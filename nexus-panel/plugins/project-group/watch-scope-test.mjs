@@ -30,6 +30,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsFlatJs } from '../../test-scan-utils.mjs';
 import { makeT } from './testkit.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -41,9 +42,7 @@ const mod = read('../../src-tauri/src/fpx/mod.rs');
 const app = read('App.tsx');
 
 /* 剥注释：下面多条断言的字面量都写在说明里，不剥会空跑（第 27 次同类） */
-const strip = (s) => s
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/(^|\s)\/\/[^\n]*/g, '$1');
+const strip = stripCommentsFlatJs;
 const watchCode = strip(watch);
 const modCode = strip(mod);
 const appCode = strip(app);
