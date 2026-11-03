@@ -1938,11 +1938,19 @@ function applyXmlBoundaries(pairs, boundariesEl, counter = null) {
  *            fmIcons:number, fmCloud:number, theme:number, layout:number,
  *            valign:number}} 0 = 没有损失
  */
+/**
+ * XMind 导出的全部损失字段（BUG 202 的单一来源）。
+ *
+ * xmindLossCount 的返回值、index.js 里老快照的兜底对象、以及 xmindLossTotal
+ * 的累加范围，过去是三份互不相干的手写清单。新增一类损失只补其中一处时，
+ * 另外两处就会「数到了却不说」或「整段提示不出现」（BUG 186 / 194 各重演一次）。
+ * 现在统一从这一份派生；提示文案是否覆盖全集由常驻测试逐键核对。
+ */
+export const XMIND_LOSS_KEYS = ['blocked', 'unlinked', 'images', 'fmIcons',
+  'fmCloud', 'theme', 'layout', 'valign', 'summary'];
+
 export function xmindLossCount(sheets) {
-  const out = { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0,
-    theme: 0, layout: 0, valign: 0,
-    // BUG 194：概要因缺少可概括的兄弟被降级成普通分支
-    summary: 0 };
+  const out = Object.fromEntries(XMIND_LOSS_KEYS.map((k) => [k, 0]));
   for (const s of sheets || []) {
     const km = parseKm(s?.content);
     if (!km) continue;              // 坏内容不算 —— 它本来也导不出东西
@@ -2024,6 +2032,31 @@ export function xmindLossCount(sheets) {
     });
   }
   return out;
+}
+
+/**
+ * XMind 导出「这次到底有没有损失」的**唯一判据**（BUG 201）。
+ *
+ * 早先 index.js 里写的是 `loss.blocked + loss.unlinked + ... + loss.summary`
+ * —— 一份手写清单。两个后果，历史上都发生过：
+ *   · 新增一类损失（BUG 186 valign、BUG 194 summary）忘了往里加 →
+ *     那张画布 lossTotal=0 → 整段提示不出现，界面只说「XMind 已导出」；
+ *     交换格式那一侧早在 BUG 184 就换成遍历全部字段的 hasExchangeLoss，
+ *     这一侧没同步 —— 同一条规矩只修一半，这是第 3 次重演。
+ *   · 老快照若缺某个字段，`+ undefined` = NaN，`NaN > 0` 为 false，
+ *     提示同样整段消失（原先只对 valign / summary 用 `|| 0` 兜底）。
+ *
+ * 与 formats.hasExchangeLoss 同口径：遍历**全部**字段，数值化后累加；
+ * 非数值字段（将来若加 reason 之类的字符串）忽略，不参与总数。
+ */
+export function xmindLossTotal(loss) {
+  if (!loss || typeof loss !== 'object') return 0;
+  let total = 0;
+  for (const k of Object.keys(loss)) {
+    const v = Number(loss[k]);
+    if (Number.isFinite(v)) total += v;
+  }
+  return total;
 }
 
 /**

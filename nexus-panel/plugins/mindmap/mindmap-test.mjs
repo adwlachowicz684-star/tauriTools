@@ -18392,7 +18392,9 @@ group('BUG 119 · 交换格式丢掉的图片 / 附件 / 外框必须计入提�
   {
     const idx = fs2.readFileSync(path2.join(HERE, 'index.js'), 'utf8');
     const code = stripCommentsFlatJs(idx);
-    // 两个 NAME 表都得有三项；只改一处的话，另一条导出路径仍然不说
+    // BUG 201：名单收成一份（formats.LOSS_NAME），两处提示都从它派生 ——
+    // 早先两张手写表要各查一次窗口，现在只需确认共用名单 + 两处都调派生函数
+    const fsrc = stripCommentsFlatJs(fs2.readFileSync(path2.join(HERE, 'formats.js'), 'utf8'));
     const has = (s) => /image: '图片与图标'/.test(s) && /attachment: '附件'/.test(s)
       && /boundary: '外框'/.test(s);
     // BUG 123：签名加了第三个参数（画布本身，用于数关系线），锚点跟着改
@@ -18400,10 +18402,9 @@ group('BUG 119 · 交换格式丢掉的图片 / 附件 / 外框必须计入提�
     const iMd = code.indexOf('exchangeLossAll(workbook.sheets');
     const iEx = code.indexOf('exchangeLoss(s.content, kind, s)');
     ok(iMd > 0 && iEx > 0, '两条导出路径都在算丢失');
-    // 两张 NAME 表相距约 1600 字符，窗口取 900 不会互相盖住 ——
-    // 窗口一旦跨过去，删掉其中一张表也会被另一张顶成绿，那就是空转
-    ok(has(code.slice(iMd, iMd + 900)), '★ Markdown 提示带上新三类');
-    ok(has(code.slice(iEx, iEx + 900)), '★ 交换格式提示带上新三类');
+    ok(has(fsrc), '★ 单一名单带上新三类（两处提示共用）');
+    eq(code.split('fmt.lossSegments(').length - 1, 2,
+      '★ 两处提示都走同一份派生名单（不再各写一张表）');
   }
 }
 
@@ -18804,15 +18805,11 @@ group('BUG 123 · 交换格式丢掉的标记图标与关系线必须计入提�
      * 照样让两条断言都绿（实测：只删交换格式那张，两条断言全过）。
      * 改成按 `const NAME = {` 逐张定位、各查自己的窗口。
      */
-    const nameAt = [];
-    for (let k = code.indexOf('const NAME = {'); k >= 0; k = code.indexOf('const NAME = {', k + 1)) {
-      nameAt.push(k);
-    }
-    ok(nameAt.length >= 2, `两处提示表都在（实际 ${nameAt.length} 处）`);
-    nameAt.forEach((at, i) => {
-      ok(/markers: '标记图标'/.test(code.slice(at, at + 400)),
-        `★ 第 ${i + 1} 张提示表带上标记图标`, code.slice(at, at + 120));
-    });
+    const fname = stripCommentsFlatJs(fs2.readFileSync(path2.join(HERE, 'formats.js'), 'utf8'));
+    eq(code.split('fmt.lossSegments(').length - 1, 2,
+      '★ 两处导出提示都走同一份 lossSegments 派生（各写一份必然只改一处）');
+    ok(/export const LOSS_NAME/.test(fname), '★ 提示名单在 formats.js 只有一份');
+    ok(/markers: '标记图标'/.test(fname), '★ 提示名单带上标记图标');
     const iMd = code.indexOf('fmt.exchangeLossAll(workbook.sheets');
     const iEx = code.indexOf('exchangeLoss(s.content, kind, s)');
     ok(iMd > 0 && iEx > 0, '两条导出路径都在调统计（且把画布传进去了）');
@@ -18822,8 +18819,10 @@ group('BUG 123 · 交换格式丢掉的标记图标与关系线必须计入提�
      * 「标题」（`${relLabel}`），字面量只剩 1 处 —— **断言会失败**。
      * 按形状数（seg.push 里带 loss.relationships）才不依赖措辞。
      */
-    const relSeg = (code.match(/seg\.push\(`[^`]*\$\{loss\.relationships\}[^`]*`\)/g) || []).length;
-    ok(relSeg >= 2, '★ 关系线按「条」写进两段提示里', `实际 ${relSeg} 处`);
+    // BUG 201：关系线的「按条」措辞收进 formats.lossSegments 一份，
+    // 两处提示共用；数字面量会随 .mm 的「关系线标题」措辞失效，所以盯函数。
+    const relSeg = (fname.match(/loss\?\.relationships/g) || []).length;
+    ok(relSeg >= 1, '★ 关系线按「条」说、措辞由 relLabel 决定', `实际 ${relSeg} 处`);
     /*
      * 「共涉及」只在**有节点级丢失**时才带，且只说节点 ——
      * 早先 lossScope 把关系线也拼进去，而 seg 里已经有一句「关系线 N 条」，
@@ -19749,9 +19748,8 @@ group('BUG 135 · FreeMind 图标与外框导成 XMind 会丢，必须数出来�
      * 只加 seg.push 而不加进 lossTotal 的话，整段 `if` 根本不会进 ——
      * 提示永远不出现。这条盯的是"改了一半"。
      */
-    const lt = body.slice(body.indexOf('const lossTotal'), body.indexOf('if (lost > 0 || lossTotal > 0)'));
-    ok(body.indexOf('const lossTotal') > 0 && lt.includes('fmIcons') && lt.includes('fmCloud'),
-      '★ 两项都进了 lossTotal（否则整段提示不出现）');
+    ok(/const lossTotal = xmind\.xmindLossTotal\(loss\)/.test(body),
+      '★ lossTotal 走派生判据（新增损失字段自动计入，缺字段不 NaN）');
     /*
      * 两类损失的原因不同（"只能挂 1 个" vs "根本没有这个字段"），
      * 共用一句括注就会给错原因 —— 用户照着"只能挂 1 个"去删附件，白忙。
@@ -19869,10 +19867,8 @@ group('BUG 185 · 画布主题与「天盘图」导成 XMind 会回退默认，�
     }
     ok(body.includes('张画布的主题未能写入'), '主题那句说清楚是什么丢了');
     ok(body.includes('张画布的布局未能写入'), '布局那句同上');
-    const lt = body.slice(body.indexOf('const lossTotal'),
-      body.indexOf('if (lost > 0 || lossTotal > 0)'));
-    ok(body.indexOf('const lossTotal') > 0 && lt.includes('loss.theme') && lt.includes('loss.layout'),
-      '★ 两项都进了 lossTotal（否则整段提示不出现）');
+    ok(/const lossTotal = xmind\.xmindLossTotal\(loss\)/.test(body),
+      '★ lossTotal 走派生判据（新增损失字段自动计入，缺字段不 NaN）');
     /*
      * 原因必须与其余两类分开：这两项是"画布外观回退"，不是"节点数据丢了"。
      * 混成一句会让人以为内容被改坏，照着去删附件、白忙一场。
@@ -19988,10 +19984,8 @@ group('BUG 186 · 节点垂直对齐导成 XMind 走私有键，必须数出来�
     const body = isrc.slice(i, i + 3600);
     ok(body.includes('loss.valign'), '★ 提示带上 valign 这一类（不数就等于没修）');
     ok(body.includes('个节点的垂直对齐未能写入'), '说清楚丢的是什么');
-    const lt = body.slice(body.indexOf('const lossTotal'),
-      body.indexOf('if (lost > 0 || lossTotal > 0)'));
-    ok(body.indexOf('const lossTotal') > 0 && lt.includes('loss.valign'),
-      '★ valign 进了 lossTotal（否则整段提示不出现）');
+    ok(/const lossTotal = xmind\.xmindLossTotal\(loss\)/.test(body),
+      '★ lossTotal 走派生判据（新增损失字段自动计入，缺字段不 NaN）');
     /*
      * 原因必须与其余几类分开：它是"私有键别人不认"，不是"节点数据丢了"。
      * 混进「XMind 没有对应字段」那句会让人以为节点内容被改坏。
@@ -21354,19 +21348,12 @@ group('BUG 152 · 交换格式丢掉的概要与标注必须计入提示');
   // ⑤ 两处提示表都必须带上这两类 —— 逐张查，不能用一个大窗口盖过去
   {
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
-    const nameAt = [];
-    for (let k = code.indexOf('const NAME = {'); k >= 0; k = code.indexOf('const NAME = {', k + 1)) {
-      nameAt.push(k);
-    }
-    ok(nameAt.length >= 2, `两处提示表都在（实际 ${nameAt.length} 处）`);
-    nameAt.forEach((at, i) => {
-      const win = code.slice(at, at + 460);
-      ok(/summary: '概要'/.test(win), `★ 第 ${i + 1} 张提示表带上概要`, code.slice(at, at + 90));
-      ok(/callout: '标注'/.test(win), `★ 第 ${i + 1} 张提示表带上标注`, code.slice(at, at + 90));
-    });
-    // 只改统计、提示表不接 = 等于没修（本项目第 N 次）
-    ok(/Object\.keys\(NAME\)\.filter\(\(k\) => loss\[k\] > 0\)/.test(code),
-      '★ 提示是按 NAME 表逐项生成的（表上加一类就多说一类）');
+    const fname = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    eq(code.split('fmt.lossSegments(').length - 1, 2,
+      '★ 两处导出提示都走同一份 lossSegments 派生（各写一份必然只改一处）');
+    ok(/export const LOSS_NAME/.test(fname), '★ 提示名单在 formats.js 只有一份');
+    for (const k of ['summary', 'callout']) ok(new RegExp(k + ':').test(fname), `★ 提示名单带上 ${k}`);
+    ok(/Object\.entries\(LOSS_NAME\)/.test(fname), '★ 提示片段按名单逐项派生（表上加一类就多说一类）');
   }
 
   // ⑥ 反向：XMind 自己的路径不受影响（概要 / 标注 .xmind 写得回去）
@@ -21615,9 +21602,10 @@ group('BUG 181 · 画布主题与布局丢失必须计入提示');
 
   // ⑧ 界面要有中文名（不然统计到了也说不出来）
   {
-    const idxSrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
-    ok(/theme: '画布主题'/.test(idxSrc), '★ index.js 有画布主题的中文名');
-    ok(/layout: '画布布局'/.test(idxSrc), '★ index.js 有画布布局的中文名');
+    // BUG 201：中文名搬去 formats.LOSS_NAME（单一来源），两处提示共用
+    const fmtSrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/theme: '画布主题'/.test(fmtSrc), '★ 单一名单里有画布主题的中文名');
+    ok(/layout: '画布布局'/.test(fmtSrc), '★ 单一名单里有画布布局的中文名');
   }
 }
 
@@ -23540,11 +23528,11 @@ group('BUG 184 · 画布主题 / 布局丢失必须让提示真的出现');
     const hits = plain.split('fmt.hasExchangeLoss(loss)').length - 1;
     eq(hits, 2, '★ 两处提示都走 fmt.hasExchangeLoss（各写一份必然只改一处）',
       '命中 ' + hits + ' 次');
-    // 两张 NAME 表都要能说出来 —— 缺一张就是"统计到了但名字没有"
-    const t = plain.indexOf("theme: '画布主题', layout: '画布布局'");
-    ok(t > -1, '能定位第一处 NAME 表的主题 / 布局');
-    ok(plain.indexOf("theme: '画布主题', layout: '画布布局'", t + 10) > -1,
-      '★ 两处 NAME 表都带主题 / 布局（只加一处 = 那一路的提示里这两个词说不出来）');
+    // BUG 201：名单只有一份，两处提示都从它派生 —— 缺名字是"处处都说不出来"
+    const fmt184 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    ok(/export const LOSS_NAME/.test(fmt184), '★ 能定位单一名单 LOSS_NAME');
+    ok(/theme: '画布主题'/.test(fmt184) && /layout: '画布布局'/.test(fmt184),
+      '★ 名单带主题 / 布局（两处提示共用，删掉就都说不出来）');
   }
 }
 
@@ -23995,15 +23983,16 @@ group('BUG 191 · 节点文字里的换行：交换格式丢了必须说');
   // ⑦ 源码契约：两处提示表都要有这一项，判据只有一份
   {
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
-    const at = [];
-    for (let k = code.indexOf('const NAME = {'); k >= 0;
-      k = code.indexOf('const NAME = {', k + 1)) at.push(k);
-    ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
-    at.forEach((p, i) => ok(/newline: '节点文字内的换行'/.test(code.slice(p, p + 500)),
-      `★ 第 ${i + 1} 张提示表带上换行这一项`, code.slice(p, p + 90)));
+    const fname = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    eq(code.split('fmt.lossSegments(').length - 1, 2,
+      '★ 两处导出提示都走同一份 lossSegments 派生（各写一份必然只改一处）');
+    ok(/export const LOSS_NAME/.test(fname), '★ 提示名单在 formats.js 只有一份');
+    ok(/newline: '节点文字内的换行'/.test(fname), '★ 提示名单带上换行');
     const f2 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
     ok(/LINE_BREAK_ONLY/.test(f2), '★ 判据抽成常量（写侧与统计同一批字符）');
-    ok(/newline: 0/.test(f2), '★ exchangeLoss 的 out 里有 newline 这一项');
+    // BUG 202：out 已改成从 LOSS_KEYS 派生，钉「清单里有」而不是钉手写字面量
+ok(/'newline',/.test(f2) && /const out = Object\.fromEntries\(LOSS_KEYS\.map/.test(f2),
+  '★ newline 在单一清单里（exchangeLoss 自动派生）');
     ok(/'newline',/.test(f2), '★ LOSS_KEYS 带 newline（跨画布累加）');
   }
 }
@@ -24162,8 +24151,11 @@ group('BUG 194 · 概要写不回 .xmind 必须数出来且说出来');
     '★ xmindLossCount 真的累加概要降级数');
 
   // ⑥ 界面：数出来还得说出来（index.js 在 Node 里跑不起来，用源码断言）
-  ok(/\(loss\.summary \|\| 0\)/.test(idx194), '★ lossTotal 计入 summary（否则整段提示不出现）');
-  ok(/summary:\s*0/.test(idx194), '★ 老快照兜底里有 summary');
+  ok(/const lossTotal = xmind\.xmindLossTotal\(loss\)/.test(idx194),
+    '★ lossTotal 走派生判据（summary 等字段自动计入，不用逐个补）');
+  // BUG 202：兜底对象走 XMIND_LOSS_KEYS 派生，summary 自动在内
+ok(/XMIND_LOSS_KEYS\.map/.test(idx194),
+  '★ 老快照兜底从单一清单派生（summary 自动在内）');
   ok(/概要未能按概要写入/.test(idx194), '★ 提示说「未能按概要写入」（文字没丢，不能说「丢失」）');
   ok(/概要缺少可概括的兄弟节点/.test(idx194), '★ 原因自成一档，说清为什么会降级');
 }
@@ -24278,7 +24270,8 @@ group('BUG 195 · 备注首尾与行尾空白：.mm / .opml 削了必须说');
   // ⑧ 源码契约：判据复用写侧同一个函数、两处提示表都要说
   {
     const f2 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
-    ok(/noteEdge:\s*0/.test(f2), '★ exchangeLoss 的 out 里有 noteEdge');
+    ok(/'noteEdge',/.test(f2) && /const out = Object\.fromEntries\(LOSS_KEYS\.map/.test(f2),
+  '★ noteEdge 在单一清单里（exchangeLoss 自动派生）');
     ok(/noteNorm\s*!==\s*rawNote/.test(f2) && /normalizeNoteText\(/.test(f2),
       '★ 判据直接复用 normalizeNoteText（不另抄一份正则）');
     // BUG 198：.mm 的 richcontent 把 CR 变 LF，.opml 的 &#13; 原样保住 ——
@@ -24288,12 +24281,11 @@ group('BUG 195 · 备注首尾与行尾空白：.mm / .opml 削了必须说');
     ok(/keep\.note\s*&&\s*rawNote/.test(f2), '★ 只在 keep.note 为真时数（不重复计）');
     ok(/'noteEdge',/.test(f2), '★ LOSS_KEYS 带 noteEdge（跨画布累加）');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
-    const at = [];
-    for (let k = code.indexOf('const NAME = {'); k >= 0;
-      k = code.indexOf('const NAME = {', k + 1)) at.push(k);
-    ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
-    at.forEach((p, i) => ok(/noteEdge:\s*'备注首尾与行尾空白'/.test(code.slice(p, p + 600)),
-      `★ 第 ${i + 1} 张提示表带上备注空白这一项`, code.slice(p, p + 90)));
+    const fname = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    eq(code.split('fmt.lossSegments(').length - 1, 2,
+      '★ 两处导出提示都走同一份 lossSegments 派生（各写一份必然只改一处）');
+    ok(/export const LOSS_NAME/.test(fname), '★ 提示名单在 formats.js 只有一份');
+    ok(/noteEdge:\s*'备注首尾与行尾空白'/.test(fname), '★ 提示名单带上备注空白');
   }
 }
 
@@ -24407,7 +24399,8 @@ group('BUG 196 · 画布标题空白与换行：Markdown 改了必须说');
   // ⑦ 源码契约：判据复用写侧同一函数、两处提示表都要说
   {
     const f3 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
-    ok(/titleEdge:\s*0/.test(f3), '★ exchangeLoss 的 out 里有 titleEdge');
+    ok(/'titleEdge',/.test(f3) && /const out = Object\.fromEntries\(LOSS_KEYS\.map/.test(f3),
+  '★ titleEdge 在单一清单里（exchangeLoss 自动派生）');
     ok(/inlineText\(title\)\s*!==\s*title/.test(f3),
       '★ 判据直接复用 inlineText（不另抄一份正则）');
     ok(/kind\s*===\s*'markdown'/.test(f3) && /kind\s*===\s*'opml'/.test(f3),
@@ -24416,12 +24409,11 @@ group('BUG 196 · 画布标题空白与换行：Markdown 改了必须说');
       '★ .opml 判据复用读侧同一个 opmlTitleNorm（含 CR 归一，不另抄 trim）');
     ok(/'titleEdge',/.test(f3), '★ LOSS_KEYS 带 titleEdge（跨画布累加）');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
-    const at = [];
-    for (let k = code.indexOf('const NAME = {'); k >= 0;
-      k = code.indexOf('const NAME = {', k + 1)) at.push(k);
-    ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
-    at.forEach((p, i) => ok(/titleEdge:\s*'画布标题的空白与换行'/.test(code.slice(p, p + 700)),
-      `★ 第 ${i + 1} 张提示表带上画布标题这一项`, code.slice(p, p + 90)));
+    const fname = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    eq(code.split('fmt.lossSegments(').length - 1, 2,
+      '★ 两处导出提示都走同一份 lossSegments 派生（各写一份必然只改一处）');
+    ok(/export const LOSS_NAME/.test(fname), '★ 提示名单在 formats.js 只有一份');
+    ok(/titleEdge:\s*'画布标题的空白与换行'/.test(fname), '★ 提示名单带上画布标题');
   }
 }
 
@@ -24530,12 +24522,11 @@ group('BUG 197 · OPML 画布标题：读侧 trim 改了名字必须说');
     ok(/kind\s*===\s*'opml'/.test(f), '★ 判据覆盖 opml');
     ok(/'titleEdge',/.test(f), '★ LOSS_KEYS 带 titleEdge');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
-    const at = [];
-    for (let k = code.indexOf('const NAME = {'); k >= 0;
-      k = code.indexOf('const NAME = {', k + 1)) at.push(k);
-    ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
-    at.forEach((p, i) => ok(/titleEdge:\s*'画布标题的空白与换行'/.test(code.slice(p, p + 700)),
-      `★ 第 ${i + 1} 张提示表带上画布标题这一项`));
+    const fname = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    eq(code.split('fmt.lossSegments(').length - 1, 2,
+      '★ 两处导出提示都走同一份 lossSegments 派生（各写一份必然只改一处）');
+    ok(/export const LOSS_NAME/.test(fname), '★ 提示名单在 formats.js 只有一份');
+    ok(/titleEdge:\s*'画布标题的空白与换行'/.test(fname), '★ 提示名单带上画布标题');
   }
 }
 
@@ -24716,7 +24707,8 @@ group('BUG 198 · 交换格式标量值的静默改写（全矩阵一次性普�
   {
     const f = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
     for (const k of ['textEdge', 'linkEdge', 'styleEdge']) {
-      ok(new RegExp(k + ':\\s*0').test(f), `★ exchangeLoss 的 out 里有 ${k}`);
+      // BUG 202：out 从 LOSS_KEYS 派生 —— 钉行为（返回值带它），不钉手写字面量
+      ok(k in F198.exchangeLoss('', 'markdown'), `★ exchangeLoss 返回带 ${k}`);
       ok(f.includes("'" + k + "'"), `★ LOSS_KEYS 带 ${k}（跨画布累加）`);
     }
     ok(/function exchangeScalarTrim\(/.test(f) && /function xmlScalarChanged\(/.test(f),
@@ -24729,16 +24721,11 @@ group('BUG 198 · 交换格式标量值的静默改写（全矩阵一次性普�
     ok(/function inlineTextEdgeChanged\(/.test(f) && /inlineTextEdgeChanged\(rawText\)/.test(f),
       '★ textEdge 判据只认首尾空白（组合样本不再被换行排除）');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
-    const at = [];
-    for (let p = code.indexOf('const NAME = {'); p >= 0;
-      p = code.indexOf('const NAME = {', p + 1)) at.push(p);
-    eq(at.length, 2, '两处导出提示表都在');
-    at.forEach((p, i) => {
-      const seg = code.slice(p, p + 900);
-      for (const k of ['textEdge', 'linkEdge', 'styleEdge']) {
-        ok(seg.includes(k + ':'), `★ 第 ${i + 1} 张提示表带上 ${k}`);
-      }
-    });
+    const fname = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    eq(code.split('fmt.lossSegments(').length - 1, 2,
+      '★ 两处导出提示都走同一份 lossSegments 派生（各写一份必然只改一处）');
+    ok(/export const LOSS_NAME/.test(fname), '★ 提示名单在 formats.js 只有一份');
+    for (const k of ['textEdge', 'linkEdge', 'styleEdge']) ok(new RegExp(k + ':').test(fname), `★ 提示名单带上 ${k}`);
   }
 }
 
@@ -24807,6 +24794,106 @@ group('BUG 199 · LOSS_KEYS 全字段跨画布累加（一次性通测）');
   }
 }
 
+
+/* ============================================================
+   BUG 201 · 丢失提示的手写清单 → 单一来源派生（一次性收口）
+   ------------------------------------------------------------
+   交换格式侧两处 NAME 表各手写 21 项、XMind 侧 lossTotal 手写 9 项相加：
+   每新增一类损失就要改 2～4 处，漏一处就是「统计数到了、提示不说」或
+   「整段提示不出现」。BUG 186 / 194 都是这么补的，与 BUG 184 在交换格式
+   侧早已修掉的洞是同一条规矩的另一半。这里全部换成派生，并钉住覆盖。
+   ============================================================ */
+group('BUG 201 · 丢失提示手写清单统一派生');
+{
+  const F200 = await import('./formats.js');
+  const X200 = await import('./xmind.js');
+  const fsrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+  const isrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+  const xsrc = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'xmind.js'), 'utf8'));
+
+  // ① LOSS_NAME 与 LOSS_KEYS 严格对齐（relationships / nodes 另行处理）
+  const keys200 = [...fsrc.match(/const LOSS_KEYS = \[([\s\S]*?)\];/)[1]
+    .matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1]);
+  const names200 = Object.keys(F200.LOSS_NAME);
+  eq(names200.length, keys200.length - 2, '★ LOSS_NAME 覆盖 LOSS_KEYS 除关系线/节点外的全部项');
+  for (const k of keys200.filter((k) => k !== 'relationships' && k !== 'nodes')) {
+    ok(k in F200.LOSS_NAME, `★ LOSS_NAME 带 ${k}（新增丢失项不登记就红）`);
+  }
+  for (const k of names200) ok(keys200.includes(k), `★ LOSS_NAME 的 ${k} 在 LOSS_KEYS 里`);
+  eq((fsrc.match(/export const LOSS_NAME/g) || []).length, 1, '★ 提示名单只有一份定义');
+
+  // ② 行为等价：与改动前两处手写表逐字一致（基线由改动前源码生成）
+  const CASES200 = [{"note": 1, "textEdge": 2, "relationships": 3, "nodes": 4, "theme": 1}, {"markers": 2, "summary": 1, "callout": 1, "newline": 1, "noteEdge": 1, "titleEdge": 1, "linkEdge": 1, "styleEdge": 1}, {"style": 3, "image": 1, "attachment": 2, "boundary": 1, "hyperlink": 1, "priority": 1, "progress": 1, "labels": 1, "collapsed": 1, "layout": 1}, {"theme": 1, "layout": 1}, {"relationships": 2}, {}];
+  const EXPECT200 = [{"seg": ["备注 1 处", "画布主题 1 处", "节点文字首尾空白 2 处", "关系线 3 条"], "segFree": ["备注 1 处", "画布主题 1 处", "节点文字首尾空白 2 处", "关系线标题 3 条"], "total": 1}, {"seg": ["标记图标 2 处", "概要 1 处", "标注 1 处", "节点文字内的换行 1 处", "备注首尾与行尾空白 1 处", "画布标题的空白与换行 1 处", "超链接里的空白与换行 1 处", "样式值里的空白与换行 1 处"], "segFree": ["标记图标 2 处", "概要 1 处", "标注 1 处", "节点文字内的换行 1 处", "备注首尾与行尾空白 1 处", "画布标题的空白与换行 1 处", "超链接里的空白与换行 1 处", "样式值里的空白与换行 1 处"], "total": 0}, {"seg": ["超链接 1 处", "优先级 1 处", "进度 1 处", "标签 1 处", "折叠状态 1 处", "自定义样式 3 处", "图片与图标 1 处", "附件 2 处", "外框 1 处", "画布布局 1 处"], "segFree": ["超链接 1 处", "优先级 1 处", "进度 1 处", "标签 1 处", "折叠状态 1 处", "自定义样式 3 处", "图片与图标 1 处", "附件 2 处", "外框 1 处", "画布布局 1 处"], "total": 1}, {"seg": ["画布主题 1 处", "画布布局 1 处"], "segFree": ["画布主题 1 处", "画布布局 1 处"], "total": 2}, {"seg": ["关系线 2 条"], "segFree": ["关系线标题 2 条"], "total": 0}, {"seg": [], "segFree": [], "total": 0}];
+  CASES200.forEach((l, j) => {
+    eq(F200.lossSegments(l, '关系线').join('|'), EXPECT200[j].seg.join('|'),
+      `★ seg 与旧表逐字一致 #${j}`);
+    eq(F200.lossSegments(l, '关系线标题').join('|'), EXPECT200[j].segFree.join('|'),
+      `★ .mm 的「关系线标题」措辞不变 #${j}`);
+  });
+  eq(F200.lossSegments({ relationships: 2 }, '关系线').join('|'), '关系线 2 条',
+    '★ 关系线按条说、排在最后');
+  eq(F200.lossSegments({}, '关系线').length, 0, '★ 干净 loss 不产生片段');
+  eq(F200.lossSegments(null).length, 0, '★ null 不炸');
+
+  // ③ 源码契约：index.js 不得再留第二份表 / XMind 段走派生总数
+  eq((isrc.match(/const NAME = \{/g) || []).length, 0, '★ index.js 里不再有手写 NAME 表');
+  eq(isrc.split('fmt.lossSegments(').length - 1, 2, '★ 两处导出提示都调 lossSegments');
+  ok(/const lossTotal = xmind\.xmindLossTotal\(loss\)/.test(isrc),
+    '★ XMind 提示走派生总数（遍历全部字段）');
+  eq((xsrc.match(/export function xmindLossTotal/g) || []).length, 1,
+    '★ xmindLossTotal 只有一份定义');
+
+  // ④ xmindLossTotal 行为：自动覆盖新字段、缺字段不 NaN
+  const xl = X200.xmindLossCount([{ id: 's', title: '甲',
+    content: JSON.stringify({ root: { data: { text: '甲', 'vertical-align': 'top' } } }),
+    theme: 'classic', layout: 'tianpan' }]);
+  eq(X200.xmindLossTotal(xl), 3, '★ 主题/布局/垂直对齐合计 3');
+  eq(X200.xmindLossTotal({ ...xl, futureField: 1 }), 4,
+    '★ 新增损失字段自动计入（手写相加会漏 → 整段提示不出现）');
+  const partial200 = { ...xl, images: undefined };
+  ok(Number.isFinite(X200.xmindLossTotal(partial200)),
+    '★ 字段值为 undefined 不产生 NaN（提示整段不会因此消失）');
+  eq(X200.xmindLossTotal(null), 0, '★ null 为 0');
+  eq(X200.xmindLossTotal({ a: '文本', b: NaN, c: 2 }), 2, '★ 非数值字段忽略');
+  ok(X200.xmindLossTotal({ futureField: 1 }) > 0,
+    '★ 只有新损失字段时提示照样出现（手写相加恒 0）');
+
+  // ⑤ xmindLossCount 返回的每个键都必须在 XMind 提示里有文案
+  const xkeys = Object.keys(X200.xmindLossCount([]));
+  const at200 = isrc.indexOf('if (lost > 0 || lossTotal > 0)');
+  ok(at200 > 0, '★ 能定位 XMind 提示段');
+  const win200 = isrc.slice(at200, isrc.indexOf('status(', at200));
+  // 只认 seg.push 里的引用 —— why 括注里出现同名键不算「说给用户听了」
+  const segKeys = new Set([...win200.matchAll(/seg\.push\([^\n]*?loss\.([A-Za-z]+)/g)].map((m) => m[1]));
+  // BUG 202：数量不再手写 9 —— 从单一清单派生，漏补一项立刻红
+  eq(xkeys.length, X200.XMIND_LOSS_KEYS.length,
+    '★ xmindLossCount 返回字段数等于 XMIND_LOSS_KEYS');
+  for (const k of X200.XMIND_LOSS_KEYS) ok(k in X200.xmindLossCount([]),
+    `★ XMIND_LOSS_KEYS 的 ${k} 在返回值里（漏了就数不到）`);
+  for (const k of xkeys) ok(segKeys.has(k), `★ XMind 提示覆盖 ${k}（新增损失不写文案就红）`);
+
+  /* ============================================================
+     BUG 202 · 三份手写清单 → 两份单一来源（一次性收口）
+     ------------------------------------------------------------
+     exchangeLoss 的 out（23 项）、xmindLossCount 的 out（9 项）、
+     index.js 老快照的兜底对象（9 项）过去互不相干。BUG 201 把提示名单
+     与总数改成派生后，这三处是最后残留：新增一类损失只补 LOSS_KEYS
+     / XMIND_LOSS_KEYS 之一，另一处就「数到了却不说」。
+     ============================================================ */
+  const loss202 = F200.exchangeLoss('', 'markdown');
+  eq(Object.keys(loss202).length, keys200.length,
+    '★ exchangeLoss 返回字段与 LOSS_KEYS 全集一致');
+  for (const k of keys200) ok(k in loss202, `★ exchangeLoss 带 ${k}`);
+  ok(/const out = Object\.fromEntries\(LOSS_KEYS\.map/.test(fsrc),
+    '★ exchangeLoss 初始化走 LOSS_KEYS 派生（不再手写第二份）');
+  ok(/const out = Object\.fromEntries\(XMIND_LOSS_KEYS\.map/.test(xsrc),
+    '★ xmindLossCount 初始化走 XMIND_LOSS_KEYS 派生');
+  ok(!/blocked:\s*0/.test(isrc), '★ index.js 不再手写兜底清单');
+  ok(/XMIND_LOSS_KEYS\.map/.test(isrc), '★ 兜底对象走同一份清单');
+  eq(X200.xmindLossTotal({ ...X200.xmindLossCount([]), future202: 1 }), 1,
+    '★ 新增字段自动计入总数（派生清单不漏）');
+}
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

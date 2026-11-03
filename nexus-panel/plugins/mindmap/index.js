@@ -2784,27 +2784,12 @@ async function gcOrphanAssets(quiet = false) {
      */
     const loss = fmt.exchangeLossAll(workbook.sheets, 'markdown');
     if (fmt.hasExchangeLoss(loss)) {
-      const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
-        progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
-        image: '图片与图标', attachment: '附件', boundary: '外框',
-        markers: '标记图标',
-        // BUG 152：概要 / 标注 —— 交换格式没有对应概念，会被写成普通分支
-        summary: '概要', callout: '标注',
-        // BUG 184：画布主题 / 布局 —— 导回一律回落默认（与交换格式那一路同口径）
-        theme: '画布主题', layout: '画布布局',
-        // BUG 191：节点文字里的换行 —— 写侧并成空格，导回就找不回来了
-        newline: '节点文字内的换行',
-        // BUG 195：.mm / .opml 带得走备注，却会削掉首尾与行尾空白
-        noteEdge: '备注首尾与行尾空白',
-        // BUG 196 / 197：.md 摊平换行 / 削首尾空白；.opml 导回侧削首尾空白
-        titleEdge: '画布标题的空白与换行',
-        // BUG 198：值被悄悄规范化（不是整条丢）的三类
-        textEdge: '节点文字首尾空白', linkEdge: '超链接里的空白与换行',
-        styleEdge: '样式值里的空白与换行' };
-      const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
-        .map((k) => `${NAME[k]} ${loss[k]} 处`);
-      // 关系线按「条」说。它挂在画布上，"共涉及 N 个节点"对它不成立
-      if (loss.relationships > 0) seg.push(`关系线 ${loss.relationships} 条`);
+      /*
+       * BUG 201：提示名单一律走 formats.LOSS_NAME 派生，两处导出提示共用
+       * 一份 —— 早先这里与交换格式段各手写一张 21 项表，每补一个新损失
+       * 项都要改两处，漏一处就「数到了但不说」。
+       */
+      const seg = fmt.lossSegments(loss, '关系线');
       const scope = loss.nodes > 0 ? `（共涉及 ${loss.nodes} 个节点）` : '';
       notes.push(`Markdown 装不下 ${seg.join('、')}${scope}，`
         + '这些内容在导出的文件里不会保留');
@@ -2862,32 +2847,13 @@ async function gcOrphanAssets(quiet = false) {
     // 用法，而备注/进度/标签/样式导出去就没了 —— 等导回来才发现已经晚了
     // （导入是整体替换且不可撤销）。放在保存之后，先让人看到文件存好了。
     const loss = fmt.exchangeLoss(s.content, kind, s);
-    const NAME = { note: '备注', hyperlink: '超链接', priority: '优先级',
-      progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
-      image: '图片与图标', attachment: '附件', boundary: '外框',
-      markers: '标记图标',
-      // BUG 152：概要 / 标注 —— 交换格式没有对应概念，会被写成普通分支
-      summary: '概要', callout: '标注',
-      // BUG 181：画布主题 / 布局 —— 五种格式都没有画布级外观属性，导回一律回落默认
-      theme: '画布主题', layout: '画布布局',
-      // BUG 191：节点文字里的换行 —— 写侧并成空格，导回就找不回来了
-      newline: '节点文字内的换行',
-      // BUG 195：.mm / .opml 带得走备注，却会削掉首尾与行尾空白
-      noteEdge: '备注首尾与行尾空白',
-      // BUG 196 / 197：.md 摊平换行 / 削首尾空白；.opml 导回侧削首尾空白
-      titleEdge: '画布标题的空白与换行',
-      // BUG 198：值被悄悄规范化（不是整条丢）的三类
-      textEdge: '节点文字首尾空白', linkEdge: '超链接里的空白与换行',
-      styleEdge: '样式值里的空白与换行' };
-    const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
-      .map((k) => `${NAME[k]} ${loss[k]} 处`);
     /*
      * BUG 128：.mm 带得走连线**本身**、带不走它的标题（FreeMind 的 arrowlink
      * 没有标题属性），所以这里说的是"标题"而不是"关系线" —— 说成整条线
      * 丢失是虚报，说成没丢是瞒报。
      */
     const relLabel = kind === 'freemind' ? '关系线标题' : '关系线';
-    if (loss.relationships > 0) seg.push(`${relLabel} ${loss.relationships} 条`);
+    const seg = fmt.lossSegments(loss, relLabel);
     const scope = loss.nodes > 0 ? `（共涉及 ${loss.nodes} 个节点）` : '';
     const notes = [];
     if (workbook.sheets?.length > 1) {
@@ -2951,11 +2917,10 @@ async function gcOrphanAssets(quiet = false) {
        *               在别的 XMind 软件里打开却是没有那个附件的。
        */
       const lost = wanted - packed;
+      // BUG 202：老快照的兜底对象也走同一份字段清单（早先手写 9 项，
+      // 新增损失漏补一处 → xmindLossTotal 数不到 → 整段提示不出现）
       const loss = xmind.xmindLossCount(workbook.sheets)
-        || { blocked: 0, unlinked: 0, images: 0, fmIcons: 0, fmCloud: 0,
-          theme: 0, layout: 0, valign: 0,
-          // BUG 194：老快照里 xmindLossCount 可能不返回 summary
-          summary: 0 };
+        || Object.fromEntries(xmind.XMIND_LOSS_KEYS.map((k) => [k, 0]));
       /*
        * BUG 135：FreeMind 的标记图标 / 外框（data.fmIcons / data.fmCloud，
        * BUG 127 起从别人的 .mm 收进来）在 XMind 里**没有对应字段** ——
@@ -2975,9 +2940,7 @@ async function gcOrphanAssets(quiet = false) {
        */
       // BUG 194：概要降级同样要进总数 —— 否则一张「只有概要、没挂任何附件」
       // 的画布 lossTotal 是 0，整段提示都不出现，界面只说「XMind 已导出」。
-      const lossTotal = loss.blocked + loss.unlinked + loss.images
-        + loss.fmIcons + loss.fmCloud + loss.theme + loss.layout + (loss.valign || 0)
-        + (loss.summary || 0);
+      const lossTotal = xmind.xmindLossTotal(loss);
       if (lost > 0 || lossTotal > 0) {
         const seg = [];
         if (lost > 0) seg.push(`${lost} 个附件未能打包`);

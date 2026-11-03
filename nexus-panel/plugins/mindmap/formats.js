@@ -2254,28 +2254,14 @@ function oneOrList(raw) {
  */
 export function exchangeLoss(content, kind, sheet) {
   const keep = EXCHANGE_KEEP[kind] || {};
-  const out = { note: 0, hyperlink: 0, priority: 0, progress: 0,
-    labels: 0, collapsed: 0, style: 0, image: 0, attachment: 0,
-    boundary: 0, markers: 0, relationships: 0, nodes: 0,
-    // BUG 152：概要 / 标注（BUG 141 / 143 才收的 XMind 数据）
-    summary: 0, callout: 0,
-    // BUG 191：节点文字里的换行（写侧一律并成空格，见 nodeText / inlineText）
-    newline: 0,
-    // BUG 195：备注在 .mm / .opml 里被 normalizeNoteText 削掉的那部分空白
-    noteEdge: 0,
-    // BUG 196 / 197：画布标题「带得走」但「没原样带得走」——
-    //   .md 被 inlineText 摊平换行 / 削首尾空白，.opml 读侧削首尾空白
-    titleEdge: 0,
-    // BUG 181：画布自己的主题与布局（画布级，不计进 nodes，见函数末尾）
-    theme: 0, layout: 0,
-    /*
-     * BUG 198：批量普查「值被悄悄改掉」的其余三类 —— 与 newline / noteEdge /
-     *   titleEdge 是同一条线（「带得走」≠「原样带得走」）。早先只按字段补了
-     *   这三处，超链接、样式值、Markdown 节点文字仍是一句「已保存」。
-     *   ⓘ 与那三处**互斥**：换行归 newline、备注空白归 noteEdge、画布标题归
-     *     titleEdge，这里只数剩下没被覆盖的，绝不把同一份内容数两遍。
-     */
-    textEdge: 0, linkEdge: 0, styleEdge: 0 };
+  /*
+   * BUG 202：字段全集与 exchangeLossAll 共用下面那份 LOSS_KEYS ——
+   * 早先这里手写了一份 23 项、XMind 侧又手写两份 9 项，三份清单互不相干：
+   * 新增一类损失只补一处，另外两处就「数到了却不说」或「整段提示不出现」。
+   * 现在三处全部从各自的单一清单派生，新增字段只填一次。
+   * ⓘ LOSS_KEYS 定义在下方，但本函数只在模块求值完成后被调用，无 TDZ 风险。
+   */
+  const out = Object.fromEntries(LOSS_KEYS.map((k) => [k, 0]));
   const km = parseKm(content);
   if (!km) return out;
   const touched = new Set();
@@ -2600,6 +2586,49 @@ export function hasExchangeLoss(loss) {
   if (!loss || typeof loss !== 'object') return false;
   for (const k of Object.keys(loss)) if (Number(loss[k]) > 0) return true;
   return false;
+}
+
+/**
+ * 丢失项 → 状态栏提示里的中文名（BUG 201）。
+ *
+ * 早先 index.js 的 Markdown 段与交换格式段**各手写一份** 21 项的表，
+ * 于是每补一个新损失项（BUG 191 / 195 / 196 / 197 / 198…）都要改两处，
+ * 漏一处就是「统计数到了、提示不说」。这里收成单一来源，两处共用。
+ *
+ * ⓘ `relationships`（按条）与 `nodes`（括注里的节点数）由 `lossSegments`
+ *   单独处理，不在这张表里 —— 它们不是「XX N 处」的句式。
+ */
+export const LOSS_NAME = {
+  note: '备注', hyperlink: '超链接', priority: '优先级',
+  progress: '进度', labels: '标签', collapsed: '折叠状态', style: '自定义样式',
+  image: '图片与图标', attachment: '附件', boundary: '外框',
+  markers: '标记图标',
+  summary: '概要', callout: '标注',
+  theme: '画布主题', layout: '画布布局',
+  newline: '节点文字内的换行',
+  noteEdge: '备注首尾与行尾空白',
+  titleEdge: '画布标题的空白与换行',
+  textEdge: '节点文字首尾空白', linkEdge: '超链接里的空白与换行',
+  styleEdge: '样式值里的空白与换行'
+};
+
+/**
+ * 由 LOSS_NAME 派生提示片段（两处导出提示共用）。
+ *
+ * @param {Object} loss exchangeLoss / exchangeLossAll 的结果
+ * @param {string} [relLabel] 关系线的措辞：.mm 带得走连线本身、带不走标题，
+ *        所以说「关系线标题」；其余格式说「关系线」（BUG 128）。
+ * @returns {string[]} 形如 ['备注 1 处', '关系线 2 条']
+ */
+export function lossSegments(loss, relLabel = '关系线') {
+  const seg = [];
+  for (const [k, name] of Object.entries(LOSS_NAME)) {
+    const n = Number(loss?.[k]) || 0;
+    if (n > 0) seg.push(`${name} ${n} 处`);
+  }
+  const rel = Number(loss?.relationships) || 0;
+  if (rel > 0) seg.push(`${relLabel} ${rel} 条`);
+  return seg;
 }
 
 /**
