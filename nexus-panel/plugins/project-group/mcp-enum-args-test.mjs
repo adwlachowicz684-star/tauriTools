@@ -24,6 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsFlat } from '../../test-scan-utils.mjs';
 import { makeT } from './testkit.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ const { t, done } = makeT();
 
 const read = (f) => fs.readFileSync(path.join(RS, f), 'utf8');
 /** 剥块注释：断言只看真代码，否则会被注释里的同名字样喂饱（踩过多次）。 */
-const strip = (x) => x.replace(/\/\*[\s\S]*?\*\//g, '');
+const strip = stripCommentsFlat;
 
 const MCP = read('mcp.rs');
 const MCPC = strip(MCP);
