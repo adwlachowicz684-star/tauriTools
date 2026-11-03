@@ -1151,8 +1151,17 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
         Ok(v) => json!({
             "content": [{ "type": "text", "text": v.to_string() }],
         }),
+        /*
+          ⛔ 原来是裸错误文案，而**成功**的 text 是 JSON 串（v.to_string()）：
+          同一通道内成功/失败两种形状，客户端统一写 JSON.parse(text) 时
+          失败分支直接抛 SyntaxError —— 会把「任务不存在」误判成
+          「服务端返回坏数据」。上一轮刚把两条通道的成功响应统一成
+          resp.ok / resp.task.id，失败侧却没跟上：HTTP 是
+          {"ok":false,"error":...}，MCP 既没有 ok:false 也没有 error。
+          现在 text 也走 err_json，isError:true 保留（协议要求，不能删）。
+        */
         Err(e) => json!({
-            "content": [{ "type": "text", "text": e }],
+            "content": [{ "type": "text", "text": err_json(&e) }],
             "isError": true,
         }),
     }
@@ -1741,7 +1750,7 @@ fn search_hay(task: &Value, store: &Value) -> String {
 /// 认两种写法：`[{"id":"todo",...}]`（界面写的）和 `["todo",...]`（手写图省事）。
 /// 百分比解码（query string 里的 `%XX` / `+`）。不引第三方 crate，
 /// 手写就够：AI 传的中文分组名、带空格的 q 都要能还原。
-fn pct_decode(s: &str) -> String {
+fn pct_decode_with(s: &str, plus_as_space: bool) -> String {
     let b = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -1758,11 +1767,36 @@ fn pct_decode(s: &str) -> String {
                 out.push(b[i]);
                 i += 1;
             }
-            b'+' => { out.push(b' '); i += 1; }
+            /*
+              `+` 只在 **query string** 里表示空格（form-urlencoded）。
+              MCP 的 JSON 参数里 `+` 是字面量 —— 分组名「C++」「a+b」被
+              静默解成「C  」「a b」，筛不到且不报错。开关由调用方给，
+              这是协议差异，不是判据分歧。
+            */
+            b'+' if plus_as_space => { out.push(b' '); i += 1; }
             c => { out.push(c); i += 1; }
         }
     }
     String::from_utf8_lossy(&out).to_string()
+}
+
+/// query string 专用：把 `+` 当空格。签名与语义保持原样（守卫钉着）。
+fn pct_decode(s: &str) -> String {
+    pct_decode_with(s, true)
+}
+
+/// **所有过滤值 / 关键词的归一化**：百分号解码 + 首尾空白，一处定义。
+///
+/// ⛔ 修前两个构造函数各写各的：
+///   · from_args 只 `.trim()` → MCP 传 `{"group":"%E7%99%BB%E5%BD%95"}`
+///     筛不到，而 HTTP `?group=%E7%99%BB%E5%BD%95` 能筛到
+///   · from_query 只 `pct_decode()` 不 trim → `?status=%20todo%20` 是
+///     " todo "，不命中；MCP 的 `{"status":" todo "}` 却命中
+/// 上一轮刚给 MCP 的 **id** 加了 norm_id（解码+trim），理由写的是
+/// "AI 手写 %20 常见" —— 同一份请求里的过滤值却没跟上。
+/// 现在两条通道只共用这一份，差别仅在协议要求的 `+` 语义。
+fn norm_text(s: &str, plus_as_space: bool) -> String {
+    pct_decode_with(s, plus_as_space).trim().to_string()
 }
 
 /// **所有入口的 id 都过这里**：百分号解码 + 首尾空白。
@@ -1804,13 +1838,14 @@ impl TaskFilter {
         let vals = |k: &str| -> Vec<String> {
             match args.get(k) {
                 Some(Value::String(v)) => {
-                    let t = v.trim().to_string();
+                    let t = norm_text(v, false);
                     if t.is_empty() { Vec::new() } else { vec![t] }
                 }
+                /* JSON 参数里 `+` 是字面量，不按空格解 */
                 Some(Value::Array(a)) => a
                     .iter()
                     .filter_map(|x| x.as_str())
-                    .map(|x| x.trim().to_string())
+                    .map(|x| norm_text(x, false))
                     .filter(|x| !x.is_empty())
                     .collect(),
                 _ => Vec::new(),
@@ -1835,8 +1870,8 @@ impl TaskFilter {
         for pair in raw.split('&') {
             if pair.is_empty() { continue; }
             let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
-            let key = pct_decode(k);
-            let val = pct_decode(v);
+            let key = norm_text(k, true);
+            let val = norm_text(v, true);
             if val.is_empty() { continue; }
             match key.as_str() {
                 "status" => f.status.push(val),

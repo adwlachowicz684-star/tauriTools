@@ -7838,6 +7838,166 @@ t('守卫：id 专属取值闭包不许退回通用名 s', (() => {
     && !/s\("id"\)/.test(STRIP(R17_DISPATCH));
 })());
 
+/*
+ * ============================================================
+ * 本轮：上一轮抽了 TaskFilter 的 matches，却留下**两个构造函数各自归一**。
+ *
+ * 复现（按 Rust 现有判据等价）：
+ *   from_args  {"status":" todo "}            → trim → "todo"   命中
+ *   from_query ?status=%20todo%20            → 解码 → " todo "  不命中
+ *   from_args  {"group":"%E7%99%BB%E5%BD%95"} → 原样          不命中
+ *   from_query ?group=%E7%99%BB%E5%BD%95      → "登录"         命中
+ * 上一轮刚给 MCP 的 **id** 加了 norm_id（解码+trim），同一份 AI 请求里的
+ * 过滤值却没跟上 —— 又是「同一判据两个入口」。
+ *
+ * 还有失败侧：上一轮把两条通道的成功响应统一成 resp.ok / resp.task.id，
+ * MCP 的失败 text 却仍是裸文案（成功是 JSON 串）—— 严格客户端
+ * JSON.parse(text) 直接抛，把「任务不存在」误判成「服务端返回坏数据」。
+ * ============================================================
+ */
+
+const R18_DECODE = rsBranch('fn pct_decode_with(', '/// **所有入口的 id 都过这里');
+const R18_ARGS = rsBranch('fn from_args(args: &Value) -> Self {', 'fn from_query(req: &Request) -> Self {');
+const R18_QUERY = rsBranch('fn from_query(req: &Request) -> Self {', 'fn matches(&self');
+const R18_MCP = rsBranch('fn mcp_call_tool(', '/// JSON-RPC 2.0 分发');
+
+/* ① 通杀：两个构造函数都必须走同一个归一函数，且不许再各自手写归一 */
+t('守卫：通杀 —— 过滤值归一只有一份（from_args / from_query 都走 norm_text）', (() => {
+  if (!rsSrc) return false;
+  return /fn norm_text\(s: &str, plus_as_space: bool\) -> String/.test(R18_DECODE)
+    && (STRIP(R18_ARGS).match(/norm_text\(/g) || []).length >= 2
+    && (STRIP(R18_QUERY).match(/norm_text\(/g) || []).length >= 2
+    /* 两个构造函数里都不许再出现手写的 trim / 裸 pct_decode */
+    && !/\.trim\(\)\.to_string\(\)/.test(STRIP(R18_ARGS))
+    && !/pct_decode\(/.test(STRIP(R18_ARGS))
+    && !/\.trim\(\)\.to_string\(\)/.test(STRIP(R18_QUERY))
+    && !/pct_decode\(/.test(STRIP(R18_QUERY));
+})());
+
+/* ② norm_text 必须同时做解码与 trim（缺一半就是修前的两种退化） */
+t('守卫：norm_text 同时做百分号解码与 trim', (() => {
+  if (!rsSrc) return false;
+  const seg = R18_DECODE.slice(R18_DECODE.indexOf('fn norm_text('));
+  return /pct_decode_with\(s, plus_as_space\)/.test(seg)
+    && /\.trim\(\)\.to_string\(\)/.test(seg)
+    && (STRIP(rsSrc).match(/fn norm_text\(/g) || []).length === 1;
+})());
+
+/* ③ `+` 语义：query 解成空格，JSON 参数里是字面量（协议差异，不能一刀切） */
+t('守卫：+ 语义按协议分开（HTTP=true / MCP=false）', (() => {
+  if (!rsSrc) return false;
+  const A = STRIP(R18_ARGS), Q = STRIP(R18_QUERY);
+  return /b'\+' if plus_as_space/.test(R18_DECODE)
+    && /fn pct_decode\(s: &str\) -> String\s*\{\s*pct_decode_with\(s, true\)/.test(R18_DECODE)
+    && !/norm_text\([^)]*,\s*true\)/.test(A)
+    && (A.match(/norm_text\([^)]*,\s*false\)/g) || []).length >= 2
+    && !/norm_text\([^)]*,\s*false\)/.test(Q)
+    && (Q.match(/norm_text\([^)]*,\s*true\)/g) || []).length >= 2;
+})());
+
+/* ④ 数据等价：四个用例的修前/修后命中对照（判据本身要能区分） */
+t('守卫：数据等价 —— 两条通道归一后命中一致', (() => {
+  const pct = (s, plus) => {
+    let out = '';
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === '%' && i + 2 < s.length && /^[0-9a-f]{2}$/i.test(s.slice(i + 1, i + 3))) {
+        out += String.fromCharCode(parseInt(s.slice(i + 1, i + 3), 16)); i += 2;
+      } else if (plus && s[i] === '+') out += ' ';
+      else out += s[i];
+    }
+    return out;
+  };
+  /* 多字节 UTF-8 得按字节解；这里用 Node 的 Buffer 精确复现 Rust */
+  const dec = (s, plus) => {
+    const b = Buffer.from(s, 'utf8'), o = [];
+    for (let i = 0; i < b.length;) {
+      if (b[i] === 37 && i + 2 < b.length) {
+        const h = parseInt(String.fromCharCode(b[i + 1]), 16), l = parseInt(String.fromCharCode(b[i + 2]), 16);
+        if (!isNaN(h) && !isNaN(l)) { o.push(h * 16 + l); i += 3; continue; }
+        o.push(b[i]); i++;
+      } else if (plus && b[i] === 43) { o.push(32); i++; }
+      else { o.push(b[i]); i++; }
+    }
+    return Buffer.from(o).toString('utf8');
+  };
+  const norm = (s, plus) => dec(s, plus).trim();
+  const cases = [
+    [' todo ', false, 'todo'],
+    ['%20todo%20', true, 'todo'],
+    ['%E7%99%BB%E5%BD%95', false, '登录'],
+    ['%E7%99%BB%E5%BD%95', true, '登录'],
+  ];
+  const ok = cases.every(([v, plus, want]) => norm(v, plus) === want);
+  /* 反例：修前的两种退化确实会漏（证明判据不是恒真） */
+  const beforeArgs = (v) => v.trim();
+  const beforeQuery = (v) => dec(v, true);
+  return ok
+    && beforeArgs('%E7%99%BB%E5%BD%95') !== '登录'      /* from_args 没解码 */
+    && beforeQuery('%20todo%20') !== 'todo'             /* from_query 没 trim */
+    /* `+` 开关有效：C++ 在 JSON 里不被破坏，在 query 里按空格解。
+       ⛔ 这里必须比 `dec` 不能比 `norm` —— norm 带 trim，'C  ' 会被
+       削成 'C'，第一版就是这么写错的（守卫自己恒红）。 */
+    && norm('C++', false) === 'C++'
+    && dec('C++', true) === 'C  '
+    && dec('C++', false) === 'C++';
+})());
+
+/* ⑤ MCP 失败 text 走 err_json（与成功 / HTTP 失败同形状） */
+t('守卫：MCP 失败 text 是 JSON 串且带 ok:false / error', (() => {
+  if (!rsSrc) return false;
+  const d = STRIP(R18_MCP);
+  const errSeg = d.slice(d.indexOf('Err(e) => json!({'));
+  return /"text": err_json\(&e\)/.test(errSeg)
+    && /"isError": true/.test(errSeg)
+    && /"text": v\.to_string\(\)/.test(d)          /* 成功仍是 JSON 串 */
+    && !/"text": e \}/.test(d);                     /* 不许退回裸文案 */
+})());
+
+/* ⑥ 数据等价：失败 text 与 HTTP err_json 字段一致，且可 JSON.parse */
+t('守卫：数据等价 —— MCP 失败 text 解析后与 HTTP 错误体同字段', (() => {
+  const e = '任务 tb-0001 不存在';
+  const errJson = JSON.stringify({ ok: false, error: e });
+  const http = JSON.parse(errJson);
+  let mcp;
+  try { mcp = JSON.parse(errJson); } catch { return false; }
+  /* 反例：修前的裸文案确实解析不了 */
+  let beforeOk = true;
+  try { JSON.parse(e); } catch { beforeOk = false; }
+  return http.ok === false && http.error === e
+    && mcp.ok === false && mcp.error === e
+    && beforeOk === false;
+})());
+
+/* ⑦ 两条通道的错误文案来自同一个 err_json（不许再写第二份形状） */
+t('守卫：错误体只有 err_json 一份定义', (() => {
+  if (!rsSrc) return false;
+  return (STRIP(rsSrc).match(/fn err_json\(/g) || []).length === 1
+    && /json!\(\{"ok": false, "error": e\}\)\.to_string\(\)/.test(rsSrc)
+    && /"text": err_json\(&e\)/.test(R18_MCP);
+})());
+
+/* ⑧ norm_id 仍用原签名（上一轮的守卫锚点不许被这轮改动带偏） */
+t('守卫：id 归一与过滤值归一互不干扰（norm_id / pct_decode 保留）', (() => {
+  if (!rsSrc) return false;
+  return /fn pct_decode\(s: &str\) -> String/.test(rsSrc)
+    && /pct_decode\(raw\)\.trim\(\)\.to_string\(\)/.test(rsSrc)
+    && /fn norm_id\(raw: &str\) -> String/.test(rsSrc)
+    /* 过滤构造函数不许改用 norm_id（那是给 id 的，语义不同） */
+    && !/norm_id\(/.test(STRIP(R18_ARGS) + STRIP(R18_QUERY));
+})());
+
+/* ⑨ 通杀：MCP 七个工具成功 / 失败两条路径的 text 都必须是 JSON 串 */
+t('守卫：通杀 —— MCP text 成功失败都是可解析的 JSON', (() => {
+  if (!rsSrc) return false;
+  const d = STRIP(R18_MCP);
+  const ok = d.slice(d.indexOf('match result {'), d.indexOf('Err(e) => json!({'));
+  const er = d.slice(d.indexOf('Err(e) => json!({'));
+  /* 成功：v.to_string()；失败：err_json(&e)。两者都不是裸变量 */
+  return /"text": v\.to_string\(\)/.test(ok)
+    && /"text": err_json\(&e\)/.test(er)
+    && !/"text": e\b/.test(ok + er);
+})());
+
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
   const nums = [...rd.matchAll(/(\d+)\s*项/g)].map((m) => Number(m[1]));

@@ -36,6 +36,8 @@
 - **MCP schema 的 6 处 type 声明放行宽进参数**：`tags` / `deps` 原来写 `"type": "array"`、`estimate` 写 `"type": "number"`，而三者的描述都写着「单个写成字符串也认 / 写成数字字符串也认」、服务端也确实认 —— **严格按 `inputSchema` 做本地校验的 MCP 客户端会在请求发出前就拒掉**，curl 手调却一切正常。与之前修过的「status enum 写死 7 个」「PATCH 多值列 type 单值」同族：指了路却把门关着。已改成 `["string","array"]` / `["number","string"]`，并加通杀守卫：凡描述说宽进的字段，type 必须真的放行。
 - **写响应形状两条通道统一**：新建/修改/删除/事件/注册，HTTP 一直用 `{"ok":true,"task":...}`，MCP 却是 `created` / `updated` / `task` 三个名字且没有 `ok`；`entered_notify_status` 反过来只有 MCP 有。现在 MCP 补上 `ok` 与 `task` 别名、HTTP PATCH 补上 `entered_notify_status`，**旧名 `created`/`updated` 全部保留**（不破坏已有客户端）—— 两条通道都能用 `resp.ok` / `resp.task.id` 解析。
 - **id 专属取值闭包改名 `id_of`**：上一轮给 `norm_id` 加了 `pct_decode`，而承载它的闭包仍叫通用的 `s` —— 将来谁复用它读正文，会把 `%20` 静默解成空格。四个调用点全是 id，改名把语义钉死；`search_hay` 里那个只读文本字段的 `s` 保持不变。
+- **过滤值归一只有一份 `norm_text`**：上一轮抽了 `TaskFilter.matches`，却留下 `from_args` / `from_query` **各自归一** —— MCP 只 `trim()`、HTTP 只 `pct_decode()`。于是同一个 AI 请求里 `?status=%20todo%20` 静默 0 条而 `{"status":" todo "}` 命中；`{"group":"%E7%99%BB%E5%BD%95"}` 筛不到而 HTTP 同名 query 能筛到（上一轮刚给 MCP 的 **id** 加了 `norm_id` 解码+trim，过滤值没跟上）。现在两条通道共用「百分号解码 + trim」，差别仅在协议要求的 `+` 语义：query 里 `+` 是空格，JSON 参数里是字面量（分组名「C++」不会被悄悄改成「C  」）。
+- **MCP 失败的 `text` 与成功 / HTTP 同形状**：上一轮把两条通道的成功响应统一成 `resp.ok` / `resp.task.id`，失败侧没跟上 —— MCP 成功的 `content[0].text` 是 JSON 串，失败却是裸文案，客户端统一 `JSON.parse(text)` 时直接抛 SyntaxError，把「任务不存在」误判成「服务端返回坏数据」；HTTP 失败是 `{"ok":false,"error":...}`，MCP 既没有 `ok:false` 也没有 `error`。现在失败 `text` 也走 `err_json`，`isError:true` 保留（协议要求）。两条通道、成功失败，解析后字段一致。
 - **CORS 允许 DELETE**：新增 `DELETE /api/tasks/{id}` 时 `Access-Control-Allow-Methods` 仍是 `GET, POST, PATCH, OPTIONS` —— 浏览器跨域 DELETE 的预检会被拒，而服务端用 curl 测一切正常，属于「新增能力但配套没跟上」。已补，并加通杀守卫：从 route 动态抽出所有方法名，逐个核对响应头。文件头的路由清单也同步补上 DELETE 和各通道新增的字段。
 - **工具表 7 个**：Rust 内置测试里 `assert_eq!(tools.len(), 6)` 同步改成 7，避免 `cargo test` 红。
 - **认领守卫与追加语义统一**：守卫注释原写着「PATCH 是覆盖语义」，而 `patch_vals` 早已改成追加 —— 任务已有 `["张三"]` 时，AI 传单值「李四」想共同认领被拒绝，界面却支持共同认领。现在抽成 `guard_assignee`，只看**最终集合是否保留所有现有认领人**：单值追加/数组加人放行，踢人拒绝，空串或空数组显式释放。哨兵值不参与判断。
@@ -127,7 +129,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（632 项，含源码扫描类守卫）
+  task-board-test.mjs   core 单测（641 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -152,7 +154,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 632 项
+npm run test:tb-core        # core 纯逻辑 641 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描
