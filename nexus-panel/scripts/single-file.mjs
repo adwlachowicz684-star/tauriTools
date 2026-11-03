@@ -317,10 +317,15 @@ export function checkSingleFile(html) {
     for (const u of dyn) {
       warnings.push({ kind: 'dynamic-import', url: u });
     }
-    /* 静态 import ./assets/... 说明根本不是一个 chunk，内联了个残的 */
-    const stat = [...body.matchAll(/(?:^|[\s;])import\s+[^"']*from\s*["'](\.[^"']+)["']/g)]
-      .map((d) => d[1]);
-    for (const u of stat) {
+    /* 静态 import ./assets/... 说明根本不是一个 chunk，内联了个残的。
+       ⛔ 只认「import 后跟空格再 from」会放过三种真实形态（2026-11-02 实测全漏）：
+       压缩无空格、re-export、副作用导入。漏的代价：复查报 ok=true → 构建流程
+       认为产物自包含 → asset 协议下运行到才 404，插件白屏且不报错。 */
+    const stat = [
+      ...body.matchAll(/(?:^|[;{}\s])(?:import|export)\b[^;'"]*?\bfrom\s*["'](\.[^"']+)["']/g),
+      ...body.matchAll(/(?:^|[;{}\s])import\s*["'](\.[^"']+)["']/g),
+    ].map((d) => d[1]);
+    for (const u of new Set(stat)) {
       warnings.push({ kind: 'static-import', url: u });
     }
   }

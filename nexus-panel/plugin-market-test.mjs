@@ -19,10 +19,7 @@
  *   ③ 卸载保留数据 —— 重装同 id 要读得回来；显式删才真删
  */
 
-import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync,
-  existsSync, renameSync,
-} from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, renameSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -34,7 +31,7 @@ import { createPluginDataStore } from './js/plugin-data-store.js';
 import { DATA_DIR_NAME } from './js/plugin-data-store.js';
 import { MANIFEST_FILE } from './js/plugin-manifest.js';
 import { ASSET_PREFIX, ASSET_SUFFIX, assetNameFor } from './js/plugin-store-client.js';
-import { LEDGER_FILE } from './js/plugin-ledger.js';
+import { LEDGER_FILE, readLedger, writeLedger } from './js/plugin-ledger.js';
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
@@ -406,6 +403,94 @@ console.log('\n--- 7. digest 完整性校验接线 ---');
   t('上传中的产物不被挑中 → 明确拒绝', ur.ok === false && ur.stage === 'asset',
     `${ur.stage} ${ur.error}`);
   t('上传中拒装后没有落目录', !existsSync(join(up.installedDir, 'demo')));
+}
+
+/* ==========================================================================
+   7. 台账坏了不许写回（安装/卸载两条路径）· 写失败不许抛异常
+   --------------------------------------------------------------------------
+   与项目里修过的「清单文件坏 → 被当成空 → 加一条就整份覆盖」完全同形，
+   只是载体换成插件台账：readLedger 解析失败时会把原文件改名备份并返回
+   **空台账** + corrupted:true。编排层只取 .ledger 就等于拿"空"当
+   "磁盘上没有记录"，recordInstall 合并后写回 → 其余插件的更新记录全没，
+   而且不报错。写台账失败则原先是 throw，调用方按 `if (!r.ok)` 写会撞上
+   穿透的异常，界面上只剩"点了没反应"。
+   ========================================================================== */
+console.log('\n--- 7. 台账损坏 / 写入失败 ---');
+{
+  const tar = makeTarGz(pluginEntries('demo', '1.0.0'));
+  const cfg = { assets: [{ name: assetNameFor('demo', '1.0.0') }], tar };
+
+  /* A. 损坏：先装出一份含其它插件的台账，再把它写成截断 JSON */
+  const ctx = makeMarket(cfg);
+  const { market, ledgerFile, installedDir } = ctx;
+  const ok0 = await market.install('owner/demo-repo');
+  t('前置：正常安装成功（本节不是空跑）', ok0.ok === true, `${ok0.stage || ''} ${ok0.error || ''}`);
+  const before = readLedgerSafe(ledgerFile);
+  const withOther = { ...before, plugins: { ...before.plugins,
+    other: { id: 'other', source: 'market', version: '1.0.0', repo: { owner: 'o', repo: 'r' } } } };
+  const broken = JSON.stringify(withOther).slice(0, -15);
+  writeFileSync(ledgerFile, broken);
+
+  /* 钉住缺陷本身，不钉实现：底层确实把坏文件当空台账、并改名备份 */
+  const st = readLedger(ledgerFile);
+  t('底层 readLedger 报 corrupted 且返回空台账（缺陷存在的证据）',
+    st.corrupted === true && Object.keys(st.ledger.plugins).length === 0,
+    `corrupted=${st.corrupted} plugins=${Object.keys(st.ledger.plugins).length}`);
+  t('底层把原文件改名备份，没有直接删', !!st.backup && existsSync(st.backup));
+  t('备份里还在其它插件的记录', /"other"/.test(st.backup ? readFileSync(st.backup, 'utf8') : ''));
+
+  /* 上面那次只读检查也会移走坏文件；重新写坏一份，验编排层的写前预检 */
+  writeFileSync(ledgerFile, broken);
+  const ri = await market.install('owner/demo-repo');
+  t('⛔ 台账损坏时安装被明确拒绝（stage=ledger，不是抛异常）',
+    ri && ri.ok === false && ri.stage === 'ledger', JSON.stringify(ri));
+  t('拒绝理由点名备份 / 人工核对（用户找得回数据）',
+    /备份|人工核对/.test(ri?.error || ''), ri?.error);
+  t('⛔ 损坏的台账没有被写回成「只剩这一条」', !existsSync(ledgerFile),
+    existsSync(ledgerFile) ? '被写回了' : '未写回');
+  const backups = readdirSync(dirname(ledgerFile)).filter((x) => x.includes('.corrupt-'));
+  t('原文件仍在备份里（其它插件记录没丢）',
+    backups.length > 0
+      && backups.some((b) => /"other"/.test(readFileSync(join(dirname(ledgerFile), b), 'utf8'))),
+    backups.join(','));
+
+  /* install 的预检已把坏文件移进备份；要验卸载/查更新，得各自重新写坏一份 */
+  writeFileSync(ledgerFile, broken);
+  const ru = await market.uninstall('demo');
+  t('⛔ 台账损坏时卸载同样被拒绝，插件没被删',
+    ru && ru.ok === false && ru.stage === 'ledger'
+      && existsSync(join(installedDir, 'demo', 'index.html')), JSON.stringify(ru));
+
+  writeFileSync(ledgerFile, broken);
+  const up = await market.checkUpdates();
+  t('checkUpdates 只读不崩，且把台账异常如实带出来（不吞）',
+    Array.isArray(up.results) && up.errors.length > 0, JSON.stringify(up.errors).slice(0, 160));
+
+  /* B. 写入失败：删掉台账目录，让原子写的临时文件落不下去 */
+  const ctx2 = makeMarket(cfg);
+  const ok2 = await ctx2.market.install('owner/demo-repo');
+  t('前置：B 场景首次安装成功', ok2.ok === true, `${ok2.stage || ''} ${ok2.error || ''}`);
+  rmSync(dirname(ctx2.ledgerFile), { recursive: true, force: true });
+  t('底层 writeLedger 确实会失败（本节不是空跑）',
+    writeLedger(ctx2.ledgerFile, { plugins: {} }).ok === false);
+  let ri2 = null, thrown2 = null;
+  try { ri2 = await ctx2.market.install('owner/demo-repo'); }
+  catch (e) { thrown2 = String((e && e.message) || e); }
+  t('⛔ 台账写入失败不抛异常（按契约返回结构化失败）',
+    !thrown2 && ri2 && ri2.ok === false && ri2.stage === 'ledger',
+    thrown2 || JSON.stringify(ri2));
+  t('写失败理由点名台账写入失败与人工核对',
+    /台账写入失败/.test(ri2?.error || '') && /人工核对|旧版本/.test(ri2?.error || ''), ri2?.error);
+
+  const ctx3 = makeMarket(cfg);
+  await ctx3.market.install('owner/demo-repo');
+  rmSync(dirname(ctx3.ledgerFile), { recursive: true, force: true });
+  let ru3 = null, thrown3 = null;
+  try { ru3 = await ctx3.market.uninstall('demo'); }
+  catch (e) { thrown3 = String((e && e.message) || e); }
+  t('⛔ 卸载时台账写入失败也不抛异常',
+    !thrown3 && ru3 && ru3.ok === false && ru3.stage === 'ledger',
+    thrown3 || JSON.stringify(ru3));
 }
 
 for (const d of cleanup) { try { rmSync(d, { recursive: true, force: true }); } catch { /* 临时目录 */ } }

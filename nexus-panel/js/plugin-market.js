@@ -129,11 +129,25 @@ export function createPluginMarket(p) {
 
   if (!ledgerFile) throw new Error('plugin-market: 缺少 ledgerFile');
 
-  const ledger = () => readLedger(ledgerFile).ledger;
-  const saveLedger = (l) => {
-    const r = writeLedger(ledgerFile, l);
-    if (!r.ok) throw new Error(`台账写入失败: ${r.error}`);
-  };
+  /*
+   * ⛔ 不能只取 `.ledger`：readLedger 解析失败时会把损坏文件改名备份、
+   * 返回**空台账** + corrupted:true。丢掉这个标记，下一步 recordInstall 就会
+   * 拿"空台账"当"磁盘上没有记录"合并写回 —— 装一个新插件，其余插件的
+   * 更新记录全没了，全程不报错（原文件只在 .corrupt-* 备份里，用户不知道）。
+   *
+   * 逐条跳过坏条目同理：内存里的台账已经比磁盘上少了几条，此时写回
+   * 就是把那几条真的删掉。所以只要 readLedger 报了任何异常，一律
+   * **不写回**，明确让人去核对。这与快照/清单那条"读不全就不写"同判据。
+   */
+  const readLedgerState = () => readLedger(ledgerFile);
+  const ledgerFault = (st) => (st.corrupted || st.errors.length
+    ? `台账不可安全写入（${st.errors.join('; ') || '文件已损坏'}）`
+      + `${st.backup ? `，原文件已备份到 ${st.backup}` : ''}`
+      + '；为避免覆盖其它插件的记录，本次操作已中止，请人工核对后再试'
+    : null);
+  /* 不再 throw：任何阶段的失败都要按文件头契约返回 {ok:false, stage, error}，
+     否则调用方按 `if (!r.ok)` 写就会撞上一个穿透的异常，界面上只剩"点了没反应"。 */
+  const saveLedger = (l) => writeLedger(ledgerFile, l);
 
   return {
     paths: { installedDir: root, ledgerFile, dataRoot, userDataRoot },
@@ -145,7 +159,10 @@ export function createPluginMarket(p) {
 
     /** 只报告不下载（D6）。台账没记录 = 查不到，正是契约①要防的失效。 */
     async checkUpdates() {
-      return ledgerCheckUpdates(ledger(), { fetch: fetchFn });
+      const st = readLedgerState();
+      const out = await ledgerCheckUpdates(st.ledger, { fetch: fetchFn });
+      const why = ledgerFault(st);
+      return { ...out, errors: [...(why ? [why] : []), ...(out.errors || [])] };
     },
 
     /** 用户数据：委托注入的 store，不在这里另实现一套文件读写 */
@@ -163,6 +180,11 @@ export function createPluginMarket(p) {
      * 且**不产生半状态**：目录没落、台账没记、旧版本原样还在。
      */
     async install(input, opts = {}) {
+      /* 写前预检：损坏/有跳过条目的台账一律不拿来做合并，也不再重读一次
+         （重读会撞上"原文件已被改名备份 → 看起来是干净空台账"而放行）。 */
+      const stLedger = readLedgerState();
+      const fault = ledgerFault(stLedger);
+      if (fault) return { ok: false, stage: 'ledger', error: fault };
       const digestWarnings = [];
       const parsed = parseRepoInput(input);
       if (!parsed) return { ok: false, stage: 'parse', error: '仓库地址无法解析' };
@@ -235,13 +257,18 @@ export function createPluginMarket(p) {
         if (s.ok) sha = s.sha;
         else warnings.push(`commit sha 未取到（${s.error}），更新指纹比对会退化`);
       }
-      const rec = recordInstall(ledger(), {
+      const rec = recordInstall(stLedger.ledger, {
         id, version: mf.manifest.version, repo, ref, sha, asset,
       });
       if (rec.errors.length) {
         return { ok: false, stage: 'ledger', error: `安装已落盘但台账记录失败: ${rec.errors.join('; ')}`, id };
       }
-      saveLedger(rec.ledger);
+      const wr = saveLedger(rec.ledger);
+      if (!wr.ok) {
+        return { ok: false, stage: 'ledger', id,
+          error: `安装已落盘但台账写入失败: ${wr.error}（旧版本可能已被替换，请人工核对）`,
+          warnings };
+      }
       warnings.push(...rec.warnings);
       return { ok: true, id, version: mf.manifest.version, replaced: r.replaced,
         dir: r.dir, sha, digestChecked: dv.checked, warnings, errors: [] };
@@ -252,11 +279,14 @@ export function createPluginMarket(p) {
      * 去留结论只来自 policy，且 source 取台账里的记录，不靠 id 前缀猜。
      */
     async uninstall(id, opts = {}) {
+      const stLedger = readLedgerState();
+      const fault = ledgerFault(stLedger);
+      if (fault) return { ok: false, id, stage: 'ledger', error: fault, removed: [], kept: [] };
       const plan = uninstallPlan({ root, id, userDataRoot });
       if (!plan.ok) return { ok: false, id, error: plan.reason, removed: [], kept: [] };
       if (!plan.exists) return { ok: false, id, error: '插件未安装', removed: [], kept: [] };
 
-      const entry = getEntry(ledger(), id);
+      const entry = getEntry(stLedger.ledger, id);
       const source = normalizeSource(entry && entry.source);
       const purge = shouldPurgeDataOnUninstall({
         id, source, removeUserData: opts.removeUserData === true,
@@ -265,8 +295,46 @@ export function createPluginMarket(p) {
       const r = uninstallPlugin({ root, id, userDataRoot, removeUserData: purge });
       if (!r.ok) return { ok: false, id, error: r.errors.join('; '), removed: r.removed, kept: r.kept };
 
-      const rec = recordUninstall(ledger(), id);   // 契约②
-      saveLedger(rec.ledger);
+      const rec = recordUninstall(stLedger.ledger, id);   // 契约②
+      const wr = saveLedger(rec.ledger);
+      if (!wr.ok) {
+        return { ok: false, stage: 'ledger', id,
+          error: `安装已落盘但台账写入失败: ${wr.error}（旧版本可能已被替换，请人工核对）`,
+          warnings };
+      }
+      warnings.push(...rec.warnings);
+      return { ok: true, id, version: mf.manifest.version, replaced: r.replaced,
+        dir: r.dir, sha, warnings, errors: [] };
+    },
+
+    /**
+     * 卸载。默认保留用户数据（D3）；显式 removeUserData 才删。
+     * 去留结论只来自 policy，且 source 取台账里的记录，不靠 id 前缀猜。
+     */
+    async uninstall(id, opts = {}) {
+      const stLedger = readLedgerState();
+      const fault = ledgerFault(stLedger);
+      if (fault) return { ok: false, id, stage: 'ledger', error: fault, removed: [], kept: [] };
+      const plan = uninstallPlan({ root, id, userDataRoot });
+      if (!plan.ok) return { ok: false, id, error: plan.reason, removed: [], kept: [] };
+      if (!plan.exists) return { ok: false, id, error: '插件未安装', removed: [], kept: [] };
+
+      const entry = getEntry(stLedger.ledger, id);
+      const source = normalizeSource(entry && entry.source);
+      const purge = shouldPurgeDataOnUninstall({
+        id, source, removeUserData: opts.removeUserData === true,
+      });
+
+      const r = uninstallPlugin({ root, id, userDataRoot, removeUserData: purge });
+      if (!r.ok) return { ok: false, id, error: r.errors.join('; '), removed: r.removed, kept: r.kept };
+
+      const rec = recordUninstall(stLedger.ledger, id);   // 契约②
+      const wr = saveLedger(rec.ledger);
+      if (!wr.ok) {
+        return { ok: false, id, stage: 'ledger',
+          error: `卸载已完成但台账写入失败: ${wr.error}`,
+          removed: r.removed, kept: r.kept };
+      }
       return { ok: true, id, source, purgeUserData: purge,
         removed: r.removed, kept: r.kept,
         plan: { fileCount: plan.fileCount, bytes: plan.bytes },

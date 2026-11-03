@@ -191,6 +191,34 @@ t('远程 script 进 remaining', wRemote.remaining.length === 1
   && wRemote.remaining[0].cls === 'remote');
 t('有远程引用时 ok=false', wRemote.ok === false);
 
+/*
+ * 静态残留的三种形态（2026-11-02 实测全部漏报）
+ * ------------------------------------------------------------
+ * 漏的代价：复查报 ok=true → 构建流程认为产物自包含 → asset 协议下运行到才 404
+ * → **插件白屏且不报错**。这正是文件头约束 3 要防的「生成器说自己没事」。
+ * 每条单独一个样本，只该触发 static-import 一条判据。
+ */
+const wMin = checkSingleFile(`<script type="module">import{a}from"./chunk.js";console.log(a)</script>`);
+t('压缩形态 import{a}from"./x.js" 被查出',
+  wMin.warnings.some((w) => w.kind === 'static-import' && w.url === './chunk.js'),
+  JSON.stringify(wMin.warnings));
+t('压缩形态样本不触发其它 warning 类型',
+  wMin.warnings.every((w) => w.kind === 'static-import'), JSON.stringify(wMin.warnings));
+
+const wReExport = checkSingleFile(`<script type="module">export { a } from "./chunk.js";</script>`);
+t('re-export（export ... from）被查出',
+  wReExport.warnings.some((w) => w.kind === 'static-import' && w.url === './chunk.js'),
+  JSON.stringify(wReExport.warnings));
+
+const wSide = checkSingleFile(`<script type="module">import "./chunk.js";</script>`);
+t('副作用导入 import "./x.js" 被查出',
+  wSide.warnings.some((w) => w.kind === 'static-import' && w.url === './chunk.js'),
+  JSON.stringify(wSide.warnings));
+
+/* 反向：判据放宽到「见 import 就报」也能让上面四条过，所以必须钉住不误报 */
+t('import.meta.url 不算残留引用',
+  checkSingleFile(`<script type="module">console.log(import.meta.url)</script>`).warnings.length === 0);
+
 /* ============================================================
    6. 真磁盘：走一遍真实读文件路径
    ============================================================ */
