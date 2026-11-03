@@ -2719,6 +2719,20 @@ const rsSeg = (anchor, len) => {
 };
 
 /*
+  ⛔ 按**语义边界**切源码片段，不要用固定字符数窗口。
+  这是反复出事的老毛病：往分支里加几行代码，目标就被推出窗口 →
+  守卫恒红（恒红的守卫等于没有守卫）。本轮一次性把涉及 list 分支的
+  5 条守卫全部收敛到这里。
+*/
+const rsBranch = (start, end) => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf(start);
+  if (i < 0) return '';
+  const j = end ? rsSrc.indexOf(end, i + start.length) : -1;
+  return j < 0 ? rsSrc.slice(i) : rsSrc.slice(i, j);
+};
+
+/*
  * **任务说明（summary）对 AI 通道完全不可用**：
  * · 建任务的 schema 里没有 summary
  * · 改任务的 schema 里没有 summary
@@ -3835,7 +3849,7 @@ t('守卫：MCP 列表带定义表', (() => {
     本轮在中间加了几行 schema 描述就把它推出了窗口 → 恒红。
     恒红的守卫等于没有守卫。改成钉住分支本身，与文件长度无关。
   */
-  const seg = rsSeg('"tb_list_tasks" => (||', 3200);
+  const seg = rsBranch('"tb_list_tasks" => (||', '"tb_create_task" =>');
   return !rsSrc || seg.indexOf('"defs": defs_of(&store)') >= 0;
 })());
 
@@ -6246,7 +6260,7 @@ const RS_SEG = (from, len) => {
   const i = rsSrc.indexOf(from);
   return i < 0 ? '' : rsSrc.slice(i, i + len);
 };
-const RS_LIST = RS_SEG('"tb_list_tasks" => (||', 2600);
+const RS_LIST = rsBranch('"tb_list_tasks" => (||', '"tb_create_task" =>');
 const RS_PATCH = RS_SEG('fn patch_task(', 9000);
 const RS_CREATE = RS_SEG('fn create_task(', 4200);
 const RS_HELPERS = RS_SEG('fn vals_from_map(', 5200);
@@ -6647,7 +6661,7 @@ const R11 = (a, len) => {
 const R11_PATCH = R11('fn patch_task(', 12000);
 const R11_CREATE = R11('fn create_task(', 3000);
 const R11_ROUTE = R11('("PATCH", ["api", "tasks", id])', 2200);
-const R11_LIST = R11('"tb_list_tasks" => (||', 2800);
+const R11_LIST = rsBranch('"tb_list_tasks" => (||', '"tb_create_task" =>');
 const R11_NOTIFY = R11('fn spawn_notify(', 2600);
 const R11_STRIP = STRIP(rsSrc);
 
@@ -6866,18 +6880,14 @@ t('守卫：AI 空事件不写盘、不刷新 updatedAt', (() => {
 /* ⑥ 四条读通道全部带 defs（自动覆盖，不硬编码位置） */
 t('守卫：四条读通道都带 defs（含两条单条通道）', (() => {
   if (!rsSrc) return false;
-  const anchors = [
-    '("GET", ["api", "tasks"])',
-    '("GET", ["api", "tasks", id])',
-    '"tb_list_tasks" => (||',
-    '"tb_get_task" => (||',
+  /* 每条通道各自切到**下一个分支锚点**，与文件长度无关 */
+  const pairs = [
+    ['("GET", ["api", "tasks"])', '("GET", ["api", "tasks", id])'],
+    ['("GET", ["api", "tasks", id])', '("POST", ["api", "tasks"])'],
+    ['"tb_list_tasks" => (||', '"tb_create_task" =>'],
+    ['"tb_get_task" => (||', '"tb_update_task" =>'],
   ];
-  return anchors.every((a) => {
-    const i = rsSrc.indexOf(a);
-    if (i < 0) return false;
-    /* 到下一个 500 字符内必须出现 defs_of(&store) */
-    return rsSrc.slice(i, i + 3600).includes('defs_of(&store)');
-  });
+  return pairs.every(([a, b]) => rsBranch(a, b).includes('defs_of(&store)'));
 })());
 
 /* ⑦ by 空串归一（历史里不该出现 by=""） */
@@ -6921,6 +6931,212 @@ t('守卫：跨端等价 —— 带空格的 status/priority 两条入口都认'
     && sf(b, 'detail') === 'x'
     && sf(b, 'reporter') === 'dev-a'
     && statusName(DEFAULT_FLOW, sf(b, 'status')) !== '';
+})());
+
+/*
+ * ============================================================
+ * 本轮：AI 通道「看得见却用不了 / 报错指错方向」一次性排查。
+ *
+ * 复现：
+ *   ① defs.statuses 只有内部 id（["s1","s2","s3"]），而 priorityDefs 是带 name
+ *      的完整对象 —— 同一份 defs 两种形状。AI 不知道「开发中」填哪个 id、
+ *      哪个是完成态；也不给流转图，只能靠一次次 PATCH 失败（还全是 500）试错
+ *   ② flow_transitions 空表返回 None → can_flow 退回**不裁剪**的默认图，
+ *      而前端 normalizeFlow 用的是**裁到当前状态清单**的默认图
+ *   ③ tb_list_tasks 不给 type/group 过滤，而 defs 明明给了 typeDefs/groupDefs
+ *   ④ 业务错误一律 500，同一 route 里 GET 单条「没找到」却是 404
+ *
+ * 修法：默认流转表抽一份常量（两处共用）、归一表一份（defs 与 patch 共用）、
+ * defs 补三个派生字段、list 补两个过滤、错误码集中分类。
+ * ============================================================
+ */
+
+const R13 = (a, len) => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf(a);
+  return i < 0 ? '' : rsSrc.slice(i, i + len);
+};
+const R13_CODE = STRIP(rsSrc);
+const R13_DEFS = R13('fn defs_of(', 1900);
+const R13_FLOWAI = R13('fn flow_for_ai(', 1900);
+const R13_STATDEF = R13('fn status_defs_of(', 2400);
+const R13_CANTR = R13('fn can_transition(', 500);
+const R13_APIST = R13('fn api_status(', 1100);
+const R13_LIST = rsBranch('"tb_list_tasks" => (||', '"tb_create_task" =>');
+const R13_TOOLS = R13('pub fn mcp_tools(', 13000);
+const R13_ROUTE = rsBranch('fn route(', '\nfn ');
+
+/* ① defs 三个派生字段一个都不能少 */
+t('守卫：defs 给 AI 完整流程视图（statusDefs / transitions / initial）', (() => {
+  if (!rsSrc) return false;
+  return /"statusDefs":\s*status_defs_of\(store\)/.test(R13_DEFS)
+    && /"transitions":\s*flow_for_ai\(store\)/.test(R13_DEFS)
+    && /"initial":\s*statuses_for\(store\)\.first\(\)/.test(R13_DEFS)
+    && /"statuses":\s*statuses_for\(store\)/.test(R13_DEFS);
+})());
+
+/* ② 默认流转表只有一份常量，两处共用（不许再抄第二份字面量） */
+t('守卫：默认流转表一份常量（can_transition 与 flow_for_ai 共用）', (() => {
+  if (!rsSrc) return false;
+  return /const DEFAULT_TRANSITIONS: &\[\(&str, &\[&str\]\)\]/.test(R13_CODE)
+    && /DEFAULT_TRANSITIONS/.test(R13_CANTR)
+    && /DEFAULT_TRANSITIONS/.test(R13_FLOWAI)
+    && (R13_CODE.match(/\("todo", &\["claimed"/g) || []).length === 1;
+})());
+
+/* ③ 归一表：自定义优先、裁到当前状态清单、空表回退裁剪默认图 */
+t('守卫：flow_for_ai 与前端 normalizeFlow 同一判据', (() => {
+  if (!rsSrc) return false;
+  return /fn flow_for_ai\(store: &Value\) -> HashMap/.test(R13_FLOWAI)
+    && /let ids = statuses_for\(store\)/.test(R13_FLOWAI)
+    && /let has = \|id: &str\| ids\.iter\(\)\.any\(/.test(R13_FLOWAI)
+    && /if out\.is_empty\(\)/.test(R13_FLOWAI)
+    && /DEFAULT_TRANSITIONS/.test(R13_FLOWAI)
+    /* 即使数组被裁空也保留 key（与前端一致：有 key 就不回退默认表） */
+    && /out\.insert\(k\.clone\(\), arr\)/.test(R13_FLOWAI);
+})());
+
+/* ④ patch_task 与 defs 用同一份流转表（AI 看到的图就是校验的图） */
+t('守卫：PATCH 校验与 defs.transitions 共用归一表', (() => {
+  if (!rsSrc) return false;
+  return /let flow = Some\(flow_for_ai\(&store\)\)/.test(R13_CODE)
+    && !/let flow = flow_transitions\(&store\)/.test(R13_CODE);
+})());
+
+/* ⑤ status_defs_of 归一（id/name/color/enter/done 全给） */
+t('守卫：statusDefs 是完整定义而非 id 列表', (() => {
+  if (!rsSrc) return false;
+  return /fn status_defs_of\(store: &Value\)/.test(R13_STATDEF)
+    && /DEFAULT_STATUS_DEFS/.test(R13_STATDEF)
+    && /"name": name/.test(R13_STATDEF)
+    && /"color": color/.test(R13_STATDEF)
+    && /"enter": enter/.test(R13_STATDEF)
+    /*
+      ⛔ 第一版只查 `"done": done` 出现没出现 —— 注入「把自定义分支的 done
+      改成 false」时，默认分支那处还在，守卫照样全绿（本轮注入 5 抓到的假绿）。
+      两处都必须带 done，且自定义分支要真的从数据里读 done 布尔。
+    */
+    && (R13_STATDEF.match(/"done": done/g) || []).length === 2
+    && /let done = one\.get\("done"\)\.and_then\(\|v\| v\.as_bool\(\)\) == Some\(true\)/.test(R13_STATDEF)
+    && /seen\.contains\(&id\)/.test(R13_STATDEF);
+})());
+
+/* ⑥ 跨端：Rust 默认状态定义与前端 DEFAULT_FLOW 的 id / name 逐项一致 */
+t('守卫：跨端默认状态定义一致（id / name 逐项）', (() => {
+  if (!rsSrc) return false;
+  const m = R13_CODE.match(/const DEFAULT_STATUS_DEFS[^=]*=\s*&\[([\s\S]*?)\n\];/);
+  if (!m) return false;
+  const pairs = [...m[1].matchAll(/\("([^"]+)", "([^"]+)"/g)].map((x) => [x[1], x[2]]);
+  const front = DEFAULT_FLOW.statuses.map((x) => [x.id, x.name]);
+  return pairs.length === front.length
+    && pairs.every((p, k) => p[0] === front[k][0] && p[1] === front[k][1]);
+})());
+
+/* ⑦ tb_list_tasks 认 type / group 过滤（含 __none__），schema 也列了 */
+t('守卫：AI 列任务可按 type / group 过滤（不再看得见却筛不了）', (() => {
+  if (!rsSrc) return false;
+  return /let typ = s\("type"\)/.test(R13_LIST)
+    && /let group = s\("group"\)/.test(R13_LIST)
+    && /for \(field, want\) in \[\("type", &typ\), \("group", &group\)\]/.test(R13_LIST)
+    && /w == "__none__"/.test(R13_LIST)
+    && /"type":\s*\{ "type": "string", "description": "按任务类型 id 过滤/.test(R13_TOOLS)
+    && /"group":\s*\{ "type": "string", "description": "按分组名过滤/.test(R13_TOOLS);
+})());
+
+/* ⑧ 业务错误不再一律 500（route 里 6 处统一走 api_status） */
+t('守卫：HTTP 业务错误按语义分类（不再一律 500）', (() => {
+  if (!rsSrc) return false;
+  return /fn api_status\(e: &str\) -> u16/.test(R13_CODE)
+    && /e\.contains\("不存在"\)/.test(R13_APIST)
+    && /IO_PREFIXES/.test(R13_APIST)
+    && (R13_ROUTE.match(/Err\(e\) => \(500, err_json\(&e\), None\)/g) || []).length === 0
+    && (R13_ROUTE.match(/Err\(e\) => \(api_status\(&e\), err_json\(&e\), None\)/g) || []).length === 6;
+})());
+
+/* ⑨ IO 前缀清单覆盖所有文件/序列化错误文案（改文案时不会静默失准） */
+t('守卫：api_status 的 IO 前缀清单覆盖全部 I/O 错误', (() => {
+  if (!rsSrc) return false;
+  const need = ['读取 tasks.json 失败', 'tasks.json 已损坏', 'tasks.json 顶层不是对象',
+    '序列化失败', '写临时文件失败', '替换 tasks.json 失败',
+    'tasks 不是数组', 'agents 不是数组', '任务不是对象'];
+  return need.every((x) => R13_APIST.includes('"' + x + '"'))
+    /* 这些文案确实还在源码里（没有清掉错误来源却忘了更新清单） */
+    && need.every((x) => R13_CODE.includes(x));
+})());
+
+/* ⑩ 通杀：list 分支不许再用固定字符数窗口（本轮 5 条守卫恒红的根因） */
+t('守卫：源码扫描不再对 list 分支用固定窗口（通杀）', (() => {
+  return !/rsSeg\('"tb_list_tasks"[^)]*, \d+\)/.test(testSrc)
+    && !/RS_SEG\('"tb_list_tasks"[^)]*, \d+\)/.test(testSrc)
+    && !/R11\('"tb_list_tasks"[^)]*, \d+\)/.test(testSrc)
+    && /rsBranch\('"tb_list_tasks"/.test(testSrc);
+})());
+
+/* ⑪ 跨端等价：归一后的流转表与 normalizeFlow 一致 */
+const R13_FLOW_EQ = (store) => {
+  const ids = (store.flow && Array.isArray(store.flow.statuses) && store.flow.statuses.length)
+    ? store.flow.statuses.map((x) => (typeof x === 'string' ? x : (x && x.id) || ''))
+    : DEFAULT_FLOW.statuses.map((x) => x.id);
+  const has = (id) => ids.indexOf(id) >= 0;
+  const raw = store.flow && store.flow.transitions;
+  const out = {};
+  if (raw && typeof raw === 'object') {
+    for (const from of Object.keys(raw)) {
+      if (!has(from)) continue;
+      out[from] = (Array.isArray(raw[from]) ? raw[from] : []).filter((x) => has(x));
+    }
+  }
+  if (Object.keys(out).length === 0) {
+    for (const from of Object.keys(DEFAULT_FLOW.transitions)) {
+      if (!has(from)) continue;
+      out[from] = DEFAULT_FLOW.transitions[from].filter((x) => has(x));
+    }
+  }
+  return out;
+};
+t('守卫：跨端等价 —— 流转表归一结果逐项相同', (() => {
+  const cases = [
+    { flow: { statuses: [{ id: 's1' }, { id: 's2' }, { id: 's3' }] } },
+    { flow: { statuses: [{ id: 'todo' }, { id: 'doing' }, { id: 'done' }] } },
+    { flow: { statuses: [{ id: 's1' }, { id: 's2' }], transitions: { s1: ['s2', 'ghost'], ghost: ['s1'] } } },
+    { flow: { statuses: [{ id: 'todo' }, { id: 'doing' }], transitions: {} } },
+  ];
+  return cases.every((c) => {
+    const want = normalizeFlow(c.flow).transitions;
+    return JSON.stringify(R13_FLOW_EQ(c)) === JSON.stringify(want);
+  });
+})());
+
+/* ⑫ 跨端等价：status_defs_of 的归一与 normalizeFlow 一致 */
+const R13_STAT_EQ = (store) => {
+  const raw = store.flow && Array.isArray(store.flow.statuses) ? store.flow.statuses : null;
+  const seen = new Set();
+  const out = [];
+  if (raw) {
+    for (const one of raw) {
+      const id = (typeof one === 'string' ? one : (one && one.id) || '').trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const o = typeof one === 'object' && one ? one : {};
+      out.push({ id, name: (o.name || id), color: (o.color || '#78716c'),
+        enter: (o.enter || `标为「${o.name || id}」`), done: o.done === true });
+    }
+  }
+  if (out.length === 0) {
+    for (const x of DEFAULT_FLOW.statuses) out.push({ ...x });
+  }
+  return out;
+};
+t('守卫：跨端等价 —— statusDefs 归一与 normalizeFlow 一致', (() => {
+  const cases = [
+    { flow: { statuses: [{ id: 's1', name: '待开工', color: '#111', done: false },
+                         { id: ' s2 ', name: '', done: true }, 's1'] } },
+    {},
+  ];
+  return cases.every((c) => {
+    const want = normalizeFlow(c.flow).statuses.map((x) => ({ id: x.id, name: x.name, color: x.color, enter: x.enter, done: x.done }));
+    return JSON.stringify(R13_STAT_EQ(c)) === JSON.stringify(want);
+  }) && R13_STAT_EQ(cases[0]).length === 2;
 })());
 
 const readmeCount = (() => {

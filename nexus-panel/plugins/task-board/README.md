@@ -20,6 +20,10 @@
 - **deps 通道补齐**：建任务与改任务都认 `deps`（字符串或数组），写入侧按前端 `normalizeTask` 同一判据清洗（trim / 去空 / 去重 / 去自依赖），指向不存在任务的 id 保留给界面标「前置不存在」。两处 schema 都列了这个字段。
 - **空事件不写盘**：`tb_add_event` 无 `note` 且 `action` 缺省或为 `note` 时返回错误，不再 push 一条空历史、不再刷新 `updatedAt`。
 - **四条读通道都带 defs**：`GET /api/tasks`、`GET /api/tasks/{id}`、`tb_list_tasks`、`tb_get_task` 口径一致。
+- **defs 给 AI 完整流程视图**：除 `statuses`（id 列表，保留兼容）外新增 `statusDefs`（每个状态的名字/颜色/进入动词/是否完成态）、`transitions`（界面实际生效的流转图）、`initial`（新建任务必须落在的状态）。三者都从 `flow` 派生，不新增落盘字段，导入导出原样带回。
+- **默认流转表抽成一份常量**：`can_transition` 与 `flow_for_ai` 共用 `DEFAULT_TRANSITIONS`；`patch_task` 与 `defs.transitions` 共用同一份归一表（自定义优先、裁到当前状态清单、空表回退裁剪默认图），AI 看到的图就是服务端校验的图。
+- **AI 列任务可按 type / group 过滤**：支持多值列任一命中与 `__none__` 查空值，两处 schema 都列了参数。
+- **HTTP 业务错误按语义分类**：参数错误 400、目标不存在 404、文件/序列化错误仍 500。原来一律 500，AI 会当成服务端故障去重试、去查端口和 token。
 
 ### 写入侧归一化（与界面同一判据）
 
@@ -108,7 +112,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（583 项，含源码扫描类守卫）
+  task-board-test.mjs   core 单测（595 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -133,7 +137,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 583 项
+npm run test:tb-core        # core 纯逻辑 595 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描

@@ -40,6 +40,32 @@ const HISTORY_CAP: usize = 100;
 /// 前端 core.mjs 的 STATUSES 与本行逐项同序（守卫第 22 节盯着）。
 const STATUSES: [&str; 7] = ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"];
 
+/// 默认流转图。与前端 `DEFAULT_FLOW.transitions` 同一份。
+/// ⛔ 原先这份字面量只存在于 `can_transition` 内部，defs 想给 AI 看流转图
+/// 就只能再抄一遍 —— 两份字面量必然漂移。抽成常量，两处共用。
+const DEFAULT_TRANSITIONS: &[(&str, &[&str])] = &[
+    ("todo", &["claimed", "doing", "hold", "cancelled"]),
+    ("claimed", &["doing", "todo", "hold", "cancelled"]),
+    ("doing", &["review", "todo", "hold", "cancelled"]),
+    ("hold", &["doing", "todo", "cancelled"]),
+    ("review", &["done", "doing", "hold", "cancelled"]),
+    ("done", &["review"]),
+    ("cancelled", &["todo"]),
+];
+
+/// 默认状态**完整定义**（id / 名字 / 颜色 / 进入动词 / 是否完成态）。
+/// 与前端 `DEFAULT_FLOW.statuses` 逐项对齐；跨端守卫按名字集合比对。
+/// 没配自定义流程时，defs.statusDefs 就回这份 —— AI 也看得见"待审查"对应 review。
+const DEFAULT_STATUS_DEFS: &[(&str, &str, &str, &str, bool)] = &[
+    ("todo", "待办", "#78716c", "退回", false),
+    ("claimed", "已认领", "#0ea5e9", "认领", false),
+    ("doing", "进行中", "#3b82f6", "开始", false),
+    ("hold", "挂起", "#f59e0b", "挂起", false),
+    ("review", "待审查", "#a855f7", "提交审查", false),
+    ("done", "已完成", "#22c55e", "通过", true),
+    ("cancelled", "已取消", "#ef4444", "取消", false),
+];
+
 /// 合法优先级 **P0~P5 六档**，与前端 types.ts 的 PRIORITY_ORDER 逐项同序
 /// （守卫钉着，不一致时 AI 通道会拒掉界面上明明能选的档位）。
 ///
@@ -679,7 +705,7 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             Ok(store) => ok_json(json!({"ok": true, "tasks": store.get("tasks").cloned().unwrap_or(json!([])),
                        "agents": store.get("agents").cloned().unwrap_or(json!([])),
                        "defs": defs_of(&store)})),
-            Err(e) => (500, err_json(&e), None),
+            Err(e) => (api_status(&e), err_json(&e), None),
         },
         ("GET", ["api", "tasks", id]) => match load_tasks(dir) {
             Ok(store) => match find_task(&store, id) {
@@ -687,12 +713,12 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
                 Some(t) => ok_json(json!({"ok": true, "task": t, "defs": defs_of(&store)})),
                 None => (404, r#"{"ok":false,"error":"task not found"}"#.to_string(), None),
             },
-            Err(e) => (500, err_json(&e), None),
+            Err(e) => (api_status(&e), err_json(&e), None),
         },
         ("POST", ["api", "tasks"]) => match parse_body(&req.body) {
             Ok(body) => match create_task(dir, &body) {
                 Ok(t) => ok_json(json!({"ok": true, "task": t})),
-                Err(e) => (500, err_json(&e), None),
+                Err(e) => (api_status(&e), err_json(&e), None),
             },
             Err(e) => (400, err_json(&e), None),
         },
@@ -726,21 +752,21 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
                     });
                     (200, json!({"ok": true, "task": t}).to_string(), notice)
                 }
-                Err(e) => (500, err_json(&e), None),
+                Err(e) => (api_status(&e), err_json(&e), None),
             },
             Err(e) => (400, err_json(&e), None),
         },
         ("POST", ["api", "tasks", id, "events"]) => match parse_body(&req.body) {
             Ok(body) => match add_event(dir, id, &body) {
                 Ok(t) => (200, json!({"ok": true, "task": t}).to_string(), None),
-                Err(e) => (500, err_json(&e), None),
+                Err(e) => (api_status(&e), err_json(&e), None),
             },
             Err(e) => (400, err_json(&e), None),
         },
         ("POST", ["api", "agents"]) => match parse_body(&req.body) {
             Ok(body) => match register_agent(dir, &body) {
                 Ok(agents) => (200, json!({"ok": true, "agents": agents}).to_string(), None),
-                Err(e) => (500, err_json(&e), None),
+                Err(e) => (api_status(&e), err_json(&e), None),
             },
             Err(e) => (400, err_json(&e), None),
         },
@@ -826,6 +852,35 @@ fn spawn_notify(notify_url: &str, body: &str) {
     });
 }
 
+/*
+  ⛔ 业务错误原来**一律 500**。而同一个 route 里，GET 单条「没找到」已经是 404、
+  parse_body 失败已经是 400 —— 同一函数内两种判据。
+
+  后果不只是"码不好看"：AI 客户端看到 5xx 会判定服务端故障，去查端口 / token /
+  重试（很多 HTTP 客户端对 5xx 自动重试），而错误其实是确定性的参数问题
+  （非法优先级、任务不存在、没有可应用的变更、空事件、流转不允许）。
+  排查方向整个反了 —— 与前几轮修的「流转失败文案把人往任务不存在上引」
+  「通知失败静默让用户在 对端 排查」是同一族：报错把人往反方向引。
+
+  分类集中在这一处：不带 I/O 特征的业务错误 = 400；目标不存在 = 404；
+  load_tasks / save_tasks 的 `?` 传播错误带这些固定前缀 = 500（真的服务端/文件问题）。
+  守卫钉住前缀清单覆盖所有 I/O 错误文案，改文案时不会静默失准。
+*/
+fn api_status(e: &str) -> u16 {
+    const IO_PREFIXES: &[&str] = &[
+        "读取 tasks.json 失败", "tasks.json 已损坏", "tasks.json 顶层不是对象",
+        "序列化失败", "写临时文件失败", "替换 tasks.json 失败",
+        "tasks 不是数组", "agents 不是数组", "任务不是对象",
+    ];
+    if e.contains("不存在") {
+        404
+    } else if IO_PREFIXES.iter().any(|p| e.starts_with(p)) {
+        500
+    } else {
+        400
+    }
+}
+
 fn err_json(e: &str) -> String {
     json!({"ok": false, "error": e}).to_string()
 }
@@ -859,19 +914,21 @@ pub fn mcp_tools() -> Vec<Value> {
     vec![
         tool(
             "tb_list_tasks",
-            "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）与生效状态清单（statuses）——建任务或改字段前先读它，才知道分组、类型、认领人、优先级各有哪些可选值",
+            "列出任务看板全部任务（可按状态/优先级/类型/分组/标签/认领人/关键词过滤）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）、生效状态清单（statuses）、状态完整定义 statusDefs（名字/颜色/是否完成态）、界面实际生效的流转图 transitions、以及新建任务必须落在的初始状态 initial——建任务或改字段前先读它，才知道各列有哪些可选值、当前状态能流转到哪",
             json!({
                 "status":   { "type": "string", "description": "按状态过滤，缺省=全部。⛔ 不写 enum：用户可能自定义过流程，写死那 7 个会让严格校验 schema 的 MCP 客户端在本地就拒掉自定义状态；实际生效的状态看响应里的 defs.statuses" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "按优先级过滤" },
                 "tag":      { "type": "string", "description": "按标签过滤" },
                 "assignee": { "type": "string", "description": "按认领人过滤（该列可多选，数组里的任一值命中即算）；传 \"__none__\" 查未认领" },
+                "type":     { "type": "string", "description": "按任务类型 id 过滤（可多选，任一命中即算）；传 \"__none__\" 查未分类。可选值看响应 defs.typeDefs" },
+                "group":    { "type": "string", "description": "按分组名过滤（可多选，任一命中即算）；传 \"__none__\" 查未分组。可选值看响应 defs.groupDefs" },
                 "q":        { "type": "string", "description": "关键词，匹配 id/标题/详情/说明，以及状态/优先级/分组/认领人/类型/标签的原始值与定义表显示名（多值列逐个匹配；自定义流程的状态按流程里配的名字，默认流程按状态 id）" },
             }),
             vec![],
         ),
         tool(
             "tb_create_task",
-            "新建任务（发现问题→建任务交给其他窗口认领）",
+            "新建任务（发现问题→建任务交给其他窗口认领）。新建只允许落在初始状态（看 defs.initial），想流转走 tb_update_task",
             json!({
                 "title":    { "type": "string", "description": "一句话说清问题" },
                 "detail":   { "type": "string", "description": "复现步骤/期望行为，可选" },
@@ -897,7 +954,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "流转/修改任务：认领、开工、提交审查、通过、打回、退回、改字段。返回 entered_notify_status 只表示本次进入了通知状态；webhook 由 HTTP PATCH 通道发出，MCP 通道不发通知",
             json!({
                 "id":       { "type": "string", "description": "任务 id" },
-                "status":   { "type": "string", "description": "目标状态（流转图校验，服务端按本项目 flow 校验）。⛔ 不写 enum：写死默认 7 个会让自定义流程的状态在客户端被拒；先调 tb_list_tasks 看响应里的 defs.statuses" },
+                "status":   { "type": "string", "description": "目标状态（流转图校验，服务端按本项目 flow 校验）。⛔ 不写 enum：写死默认 7 个会让自定义流程的状态在客户端被拒；先调 tb_list_tasks 看 defs.statuses（合法 id）、defs.statusDefs（名字/完成态）、defs.transitions（当前状态能去哪）" },
                 "assignee": { "type": "string", "description": "认领人；该列可多选且任务上已是数组时按追加处理（不会挤掉他人）；已被他人认领且不是共同认领会被拒绝；空串=释放全部认领" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
@@ -957,6 +1014,8 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
             let priority = s("priority");
             let tag = s("tag");
             let assignee = s("assignee");
+            let typ = s("type");
+            let group = s("group");
             let q = s("q").map(|x| x.to_lowercase());
             let hit: Vec<&Value> = tasks
                 .iter()
@@ -989,6 +1048,29 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
                             }
                         } else if !cur.iter().any(|x| x == asg.as_str()) {
                             return false;
+                        }
+                    }
+                    /*
+                      ⛔ type / group 原来根本不能筛 —— 而 defs 里明明给了
+                      typeDefs / groupDefs 可选值，界面也能按这两列筛。
+                      AI 想「列出所有开发类型的任务」只能拉全量自己过滤，
+                      又是「看得见却用不了」。与 assignee 同口径：多值列
+                      任一命中；__none__ 查空值（哨兵值不算真实值）。
+                    */
+                    for (field, want) in [("type", &typ), ("group", &group)] {
+                        if let Some(w) = want {
+                            let cur = vals_of(t, field);
+                            let real: Vec<&String> = cur
+                                .iter()
+                                .filter(|v| !(v.starts_with("__") && v.ends_with("__")))
+                                .collect();
+                            if w == "__none__" {
+                                if !real.is_empty() {
+                                    return false;
+                                }
+                            } else if !real.iter().any(|v| v.as_str() == w.as_str()) {
+                                return false;
+                            }
                         }
                     }
                     /* 与界面顶栏同一口径：说明 + 所有 enum 列的原始值与显示名 */
@@ -1239,6 +1321,16 @@ fn defs_of(store: &Value) -> Value {
         "assigneeDefs": list("assigneeDefs", "assignee"),
         "priorityDefs": list("priorityDefs", "priority"),
         "statuses":  statuses_for(store),
+        /*
+          ⛔ 只有 id 列表不够：AI 看不见名字/颜色/完成态，也看不见流转图，
+          于是只能靠一次次 PATCH 失败（还全是 500）去试哪条边能走。
+          三个字段都是**从 tasks.json 的 flow 派生**，不新增落盘字段，
+          导入导出原样带回。statuses（id 列表）保留，不破坏已有客户端。
+        */
+        "statusDefs": status_defs_of(store),
+        "transitions": flow_for_ai(store),
+        "initial": statuses_for(store).first().cloned()
+                    .unwrap_or_else(|| "todo".to_string()),
     })
 }
 
@@ -1598,6 +1690,115 @@ fn flow_transitions(store: &Value) -> Option<HashMap<String, Vec<String>>> {
     if out.is_empty() { None } else { Some(out) }
 }
 
+/// **界面实际生效**的流转表。与前端 `normalizeFlow` 同一判据：
+///   自定义表优先（from / to 不在当前状态清单里的边裁掉）；
+///   没配或全空时用默认图**裁到当前状态清单** —— 不留指向已删状态的边。
+///
+/// ⛔ 永不为 None。原来 `flow_transitions` 在空表时返回 None，
+/// `can_flow(None, …)` 就退回**不裁剪**的默认图：自定义状态删掉 review 后，
+/// 界面上那条边已经没了，服务端却还按默认图认它（只靠 allowed 兜底，
+/// 一旦 allowed 的顺序/内容变化就会漏）。defs 与 patch_task 共用这一份，
+/// AI 看到的流转图就是服务端真正用来校验的那张。
+fn flow_for_ai(store: &Value) -> HashMap<String, Vec<String>> {
+    let ids = statuses_for(store);
+    let has = |id: &str| ids.iter().any(|i| i.as_str() == id);
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    if let Some(obj) = store
+        .get("flow")
+        .and_then(|f| f.get("transitions"))
+        .and_then(|v| v.as_object())
+    {
+        for (k, v) in obj.iter() {
+            if !has(k.as_str()) {
+                continue;
+            }
+            let arr: Vec<String> = match v.as_array() {
+                Some(a) => a
+                    .iter()
+                    .filter_map(|x| x.as_str())
+                    .map(|x| x.to_string())
+                    .filter(|x| has(x.as_str()))
+                    .collect(),
+                None => Vec::new(),
+            };
+            /* 即使数组被裁空也保留 key（与前端一致：有 key 就不回退默认表） */
+            out.insert(k.clone(), arr);
+        }
+    }
+    if out.is_empty() {
+        for &(from, tos) in DEFAULT_TRANSITIONS {
+            if !has(from) {
+                continue;
+            }
+            let arr: Vec<String> = tos
+                .iter()
+                .map(|x| x.to_string())
+                .filter(|x| has(x.as_str()))
+                .collect();
+            out.insert(from.to_string(), arr);
+        }
+    }
+    out
+}
+
+/// 状态的**完整定义**：id / name / color / enter / done。
+///
+/// ⛔ defs.statuses 只有 id 列表，AI 想「把任务流转到开发中」不知道该填 s2，
+/// 也不知道哪个是完成态 —— 而 defs.priorityDefs / groupDefs 都是带 name 的
+/// 完整对象，同一份 defs 里两种形状。自定义流程越用得多，这个坑越明显。
+/// 归一判据与前端 `normalizeFlow` 一致（id trim / name 缺省用 id / done 布尔）。
+fn status_defs_of(store: &Value) -> Value {
+    let ids = statuses_for(store);
+    let raw = store
+        .get("flow")
+        .and_then(|f| f.get("statuses"))
+        .and_then(|v| v.as_array());
+    let mut out: Vec<Value> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    if let Some(arr) = raw {
+        for one in arr.iter() {
+            let id = match one.as_str() {
+                Some(v) => v.trim().to_string(),
+                None => one
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
+            };
+            if id.is_empty() || seen.contains(&id) {
+                continue;
+            }
+            seen.push(id.clone());
+            let name = match one.get("name").and_then(|v| v.as_str()) {
+                Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+                _ => id.clone(),
+            };
+            let color = match one.get("color").and_then(|v| v.as_str()) {
+                Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+                _ => "#78716c".to_string(),
+            };
+            let enter = match one.get("enter").and_then(|v| v.as_str()) {
+                Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+                _ => format!("标为「{}」", name),
+            };
+            let done = one.get("done").and_then(|v| v.as_bool()) == Some(true);
+            out.push(json!({ "id": id, "name": name, "color": color,
+                            "enter": enter, "done": done }));
+        }
+    }
+    if out.is_empty() {
+        for &(id, name, color, enter, done) in DEFAULT_STATUS_DEFS {
+            if !ids.iter().any(|i| i.as_str() == id) {
+                continue;
+            }
+            out.push(json!({ "id": id, "name": name, "color": color,
+                            "enter": enter, "done": done }));
+        }
+    }
+    Value::Array(out)
+}
+
 /// 按这份数据的配置判断能不能流转。没配过流转表就走默认那张图。
 ///
 /// ⛔ 表里写了起点但没列目标 → **不放行**：
@@ -1623,16 +1824,7 @@ fn can_transition(from: &str, to: &str) -> bool {
     if from == to {
         return true;
     }
-    let allowed: &[(&str, &[&str])] = &[
-        ("todo", &["claimed", "doing", "hold", "cancelled"]),
-        ("claimed", &["doing", "todo", "hold", "cancelled"]),
-        ("doing", &["review", "todo", "hold", "cancelled"]),
-        ("hold", &["doing", "todo", "cancelled"]),
-        ("review", &["done", "doing", "hold", "cancelled"]),
-        ("done", &["review"]),
-        ("cancelled", &["todo"]),
-    ];
-    allowed
+    DEFAULT_TRANSITIONS
         .iter()
         .find(|(f, _)| *f == from)
         .map(|(_, ts)| ts.contains(&to))
@@ -1769,7 +1961,8 @@ fn patch_task(
       会一直持有 &mut store，那时候再借 &store 会被借用检查器拒（E0502）。
     */
     let allowed = statuses_for(&store);
-    let flow = flow_transitions(&store);
+    /* 与 defs.transitions 同一份归一表：AI 看到的图就是这里校验的图 */
+    let flow = Some(flow_for_ai(&store));
     let by = match str_field(body, "by") {
         Some(s) if !s.is_empty() => s,
         _ => "manual".to_string(),
