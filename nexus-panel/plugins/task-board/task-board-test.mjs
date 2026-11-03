@@ -44,6 +44,7 @@ import {
   toggleFieldVal,
   MULTI_OK,
   COLOR_OK,
+  fieldVals,
   colFilterValues,
   dependsOn,
   activeColFilters,
@@ -6613,6 +6614,161 @@ t('守卫：跨端等价 —— 自定义流程送审状态两条通道一致', 
   const mcp = entered(cfg, 's2', 'gate');   /* 透传后 MCP 用的是同一个 cfg */
   const oldMcp = entered('review', 's2', 'gate');
   return watchUsed && http === true && mcp === true && oldMcp === false;
+})());
+
+/*
+ * ============================================================
+ * 本轮：把「前端修过、Rust 没跟上」的**写入侧与通知链**再翻一遍。
+ *
+ * 复现（按 Rust 原判据等价跑）：
+ *   ① PATCH 传一个没变化的 title → changed=true → 写盘 + updatedAt 刷新
+ *      ⇒ 啥都没改，任务却从「超 7 天未动」消失、按更新排序顶到最前
+ *   ② PATCH 的 title/detail/... 不 trim，而 create 会 trim
+ *      ⇒ 同一条任务新建时干净、改一次就带空格；AI 读原始文件与界面不一致
+ *   ③ "  P4  " → create / patch 都拒（前端写入侧早就一律 trim）
+ *   ④ 同一 submit-review 事件：前端发 4 字段精简体、Rust 发整条任务
+ *      ⇒ 对端按字符串读 assignee 时拿到数组
+ *   ⑤ tb_list_tasks 不返回 agents（GET /api/tasks 返回）
+ *   ⑥ spawn_notify 不读响应、write_all 错误被 let _ = 吞掉
+ * ============================================================
+ */
+
+const R11 = (a, len) => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf(a);
+  return i < 0 ? '' : rsSrc.slice(i, i + len);
+};
+const R11_PATCH = R11('fn patch_task(', 12000);
+const R11_CREATE = R11('fn create_task(', 3000);
+const R11_ROUTE = R11('("PATCH", ["api", "tasks", id])', 2200);
+const R11_LIST = R11('"tb_list_tasks" => (||', 2800);
+const R11_NOTIFY = R11('fn spawn_notify(', 2600);
+const R11_STRIP = STRIP(rsSrc);
+
+/* ① PATCH 五个文本字段不许再无条件 changed=true */
+t('守卫：AI 改任务传无变化的值不得刷新 updatedAt（判等）', (() => {
+  if (!rsSrc) return false;
+  /*
+    ⛔ 第一版按「从 for 起切 1000 字符」找 trim —— 判据太宽：
+    下面 assignee 段也有一句 `let next = v.trim();`，落在同一个窗口里。
+    于是把 for 里的 trim 删掉，守卫照样全绿（本轮注入 2 抓到的假绿）。
+    现在只切**这个 for 的循环体**（到第一个 8 空格缩进的 `}` 为止）。
+  */
+  const start = R11_PATCH.indexOf('for key in ["title"');
+  if (start < 0) return false;
+  const end = R11_PATCH.indexOf('\n        }', start);
+  const seg = end < 0 ? '' : R11_PATCH.slice(start, end);
+  return /let next = v\.trim\(\)/.test(seg)
+    && /obj\.get\(key\)\.and_then\(\|x\| x\.as_str\(\)\) != Some\(next\)/.test(seg)
+    && /obj\.insert\(key\.to_string\(\), json!\(next\)\)/.test(seg)
+    && !/for key in \["title"[^\]]*\][\s\S]{0,300}json!\(v\);\s*\n\s*changed = true;/.test(R11_STRIP);
+})());
+
+/* ② 写入侧 trim：create 与 patch 的 priority 都要 trim */
+t('守卫：AI 通道 priority 写入侧 trim（create/patch 同一判据）', (() => {
+  if (!rsSrc) return false;
+  return /\.trim\(\)\s*\.to_string\(\);\s*\n\s*if !PRIORITIES\.contains\(&priority\.as_str\(\)\)/.test(R11_CREATE)
+    && /PRIORITIES\.contains\(&v\.trim\(\)\)/.test(R11_PATCH);
+})());
+
+/* ③ 通知 payload 跨端字段一致（从前端源码抽字段清单，不硬编码） */
+t('守卫：跨端通知契约一致（前端 4 字段 ↔ Rust 4 字段）', (() => {
+  if (!rsSrc) return false;
+  const store = fs.readFileSync(path.join(dir, 'lib/store.ts'), 'utf8');
+  const i = store.indexOf('task: { id: task.id');
+  if (i < 0) return false;
+  const frontLine = store.slice(i, store.indexOf('},', i));
+  /* 去掉外层 `task:` 本身，只比内层四个字段 */
+  const front = [...frontLine.matchAll(/(\w+):/g)].map((m) => m[1]).slice(1);
+  const j = R11_ROUTE.indexOf('"task": json!({');
+  if (j < 0) return false;
+  const rustPart = R11_ROUTE.slice(j, R11_ROUTE.indexOf('}),', j));
+  const rust = [...rustPart.matchAll(/"(\w+)":/g)].map((m) => m[1]).slice(1);
+  return front.length === 4 && rust.length === 4
+    && front.join(',') === rust.join(',')
+    && rustPart.includes('vals_of(&t, "assignee").join("、")')
+    && rustPart.includes('status')
+    && !/"task": t,/.test(R11_ROUTE);
+})());
+
+/* ④ 通知里不许再带整条任务（history/deps/estimate 不外泄） */
+t('守卫：通知体不再整条外发', (() => {
+  if (!rsSrc) return false;
+  /*
+    ⛔ 第一版查的是**全仓** STRIP(rsSrc)：`tb_get_task` 分支本来就有
+    `json!({ "task": t })`，于是恒红。恒红的守卫等于没有守卫。
+    这里要判的只是「PATCH 的通知体」，必须限定在 R11_ROUTE 片段内。
+  */
+  /*
+    ⛔ 第二版仍恒红：注释里明明白白写着 `"task": t` 和
+    "history / deps / estimate" —— 查原文必然命中。
+    否项一律查**剥掉注释**的片段；正项查原文（vals_of 是代码）。
+  */
+  const code = STRIP(R11_ROUTE);
+  const j2 = code.indexOf('"task": json!({');
+  const bodyPart = j2 < 0 ? '' : code.slice(j2, code.indexOf('}),', j2));
+  return R11_ROUTE.includes('"assignee": vals_of(&t, "assignee").join("、")')
+    && j2 >= 0
+    /* 响应体 `json!({"ok": true, "task": t})` 是合法的（该把整条任务回给调用方）；
+       要禁的是通知体里 `"task": t,` 这种裸字段。用逗号区分，别误伤响应。 */
+    && !/"task":\s*t\s*,/.test(code)
+    && !/history|deps|estimate/.test(bodyPart)
+    && /"task": json!\(\{/.test(code);
+})());
+
+/* ⑤ 两条读通道字段一致（MCP 也要给 agents） */
+t('守卫：tb_list_tasks 与 GET /api/tasks 同样带 agents', (() => {
+  if (!rsSrc) return false;
+  return /"agents": store\.get\("agents"\)/.test(R11_LIST)
+    && /"agents": store\.get\("agents"\)/.test(R11('("GET", ["api", "tasks"])', 600))
+    && /"defs": defs_of\(&store\)/.test(R11_LIST);
+})());
+
+/* ⑥ spawn_notify 不吞写错误 + 读响应状态行 */
+t('守卫：AI 通道通知失败不再完全静默', (() => {
+  if (!rsSrc) return false;
+  return /let write_result = \(\|\| -> std::io::Result<\(\)>/.test(R11_NOTIFY)
+    && /if let Err\(e\) = write_result/.test(R11_NOTIFY)
+    && /eprintln!\("\[task-board\] 通知写出失败/.test(R11_NOTIFY)
+    && /BufReader::new\(stream\)/.test(R11_NOTIFY)
+    && /read_line\(&mut status_line\)/.test(R11_NOTIFY)
+    && /eprintln!\("\[task-board\] 通知没发出去/.test(R11_NOTIFY)
+    /* 同样只查本函数：别处（如 write_response）的 let _ = 与本判据无关 */
+    && !/let _ = stream\.write_all/.test(R11_NOTIFY);
+})());
+
+/* ⑦ 跨端等价：无变化不刷新时间戳、trim 结果一致 */
+const R11_EQUIV = {
+  putStr: (obj, body, keys) => {
+    let changed = false;
+    for (const k of keys) {
+      if (typeof body[k] !== 'string') continue;
+      const next = body[k].trim();
+      if (obj[k] !== next) { obj[k] = next; changed = true; }
+    }
+    return changed;
+  },
+  prioOk: (v) => PRIORITIES.includes((v || '').trim()),
+  notice: (t) => ({
+    id: t.id || '', title: t.title || '', status: t.status || '',
+    assignee: fieldVals(t, 'assignee').join('、'),
+  }),
+};
+t('守卫：跨端等价 —— 无变化不刷新 updatedAt / trim 一致', (() => {
+  const t0 = { title: '登录重构', detail: '改一下', summary: '', priority: 'P2', reporter: 'manual', updatedAt: 1000 };
+  const same = R11_EQUIV.putStr({ ...t0 }, { title: '登录重构' }, ['title', 'detail', 'summary', 'priority', 'reporter']);
+  const diff = R11_EQUIV.putStr({ ...t0 }, { title: '  登录重构  ' }, ['title', 'detail', 'summary', 'priority', 'reporter']);
+  const o = { ...t0 }; R11_EQUIV.putStr(o, { title: '  新的  ' }, ['title', 'detail', 'summary', 'priority', 'reporter']);
+  const normalized = normalizeTask({ ...o, id: 'tb-0001', status: 'todo', tags: [] });
+  return same === false && diff === false && o.title === '新的'
+    && normalized.title === '新的'
+    && R11_EQUIV.prioOk('  P4  ') === true && R11_EQUIV.prioOk('P9') === false;
+})());
+t('守卫：跨端等价 —— 通知 assignee 多值连成显示串', (() => {
+  const t0 = normalizeStore({ tasks: [{ id: 'tb-0001', title: 'A', status: 'doing', assignee: ['张三', '李四'], tags: [] }] }).tasks[0];
+  const n = R11_EQUIV.notice(t0);
+  return Object.keys(n).length === 4 && n.assignee === '张三、李四'
+    && typeof n.assignee === 'string';
 })());
 
 const readmeCount = (() => {

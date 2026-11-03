@@ -13,6 +13,9 @@
 - **通知状态**：`tb_update_task` 用的 `notify_status` 由 HTTP 服务一路透传到 MCP 通道，不再写死 `review`（自定义流程里那一步可能叫别的）。返回值是 `entered_notify_status`，**只表示本次进入了通知状态**；webhook 由 HTTP PATCH 通道发出，MCP 通道不发通知 —— 别把它当成"已送达"。
 - **status 参数不写 enum**：两处 schema 只声明 `type: string`，实际生效的状态看 `tb_list_tasks` 响应的 `defs.statuses`（服务端按 `flow` 校验），自定义流程的状态不会被客户端 schema 挡掉。
 - **register_agent**：id / name / role 写入侧先 trim。
+- **PATCH 判等**：`title / detail / summary / priority / reporter` 传一个没变化的值不再写盘、不再刷新 `updatedAt` —— 否则任务会从「超 7 天未动」里凭空消失、按更新排序顶到最前，而什么都没改。这五个字段写入侧也和 create 一样先 trim。
+- **通知契约**：HTTP PATCH 进通知状态时，webhook 体与界面 `notifyWebhook` 用同一份形状（`{ id, title, status, assignee: 显示串 }`），不再把整条任务（含多值数组 / history / deps）外发。通知写失败或收到非 2xx 会写进 stderr，不再完全静默。
+- **两条读通道字段一致**：`tb_list_tasks` 与 `GET /api/tasks` 都返回 `tasks + agents + defs`。
 
 ### 写入侧归一化（与界面同一判据）
 
@@ -101,7 +104,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（566 项，含源码扫描类守卫）
+  task-board-test.mjs   core 单测（574 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -126,7 +129,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 566 项
+npm run test:tb-core        # core 纯逻辑 574 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描

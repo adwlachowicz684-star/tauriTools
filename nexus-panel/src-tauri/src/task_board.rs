@@ -703,10 +703,23 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
                       状态由配置决定，不写死 review —— 理由见 tb_http_start 处。
                     */
                     let notice = entered_notify.then(|| {
+                        /*
+                          ⛔ 原来发整条任务（"task": t）。而前端 notifyWebhook 发的只是
+                          { id, title, status, assignee: 显示串 } —— 同一个
+                          submit-review 事件两种形状。对端按字符串读 assignee 时，
+                          AI 通道送过去的是数组 → 显示成 "张三,李四" 或解析失败；
+                          整条任务还带 history / deps / estimate，一起 POST 出去没有用途。
+                          现在与前端用同一份契约（多值认领人用「、」连成显示串）。
+                        */
                         json!({
                             "source": "task-board",
                             "event": "submit-review",
-                            "task": t,
+                            "task": json!({
+                                "id": t.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                                "title": t.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                                "status": t.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                                "assignee": vals_of(&t, "assignee").join("、"),
+                            }),
                         })
                         .to_string()
                     });
@@ -775,10 +788,40 @@ fn spawn_notify(notify_url: &str, body: &str) {
             host_port,
             body.len()
         );
-        let _ = stream.write_all(head.as_bytes());
-        let _ = stream.write_all(body.as_bytes());
-        let _ = stream.flush();
-        // 不读响应：webhook 只需要收到，HTTP/1.1 close 语义下直接断开
+        /*
+          ⛔ 原来 `let _ = write_all(...)` 把 TCP 写失败也吞了。
+          和前端 fetch 那边的坑同理：写不出去一声不吭。
+        */
+        /* 顺序闭包写法：避免 and_then 链里嵌套 &mut stream 的借用争议 */
+        let write_result = (|| -> std::io::Result<()> {
+            stream.write_all(head.as_bytes())?;
+            stream.write_all(body.as_bytes())?;
+            stream.flush()
+        })();
+        if let Err(e) = write_result {
+            eprintln!("[task-board] 通知写出失败 {}: {}", host_port, e);
+            return;
+        }
+        /*
+          ⛔ 原来"不读响应"：URL 配错(404)、对端接口报错(500)、网关挂了(502)
+          全都当成发出去了，这一侧一声不吭。前端 notifyWebhook 早就改成
+          检查 !res.ok 并提示，AI 通道是**同一根因、另一条路**。
+          这里没有 UI 可弹 toast，至少把状态行读出来写进 stderr，
+          让用户/日志能查到"不是对端没收到，是它回了错误"。
+          只读状态行就够，body 不必消费（Connection: close 随后断开）。
+        */
+        let mut reader = BufReader::new(stream);
+        let mut status_line = String::new();
+        match reader.read_line(&mut status_line) {
+            Ok(0) => eprintln!("[task-board] 通知对端未返回响应: {}", url),
+            Ok(_) => {
+                let code = status_line.split_whitespace().nth(1).unwrap_or("?");
+                if !code.starts_with('2') {
+                    eprintln!("[task-board] 通知没发出去（对端返回 {}）: {}", code.trim(), url);
+                }
+            }
+            Err(e) => eprintln!("[task-board] 通知读响应失败 {}: {}", host_port, e),
+        }
     });
 }
 
@@ -954,7 +997,10 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
                     true
                 })
                 .collect();
-            Ok(json!({ "count": hit.len(), "tasks": hit, "defs": defs_of(&store) }))
+            /* 与 GET /api/tasks 同一份读通道字段：AI 经 MCP 也要能查窗口台账 */
+            Ok(json!({ "count": hit.len(), "tasks": hit,
+                       "agents": store.get("agents").cloned().unwrap_or(json!([])),
+                       "defs": defs_of(&store) }))
         })(),
         "tb_create_task" => create_task(dir, args).map(|t| json!({ "created": t })),
         "tb_get_task" => (|| -> Result<Value, String> {
@@ -1570,7 +1616,11 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     if title.trim().is_empty() {
         return Err("title 不能为空".to_string());
     }
-    let priority = str_field(body, "priority").unwrap_or_else(|| "P2".to_string());
+    /* 文本字段一律 trim：AI 手写 "  P4  " 不该因为多了空格就建不了任务 */
+    let priority = str_field(body, "priority")
+        .unwrap_or_else(|| "P2".to_string())
+        .trim()
+        .to_string();
     if !PRIORITIES.contains(&priority.as_str()) {
         return Err(format!("非法优先级 {}（合法值: {}）", priority, PRIORITIES.join("/")));
     }
@@ -1690,16 +1740,34 @@ fn patch_task(
           静默归到 P2，用户看到的是"改了又变回去"。
         */
         if let Some(v) = str_field(body, "priority") {
-            if !PRIORITIES.contains(&v.as_str()) {
+            if !PRIORITIES.contains(&v.trim()) {
                 return Err(format!("非法优先级 {}（合法值: {}）", v, PRIORITIES.join("/")));
             }
         }
         // ⛔ summary 必须在这里：任务说明是显式写进文件的字段，
         // AI 看得见却改不了，等于这个字段对 AI 通道只读。
+        /*
+          ⛔ 这五个字段原来无条件 `insert + changed = true`，而同一个函数里
+          status / type / group / estimate / tags / assignee **全都判了等** ——
+          同一函数内两种判据。后果：AI 传一个没变化的 title：
+            · 写盘 + updatedAt 刷新 → 任务从「超 7 天未动」里消失、
+              按更新排序顶到最前，界面上确实"动了"，而什么都没改
+            · 返回 200「已改」
+          与前几轮修的「自环状态不加无变化历史」「认领要更新时间戳」
+          是互补的一族：无变化的操作污染时间戳 / 该变没变。
+
+          ⛔ 值也要 trim：create_task 的 title 存的是 trim 后的，
+          而 PATCH 原样写入 —— 同一条任务新建时干净、改一次就带空格。
+          前端 normalizeTask 读盘会 trim（界面看着干净），
+          但 AI 直接读 tasks.json 看到的是带空格的，两条通道数据不一致。
+        */
         for key in ["title", "detail", "summary", "priority", "reporter"] {
             if let Some(v) = str_field(body, key) {
-                obj.insert(key.to_string(), json!(v));
-                changed = true;
+                let next = v.trim();
+                if obj.get(key).and_then(|x| x.as_str()) != Some(next) {
+                    obj.insert(key.to_string(), json!(next));
+                    changed = true;
+                }
             }
         }
         // 认领守卫：已被别人认领的任务不能被悄悄抢走（PATCH 是覆盖语义，
