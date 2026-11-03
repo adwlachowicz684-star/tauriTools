@@ -3829,7 +3829,13 @@ t('守卫：HTTP 读通道带定义表（AI 才看得见有哪些分组/类型�
   于是判据恒假（红）。这不是代码有问题，是守卫自己的窗口开小了。
 */
 t('守卫：MCP 列表带定义表', (() => {
-  const seg = rsSeg('"tb_list_tasks"', 8200);
+  /*
+    ⛔ 原锚点 `"tb_list_tasks"` 命中的是**工具描述字符串**（位置 30260），
+    不是分发分支（36073）；靠 8200 字符窗口"恰好"够到响应，
+    本轮在中间加了几行 schema 描述就把它推出了窗口 → 恒红。
+    恒红的守卫等于没有守卫。改成钉住分支本身，与文件长度无关。
+  */
+  const seg = rsSeg('"tb_list_tasks" => (||', 3200);
   return !rsSrc || seg.indexOf('"defs": defs_of(&store)') >= 0;
 })());
 
@@ -6769,6 +6775,152 @@ t('守卫：跨端等价 —— 通知 assignee 多值连成显示串', (() => {
   const n = R11_EQUIV.notice(t0);
   return Object.keys(n).length === 4 && n.assignee === '张三、李四'
     && typeof n.assignee === 'string';
+})());
+
+/*
+ * ============================================================
+ * 本轮：把「写入侧 trim」「无变化不刷新 updatedAt」「看得见却填不了」
+ * 「读通道字段一致」这四个修过多次的老毛病，翻到 AI 通道最后一圈。
+ *
+ * 复现（按 Rust 原判据等价跑）：
+ *   ① create 的 detail/reporter/status 仍原样写入，而 title/summary/priority 已 trim
+ *      → 同一份请求里两个字段带空格、两个不带；"  todo  " 建任务被拒
+ *   ② add_event body={} → push 空历史 + 刷新 updatedAt（空操作把任务"救活"）
+ *   ③ deps：create 不写 / PATCH 不改 / 两处 schema 不列，界面有依赖下拉
+ *      → 与 summary 那个 bug 一模一样：文件里看得见却没有任何入口能填
+ *   ④ GET /api/tasks/{id} 与 tb_get_task 不带 defs，另两条读通道都带
+ *
+ * 修法仍是「改定义、不动调用点」：str_field 统一 trim（20 个调用点自动生效）。
+ * ============================================================
+ */
+
+const R12 = (a, len) => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf(a);
+  return i < 0 ? '' : rsSrc.slice(i, i + len);
+};
+const R12_STR = R12('fn str_field(', 1200);
+const R12_DEPS = R12('fn deps_value(', 1400);
+const R12_CREATE = R12('fn create_task(', 3800);
+const R12_PATCH = R12('fn patch_task(', 14000);
+const R12_EVENT = R12('fn add_event(', 1500);
+const R12_TOOLS = R12('pub fn mcp_tools(', 11000);
+const R12_GETONE = R12('("GET", ["api", "tasks", id])', 500);
+const R12_MCPGET = R12('"tb_get_task" => (||', 500);
+const R12_CODE = STRIP(rsSrc);
+
+/* ① 通杀：所有 str_field 消费点自动归一（判的是定义，不是逐个调用点） */
+t('守卫：AI 通道全部文本字段由 str_field 统一 trim（通杀）', (() => {
+  if (!rsSrc) return false;
+  /*
+    ⛔ 第一版带了条否项「不许 json!(str_field(...)) 原样落盘」—— 恒红：
+    str_field 统一 trim 之后，create 的 detail 正是这么写的，而且是**正确**的
+    （归一在取值函数里，调用点不该再各自 trim 一遍）。
+    通杀守卫只需钉住定义：所有调用点自动覆盖。
+  */
+  return /body\.get\(key\)\s*\.and_then\(\|v\| v\.as_str\(\)\)\s*\.map\(\|s\| s\.trim\(\)\.to_string\(\)\)/.test(R12_CODE)
+    && /fn str_field\(body: &Value, key: &str\)/.test(rsSrc)
+    /* 不许另起一份没 trim 的取值函数（那会绕过这份通杀归一） */
+    && (R12_CODE.match(/fn str_field\(/g) || []).length === 1;
+})());
+
+/* ② deps_value 与前端 ids() 同一判据（trim/去空/去重/去自依赖） */
+t('守卫：AI 通道 deps 归一与前端 ids() 一致', (() => {
+  if (!rsSrc) return false;
+  return /fn deps_value\(body: &Value, self_id: &str\)/.test(R12_DEPS)
+    && /clean_str_array\(&raw\)/.test(R12_DEPS)
+    && /\.filter\(\|d\| d\.as_str\(\) != self_id\)/.test(R12_DEPS)
+    && /Some\(Value::String\(v\)\) => vec!\[json!\(v\)\]/.test(R12_DEPS)
+    /* 不清掉指向不存在任务的 id（前端保留给 lockOf 标 missing） */
+    && !/tasks[\s\S]{0,200}contains\(&d\)/.test(R12_DEPS);
+})());
+
+/* ③ create 显式写 deps（不能靠前端默认值补） */
+t('守卫：AI 建任务显式写 deps（不再静默忽略）', (() => {
+  if (!rsSrc) return false;
+  return /task\.insert\("deps"\.to_string\(\), deps_value\(body, &id\)\)/.test(R12_CREATE)
+    && /"deps":\s*\{ "type": "array"/.test(R12_TOOLS);
+})());
+
+/* ④ PATCH 有 deps 分支且判等 */
+t('守卫：AI 改 deps 走判等（无变化不刷新 updatedAt）', (() => {
+  if (!rsSrc) return false;
+  const i = R12_PATCH.indexOf('if body.get("deps").is_some()');
+  if (i < 0) return false;
+  const seg = R12_PATCH.slice(i, i + 500);
+  return /deps_value\(body, self_id\)/.test(seg)
+    && /obj\.get\("deps"\) != Some\(&next\)/.test(seg)
+    && /changed = true/.test(seg)
+    && /"deps":\s*\{ "type": "array"/.test(R12_TOOLS);
+})());
+
+/* ⑤ add_event 拒绝空事件（与 PATCH 无变化不写盘同一判据） */
+t('守卫：AI 空事件不写盘、不刷新 updatedAt', (() => {
+  if (!rsSrc) return false;
+  return /return Err\("事件内容为空/.test(R12_EVENT)
+    && /action_given\.is_none\(\) \|\| action\.is_empty\(\) \|\| action == "note"/.test(R12_EVENT)
+    && /note\.is_empty\(\)/.test(R12_EVENT)
+    && /空事件/.test(R12_TOOLS);
+})());
+
+/* ⑥ 四条读通道全部带 defs（自动覆盖，不硬编码位置） */
+t('守卫：四条读通道都带 defs（含两条单条通道）', (() => {
+  if (!rsSrc) return false;
+  const anchors = [
+    '("GET", ["api", "tasks"])',
+    '("GET", ["api", "tasks", id])',
+    '"tb_list_tasks" => (||',
+    '"tb_get_task" => (||',
+  ];
+  return anchors.every((a) => {
+    const i = rsSrc.indexOf(a);
+    if (i < 0) return false;
+    /* 到下一个 500 字符内必须出现 defs_of(&store) */
+    return rsSrc.slice(i, i + 3600).includes('defs_of(&store)');
+  });
+})());
+
+/* ⑦ by 空串归一（历史里不该出现 by=""） */
+t('守卫：AI 通道 by 空串归到 manual（patch / add_event 两处）', (() => {
+  if (!rsSrc) return false;
+  const hits = [...R12_CODE.matchAll(/Some\(s\) if !s\.is_empty\(\) => s,\s*_ => "manual"\.to_string\(\)/g)];
+  return hits.length >= 2;
+})());
+
+/* ⑧ 跨端等价：deps 归一结果逐项相同 */
+const R12_IDS = (v, selfId) => {
+  const seen = new Set();
+  const out = [];
+  const arr = Array.isArray(v) ? v : (typeof v === 'string' ? [v] : []);
+  for (const x of arr) {
+    if (typeof x !== 'string') continue;
+    const y = x.trim();
+    if (!y || seen.has(y)) continue;
+    seen.add(y); out.push(y);
+  }
+  return out.filter((d) => d !== selfId);
+};
+t('守卫：跨端等价 —— deps 归一与 normalizeTask 一致', (() => {
+  const cases = [
+    { raw: ['tb-0002', '', '  ', ' tb-0001 ', 'tb-0002', 'tb-0001'], self: 'tb-0001', want: ['tb-0002'] },
+    { raw: 'tb-0002', self: 'tb-0001', want: ['tb-0002'] },
+    { raw: ['不存在', '不存在'], self: 'tb-0001', want: ['不存在'] },
+    { raw: ['tb-0001'], self: 'tb-0001', want: [] },
+  ];
+  return cases.every((c) => JSON.stringify(R12_IDS(c.raw, c.self)) === JSON.stringify(c.want))
+    /* 前端真身对照 */
+    && JSON.stringify(normalizeTask({ id: 'tb-0001', deps: cases[0].raw }).deps) === JSON.stringify(cases[0].want);
+})());
+
+/* ⑨ 跨端等价：trim 后 status / priority 两条入口判据一致 */
+t('守卫：跨端等价 —— 带空格的 status/priority 两条入口都认', (() => {
+  const sf = (b, k) => (typeof b[k] === 'string' ? b[k].trim() : undefined);
+  const b = { status: '  todo  ', priority: '  P4  ', detail: '  x  ', reporter: '  dev-a  ' };
+  return sf(b, 'status') === 'todo'
+    && PRIORITIES.includes(sf(b, 'priority'))
+    && sf(b, 'detail') === 'x'
+    && sf(b, 'reporter') === 'dev-a'
+    && statusName(DEFAULT_FLOW, sf(b, 'status')) !== '';
 })());
 
 const readmeCount = (() => {

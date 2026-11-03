@@ -683,7 +683,8 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
         },
         ("GET", ["api", "tasks", id]) => match load_tasks(dir) {
             Ok(store) => match find_task(&store, id) {
-                Some(t) => ok_json(json!({"ok": true, "task": t})),
+                /* 与全量读通道同一口径：AI 取单条后也要能查可选值 */
+                Some(t) => ok_json(json!({"ok": true, "task": t, "defs": defs_of(&store)})),
                 None => (404, r#"{"ok":false,"error":"task not found"}"#.to_string(), None),
             },
             Err(e) => (500, err_json(&e), None),
@@ -881,12 +882,13 @@ pub fn mcp_tools() -> Vec<Value> {
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；写成数字字符串（如 \"2.5\"）也认；缺省 0=没估" },
                 "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（该列可多选；留空=不分组）。先调 tb_list_tasks 看 defs.groupDefs 里已有哪些——归到已有分组，不要自造近义名（'登录'和'登陆'会分成两组）" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
+                "deps":     { "type": "array", "items": { "type": "string" }, "description": "前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，指向不存在任务的 id 会保留（界面会标「前置不存在」）。缺省=[]" },
             }),
             vec!["title"],
         ),
         tool(
             "tb_get_task",
-            "查单条任务详情（含全部历史事件）",
+            "查单条任务详情（含全部历史事件），响应同样带 defs 各列定义表",
             json!({ "id": { "type": "string", "description": "任务 id，如 tb-0001" } }),
             vec!["id"],
         ),
@@ -905,6 +907,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；该列可多选且任务上已是数组时按追加处理（不会丢已有类型）；传空串=清成未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数；写成数字字符串也认" },
                 "group":    { "type": "string", "description": "分组名；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；该列可多选且任务上已是数组时按追加处理（不会丢已有分组）；传空串=取消分组" },
+                "deps":     { "type": "array", "items": { "type": "string" }, "description": "整体替换前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，传 [] =清空全部前置" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
             }),
@@ -912,12 +915,12 @@ pub fn mcp_tools() -> Vec<Value> {
         ),
         tool(
             "tb_add_event",
-            "给任务追加备注/进展（不改状态）",
+            "给任务追加备注/进展（不改状态）。空事件（无 note 且 action 缺省/为 note）会被拒绝，不写盘",
             json!({
                 "id":     { "type": "string", "description": "任务 id" },
                 "by":     { "type": "string", "description": "操作者窗口 ID" },
                 "action": { "type": "string", "description": "事件类型，缺省 note" },
-                "note":   { "type": "string", "description": "内容" },
+                "note":   { "type": "string", "description": "内容。⛔ note 为空且 action 缺省/为 note 时不写盘（事件内容为空）——空事件不该刷新任务的更新时刻" },
             }),
             vec!["id"],
         ),
@@ -1007,7 +1010,8 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
             let id = s("id").unwrap_or_default();
             let store = load_tasks(dir)?;
             match find_task(&store, &id) {
-                Some(t) => Ok(json!({ "task": t })),
+                /* 与 GET /api/tasks/{id} / tb_list_tasks 同一口径 */
+                Some(t) => Ok(json!({ "task": t, "defs": defs_of(&store) })),
                 None => Err(format!("任务 {id} 不存在")),
             }
         })(),
@@ -1239,7 +1243,25 @@ fn defs_of(store: &Value) -> Value {
 }
 
 fn str_field(body: &Value, key: &str) -> Option<String> {
-    body.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+    /*
+      ⛔ 一律 trim。修前写入侧是逐处补的（title / summary / priority /
+      register_agent / PATCH 五字段），而 create 的 detail / reporter / status、
+      patch 的 by / note / status、add_event 的 by / action / note 仍原样写入 ——
+      补一轮漏一轮，正是下面改成统一归一的原因。
+
+      后果和前几轮修过的完全一样：
+        · 判空用 trim、写入用原值 → 同一个实体带空格存进文件，
+          AI 读原始 JSON 与界面读盘（会 trim）看到的是两份不同数据
+        · `"status": "  todo  "` 被判「新建任务只允许 status=todo」直接拒绝，
+          而 `"priority": "  P4  "` 上一轮刚修成可用 —— 同一份请求两种待遇
+        · 历史里 by="  dev-a  " 显示成一个前后带空格的名字
+
+      与其继续逐处打补丁，不如把**取值函数**改成统一归一：
+      以后新增任何文本字段自动生效，不会再漏。这就是「改定义、不动调用点」。
+    */
+    body.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
 }
 
 /// 与前端 `normalizeTask` 里的 `Number(v)` 等价：数字、**数字字符串**都认。
@@ -1287,6 +1309,29 @@ fn tags_value(body: &Value) -> Value {
         ),
         _ => json!([]),
     }
+}
+
+/// 前置依赖 id 列表。与前端 `normalizeTask` 的 `ids()` + 去自依赖 **同一判据**：
+///   trim → 去空 → 去重（保序）→ 去掉指向自己的 id。
+/// 单个字符串也认（AI 少写方括号时不该静默丢成 []）。
+///
+/// ⛔ **不清掉指向不存在任务的 id**：前端特意保留（lockOf 会标 "前置不存在（可能已被删除）"），
+/// 清掉的话那个提示永远不会出现，用户不知道为什么解锁不了。
+///
+/// ⛔ 去自依赖是必须的：`deps=['自己']` 让 lockOf 判定 pending=['自己'] + cyclic=true，
+/// 它等的是"自己完成"，而"自己完成"的前提是它先解锁 —— 永远解不开的死局。
+/// 界面的下拉挡得住，AI 直接写 JSON 不受那层约束。
+fn deps_value(body: &Value, self_id: &str) -> Value {
+    let raw: Vec<Value> = match body.get("deps") {
+        Some(Value::String(v)) => vec![json!(v)],
+        Some(Value::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    let list: Vec<String> = clean_str_array(&raw)
+        .into_iter()
+        .filter(|d| d.as_str() != self_id)
+        .collect();
+    Value::Array(list.into_iter().map(Value::String).collect())
 }
 
 /// 下一个任务 id 的序号：**max(nextId, 库里实际最大编号 + 1)**。
@@ -1690,6 +1735,14 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     );
     task.insert("reporter".to_string(), json!(reporter));
     task.insert("assignee".to_string(), enum_value(body, "assignee"));
+    /*
+      前置依赖：与 title/type/group/summary 一样**显式写进文件**。
+      ⛔ 原来 AI 通道根本没有这个入口：create 不写、PATCH 不改、两处 schema 不列，
+      而界面详情里有依赖下拉、文件里别的任务也有 deps —— 又是「看得见却填不了」
+      （和 summary 那个 bug 一模一样）。AI 传 {"deps":["tb-0002"]} 被静默忽略，
+      不报错，任务建出来永远没有前置。
+    */
+    task.insert("deps".to_string(), deps_value(body, &id));
     task.insert("createdAt".to_string(), json!(now_ms()));
     task.insert("updatedAt".to_string(), json!(now_ms()));
     push_history(&mut task, &reporter, "create", "新建任务");
@@ -1717,7 +1770,10 @@ fn patch_task(
     */
     let allowed = statuses_for(&store);
     let flow = flow_transitions(&store);
-    let by = str_field(body, "by").unwrap_or_else(|| "manual".to_string());
+    let by = match str_field(body, "by") {
+        Some(s) if !s.is_empty() => s,
+        _ => "manual".to_string(),
+    };
     let note = str_field(body, "note").unwrap_or_default();
 
     let (snapshot, became_review) = {
@@ -1853,6 +1909,15 @@ fn patch_task(
                 changed = true;
             }
         }
+        /* deps 与 tags 同一判据：清洗 + 判等（不自依赖 / 去空 / 去重） */
+        if body.get("deps").is_some() {
+            let self_id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let next = deps_value(body, self_id);
+            if obj.get("deps") != Some(&next) {
+                obj.insert("deps".to_string(), next);
+                changed = true;
+            }
+        }
         if !changed {
             return Err("没有可应用的变更".to_string());
         }
@@ -1875,9 +1940,24 @@ fn patch_task(
 }
 
 fn add_event(dir: &PathBuf, id: &str, body: &Value) -> Result<Value, String> {
-    let by = str_field(body, "by").unwrap_or_else(|| "manual".to_string());
-    let action = str_field(body, "action").unwrap_or_else(|| "note".to_string());
+    /*
+      ⛔ 原来 add_event 没有任何判等：body={} 也会 push 一条
+      {action:"note", note:""} 历史 + 刷新 updatedAt。
+      这与上一轮修的「PATCH 传无变化的值不该刷新 updatedAt」是同一个后果 ——
+      一次空操作把任务"救活"了：从「超 7 天未动」里消失、按更新排序顶到最前，
+      而用户/AI 什么都没做。
+      显式给了非 "note" 的 action（如 action:"deploy"）仍然算一次有意义的事件。
+    */
     let note = str_field(body, "note").unwrap_or_default();
+    let action_given = str_field(body, "action");
+    let action = action_given.clone().unwrap_or_else(|| "note".to_string());
+    if note.is_empty() && (action_given.is_none() || action.is_empty() || action == "note") {
+        return Err("事件内容为空（请提供 note 或非 note 的 action）".to_string());
+    }
+    let by = match str_field(body, "by") {
+        Some(s) if !s.is_empty() => s,
+        _ => "manual".to_string(),
+    };
     let mut store = load_tasks(dir)?;
 
     let snapshot = {
