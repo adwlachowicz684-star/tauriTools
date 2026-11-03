@@ -24279,8 +24279,12 @@ group('BUG 195 · 备注首尾与行尾空白：.mm / .opml 削了必须说');
   {
     const f2 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
     ok(/noteEdge:\s*0/.test(f2), '★ exchangeLoss 的 out 里有 noteEdge');
-    ok(/normalizeNoteText\(rawNote\)\s*!==\s*rawNote/.test(f2),
+    ok(/noteNorm\s*!==\s*rawNote/.test(f2) && /normalizeNoteText\(/.test(f2),
       '★ 判据直接复用 normalizeNoteText（不另抄一份正则）');
+    // BUG 198：.mm 的 richcontent 把 CR 变 LF，.opml 的 &#13; 原样保住 ——
+    // 归一必须按格式分，一刀切会把 .opml 保得住的 CR 虚报成丢失。
+    ok(f2.includes("kind === 'freemind'") && f2.includes("replace(/\\r/g, '\\n')"),
+      '★ .mm 的 CR 按读侧口径归一为 LF，.opml 不一刀切');
     ok(/keep\.note\s*&&\s*rawNote/.test(f2), '★ 只在 keep.note 为真时数（不重复计）');
     ok(/'noteEdge',/.test(f2), '★ LOSS_KEYS 带 noteEdge（跨画布累加）');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
@@ -24408,8 +24412,8 @@ group('BUG 196 · 画布标题空白与换行：Markdown 改了必须说');
       '★ 判据直接复用 inlineText（不另抄一份正则）');
     ok(/kind\s*===\s*'markdown'/.test(f3) && /kind\s*===\s*'opml'/.test(f3),
       '★ 判据按格式分口径：markdown 与 opml 各自判');
-    ok(/opmlTitleNorm\(title\)\s*!==\s*title/.test(f3),
-      '★ .opml 判据复用读侧同一个 opmlTitleNorm（不另抄 trim）');
+    ok(/opmlTitleNorm\(title\.replace\(/.test(f3) && /norm\s*!==\s*title/.test(f3),
+      '★ .opml 判据复用读侧同一个 opmlTitleNorm（含 CR 归一，不另抄 trim）');
     ok(/'titleEdge',/.test(f3), '★ LOSS_KEYS 带 titleEdge（跨画布累加）');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
     const at = [];
@@ -24521,8 +24525,8 @@ group('BUG 197 · OPML 画布标题：读侧 trim 改了名字必须说');
       '★ 读侧 opmlHeadTitle 复用共享函数（不另抄 trim）');
     ok(!/String\(t\?\.textContent\s*\?\?\s*''\)\.trim\(\)/.test(w),
       '★ 读侧没有第二份手写 trim');
-    ok(/opmlTitleNorm\(title\)\s*!==\s*title/.test(f),
-      '★ 统计复用读侧同一个函数');
+    ok(/opmlTitleNorm\(title\.replace\(/.test(f) && /norm\s*!==\s*title/.test(f),
+      '★ 统计复用读侧同一个函数（含 CR 归一）');
     ok(/kind\s*===\s*'opml'/.test(f), '★ 判据覆盖 opml');
     ok(/'titleEdge',/.test(f), '★ LOSS_KEYS 带 titleEdge');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
@@ -24532,6 +24536,245 @@ group('BUG 197 · OPML 画布标题：读侧 trim 改了名字必须说');
     ok(at.length >= 2, `两处提示表都在（实际 ${at.length} 处）`);
     at.forEach((p, i) => ok(/titleEdge:\s*'画布标题的空白与换行'/.test(code.slice(p, p + 700)),
       `★ 第 ${i + 1} 张提示表带上画布标题这一项`));
+  }
+}
+
+/* ============================================================
+   BUG 198 · 「值被悄悄改掉」整类缺口的一次性普查
+   ------------------------------------------------------------
+   先前每个字段各补一次（newline / noteEdge / titleEdge），漏一处就静默一次。
+   这一组把整类一次性扫完，并从 NODE_DATA_KEYS **派生**字段清单：
+   以后矩阵里新增一个「声称带得走」的键，守门断言会逼它进普查表。
+   ============================================================ */
+group('BUG 198 · 交换格式标量值的静默改写（全矩阵一次性普查）');
+{
+  const F198 = await import('./formats.js');
+  const W198 = await import('./workbook.js');
+  const KINDS198 = ['freemind', 'opml', 'mermaid', 'plantuml', 'markdown'];
+  const CODE198 = {
+    freemind: { to: (c) => F198.toFreemind(c), from: (s) => F198.fromFreemind(s) },
+    opml: { to: (c) => F198.toOpml(c, 'T'), from: (s) => F198.fromOpml(s) },
+    mermaid: { to: (c) => F198.toMermaid(c), from: (s) => F198.fromMermaid(s) },
+    plantuml: { to: (c) => F198.toPlantUml(c), from: (s) => F198.fromPlantUml(s) },
+    markdown: { to: (c) => W198.sheetToMarkdown(c), from: (s) => W198.markdownToSheet(s) },
+  };
+  const mk198 = (data) => JSON.stringify({
+    root: { data: { text: 'ROOT', ...data }, children: [] } });
+  const get198 = (content, k) => {
+    try { return JSON.parse(content)?.root?.data?.[k]; } catch { return '<<FAIL>>'; }
+  };
+
+  /*
+   * 枚举 / 布尔 / 结构键不适用「字符串空白边界」：真实文件里它们只有固定
+   * 取值（expandState 只会是 'collapse'），给它套空格是不存在的输入。
+   * ⓘ 这个排除表本身被下面的守门断言钉住 —— 新增 keep 字段不登记会红。
+   */
+  const ENUM198 = new Set(['expandState', 'font-strikethrough', 'underline',
+    'icon', 'xsummary', 'xcallout', 'id']);
+  /*
+   * 读侧只认合法格式的字段（数值 / 枚举 / 内置图标名）：中间插入任意字符
+   * 会被读侧整条判为非法并丢弃，那是「非法值」而不是「空白被规范化」——
+   * 与字号剥单位（'24px' → 24）同一类既定取舍，不算静默改写。
+   * 所以这些字段只测「首尾空白 / tab / 尾随 CR」三种通用边界。
+   */
+  const STRICT198 = new Set(['font-size', 'node-line-width', 'font-weight',
+    'font-style', 'font-strikethrough', 'underline', 'expandState', 'fmIcons']);
+  const PROBE198 = {};
+  for (const [k, def] of Object.entries(F198.NODE_DATA_KEYS)) {
+    if (!KINDS198.some((kind) => def.keep?.[kind])) continue;
+    if (ENUM198.has(k)) continue;
+    const p = def.probe;
+    if (typeof p === 'string') PROBE198[k] = p;
+    else if (Array.isArray(p) && typeof p[0] === 'string') PROBE198[k] = p[0];
+    else if (typeof p === 'number' || typeof p === 'boolean') PROBE198[k] = String(p);
+  }
+  ok(Object.keys(PROBE198).length >= 12,
+    '★ 普查表从能力矩阵派生，覆盖所有声称带得走的标量字段');
+  for (const [k, def] of Object.entries(F198.NODE_DATA_KEYS)) {
+    if (!KINDS198.some((kind) => def.keep?.[kind])) continue;
+    ok(PROBE198[k] !== undefined || ENUM198.has(k),
+      `★ 矩阵里 keep 为真的字段 ${k} 必须纳入普查（或明确登记为枚举）`);
+  }
+
+  const U2028 = String.fromCharCode(0x2028);
+  const EDGES198 = [
+    ['首尾空格', (v) => '  ' + v + '  '],
+    ['tab首尾', (v) => '\t' + v + '\t'],
+    ['尾随CR', (v) => v + '\r'],
+    ['中间LF', (v) => v + '\n' + v],
+    ['中间U2028', (v) => v + U2028 + v],
+  ];
+
+  let silent198 = 0;
+  for (const kind of KINDS198) {
+    for (const [k, base] of Object.entries(PROBE198)) {
+      if (!F198.NODE_DATA_KEYS[k].keep?.[kind]) continue;
+      const isList = Array.isArray(F198.NODE_DATA_KEYS[k].probe);
+      for (const [vn, fn] of EDGES198) {
+        if (STRICT198.has(k) && vn.startsWith('中间')) continue;
+        const raw = fn(base);
+        const val = isList ? [raw] : raw;
+        const content = mk198({ [k]: val });
+        let back = null;
+        try { back = CODE198[kind].from(CODE198[kind].to(content)); } catch { /* 记为失败 */ }
+        const got = back == null ? null : get198(back, k);
+        const changed = JSON.stringify(got) !== JSON.stringify(val);
+        const loss = F198.exchangeLoss(content, kind, { title: 'T', content });
+        if (changed && !F198.hasExchangeLoss(loss)) {
+          silent198++;
+          ok(false, `★ ${kind}/${k}/${vn}：值被改了却一句不提示`);
+        }
+      }
+      // 干净值不许虚报：三个新桶都必须为 0
+      const clean = mk198({ [k]: isList ? [base] : base });
+      const l0 = F198.exchangeLoss(clean, kind, { title: 'T', content: clean });
+      eq(l0.textEdge + l0.linkEdge + l0.styleEdge, 0,
+        `★ ${kind}/${k}：干净值不虚报`);
+    }
+  }
+  eq(silent198, 0, '★ 全矩阵扫描：不存在「值被静默改掉」的组合');
+
+  // 关键场景逐桶钉住（防「只报别的桶、恰好 also true」的假绿）
+  {
+    const s = mk198({ hyperlink: '  https://a.example/x  ' });
+    ok(F198.exchangeLoss(s, 'opml', { title: 'T', content: s }).linkEdge === 1,
+      '★ .opml 超链接首尾空格 → linkEdge');
+    ok(F198.exchangeLoss(s, 'freemind', { title: 'T', content: s }).linkEdge === 1,
+      '★ .mm 超链接首尾空格 → linkEdge');
+    eq(F198.exchangeLoss(s, 'mermaid', { title: 'T', content: s }).linkEdge, 0,
+      '★ 其余格式整条超链接装不下，已报 hyperlink，不重复计 linkEdge');
+  }
+  {
+    const s = mk198({ background: '  #ff0000  ' });
+    ok(F198.exchangeLoss(s, 'freemind', { title: 'T', content: s }).styleEdge === 1,
+      '★ .mm 样式值首尾空格 → styleEdge');
+    eq(F198.exchangeLoss(s, 'opml', { title: 'T', content: s }).styleEdge, 0,
+      '★ 其余格式整条样式装不下，已报 style，不重复计 styleEdge');
+  }
+  {
+    const s = mk198({ text: '  项目  ' });
+    ok(F198.exchangeLoss(s, 'markdown', { title: 'T', content: s }).textEdge === 1,
+      '★ .md 节点文字首尾空格 → textEdge（BUG 179 只锁了行为、没补提示）');
+    eq(F198.exchangeLoss(s, 'opml', { title: 'T', content: s }).textEdge, 0,
+      '★ 其余四种格式保住了首尾空白，不虚报');
+  }
+  {
+    const s = mk198({ note: 'X\rY' });
+    ok(F198.exchangeLoss(s, 'freemind', { title: 'T', content: s }).noteEdge === 1,
+      '★ .mm 备注里的 CR 变 LF → noteEdge');
+    eq(F198.exchangeLoss(s, 'opml', { title: 'T', content: s }).noteEdge, 0,
+      '★ .opml 备注的 CR 走 &#13; 原样保住，不虚报');
+  }
+  {
+    const s = mk198({});
+    ok(F198.exchangeLoss(s, 'opml', { title: 'X\rY', content: s }).titleEdge === 1,
+      '★ .opml 画布标题的 CR 变 LF → titleEdge');
+    eq(F198.exchangeLoss(s, 'opml', { title: 'X\nY', content: s }).titleEdge, 0,
+      '★ .opml 画布标题里的 LF 保得住，不虚报');
+  }
+
+  // 判据本身：XML 属性口径（含 CR/LF、不含 U+2028/NBSP）
+  {
+    ok(F198.xmlScalarChanged('  X  '), '★ 判据：首尾空格算改');
+    ok(F198.xmlScalarChanged('\tX\t'), '★ 判据：首尾 tab 算改');
+    ok(F198.xmlScalarChanged('X\rY'), '★ 判据：CR 算改');
+    ok(F198.xmlScalarChanged('X\nY'), '★ 判据：LF 算改');
+    ok(!F198.xmlScalarChanged('X\tY'), '★ 判据：中间 tab 原样保住，不虚报');
+    ok(!F198.xmlScalarChanged('X' + U2028 + 'Y'), '★ 判据：U+2028 在 XML 属性里保住，不虚报');
+    ok(!F198.xmlScalarChanged('X\u00a0Y'), '★ 判据：NBSP 原样保住，不虚报');
+    ok(!F198.xmlScalarChanged('24px'), '★ 判据：字号剥单位是既定取舍，不算静默改写');
+  }
+
+  // 源码契约：三个桶必须贯通 out / LOSS_KEYS / 两处提示表；判据与写侧同源
+  {
+    const f = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+    for (const k of ['textEdge', 'linkEdge', 'styleEdge']) {
+      ok(new RegExp(k + ':\\s*0').test(f), `★ exchangeLoss 的 out 里有 ${k}`);
+      ok(f.includes("'" + k + "'"), `★ LOSS_KEYS 带 ${k}（跨画布累加）`);
+    }
+    ok(/function exchangeScalarTrim\(/.test(f) && /function xmlScalarChanged\(/.test(f),
+      '★ 共用 trim 与判据各只有一份定义');
+    ok(/xmlScalarChanged\(/.test(f) && /exchangeScalarTrim\(s\)\s*!==\s*s/.test(f),
+      '★ 判据复用写侧同一个 exchangeScalarTrim（不另抄 trim）');
+    ok(/exchangeScalarTrim\(n\?\.data\?\.hyperlink/.test(f)
+      && /exchangeScalarTrim\(links\[i\]/.test(f),
+      '★ .mm / .opml 写侧与读侧都改调同一个 trim');
+    const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
+    const at = [];
+    for (let p = code.indexOf('const NAME = {'); p >= 0;
+      p = code.indexOf('const NAME = {', p + 1)) at.push(p);
+    eq(at.length, 2, '两处导出提示表都在');
+    at.forEach((p, i) => {
+      const seg = code.slice(p, p + 900);
+      for (const k of ['textEdge', 'linkEdge', 'styleEdge']) {
+        ok(seg.includes(k + ':'), `★ 第 ${i + 1} 张提示表带上 ${k}`);
+      }
+    });
+  }
+}
+
+/* ============================================================
+   BUG 199 · LOSS_KEYS 全字段「跨画布累加」一次性通测
+   ------------------------------------------------------------
+   BUG 198 的普查里 M4（把 textEdge / linkEdge / styleEdge 从 LOSS_KEYS
+   删掉）测试**全绿**：那三项只有「字符串在源码里出现过」的契约断言，
+   没有行为级累加断言。而 BUG 191 / 195 / 196 / 197 各自都单独补过一次
+   「跨画布累加」—— 同一条规矩逐项补了 4 次，新加的 3 项照样漏。
+   这里改成从 LOSS_KEYS **派生**覆盖表：以后新增任何一个丢失项，不给它
+   登记样本就红，不再靠人记得回来补一遍。
+   ============================================================ */
+group('BUG 199 · LOSS_KEYS 全字段跨画布累加（一次性通测）');
+{
+  const F199 = await import('./formats.js');
+  const src199 = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'formats.js'), 'utf8'));
+  const keys199 = [...src199.match(/const LOSS_KEYS = \[([\s\S]*?)\];/)[1]
+    .matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  const km199 = (data, children = []) => JSON.stringify({
+    root: { data: { text: 'ROOT', ...data }, children } });
+  const S199 = (data, extra = {}, children = []) => ({
+    id: 's', title: 'T', theme: null, layout: null,
+    content: km199(data, children), ...extra });
+  const REL199 = [{ id: 'r1', end1Id: 't2', end2Id: 't3' }];
+  // [适用格式, 单张恰好报 1 的样本, 干净样本]
+  const CASES199 = {
+    note:          ['markdown', S199({ note: '备注' }), S199({})],
+    hyperlink:     ['markdown', S199({ hyperlink: 'https://a.example/x' }), S199({})],
+    priority:      ['markdown', S199({ priority: 3 }), S199({})],
+    progress:      ['markdown', S199({ progress: 5 }), S199({})],
+    labels:        ['markdown', S199({ labels: ['标签'] }), S199({})],
+    collapsed:     ['markdown', S199({ expandState: 'collapse' }), S199({})],
+    style:         ['markdown', S199({ background: '#ff0000' }), S199({})],
+    image:         ['markdown', S199({ image: 'a.png' }), S199({})],
+    attachment:    ['markdown', S199({ file: 'a.pdf' }), S199({})],
+    boundary:      ['markdown', S199({ boundaryGroup: 'g1' }), S199({})],
+    markers:       ['markdown', S199({ xmarkers: ['flag'] }), S199({})],
+    relationships: ['opml', S199({}, { xrelationships: REL199 }), S199({})],
+    nodes:         ['markdown', S199({ note: '备注' }), S199({})],
+    summary:       ['markdown', S199({}, {}, [{ data: { id: 'x', text: 'X', xsummary: true } }]), S199({})],
+    callout:       ['markdown', S199({}, {}, [{ data: { id: 'x', text: 'X', xcallout: true } }]), S199({})],
+    newline:       ['opml', S199({ text: '甲\n乙' }), S199({})],
+    noteEdge:      ['opml', S199({ note: '  备注  ' }), S199({})],
+    titleEdge:     ['markdown', S199({}, { title: '  项目 A  ' }), S199({}, { title: '项目 A' })],
+    theme:         ['markdown', S199({}, { theme: 'dark-slate' }), S199({})],
+    layout:        ['markdown', S199({}, { layout: 'org-chart' }), S199({})],
+    textEdge:      ['markdown', S199({ text: '  甲  ' }), S199({})],
+    linkEdge:      ['opml', S199({ hyperlink: '  https://a.example/x  ' }), S199({})],
+    styleEdge:     ['freemind', S199({ background: '  #ff0000  ' }), S199({})],
+  };
+  // ① 覆盖表必须与 LOSS_KEYS 全集严格一致（新增键不登记就红）
+  eq(Object.keys(CASES199).length, keys199.length, '★ 覆盖表与 LOSS_KEYS 数量一致');
+  for (const k of keys199) ok(k in CASES199, `★ LOSS_KEYS 的 ${k} 已登记样本`);
+  // ② 逐字段四问：单张 / 两张 / 混合 / 干净 —— 删掉 LOSS_KEYS 任一项即红
+  for (const [k, [kind, hit, clean]] of Object.entries(CASES199)) {
+    const hit2 = { ...hit, id: 's2' }, clean2 = { ...clean, id: 's2' };
+    eq(F199.exchangeLoss(hit.content, kind, hit)[k], 1, `★ ${k} 单张恰好 1`);
+    eq(F199.exchangeLossAll([hit, hit2], kind)[k], 2, `★ ${k} 两张各 1 → 合计 2`);
+    eq(F199.exchangeLossAll([hit, clean2], kind)[k], 1, `★ ${k} 只数有损失的那张`);
+    eq(F199.exchangeLossAll([clean, clean2], kind)[k], 0, `★ ${k} 干净画布不虚报`);
+  }
+  // ③ 三个 BUG 198 新增项必须真在 LOSS_KEYS 里（M4 的直接反证）
+  for (const k of ['textEdge', 'linkEdge', 'styleEdge']) {
+    ok(keys199.includes(k), `★ ${k} 在 LOSS_KEYS 里（删掉就漏跨画布累加）`);
   }
 }
 

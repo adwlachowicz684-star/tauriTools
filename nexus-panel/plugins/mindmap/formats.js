@@ -289,6 +289,35 @@ export const inlineText = (v) => inlineTextKeepEdges(v).trim();
 export const opmlTitleNorm = (v) => String(v ?? '').trim();
 
 /**
+ * 交换格式标量字符串（超链接 / 颜色 / 字体名 / 图标名 / 云色…）的 trim。
+ *
+ * 写侧 toFreemind / toOpml、读侧 applyLinks、以及导出前的丢失统计，
+ * **四处必须同源**：各写一份 `.trim()` 就是本项目反复撞的「只修一半」。
+ * 用函数声明（不是 const）—— 写侧 toFreemind 在模块更前面定义，函数声明
+ * 会提升，不会踩 TDZ（BUG 163 点名过这个崩法）。
+ */
+export function exchangeScalarTrim(v) { return String(v ?? '').trim(); }
+
+/**
+ * 「这个标量值导出再导回会不会被悄悄改掉」—— 只判变没变，不返回改写值。
+ *
+ * 实测（jsdom 真实 DOMParser，.mm 的 LINK / COLOR / NAME 等属性与 .opml 的
+ * url 属性）：
+ *   · 首尾空白（空格 / tab）→ 写侧 `exchangeScalarTrim` 削掉；
+ *   · 属性里的 CR / LF / CRLF → XML 属性值规范化并成空格；
+ *   · 中间的 tab、U+2028、U+00A0 → **原样保住**（一刀切成空白会虚报）。
+ * 所以只认 `\r` `\n`，不含 U+2028 / U+2029（这两个在 XML 属性里不被规范化）。
+ *
+ * ⓘ 与 LINE_BREAK_ONLY 不同不是抄漏：那是「节点文字写侧」的口径（含所有
+ *   行终止符），这里是「XML 属性」的口径。两条路物理上就是两套规范。
+ */
+export function xmlScalarChanged(raw) {
+  const s = String(raw ?? '');
+  if (!s) return false;
+  return exchangeScalarTrim(s) !== s || /[\r\n]/.test(s);
+}
+
+/**
  * 字号取**数字部分**：`"20pt"` / `"20px"` / `"1.2em"` 一律 → `"20"` / `"20"` / `"1.2"`。
  * 拿不到数字（`'large'` 之类）返回 null（不是 0）—— 让调用方**不设**这个键、
  * 回落主题默认字号，比塞一个 NaN 进内核好（BUG 117：带单位的值会让
@@ -537,7 +566,7 @@ export function toFreemind(content, rels = null) {
     const noteHtml = noteToRichcontent(n?.data?.note, depth + 1);
     // BUG 111：LINK 是 FreeMind 的标准属性（Freeplane / XMind 都认）。
     // 不写的话往返丢，别的软件打开我们导出的 .mm 也看不到链接。
-    const href = String(n?.data?.hyperlink || '').trim();
+    const href = exchangeScalarTrim(n?.data?.hyperlink || '');
     if (href) attrs.push(`LINK="${escXml(href)}"`);
     // BUG 114：颜色走 `COLOR` / `BACKGROUND_COLOR`（FreeMind 的标准属性）。
     // 不写的话往返丢，别的软件打开我们导出的 .mm 看不到节点的配色。
@@ -585,10 +614,10 @@ export function toFreemind(content, rels = null) {
     const edgeAttrs = freemindEdgeAttrs(n?.data);
     if (edgeAttrs) inner.push(`<edge ${edgeAttrs}/>`);
     for (const ic of Array.isArray(n?.data?.fmIcons) ? n.data.fmIcons : []) {
-      const b = String(ic ?? '').trim();
+      const b = exchangeScalarTrim(ic ?? '');
       if (b) inner.push(`<icon BUILTIN="${escXml(b)}"/>`);
     }
-    const cloud = String(n?.data?.fmCloud ?? '').trim();
+    const cloud = exchangeScalarTrim(n?.data?.fmCloud ?? '');
     if (cloud) {
       inner.push(cloud && cloud !== '1' ? `<cloud COLOR="${escXml(cloud)}"/>` : '<cloud/>');
     }
@@ -612,7 +641,7 @@ export function toFreemind(content, rels = null) {
   /** 内核的字体 data 键 → `<font>` 的属性串（没有则返回 ''） */
   function freemindFontAttrs(data) {
     const a = [];
-    const fam = String(data?.['font-family'] || '').trim();
+    const fam = exchangeScalarTrim(data?.['font-family'] || '');
     if (fam) a.push(`NAME="${escXml(fam)}"`);
     // BUG 117：存量可能是 "20px" 之类带单位的脏值，只取数字部分
     const size = fontSizeNum(data?.['font-size']);
@@ -795,7 +824,7 @@ export function toOpml(content, title = '脑图') {
     // BUG 179：同 toFreemind —— 首尾空白是内容的一部分，写侧不能 trim
     const attrs = [`text="${escXml(nodeTextKeepEdges(n))}"`];
     // BUG 111：url 是 OPML 2.0 规范属性（OmniOutliner / 幕布 等都读写）
-    const href = String(n?.data?.hyperlink || '').trim();
+    const href = exchangeScalarTrim(n?.data?.hyperlink || '');
     if (href) attrs.push(`url="${escXml(href)}"`);
     /*
      * BUG 153：备注写 `_note`（通行的非标准属性，见函数头那段说明）。
@@ -1482,7 +1511,7 @@ function readXmlNodes(text, tag, attr, fallbackText = null, linkAttr = null, not
 function applyLinks(root, links) {
   let i = 0;
   walkKm(root, (n) => {
-    const href = links && String(links[i] || '').trim();
+    const href = links && exchangeScalarTrim(links[i] || '');
     if (href) {
       n.data = n.data || {};
       n.data.hyperlink = href;
@@ -2217,7 +2246,15 @@ export function exchangeLoss(content, kind, sheet) {
     //   .md 被 inlineText 摊平换行 / 削首尾空白，.opml 读侧削首尾空白
     titleEdge: 0,
     // BUG 181：画布自己的主题与布局（画布级，不计进 nodes，见函数末尾）
-    theme: 0, layout: 0 };
+    theme: 0, layout: 0,
+    /*
+     * BUG 198：批量普查「值被悄悄改掉」的其余三类 —— 与 newline / noteEdge /
+     *   titleEdge 是同一条线（「带得走」≠「原样带得走」）。早先只按字段补了
+     *   这三处，超链接、样式值、Markdown 节点文字仍是一句「已保存」。
+     *   ⓘ 与那三处**互斥**：换行归 newline、备注空白归 noteEdge、画布标题归
+     *     titleEdge，这里只数剩下没被覆盖的，绝不把同一份内容数两遍。
+     */
+    textEdge: 0, linkEdge: 0, styleEdge: 0 };
   const km = parseKm(content);
   if (!km) return out;
   const touched = new Set();
@@ -2255,6 +2292,46 @@ export function exchangeLoss(content, kind, sheet) {
     const rawText = String(d.text ?? '');
     if (rawText.trim() && LINE_BREAK_ONLY.test(rawText)) bump(n, 'newline');
     /*
+     * BUG 198 ①：Markdown 的节点文字首尾空白。
+     *
+     * BUG 179 明确记过「.md 的 ATX 标题按 CommonMark 削首尾空白，读侧必须
+     * 这么读」，并加了断言锁住行为 —— 但**只锁了行为，没补提示**。其余四种
+     * 格式（BUG 173 / 178 / 179）都保住了首尾空白，唯独 .md 静默削掉，
+     * 而 exchangeLoss 五个字段全报 0 → 界面只说「已保存」。
+     *
+     * ⓘ 判据复用读侧同一个 `inlineText()`（不另抄正则）。
+     * ⓘ 换行归 newline、纯空白走占位（BUG 100），都不在这里重复数。
+     */
+    if (kind === 'markdown' && rawText.trim()
+      && !LINE_BREAK_ONLY.test(rawText) && inlineText(rawText) !== rawText) {
+      bump(n, 'textEdge');
+    }
+    /*
+     * BUG 198 ②：超链接里的空白与换行（.mm / .opml 声称带得走）。
+     * 写侧 `exchangeScalarTrim` 削首尾，XML 属性规范化把 CR/LF 并成空格；
+     * 实测「  https://a.example/x  」导回成「https://a.example/x」，而
+     * `keep.hyperlink = true` 让 hyperlink 那一项恒 0 → 完全静默。
+     * ⓘ 其余三种格式整条超链接都装不下，已经报 hyperlink，不重复。
+     */
+    if (keep.hyperlink && xmlScalarChanged(d.hyperlink)) bump(n, 'linkEdge');
+    /*
+     * BUG 198 ③：FreeMind 声称带得走的样式值 / 图标 / 云色里的空白与换行。
+     * 实测「  #ff0000  」「  serif  」「  bold  」「  bookmark  」导回全被 trim，
+     * 而 `keep.styleKeys` 让 style 那一项恒 0 → 完全静默。
+     * ⓘ 字段清单从能力矩阵派生（keep.styleKeys）+ 两个 FreeMind 专属键，
+     *   不手写名单：以后矩阵新增一个 .mm 带得走的键，这里自动跟上。
+     * ⓘ 其余格式整条样式都装不下，已经报 style，不重复。
+     */
+    if (kind === 'freemind') {
+      const edgeKeys = [...(keep.styleKeys || []), 'fmIcons', 'fmCloud'];
+      for (const k of edgeKeys) {
+        const v = d[k];
+        if (v == null || v === '') continue;
+        const vals = Array.isArray(v) ? v : [v];
+        if (vals.some(xmlScalarChanged)) { bump(n, 'styleEdge'); break; }
+      }
+    }
+    /*
      * BUG 195：备注「带得走」不等于「原样带得走」。
      *
      * .mm / .opml 声称 note 带得走（EXCHANGE_KEEP 里 note: true），可写侧
@@ -2273,7 +2350,17 @@ export function exchangeLoss(content, kind, sheet) {
      *   再报一次就是同一份内容数两遍。
      */
     const rawNote = String(d.note ?? '');
-    if (keep.note && rawNote && normalizeNoteText(rawNote) !== rawNote) {
+    /*
+     * BUG 198：备注里的 CR 之前漏数。
+     *   .mm 的 richcontent 是 XHTML 文本节点，XML 规范把 CR 变成 LF
+     *     （实测「X\rY」→「X\nY」），而 normalizeNoteText 不认 \r → 判成没变；
+     *   .opml 的 _note 把 \r 写成 `&#13;` 字符引用，**原样保住**（实测）。
+     * 所以两种格式判据不同：一刀切会把 .opml 保得住的 CR 虚报成丢失。
+     */
+    const noteNorm = kind === 'freemind'
+      ? normalizeNoteText(rawNote.replace(/\r/g, '\n'))
+      : normalizeNoteText(rawNote);
+    if (keep.note && rawNote && noteNorm !== rawNote) {
       bump(n, 'noteEdge');
     }
     if (!keep.note && String(d.note || '').trim()) bump(n, 'note');
@@ -2407,7 +2494,14 @@ export function exchangeLoss(content, kind, sheet) {
     if (title && inlineText(title) !== title) out.titleEdge = 1;
   } else if (kind === 'opml') {
     const title = String(sheet?.title ?? '');
-    if (title && opmlTitleNorm(title) !== title) out.titleEdge = 1;
+    /*
+     * BUG 198：`<head><title>` 是 XML **元素内容**，textContent 按 XML 规范
+     * 把 CR 变成 LF（实测「X\rY」→「X\nY」）；opmlTitleNorm 只 trim，看不见
+     * 这一步 → 判据先按读侧口径归一 CR，否则完全静默。
+     * ⓘ LF / U+2028 原样保住（见 opmlTitleNorm 那段说明），不摊平、不虚报。
+     */
+    const norm = opmlTitleNorm(title.replace(/\r/g, '\n'));
+    if (title && norm !== title) out.titleEdge = 1;
   }
   out.nodes = touched.size;
   return out;
@@ -2425,7 +2519,9 @@ const LOSS_KEYS = ['note', 'hyperlink', 'priority', 'progress', 'labels',
   // BUG 196：画布标题是**画布级**，多画布导出时逐张相加 = 有几张标题被改
   'titleEdge',
   // BUG 181：主题 / 布局是**画布级**，多画布导出时逐张相加 = 有几张非默认
-  'theme', 'layout'];
+  'theme', 'layout',
+  // BUG 198：值被规范化（不是整条丢）的三类，同样要跨画布累加
+  'textEdge', 'linkEdge', 'styleEdge'];
 
 /**
  * 多张画布合计的丢失统计（Markdown 导出用）。
