@@ -6,11 +6,15 @@
 //!
 //! 路由（全部 JSON，端口默认 9911，绑 127.0.0.1）：
 //!   GET    /api/health              服务探活
-//!   GET    /api/tasks               全量任务 + 窗口身份列表
-//!   GET    /api/tasks/{id}          单条任务
-//!   POST   /api/tasks               新建 {title, detail?, priority?, tags?, reporter?}
-//!   PATCH  /api/tasks/{id}          改字段/流转 {status?, assignee?, priority?, title?,
-//!                                   detail?, tags?, by?, note?}
+//!   GET    /api/tasks               任务列表 + 窗口身份 + defs；支持 status/priority/
+//!                                   type/group/tag/assignee/q 过滤（重复键累加）
+//!   GET    /api/tasks/{id}          单条任务 + defs
+//!   POST   /api/tasks               新建 {title, detail?, summary?, priority?, tags?,
+//!                                   type?, group?, assignee?, estimate?, deps?, reporter?}
+//!   PATCH  /api/tasks/{id}          改字段/流转 {status?, assignee?, type?, group?,
+//!                                   priority?, title?, detail?, summary?, tags?, deps?,
+//!                                   estimate?, by?, note?}（三个多值列也认数组）
+//!   DELETE /api/tasks/{id}          删除任务（不可撤销；响应带 dependents）
 //!   POST   /api/tasks/{id}/events   追加事件 {by, action, note?}
 //!   POST   /api/agents              注册窗口身份 {id, name?, role?}
 //!
@@ -716,13 +720,25 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             }
             Err(e) => (api_status(&e), err_json(&e), None),
         },
-        ("GET", ["api", "tasks", id]) => match load_tasks(dir) {
-            Ok(store) => match find_task(&store, id) {
-                /* 与全量读通道同一口径：AI 取单条后也要能查可选值 */
-                Some(t) => ok_json(json!({"ok": true, "task": t, "defs": defs_of(&store)})),
-                None => (404, r#"{"ok":false,"error":"task not found"}"#.to_string(), None),
-            },
-            Err(e) => (api_status(&e), err_json(&e), None),
+        ("GET", ["api", "tasks", id]) => {
+            let id = norm_id(id);
+            match load_tasks(dir) {
+                Ok(store) => match find_task(&store, &id) {
+                    /* 与全量读通道同一口径：AI 取单条后也要能查可选值 */
+                    Some(t) => ok_json(json!({"ok": true, "task": t, "defs": defs_of(&store)})),
+                    /*
+                      ⛔ 原 404 是硬编码英文 "task not found"、不带 id、也不走 api_status，
+                      而 MCP tb_get_task 回的是「任务 {id} 不存在」。
+                      前几轮把两条通道的字段/能力/错误码都对齐了，唯独错误体没对齐 ——
+                      AI 拿到 "task not found" 分不清是路径写错还是任务真没了。
+                    */
+                    None => {
+                        let e = format!("任务 {} 不存在", id);
+                        (api_status(&e), err_json(&e), None)
+                    }
+                },
+                Err(e) => (api_status(&e), err_json(&e), None),
+            }
         },
         ("POST", ["api", "tasks"]) => match parse_body(&req.body) {
             Ok(body) => match create_task(dir, &body) {
@@ -731,8 +747,10 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             },
             Err(e) => (400, err_json(&e), None),
         },
-        ("PATCH", ["api", "tasks", id]) => match parse_body(&req.body) {
-            Ok(body) => match patch_task(dir, id, &body, notify_status) {
+        ("PATCH", ["api", "tasks", id]) => {
+            let id = norm_id(id);
+            match parse_body(&req.body) {
+            Ok(body) => match patch_task(dir, &id, &body, notify_status) {
                 Ok((t, entered_notify)) => {
                     /*
                       进入**通知状态**即通知（agent-flow 审查流程的触发源）。
@@ -764,13 +782,36 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
                 Err(e) => (api_status(&e), err_json(&e), None),
             },
             Err(e) => (400, err_json(&e), None),
+            }
         },
-        ("POST", ["api", "tasks", id, "events"]) => match parse_body(&req.body) {
-            Ok(body) => match add_event(dir, id, &body) {
+        ("DELETE", ["api", "tasks", id]) => {
+            let id = norm_id(id);
+            match delete_task(dir, &id) {
+                Ok(v) => {
+                    let mut out = Map::new();
+                    out.insert("ok".to_string(), json!(true));
+                    if let Some(obj) = v.as_object() {
+                        /* ⛔ 显式 UFCS：k/val 都是引用，`k.clone()` 可能解析成
+                           `<&String as Clone>::clone` 返回 &String（insert 要 String）。
+                           用 to_string / Value::clone 消掉歧义，编译更稳。 */
+                        for (k, val) in obj {
+                            out.insert(k.to_string(), Value::clone(val));
+                        }
+                    }
+                    ok_json(Value::Object(out))
+                }
+                Err(e) => (api_status(&e), err_json(&e), None),
+            }
+        },
+        ("POST", ["api", "tasks", id, "events"]) => {
+            let id = norm_id(id);
+            match parse_body(&req.body) {
+            Ok(body) => match add_event(dir, &id, &body) {
                 Ok(t) => (200, json!({"ok": true, "task": t}).to_string(), None),
                 Err(e) => (api_status(&e), err_json(&e), None),
             },
             Err(e) => (400, err_json(&e), None),
+            }
         },
         ("POST", ["api", "agents"]) => match parse_body(&req.body) {
             Ok(body) => match register_agent(dir, &body) {
@@ -918,7 +959,7 @@ fn parse_body(body: &str) -> Result<Value, String> {
 // 协议形状与 fpx/mcp.rs 保持一致（initialize/ping/tools/list/tools/call，
 // 无 id = 通知不回包），但工具表独立——这里是任务能力，那里是 fpx 能力。
 
-/// MCP 工具表。6 个工具覆盖任务全生命周期，参数与 HTTP API 一致。
+/// MCP 工具表。7 个工具覆盖任务全生命周期，参数与 HTTP API 一致。
 ///
 /// pub：MCP 网关（mcp_gate.rs）启动时按它逐个注册（与自身 /mcp 端点
 /// 同一份表，不另抄一遍——抄两份必然漂移）。
@@ -1017,6 +1058,14 @@ pub fn mcp_tools() -> Vec<Value> {
             }),
             vec!["id"],
         ),
+        tool(
+            "tb_delete_task",
+            "删除一条任务（⛔ 不可撤销；调用前先 tb_get_task 确认 id 与标题）。与界面单条删除同一判据：不清其它任务的 deps，而是在响应 dependents 里列出把它列为前置的任务（界面会标「前置不存在」）——AI 没有确认框，必须靠这个字段知道自己是制造了悬空依赖。删除不存在的 id 返回 404「任务 {id} 不存在」",
+            json!({
+                "id": { "type": "string", "description": "要删除的任务 id；首尾空白与百分号编码会自动还原" },
+            }),
+            vec!["id"],
+        ),
     ]
 }
 
@@ -1027,7 +1076,9 @@ pub fn mcp_tools() -> Vec<Value> {
 /// pub：MCP 网关（mcp_gate.rs）代理转发用 —— 转发时**不拆包重包**，
 /// 对端（这里是网关回传）看到的 isError 原样可达 AI 客户端。
 pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &str) -> Value {
-    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|x| x.to_string());
+    /* ⛔ 必须走 norm_id：与 str_field 的统一 trim 同一判据。
+       修前 s() 原样取值，"  tb-0001  " 让三个工具都报「任务不存在」。 */
+    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(norm_id);
     let result: Result<Value, String> = match name {
         "tb_list_tasks" => (|| -> Result<Value, String> {
             let store = load_tasks(dir)?;
@@ -1079,6 +1130,7 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
         "tb_register_agent" => {
             register_agent(dir, args).map(|a| json!({ "agents": a }))
         }
+        "tb_delete_task" => delete_task(dir, &s("id").unwrap_or_default()),
         other => Err(format!("未知工具: {other}")),
     };
 
@@ -1698,6 +1750,18 @@ fn pct_decode(s: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).to_string()
+}
+
+/// **所有入口的 id 都过这里**：百分号解码 + 首尾空白。
+///
+/// ⛔ 上一轮把 `str_field` 改成统一 trim（"改定义、不动调用点"），
+/// 但 MCP 分发的 `s("id")`、HTTP path 切出来的 id 段都没跟上：
+///   · AI 传 `"  tb-0001  "` 给 tb_get_task / tb_update_task / tb_add_event
+///     → 「任务  tb-0001  不存在」，而任务明明在；报错把人往"任务不存在"上引
+///   · AI 请求 `GET /api/tasks/%20tb-0001` → path 段没解码，也找不到
+/// 三条读写入口 + 新增的删除入口共用这一份，不再逐处补 trim。
+fn norm_id(raw: &str) -> String {
+    pct_decode(raw).trim().to_string()
 }
 
 /// 读通道的过滤条件。**HTTP GET /api/tasks 与 MCP tb_list_tasks 共用这一份**。
@@ -2333,6 +2397,46 @@ fn patch_task(
     Ok((snapshot, became_review))
 }
 
+/// 删除一条任务。**HTTP DELETE /api/tasks/{id} 与 MCP tb_delete_task 共用**。
+///
+/// ⛔ AI 通道原来完全没有删除入口：界面有单条删除 + 批量删除，
+/// 6 个工具里却只有 create/update/list/get/add_event/register_agent ——
+/// AI 误建一条任务、或清理废弃任务，只能让用户去界面点。
+/// 与「create 不写 summary / deps」「create schema 漏 assignee」同族：
+/// 看得见却用不了。
+///
+/// ⛔ **不清其它任务的 deps**：界面 doDelete 刻意保留（lockOf 会标
+/// 「前置不存在（可能已被删除）」），只在确认框里警告有多少条会受影响。
+/// AI 没有确认框，所以把 dependents 放进**响应**（界面提示的等价物）——
+/// 否则 AI 不知道自己制造了一批永远解锁不了的任务。
+/// 同样不刷新其它任务的 updatedAt（界面也不刷新）。
+fn delete_task(dir: &PathBuf, id: &str) -> Result<Value, String> {
+    let id = id.trim();
+    let mut store = load_tasks(dir)?;
+    let (removed, dependents) = {
+        let tasks = store["tasks"].as_array_mut().ok_or("tasks 不是数组")?;
+        let pos = tasks
+            .iter()
+            .position(|t| t.get("id").and_then(|v| v.as_str()) == Some(id))
+            .ok_or_else(|| format!("任务 {} 不存在", id))?;
+        let removed = tasks.remove(pos);
+        /* remove 之后只剩「其它任务」，正好是要检查依赖的对象 */
+        let dependents: Vec<String> = tasks
+            .iter()
+            .filter(|t| vals_of(t, "deps").iter().any(|d| d.as_str() == id))
+            .filter_map(|t| t.get("id").and_then(|v| v.as_str()).map(|x| x.to_string()))
+            .collect();
+        (removed, dependents)
+    };
+    save_tasks(dir, &store)?;
+    Ok(json!({
+        "deleted": id,
+        "task": removed,
+        "dependents": dependents,
+        "dependentsCount": dependents.len(),
+    }))
+}
+
 fn add_event(dir: &PathBuf, id: &str, body: &Value) -> Result<Value, String> {
     /*
       ⛔ 原来 add_event 没有任何判等：body={} 也会 push 一条
@@ -2425,7 +2529,7 @@ fn write_response(stream: &mut TcpStream, code: u16, body: &str) {
         _ => "OK",
     };
     let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, PATCH, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, X-TB-Token\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, PATCH, DELETE, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, X-TB-Token\r\nConnection: close\r\n\r\n",
         code, reason, body.len()
     );
     let _ = stream.write_all(head.as_bytes());
@@ -2530,7 +2634,7 @@ mod tests {
     #[test]
     fn tools_list_has_six_entries() {
         let tools = mcp_tools();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
         for t in &tools {
             assert!(t.get("inputSchema").is_some(), "工具缺 inputSchema");
         }

@@ -7081,11 +7081,19 @@ t('守卫：AI 列任务可按 type / group 过滤（不再看得见却筛不了
 /* ⑧ 业务错误不再一律 500（route 里 6 处统一走 api_status） */
 t('守卫：HTTP 业务错误按语义分类（不再一律 500）', (() => {
   if (!rsSrc) return false;
+  /*
+    ⛔ 两处旧判据本轮同时失效：
+      · `contains("不存在")` 靠 api_status **注释**里的旧写法通过（假绿）
+      · `=== 6` 钉死写分支数量，新增 DELETE 分支后恒红
+    改成剥注释后钉形状判据；计数用 >= 6，以后加分支不会又失效。
+  */
+  const apist = STRIP(R13_APIST);
   return /fn api_status\(e: &str\) -> u16/.test(R13_CODE)
-    && /e\.contains\("不存在"\)/.test(R13_APIST)
-    && /IO_PREFIXES/.test(R13_APIST)
+    && /e\.starts_with\("任务 "\) && e\.ends_with\("不存在"\)/.test(apist)
+    && !/contains\("不存在"\)/.test(apist)
+    && /IO_PREFIXES/.test(apist)
     && (R13_ROUTE.match(/Err\(e\) => \(500, err_json\(&e\), None\)/g) || []).length === 0
-    && (R13_ROUTE.match(/Err\(e\) => \(api_status\(&e\), err_json\(&e\), None\)/g) || []).length === 6;
+    && (R13_ROUTE.match(/Err\(e\) => \(api_status\(&e\), err_json\(&e\), None\)/g) || []).length >= 6;
 })());
 
 /* ⑨ IO 前缀清单覆盖所有文件/序列化错误文案（改文案时不会静默失准） */
@@ -7509,6 +7517,174 @@ t('守卫：跨端形状一致 —— create/update 都认三个多值列的数�
     if (!new RegExp('"' + k + '":\\s*\\{ "type": \\["string", "array"\\]').test(R15_CREATE)) return false;
   }
   return /patch_vals_set/.test(R15_PATCH);
+})());
+
+/*
+ * ============================================================
+ * 本轮：「相似问题」再往下翻一层 —— id 归一、删除能力、单条读错误文案。
+ *
+ * 复现：
+ *   ① 上一轮把 str_field 改成统一 trim（"改定义、不动调用点"），
+ *      但 MCP 分发的 s("id")、HTTP path 的 id 段都没跟上：
+ *      AI 传 "  tb-0001  " → 「任务  tb-0001  不存在」，任务明明在
+ *   ② 界面有单条删除 + 批量删除，AI 通道 6 个工具里却没有删除 ——
+ *      与「create 不写 summary/deps」「create schema 漏 assignee」同族
+ *   ③ GET /api/tasks/{id} 的 404 是硬编码英文 "task not found"（不带 id、
+ *      不走 api_status），MCP 是「任务 {id} 不存在」—— 两条通道文案不一致
+ *
+ * 修法：norm_id 一处归一（pct_decode + trim），所有 id 入口共用；
+ * delete_task 一个函数供 HTTP DELETE 与 tb_delete_task 共用，
+ * 与界面同判据「不清 deps、在响应 dependents 里回报受影响任务」。
+ * ============================================================
+ */
+
+const R16_CODE = STRIP(rsSrc);
+const R16_ROUTE = rsBranch('fn route(', '\nfn ');
+const R16_DISPATCH = rsBranch('pub fn mcp_call_tool(', '/// JSON-RPC 2.0 分发');
+const R16_DELETE = rsBranch('/// 删除一条任务。', 'fn add_event(');
+const R16_TOOLS = rsSrc ? rsSrc.slice(rsSrc.indexOf('pub fn mcp_tools('), rsSrc.indexOf('pub fn mcp_tools(') + 16000) : '';
+
+/* ① norm_id 定义：解码 + trim 两件事都在 */
+t('守卫：norm_id 一处统一解码与 trim', (() => {
+  if (!rsSrc) return false;
+  const seg = rsBranch('fn norm_id(', '/// 读通道的过滤条件');
+  return /fn norm_id\(raw: &str\) -> String/.test(seg)
+    && /pct_decode\(raw\)\.trim\(\)\.to_string\(\)/.test(seg);
+})());
+
+/* ② 通杀：所有取 id 的地方都走 norm_id（不许再裸用原始 id） */
+t('守卫：通杀 —— 所有 id 入口共用 norm_id', (() => {
+  if (!rsSrc) return false;
+  const code = R16_CODE;
+  /* MCP 分发的 s 闭包 */
+  if (!/let s = \|k: &str\| args\.get\(k\)\.and_then\(\|v\| v\.as_str\(\)\)\.map\(norm_id\)/.test(code)) return false;
+  /* route 里四个 id 分支：GET 单条 / PATCH / DELETE / events */
+  const routeIds = (R16_ROUTE.match(/let id = norm_id\(id\);/g) || []).length;
+  if (routeIds < 4) return false;
+  /* 不许再把未归一的 id 直接传给 find_task / patch_task / add_event */
+  return !/find_task\(&store, id\)/.test(code)
+    && !/patch_task\(dir, id,/.test(code)
+    && !/add_event\(dir, id,/.test(code);
+})());
+
+/* ③ 删除能力：HTTP DELETE 分支 + MCP 工具 + 分发 + 共用函数，四处齐 */
+t('守卫：AI 通道有删除入口（HTTP DELETE + tb_delete_task 共用 delete_task）', (() => {
+  if (!rsSrc) return false;
+  return /\("DELETE", \["api", "tasks", id\]\)/.test(R16_ROUTE)
+    && /"tb_delete_task"/.test(R16_TOOLS)
+    && /"tb_delete_task" => delete_task\(dir, &s\("id"\)\.unwrap_or_default\(\)\)/.test(R16_DISPATCH)
+    && /fn delete_task\(dir: &PathBuf, id: &str\)/.test(R16_DELETE)
+    && /delete_task\(dir, &id\)/.test(R16_ROUTE);
+})());
+
+/* ④ 删除与界面同判据：不清 deps，但回报 dependents */
+t('守卫：删除不清 deps 但回报 dependents（与界面 doDelete 同判据）', (() => {
+  if (!rsSrc) return false;
+  /*
+    ⛔ 第一版钉 `obj.insert("deps"` —— 注入用的是 `o.insert(...)`，
+    换个变量名就绕过（注入 9 假绿）。改成不绑定变量名，并整段剥注释后判。
+  */
+  const body = STRIP(R16_DELETE);
+  return /let removed = tasks\.remove\(pos\)/.test(body)
+    && /vals_of\(t, "deps"\)\.iter\(\)\.any\(\|d\| d\.as_str\(\) == id\)/.test(body)
+    && /"dependents": dependents/.test(body)
+    && /"dependentsCount": dependents\.len\(\)/.test(body)
+    /* 不许偷偷改其它任务的 deps 或 updatedAt（与界面 doDelete 一致） */
+    && !/insert\("deps"/.test(body)
+    && !/updatedAt/.test(body);
+})());
+
+/* ⑤ 删除不存在走 api_status → 404（与 MCP 同一句文案） */
+t('守卫：删除不存在的任务返回「任务 {id} 不存在」', (() => {
+  if (!rsSrc) return false;
+  return /\.ok_or_else\(\|\| format!\("任务 \{\} 不存在", id\)\)\?/.test(R16_DELETE);
+})());
+
+/* ⑥ 单条读 404 不再硬编码英文，两条通道同文案 */
+t('守卫：GET 单条 404 与 MCP 同文案（不再 task not found）', (() => {
+  if (!rsSrc) return false;
+  return !/task not found/.test(R16_CODE)
+    && /let e = format!\("任务 \{\} 不存在", id\)/.test(R16_ROUTE)
+    && /\(api_status\(&e\), err_json\(&e\), None\)/.test(R16_ROUTE);
+})());
+
+/* ⑦ 工具表 7 个 + 内置 Rust 测试断言同步（否则 cargo test 红） */
+t('守卫：工具表 7 个且 Rust 内置断言同步', (() => {
+  if (!rsSrc) return false;
+  return (R16_TOOLS.match(/"tb_[a-z_]+",\n/g) || []).length >= 7
+    && /assert_eq!\(tools\.len\(\), 7\)/.test(R16_CODE)
+    && !/assert_eq!\(tools\.len\(\), 6\)/.test(R16_CODE);
+})());
+
+/* ⑧ 新工具的描述是实话（不可撤销 / 不清 deps / 返回 dependents / 404） */
+t('守卫：tb_delete_task 描述与实现一致', (() => {
+  if (!rsSrc) return false;
+  const i = R16_TOOLS.indexOf('"tb_delete_task",');
+  if (i < 0) return false;
+  const d = R16_TOOLS.slice(i, i + 700);
+  return d.includes('不可撤销') && d.includes('不清其它任务的 deps')
+    && d.includes('dependents') && d.includes('前置不存在')
+    && /"dependents": dependents/.test(R16_DELETE);
+})());
+
+/* ⑨ 数据等价：删除判据逐用例复现 */
+const R16_EQ = (store, id) => {
+  const idx = store.tasks.findIndex((t) => t.id === id);
+  if (idx < 0) return { err: '任务 ' + id + ' 不存在' };
+  const removed = store.tasks[idx];
+  const rest = store.tasks.filter((_, i) => i !== idx);
+  const vals = (t, k) => {
+    const v = t[k];
+    if (typeof v === 'string') return v.trim() ? [v.trim()] : [];
+    if (Array.isArray(v)) return v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim());
+    return [];
+  };
+  const dependents = rest
+    .filter((t) => vals(t, 'deps').some((d) => d === id))
+    .map((t) => t.id);
+  return { deleted: id, task: removed, dependents, dependentsCount: dependents.length, remaining: rest };
+};
+t('守卫：数据等价 —— 删除/dependents/不清 deps 逐用例正确', (() => {
+  const store = { tasks: [
+    { id: 'tb-0001', title: '登录报错', deps: [], updatedAt: 100 },
+    { id: 'tb-0002', title: '支付超时', deps: ['tb-0001'], updatedAt: 200 },
+    { id: 'tb-0003', title: '首页优化', deps: ['tb-0001', 'tb-0002'], updatedAt: 300 },
+    { id: 'tb-0004', title: '无关', deps: [], updatedAt: 400 },
+  ] };
+  const a = R16_EQ(store, 'tb-0001');
+  if (a.dependents.join(',') !== 'tb-0002,tb-0003' || a.dependentsCount !== 2) return false;
+  /* 不清 deps、不刷新其它任务的 updatedAt */
+  if (a.remaining.find((t) => t.id === 'tb-0002').deps.join(',') !== 'tb-0001') return false;
+  if (a.remaining.some((t) => t.updatedAt !== [200, 300, 400][['tb-0002','tb-0003','tb-0004'].indexOf(t.id)])) return false;
+  const b = R16_EQ(store, 'tb-0004');
+  if (b.dependentsCount !== 0) return false;
+  const c = R16_EQ(store, 'tb-9999');
+  if (!c.err || !c.err.startsWith('任务 ') || !c.err.endsWith('不存在')) return false;
+  return true;
+})());
+
+/* ⑩ 通杀：CORS Allow-Methods 必须覆盖 route 里实际支持的全部方法。
+   ⛔ 新增 DELETE 分支时响应头没跟上（`GET, POST, PATCH, OPTIONS`）——
+   浏览器跨域 DELETE 的预检会被拒，而服务端自己测 curl 一切正常，
+   正是「新增能力但配套没跟上」的同类。动态从 route 抽方法名，不硬编码。 */
+t('守卫：通杀 —— CORS Allow-Methods 覆盖 route 全部方法', (() => {
+  if (!rsSrc) return false;
+  const m = rsSrc.match(/Access-Control-Allow-Methods: ([A-Z, ]+)\\r\\n/);
+  if (!m) return false;
+  const allowed = m[1].split(',').map((x) => x.trim());
+  const methods = [...R16_ROUTE.matchAll(/\("([A-Z]+)", \["api"/g)].map((x) => x[1]);
+  const uniq = [...new Set(methods)];
+  return uniq.length >= 4 && uniq.every((x) => allowed.includes(x))
+    && allowed.includes('OPTIONS');   /* 预检由 handle_conn 直接放行 */
+})());
+
+/* ⑪ 文件头路由清单列出 DELETE（文档不能比实现少一个入口） */
+t('守卫：文件头路由清单列出 DELETE', (() => {
+  if (!rsSrc) return false;
+  const head = rsSrc.slice(0, rsSrc.indexOf('fn read_request('));
+  return /DELETE \/api\/tasks\/\{id\}/.test(head)
+    && /GET    \/api\/tasks/.test(head)
+    && /POST   \/api\/agents/.test(head);
 })());
 
 const readmeCount = (() => {
