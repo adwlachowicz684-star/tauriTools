@@ -820,8 +820,8 @@ pub fn mcp_tools() -> Vec<Value> {
                 "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部。这个 enum 只是**默认值**——用户可能自定义过流程，实际生效的状态看响应里的 defs.statuses" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "按优先级过滤" },
                 "tag":      { "type": "string", "description": "按标签过滤" },
-                "assignee": { "type": "string", "description": "按认领人过滤；传 \"__none__\" 查未认领" },
-                "q":        { "type": "string", "description": "关键词，匹配标题/详情/说明/id，以及状态/优先级/分组/认领人/类型/标签的显示名" },
+                "assignee": { "type": "string", "description": "按认领人过滤（该列可多选，数组里的任一值命中即算）；传 \"__none__\" 查未认领" },
+                "q":        { "type": "string", "description": "关键词，匹配 id/标题/详情/说明，以及状态/优先级/分组/认领人/类型/标签的原始值与定义表显示名（多值列逐个匹配；自定义流程的状态按流程里配的名字，默认流程按状态 id）" },
             }),
             vec![],
         ),
@@ -834,9 +834,9 @@ pub fn mcp_tools() -> Vec<Value> {
                 "summary":  { "type": "string", "description": "任务说明（与详情分开：说明是要做什么，详情是复现/期望行为）" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "默认 P2" },
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "标签；先调 tb_list_tasks 看 defs.tagDefs 里已有哪些（用已有项的 id，不要自造裸名字——裸名字没有定义、没有颜色）" },
-                "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些（默认 dev/bug/opt/research/review/plan，用户可能自定义过）；缺省=未分类" },
+                "type":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "任务类型 id 或 id 数组（该列可多选）；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些（默认 dev/bug/opt/research/review/plan，用户可能自定义过）；缺省=未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；缺省 0=没估" },
-                "group":    { "type": "string", "description": "分组名（留空=不分组）。先调 tb_list_tasks 看 defs.groupDefs 里已有哪些——归到已有分组，不要自造近义名（'登录'和'登陆'会分成两组）" },
+                "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（该列可多选；留空=不分组）。先调 tb_list_tasks 看 defs.groupDefs 里已有哪些——归到已有分组，不要自造近义名（'登录'和'登陆'会分成两组）" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
             }),
             vec!["title"],
@@ -853,15 +853,15 @@ pub fn mcp_tools() -> Vec<Value> {
             json!({
                 "id":       { "type": "string", "description": "任务 id" },
                 "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）。enum 只是默认值，实际生效的状态看 tb_list_tasks 返回的 defs.statuses" },
-                "assignee": { "type": "string", "description": "认领人；已被他人认领会被拒绝；空串=释放认领" },
+                "assignee": { "type": "string", "description": "认领人；该列可多选且任务上已是数组时按追加处理（不会挤掉他人）；已被他人认领且不是共同认领会被拒绝；空串=释放全部认领" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
                 "detail":   { "type": "string", "description": "改详情" },
                 "summary":  { "type": "string", "description": "改任务说明" },
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签；先调 tb_list_tasks 看 defs.tagDefs 里已有哪些" },
-                "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；传空串=清成未分类" },
+                "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；该列可多选且任务上已是数组时按追加处理（不会丢已有类型）；传空串=清成未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数" },
-                "group":    { "type": "string", "description": "分组名；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；传空串=取消分组" },
+                "group":    { "type": "string", "description": "分组名；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；该列可多选且任务上已是数组时按追加处理（不会丢已有分组）；传空串=取消分组" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
             }),
@@ -926,34 +926,28 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
                         }
                     }
                     if let Some(tag) = &tag {
-                        let has = t
-                            .get("tags")
-                            .and_then(|v| v.as_array())
-                            .map(|a| a.iter().any(|x| x.as_str() == Some(tag.as_str())))
-                            .unwrap_or(false);
-                        if !has {
+                        if !vals_of(t, "tags").iter().any(|x| x == tag.as_str()) {
                             return false;
                         }
                     }
+                    /*
+                      ⛔ assignee 必须走 vals_of（多值认领人）。
+                      原来 `as_str().unwrap_or("")` 把数组读成空串，
+                      筛具体人 0 条、筛 __none__ 反而误命中。
+                    */
                     if let Some(asg) = &assignee {
-                        let cur = t.get("assignee").and_then(|v| v.as_str()).unwrap_or("");
+                        let cur = vals_of(t, "assignee");
                         if asg == "__none__" {
                             if !cur.is_empty() {
                                 return false;
                             }
-                        } else if cur != asg.as_str() {
+                        } else if !cur.iter().any(|x| x == asg.as_str()) {
                             return false;
                         }
                     }
+                    /* 与界面顶栏同一口径：说明 + 所有 enum 列的原始值与显示名 */
                     if let Some(q) = &q {
-                        let hay = format!(
-                            "{} {} {}",
-                            t.get("id").and_then(|v| v.as_str()).unwrap_or(""),
-                            t.get("title").and_then(|v| v.as_str()).unwrap_or(""),
-                            t.get("detail").and_then(|v| v.as_str()).unwrap_or("")
-                        )
-                        .to_lowercase();
-                        if !hay.contains(q.as_str()) {
+                        if !search_hay(t, &store).contains(q.as_str()) {
                             return false;
                         }
                     }
@@ -1169,24 +1163,223 @@ fn defs_of(store: &Value) -> Value {
 
       把当前生效的状态清单放进 defs，AI 才有得查。
     */
+    let list = |legacy: &str, key: &str| -> Value {
+        match defs_list(store, legacy, key) {
+            Some(a) => Value::Array(a.clone()),
+            None => json!([]),
+        }
+    };
     json!({
-        "groupDefs": store.get("groupDefs").cloned().unwrap_or(json!([])),
-        "typeDefs":  store.get("typeDefs").cloned().unwrap_or(json!([])),
-        "tagDefs":   store.get("tagDefs").cloned().unwrap_or(json!([])),
+        "groupDefs": list("groupDefs", "group"),
+        "typeDefs":  list("typeDefs", "type"),
+        "tagDefs":   list("tagDefs", "tag"),
         /*
           ⛔ 这两张表不能省：defs 的目的是「让 AI 看见有哪些可选值」，
           而认领人与优先级同样是可枚举的列。缺了它们，AI 建任务时
           只能自造裸名字（没颜色、不在候选里），或按写死的四档猜优先级。
           两者都由 toDisk 展开成平级字段，随 tasks.json 导入导出原样带回。
         */
-        "assigneeDefs": store.get("assigneeDefs").cloned().unwrap_or(json!([])),
-        "priorityDefs": store.get("priorityDefs").cloned().unwrap_or(json!([])),
+        "assigneeDefs": list("assigneeDefs", "assignee"),
+        "priorityDefs": list("priorityDefs", "priority"),
         "statuses":  statuses_for(store),
     })
 }
 
 fn str_field(body: &Value, key: &str) -> Option<String> {
     body.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+/// 把任务上某个字段**统一展开成字符串数组**。
+///
+/// ⛔ 多选列（tags / type / group / assignee）在列设置里勾了「多选」之后
+/// 存的是数组，老数据与单选时是字符串。只认字符串的话：
+///   `t["assignee"].as_str()` 对数组返回 None → unwrap_or("") → 空串
+/// 于是多值任务在 AI 通道里被当成「未认领」：
+///   · 筛 `assignee=张三` → 0 条（界面列表里明明挂着张三）
+///   · 筛 `assignee=__none__` → **误命中**（多值任务被算成未认领）
+/// 两种都不报错，只是筛出来的条数不对，查错方向完全反了。
+fn vals_from_map(task: &Map<String, Value>, key: &str) -> Vec<String> {
+    match task.get(key) {
+        Some(Value::String(s)) => {
+            let v = s.trim();
+            if v.is_empty() { Vec::new() } else { vec![v.to_string()] }
+        }
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|x| x.as_str())
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn vals_of(task: &Value, key: &str) -> Vec<String> {
+    match task.as_object() {
+        Some(m) => vals_from_map(m, key),
+        None => Vec::new(),
+    }
+}
+
+/// 建任务时读一个「可以是多值」的列：字符串、字符串数组都认。
+///
+/// ⛔ 原来一律 `str_field(...)` —— AI 传数组时返回 None → 静默落成空串。
+/// 界面上这些列勾了「多选」之后就是数组，AI 通道建多值任务必须能写。
+fn enum_value(body: &Value, key: &str) -> Value {
+    match body.get(key) {
+        Some(Value::String(v)) => {
+            let t = v.trim();
+            if t.is_empty() { json!("") } else { json!(t) }
+        }
+        Some(Value::Array(a)) => Value::Array(
+            a.iter()
+                .filter_map(|x| x.as_str())
+                .map(|x| x.trim())
+                .filter(|x| !x.is_empty())
+                .map(|x| Value::String(x.to_string()))
+                .collect(),
+        ),
+        _ => json!(""),
+    }
+}
+
+/// PATCH 里改一个「可以是多值」的列（type / group / assignee）。
+///
+/// ⛔ 原来 `as_str().unwrap_or("")` 把数组读成空串，于是：
+///   · 每次都认为有变化（写盘 + 记一条无意义历史）
+///   · 把**数组覆盖成单值字符串** —— 静默丢掉其它值
+/// 界面上同类问题修过（批量改类型覆盖），AI 通道是同一根因。
+///
+/// 形状跟随数据：原本是数组就追加去重（与界面多选一致），
+/// 原本是字符串就替换（老行为不变），空串 = 清空。
+/// 列配置存在插件偏好里、Rust 读不到，所以以「数据自己长什么样」为准 ——
+/// 与前端 multiOfTask 的第二个来源同理（关掉多选但还没压缩完时仍是数组）。
+fn patch_vals(
+    obj: &mut Map<String, Value>,
+    key: &str,
+    incoming: &str,
+    by: &str,
+    empty_label: &str,
+) -> bool {
+    let cur = vals_from_map(obj, key);
+    let was_array = obj.get(key).map(|v| v.is_array()).unwrap_or(false);
+    let v = incoming.trim();
+    let next: Vec<String> = if v.is_empty() {
+        Vec::new()
+    } else if was_array {
+        let mut n = cur.clone();
+        if !n.iter().any(|x| x == v) {
+            n.push(v.to_string());
+        }
+        n
+    } else {
+        vec![v.to_string()]
+    };
+    if cur == next {
+        return false;
+    }
+    let stored: Value = if was_array {
+        Value::Array(next.iter().map(|x| Value::String(x.clone())).collect())
+    } else if next.is_empty() {
+        Value::Null
+    } else {
+        json!(next[0])
+    };
+    obj.insert(key.to_string(), stored);
+    let fmt = |a: &Vec<String>| {
+        if a.is_empty() { empty_label.to_string() } else { a.join("、") }
+    };
+    push_history(obj, by, key, &format!("{} -> {}", fmt(&cur), fmt(&next)));
+    true
+}
+
+/// 定义表：优先读**平级字段**（前端 toDisk 总是写），回退 `defs.<key>`。
+///
+/// ⛔ 只认平级字段的话，导入一份「只有 defs」的文件时 defs_of 返回空表，
+/// AI 建任务只能自造裸名字（没颜色、不在候选里）。两种格式都要认。
+fn defs_list<'a>(store: &'a Value, legacy: &str, key: &str) -> Option<&'a Vec<Value>> {
+    store
+        .get(legacy)
+        .and_then(|v| v.as_array())
+        .filter(|a| !a.is_empty())
+        .or_else(|| {
+            store
+                .get("defs")
+                .and_then(|d| d.get(key))
+                .and_then(|v| v.as_array())
+        })
+}
+
+/// 定义表里的 id → 显示名；没有定义就退回 id 本身（至少能按 id 搜）。
+fn label_of(store: &Value, legacy: &str, key: &str, id: &str) -> String {
+    if let Some(arr) = defs_list(store, legacy, key) {
+        for d in arr.iter() {
+            if d.get("id").and_then(|v| v.as_str()) == Some(id) {
+                if let Some(n) = d.get("name").and_then(|v| v.as_str()) {
+                    if !n.trim().is_empty() {
+                        return n.trim().to_string();
+                    }
+                }
+            }
+        }
+    }
+    id.to_string()
+}
+
+/// 自定义流程里状态 id → 名字（flow.statuses[].name）。没配过就退回 id。
+fn status_label(store: &Value, id: &str) -> String {
+    if let Some(arr) = store
+        .get("flow")
+        .and_then(|f| f.get("statuses"))
+        .and_then(|v| v.as_array())
+    {
+        for one in arr.iter() {
+            if one.get("id").and_then(|v| v.as_str()) == Some(id) {
+                if let Some(n) = one.get("name").and_then(|v| v.as_str()) {
+                    if !n.trim().is_empty() {
+                        return n.trim().to_string();
+                    }
+                }
+            }
+        }
+    }
+    id.to_string()
+}
+
+/// AI 通道 `q` 的搜索串 —— 与界面顶栏全局搜索**同一口径**。
+///
+/// ⛔ 原来只拼 id / title / detail，而上一轮把 MCP schema 里 q 的描述
+/// 写成了「匹配标题/详情/说明/id，以及状态/优先级/分组/认领人/类型/标签的显示名」——
+/// **描述成了假话**：AI 照着描述搜「开发中」「重要」全是 0 条，界面却能搜到。
+/// 「文档说了、代码没做」比不写更误导 —— AI 会反复重试同一个词。
+fn search_hay(task: &Value, store: &Value) -> String {
+    let s = |k: &str| task.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut parts = vec![s("id"), s("title"), s("detail"), s("summary")];
+    /*
+      列清单与前端 core.mjs 的 LIST_COLUMNS（kind='enum'）**集合一致**
+      （顺序不影响拼串，跨端守卫按集合比）。每个值都放**原始值 + 显示名**：
+        · 按 id 能搜（AI 读 tasks.json 看到的就是 id）
+        · 按显示名能搜（界面上看到的字，改名后自动跟着变）
+    */
+    let cols: [(&str, &str, &str); 6] = [
+        ("status", "", ""),
+        ("priority", "priorityDefs", "priority"),
+        ("group", "groupDefs", "group"),
+        ("assignee", "assigneeDefs", "assignee"),
+        ("type", "typeDefs", "type"),
+        ("tags", "tagDefs", "tag"),
+    ];
+    for &(field, legacy, key) in cols.iter() {
+        for v in vals_of(task, field) {
+            parts.push(v.clone());
+            if field == "status" {
+                parts.push(status_label(store, &v));
+            } else {
+                parts.push(label_of(store, legacy, key, &v));
+            }
+        }
+    }
+    parts.join(" ").to_lowercase()
 }
 
 /// 状态流转图：与前端 plugins/task-board/core.mjs 的 canTransition 逐字对齐
@@ -1353,10 +1546,7 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
       字段在文件里**看得见**它才会去填；靠前端默认值补出来的字段，
       AI 根本不知道有这一项。（与前端 createTask 同一判据。）
     */
-    task.insert(
-        "type".to_string(),
-        json!(str_field(body, "type").unwrap_or_default().trim()),
-    );
+    task.insert("type".to_string(), enum_value(body, "type"));
     task.insert(
         "tags".to_string(),
         body.get("tags")
@@ -1370,10 +1560,7 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
       显式写进文件（哪怕为空）：这份 JSON 是给 AI 直接读改的，
       字段在文件里**看得见**它才会去填。
     */
-    task.insert(
-        "group".to_string(),
-        json!(str_field(body, "group").unwrap_or_default().trim()),
-    );
+    task.insert("group".to_string(), enum_value(body, "group"));
     /*
       任务说明（summary）。与 detail 分开：
       说明是"要做什么"（原始要求），详情是复现/期望行为。
@@ -1388,7 +1575,7 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
         json!(str_field(body, "summary").unwrap_or_default().trim()),
     );
     task.insert("reporter".to_string(), json!(reporter));
-    task.insert("assignee".to_string(), json!(str_field(body, "assignee")));
+    task.insert("assignee".to_string(), enum_value(body, "assignee"));
     task.insert("createdAt".to_string(), json!(now_ms()));
     task.insert("updatedAt".to_string(), json!(now_ms()));
     push_history(&mut task, &reporter, "create", "新建任务");
@@ -1455,48 +1642,30 @@ fn patch_task(
         // 不挡这里的话 A、B 先后认领都返回 200，先认领者毫不知情）。
         // 传空串 = 主动释放认领。
         if let Some(v) = str_field(body, "assignee") {
-            let cur = obj.get("assignee").and_then(|x| x.as_str()).unwrap_or("");
-            if !v.is_empty() && !cur.is_empty() && cur != v {
+            /*
+              ⛔ 认领守卫也必须认多值：原来 cur 读数组得空串 →
+              对共同认领的任务完全失效（AI 能把别人挤掉还返回 200）。
+            */
+            let cur = vals_from_map(obj, "assignee");
+            let next = v.trim();
+            if !next.is_empty() && !cur.is_empty() && !cur.iter().any(|x| x == next) {
                 return Err(format!(
                     "任务已被 {} 认领；如需接手先与其确认或先退回 todo",
-                    cur
+                    cur.join("、")
                 ));
             }
-            if obj.get("assignee").and_then(|x| x.as_str()).unwrap_or("") != v.as_str() {
-                obj.insert("assignee".to_string(), if v.is_empty() { json!(null) } else { json!(v) });
+            if patch_vals(obj, "assignee", next, &by, "未认领") {
                 changed = true;
             }
         }
         if let Some(v) = str_field(body, "type") {
-            // 取所有权：下面 obj.insert 是可变借用，&str 借到 obj 上会冲突（E0502）
-            let cur = obj.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let next = v.trim();
-            if cur != next {
-                obj.insert("type".to_string(), json!(next));
+            if patch_vals(obj, "type", &v, &by, "未分类") {
                 changed = true;
-                push_history(
-                    obj,
-                    &by,
-                    "type",
-                    &format!("{} -> {}", if cur.is_empty() { "未分类" } else { cur.as_str() },
-                             if next.is_empty() { "未分类" } else { next }),
-                );
             }
         }
         if let Some(v) = str_field(body, "group") {
-            // 取所有权：下面 obj.insert 是可变借用，&str 借到 obj 上会冲突（E0502）
-            let cur = obj.get("group").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let next = v.trim();
-            if cur != next {
-                obj.insert("group".to_string(), json!(next));
+            if patch_vals(obj, "group", &v, &by, "未分组") {
                 changed = true;
-                push_history(
-                    obj,
-                    &by,
-                    "group",
-                    &format!("{} -> {}", if cur.is_empty() { "未分组" } else { cur.as_str() },
-                             if next.is_empty() { "未分组" } else { next }),
-                );
             }
         }
         if let Some(v) = body.get("estimate") {

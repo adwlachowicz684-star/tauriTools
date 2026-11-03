@@ -6221,6 +6221,136 @@ t('守卫：README 搜索范围说明含状态/优先级（不误导用户）', 
   return !!line && line.includes('状态') && line.includes('优先级');
 })());
 
+/*
+ * ============================================================
+ * 本轮：多选列 / 六档优先级 / 改色上线之后，AI 通道（HTTP + MCP 共用
+ * create_task / patch_task / mcp_call_tool）的**读侧与写侧**全没跟上。
+ *
+ * 复现（按 Rust 原判据 as_str() 等价跑）：
+ *   assignee=["张三","李四"] → as_str()=None → unwrap_or("") → ""
+ *   筛 assignee=张三 → 0 条；筛 __none__ → 误命中（当成未认领）
+ *   q="开发中" / "重要" → hay 只有 id/title/detail → 0 条
+ *   PATCH type 时把 ["dev","bug"] 覆盖成 "research" → 静默丢值
+ * ============================================================
+ */
+
+const RS_SEG = (from, len) => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf(from);
+  return i < 0 ? '' : rsSrc.slice(i, i + len);
+};
+const RS_LIST = RS_SEG('"tb_list_tasks" => (||', 2600);
+const RS_PATCH = RS_SEG('fn patch_task(', 9000);
+const RS_CREATE = RS_SEG('fn create_task(', 4200);
+const RS_HELPERS = RS_SEG('fn vals_from_map(', 5200);
+
+/* ① list 的 assignee/tag 过滤走 vals_of（不再裸 as_str） */
+t('守卫：AI 列任务的 assignee/tag 过滤认多值', (() => {
+  if (!rsSrc) return false;
+  return /vals_of\(t, "assignee"\)/.test(RS_LIST)
+    && /vals_of\(t, "tags"\)/.test(RS_LIST)
+    && /cur\.iter\(\)\.any\(/.test(RS_LIST)
+    && /cur\.is_empty\(\)/.test(RS_LIST);
+})());
+
+/* ② 通杀：多选列不许再裸用 as_str() 读任务上的值 */
+t('守卫：通杀 —— Rust 不许对多值列裸调 as_str()', (() => {
+  if (!rsSrc) return false;
+  const code = STRIP(rsSrc);
+  for (const k of ['assignee', 'type', 'group', 'tags']) {
+    const re = new RegExp('get\\("' + k + '"\\)\\.and_then\\(\\|[^|]*\\|[^)]*as_str\\(\\)\\)', 'g');
+    const hits = code.match(re) || [];
+    if (hits.length) return false;
+  }
+  return true;
+})());
+
+/* ③ q 搜索走 search_hay，且它拼 summary + 六个 enum 列 */
+t('守卫：AI 的 q 搜索与界面同口径（说明 + 六列原始值与显示名）', (() => {
+  if (!rsSrc) return false;
+  const hay = RS_SEG('fn search_hay(', 2200);
+  const need = ['s("id")', 's("title")', 's("detail")', 's("summary")',
+    '("status", ""', '"priorityDefs"', '"groupDefs"', '"assigneeDefs"',
+    '"typeDefs"', '"tagDefs"', 'vals_of(task, field)', 'status_label(', 'label_of('];
+  return need.every((x) => hay.includes(x))
+    && /search_hay\(t, &store\)/.test(RS_LIST);
+})());
+
+/* ④ 上一轮写下的 q 描述不能是假话（描述提显示名，实现就得有 search_hay） */
+t('守卫：MCP 的 q 描述与实现一致（不是只写文档）', (() => {
+  if (!rsSrc) return false;
+  const i = rsSrc.indexOf('"q":        { "type": "string"');
+  if (i < 0) return false;
+  const desc = rsSrc.slice(i, i + 500);
+  /*
+    ⛔ 只查 `fn search_hay(` 存在太弱：函数留着、调用点退回老写法，
+    描述照样是假话而守卫不报（注入 3 时验证过，这条是假绿的）。
+    现在连**调用点**一起钉住。
+  */
+  return desc.includes('定义表显示名') && rsSrc.includes('fn search_hay(')
+    && desc.includes('默认流程按状态 id')
+    && /search_hay\(t, &store\)/.test(RS_LIST);
+})());
+
+/* ⑤ defs_of 兼容 defs-only 文件（平级优先、回退 defs.<key>） */
+t('守卫：defs_of 兼容只有 defs 的文件', (() => {
+  if (!rsSrc) return false;
+  const d = RS_SEG('fn defs_of(', 2400);
+  return /defs_list\(store/.test(d)
+    && /defs_list\(store, legacy, key\)/.test(RS_HELPERS)
+    && /get\("defs"\)/.test(RS_HELPERS)
+    && ['group', 'type', 'tag', 'assignee', 'priority'].every((k) => d.includes('"' + k + '"'));
+})());
+
+/* ⑥ 建任务认数组输入（三个多值列都走 enum_value） */
+t('守卫：AI 建任务能写多值（type/group/assignee 走 enum_value）', (() => {
+  if (!rsSrc) return false;
+  return ['type', 'group', 'assignee'].every((k) =>
+    new RegExp('enum_value\\(body, "' + k + '"\\)').test(RS_CREATE))
+    && /Some\(Value::Array\(a\)\)/.test(RS_HELPERS);
+})());
+
+/* ⑦ 改任务不再把数组覆盖成单值（三个列走 patch_vals） */
+t('守卫：AI 改任务不丢多值（type/group/assignee 走 patch_vals）', (() => {
+  if (!rsSrc) return false;
+  return ['type', 'group', 'assignee'].every((k) =>
+    new RegExp('patch_vals\\(obj, "' + k + '"').test(RS_PATCH))
+    && /let was_array =/.test(RS_HELPERS)
+    && /n\.push\(v\.to_string\(\)\)/.test(RS_HELPERS);
+})());
+
+/* ⑧ 认领守卫认多值（cur 是数组，join 进错误文案） */
+t('守卫：认领守卫对共同认领的任务仍生效', (() => {
+  if (!rsSrc) return false;
+  return /let cur = vals_from_map\(obj, "assignee"\)/.test(RS_PATCH)
+    && /cur\.iter\(\)\.any\(/.test(RS_PATCH)
+    && /cur\.join\("、"\)/.test(RS_PATCH);
+})());
+
+/* ⑨ 跨端：Rust search_hay 的列清单 = 前端 LIST_COLUMNS 的 enum 列 */
+t('守卫：跨端搜索口径一致（Rust cols ↔ 前端 enum 列）', (() => {
+  if (!rsSrc) return false;
+  const hay = RS_SEG('fn search_hay(', 2200);
+  const rust = [...hay.matchAll(/\("(\w+)",\s*"/g)].map((m) => m[1]);
+  const front = LIST_COLUMNS.filter((c) => c.kind === 'enum').map((c) => c.field);
+  /*
+    ⛔ 比**集合**不是比顺序：两边都只是把值拼进一个 hay 串，
+    先后顺序不影响命中。我第一版逐项比对，两边列序不同就恒红 ——
+    恒红的守卫等于没有守卫。
+  */
+  const norm = (x) => (x === 'tag' ? 'tags' : x);
+  const a = rust.map(norm).sort().join(',');
+  const b = front.slice().sort().join(',');
+  return rust.length === front.length && a === b;
+})());
+
+/* ⑩ MCP schema 声明多值列可传数组（AI 才知道有这个能力） */
+t('守卫：MCP schema 声明 type/group 可传数组', (() => {
+  if (!rsSrc) return false;
+  const a = (rsSrc.match(/"type": \["string", "array"\]/g) || []).length;
+  return a >= 2 && rsSrc.includes('"items": { "type": "string" }');
+})());
+
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
   const nums = [...rd.matchAll(/(\d+)\s*项/g)].map((m) => Number(m[1]));
