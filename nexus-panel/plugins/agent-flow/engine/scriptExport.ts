@@ -69,6 +69,51 @@ const num = (v: unknown, dflt: number): number => {
   return Number.isFinite(n) ? n : dflt;
 };
 
+/**
+ * 节点种类只认 data.kind —— 全文件唯一入口。
+ *
+ * 以前有 11 处分三种写法：
+ *   str(d.kind ?? (n as { type?: string }).type)   6 处
+ *   str(d.kind ?? d.type)                          3 处
+ *   str((n.data as ...)?.kind ?? '')               2 处（TODO 行）
+ *
+ * 而 GraphNode 只有 { id, data }，NodeData 那个判别联合里也没有 type
+ * —— 前两种回退都是**死代码**，真实数据上永远拿到 undefined。
+ * 今天三种写法都退化成同一个空串，所以看不出差别；但哪天有人给 data
+ * 加一个 type（xyflow 里很常见），markdown 与 shell 就会读到不同的值：
+ * 同一张图，一边认出是条件节点、一边写 TODO 未翻译，而两边都不报错。
+ *
+ * 收成一份，并明确「没有 kind 就是没有」—— 不再猜。
+ */
+function kindOf(n: GraphNode): string {
+  return str((n.data as Record<string, unknown> | undefined)?.kind);
+}
+
+/** shell 与 python 逐字相同的两条提示，收成常量防止各改各的 */
+const SKIP_PARALLEL = '并发在脚本里是顺序执行 —— 结果一致，只是不并行（画布上的并发度上限在脚本里没有对应物）';
+const SKIP_STOP = '停止节点在脚本里不终止流程 —— 后面的节点照常执行，画布上不会';
+
+/**
+ * 三种格式的公共骨架：拓扑分层展平 + 环里节点记进 skipped。
+ *
+ * 以前 toShell / toPython / toMarkdown 各抄了一份（连上面那段说明也抄了
+ * 三份）。三份的差别不报错、测试也不红 —— 只有某一处漏掉 cyclic 时，
+ * 用户才会拿到一份「少了几个节点」的脚本而毫无线索。
+ *
+ * **cyclic 不能丢**：成环的节点排不进拓扑序，静默丢掉就是这个后果。
+ * 层内顺序无意义（脚本顺序执行），展平即可。
+ */
+function flattenGraph(g: Graph): { order: string[]; cyclic: string[]; skipped: Skipped[] } {
+  const skipped: Skipped[] = [];
+  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
+  const order: string[] = [];
+  for (const l of layers) for (const id of l) order.push(id);
+  for (const id of cyclic) {
+    skipped.push({ id, kind: '', reason: '这个节点处在环里，排不进执行顺序' });
+  }
+  return { order, cyclic, skipped };
+}
+
 /** Shell 单引号转义：把 ' 换成 '\'' */
 const shq = (s: string): string => `'${s.split("'").join("'\\''")}'`;
 
@@ -137,7 +182,7 @@ export function namedOutRefs(g: Graph): Set<string> {
   const out = new Set<string>();
   for (const n of g.nodes ?? []) {
     const d = (n.data ?? {}) as Record<string, unknown>;
-    const kind = str(d.kind ?? (n as { type?: string }).type);
+    const kind = kindOf(n);
     // 与 outFieldsOf 同一份定义：主输出（OUT_DEFAULT）不算具名字段
     for (const port of outputsOf(kind, d)) {
       if (port.key === OUT_DEFAULT) continue;
@@ -151,7 +196,7 @@ export function constCardRefs(g: Graph): Map<string, string> {
   const out = new Map<string, string>();
   for (const n of g.nodes ?? []) {
     const d = (n.data ?? {}) as Record<string, unknown>;
-    if (str(d.kind ?? (n as { type?: string }).type) !== 'const') continue;
+    if (kindOf(n) !== 'const') continue;
     constsOf(d as unknown as ConstNodeData).forEach((it, i) => {
       const key = constItemKey(it, i);
       const name = constItemLabel(it, i);
@@ -187,7 +232,7 @@ export function llmPaneEffOf(
   const out = new Map<string, ReturnType<typeof resolveApiPane>>();
   for (const n of g.nodes ?? []) {
     const d = (n.data ?? {}) as Record<string, unknown>;
-    if (str(d.kind ?? (n as { type?: string }).type) !== 'llmChat') continue;
+    if (kindOf(n) !== 'llmChat') continue;
     const paneId = str(d.paneId ?? '');
     if (!paneId) continue;
     const pane = findPane(g.nodes ?? [], paneId);
@@ -499,7 +544,7 @@ function shellLine(
   ups: string[] = [],
 ): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
-  const kind = str(d.kind ?? d.type);
+  const kind = kindOf(n);
   const v = (k: string) => subst(str(d[k]), 'sh', cardRef, (key) => {
     skipped.push({ id: n.id, kind, reason: refReason(key) });
   }, namedOut, loopRef);
@@ -597,7 +642,7 @@ export function loopBodiesOf(g: Graph): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   for (const n of g.nodes ?? []) {
     const d = (n.data ?? {}) as Record<string, unknown>;
-    if (str(d.kind ?? (n as { type?: string }).type) !== 'loop') continue;
+    if (kindOf(n) !== 'loop') continue;
     out.set(n.id, loopBodyOf(n.id, g));
   }
   return out;
@@ -738,13 +783,20 @@ function upsOf(g: Graph, id: string): string[] {
   return seen;
 }
 
-/** 打平后的拓扑序（与 toShell/toPython 里同一口径） */
+/**
+ * 条件分支成员初始化用的**全量**顺序：连环里的节点也要。
+ *
+ * 这里刻意和 toShell/toPython 的执行 order 不同 —— 那两边把成环节点
+ * 记进 skipped、不进执行顺序（生成出来也跑不对）；而分支初始化只要漏了
+ * 任何一个节点，汇合点引用它就是 UnboundLocalError。
+ *
+ * 以前这里自己调了一次 topoLayers，注释却写着「与 toShell/toPython
+ * 同一口径」—— 说的和做的不是一回事。现在拓扑计算收成一处，
+ * 「要不要 cyclic」变成调用点的显式选择，而不是两份各自算。
+ */
 function flatOrder(g: Graph): string[] {
-  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
-  const out: string[] = [];
-  for (const l of layers) for (const id of l) out.push(id);
-  for (const id of cyclic) out.push(id);
-  return out;
+  const { order, cyclic } = flattenGraph(g);
+  return [...order, ...cyclic];
 }
 
 
@@ -908,20 +960,7 @@ export function condBranchesOf(
 }
 
 function toShell(g: Graph): ExportResult {
-  /*
-   * topoLayers 返回分层结果（{ layers, cyclic }），没有一维的 order。
-   * 展平即可 —— 脚本是顺序执行的，层内顺序无意义。
-   *
-   * **cyclic 不能丢**：成环的节点排不进拓扑序，静默丢掉的话
-   * 用户会拿到一份"少了几个节点"的脚本而毫无线索。
-   */
-  const skipped: Skipped[] = [];
-  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
-  const order: string[] = [];
-  for (const l of layers) for (const id of l) order.push(id);
-  for (const id of cyclic) {
-    skipped.push({ id, kind: '', reason: '这个节点处在环里，排不进执行顺序' });
-  }
+  const { order, skipped } = flattenGraph(g);
   const lines = [
     '#!/usr/bin/env bash',
     '# 由画布自动生成 —— 请勿手改后指望能同步回去',
@@ -959,7 +998,7 @@ function toShell(g: Graph): ExportResult {
       const n = g.nodes.find((x) => x.id === id);
       if (!n) continue;
       const d = (n.data ?? {}) as Record<string, unknown>;
-      const kind = str(d.kind ?? (n as { type?: string }).type);
+      const kind = kindOf(n);
 
       /*
        * shell 不翻条件判定：nonEmpty 在画布上是"去掉首尾空白后非空"，
@@ -1022,7 +1061,7 @@ function toShell(g: Graph): ExportResult {
       if (kind === 'parallel') {
         skipped.push({
           id, kind,
-          reason: '并发在脚本里是顺序执行 —— 结果一致，只是不并行（画布上的并发度上限在脚本里没有对应物）',
+          reason: SKIP_PARALLEL,
         });
       }
       if (kind === 'stop') {
@@ -1032,14 +1071,14 @@ function toShell(g: Graph): ExportResult {
          */
         skipped.push({
           id, kind,
-          reason: '停止节点在脚本里不终止流程 —— 后面的节点照常执行，画布上不会',
+          reason: SKIP_STOP,
         });
       }
       const line = shellLine(n, skipped, cardRef, namedOut, loopRef, upsOf(g, id));
       const own = line ? new RegExp(`\\b${shVar(id)}=`).test(line) : false;
       if (!own) lines.push(assignLineOf(g, id, kind, 'sh'));
       if (line) { lines.push(line); count += 1; }
-      else { lines.push(`# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
+      else { lines.push(`# TODO 未翻译：${id}（${kindOf(n)}）`); }
       lines.push(...paramLinkNoteOf(g, id, '# '));
     }
   };
@@ -1063,7 +1102,7 @@ function pyLine(
   ups: string[] = [],
 ): string | null {
   const d = (n.data ?? {}) as Record<string, unknown>;
-  const kind = str(d.kind ?? d.type);
+  const kind = kindOf(n);
   const v = (k: string) => subst(str(d[k]), 'py', cardRef, (key) => {
     skipped.push({ id: n.id, kind, reason: refReason(key) });
   }, namedOut, loopRef);
@@ -1188,20 +1227,7 @@ function pyLine(
 }
 
 function toPython(g: Graph): ExportResult {
-  /*
-   * topoLayers 返回分层结果（{ layers, cyclic }），没有一维的 order。
-   * 展平即可 —— 脚本是顺序执行的，层内顺序无意义。
-   *
-   * **cyclic 不能丢**：成环的节点排不进拓扑序，静默丢掉的话
-   * 用户会拿到一份"少了几个节点"的脚本而毫无线索。
-   */
-  const skipped: Skipped[] = [];
-  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
-  const order: string[] = [];
-  for (const l of layers) for (const id of l) order.push(id);
-  for (const id of cyclic) {
-    skipped.push({ id, kind: '', reason: '这个节点处在环里，排不进执行顺序' });
-  }
+  const { order, skipped } = flattenGraph(g);
   const lines = [
     '#!/usr/bin/env python3',
     '"""由画布自动生成 —— 请勿手改后指望能同步回去。',
@@ -1289,7 +1315,7 @@ function toPython(g: Graph): ExportResult {
       const n = g.nodes.find((x) => x.id === id);
       if (!n) continue;
       const d = (n.data ?? {}) as Record<string, unknown>;
-      const kind = str(d.kind ?? (n as { type?: string }).type);
+      const kind = kindOf(n);
 
       /*
        * 条件节点：能翻就生成真的 if/elif/else。
@@ -1384,20 +1410,20 @@ function toPython(g: Graph): ExportResult {
          */
         skipped.push({
           id, kind,
-          reason: '并发在脚本里是顺序执行 —— 结果一致，只是不并行（画布上的并发度上限在脚本里没有对应物）',
+          reason: SKIP_PARALLEL,
         });
       }
       if (kind === 'stop') {
         skipped.push({
           id, kind,
-          reason: '停止节点在脚本里不终止流程 —— 后面的节点照常执行，画布上不会',
+          reason: SKIP_STOP,
         });
       }
       const line = pyLine(n, skipped, indent, cardRef, paneEff, namedOut, loopRef, upsOf(g, id));
       const own = line ? new RegExp(`\\b${pyVar(id)}\\s*=`).test(line) : false;
       if (!own) lines.push(`${indent}${assignLineOf(g, id, kind, 'py')}`);
       if (line) { lines.push(line); count += 1; }
-      else { lines.push(`${indent}# TODO 未翻译：${id}（${str((n.data as Record<string, unknown>)?.kind ?? '')}）`); }
+      else { lines.push(`${indent}# TODO 未翻译：${id}（${kindOf(n)}）`); }
       lines.push(...paramLinkNoteOf(g, id, `${indent}# `));
     }
   };
@@ -1445,20 +1471,7 @@ function toJson(g: Graph): ExportResult {
 /* ------------------------------------------------------------------ */
 
 function toMarkdown(g: Graph): ExportResult {
-  /*
-   * topoLayers 返回分层结果（{ layers, cyclic }），没有一维的 order。
-   * 展平即可 —— 脚本是顺序执行的，层内顺序无意义。
-   *
-   * **cyclic 不能丢**：成环的节点排不进拓扑序，静默丢掉的话
-   * 用户会拿到一份"少了几个节点"的脚本而毫无线索。
-   */
-  const skipped: Skipped[] = [];
-  const { layers, cyclic } = topoLayers(g, paramLinksOf(g.edges));
-  const order: string[] = [];
-  for (const l of layers) for (const id of l) order.push(id);
-  for (const id of cyclic) {
-    skipped.push({ id, kind: '', reason: '这个节点处在环里，排不进执行顺序' });
-  }
+  const { order, skipped } = flattenGraph(g);
   const byId = new Map(g.nodes.map((n) => [n.id, n]));
   const upstream = new Map<string, string[]>();
   for (const e of g.edges ?? []) {
@@ -1474,7 +1487,7 @@ function toMarkdown(g: Graph): ExportResult {
     const n = byId.get(id);
     if (!n) continue;
     const d = (n.data ?? {}) as Record<string, unknown>;
-    const kind = str(d.kind ?? d.type);
+    const kind = kindOf(n);
     step += 1;
     const ups = upstream.get(id) ?? [];
     const from = ups.length ? `（接 ${ups.join('、')}）` : '（起点）';
