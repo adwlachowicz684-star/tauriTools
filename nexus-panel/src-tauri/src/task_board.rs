@@ -956,6 +956,14 @@ pub fn mcp_tools() -> Vec<Value> {
                 "type":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "任务类型 id 或 id 数组（该列可多选）；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些（默认 dev/bug/opt/research/review/plan，用户可能自定义过）；缺省=未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；写成数字字符串（如 \"2.5\"）也认；缺省 0=没估" },
                 "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（该列可多选；留空=不分组）。先调 tb_list_tasks 看 defs.groupDefs 里已有哪些——归到已有分组，不要自造近义名（'登录'和'登陆'会分成两组）" },
+                /*
+                  ⛔ 原来 create schema **没有 assignee**：实现里明明写了
+                  `enum_value(body, "assignee")`、文件里也显式存了这一列、
+                  update 也能改 —— AI 却在工具表里看不见这个参数，
+                  建任务时永远不填，只能建完再 PATCH 认领。
+                  与「create 不写 summary / deps」是同一族：看得见却填不了。
+                */
+                "assignee": { "type": ["string", "array"], "items": { "type": "string" }, "description": "认领人名字或名字数组（该列可多选）；留空=未认领，交给其他窗口后续认领。先调 tb_list_tasks 看 defs.assigneeDefs 里已有哪些" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
                 "deps":     { "type": "array", "items": { "type": "string" }, "description": "前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，指向不存在任务的 id 会保留（界面会标「前置不存在」）。缺省=[]" },
             }),
@@ -973,15 +981,15 @@ pub fn mcp_tools() -> Vec<Value> {
             json!({
                 "id":       { "type": "string", "description": "任务 id" },
                 "status":   { "type": "string", "description": "目标状态（流转图校验，服务端按本项目 flow 校验）。⛔ 不写 enum：写死默认 7 个会让自定义流程的状态在客户端被拒；先调 tb_list_tasks 看 defs.statuses（合法 id）、defs.statusDefs（名字/完成态）、defs.transitions（当前状态能去哪）" },
-                "assignee": { "type": "string", "description": "认领人；该列可多选且任务上已是数组时按追加处理（不会挤掉他人）；已被他人认领且不是共同认领会被拒绝；空串=释放全部认领" },
+                "assignee": { "type": ["string", "array"], "items": { "type": "string" }, "description": "认领人；传数组=整体替换（共同认领，须保留已有认领人否则拒绝）；传单个名字且任务上已是数组时按追加处理（不会挤掉他人）；空串或空数组=释放全部认领" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
                 "detail":   { "type": "string", "description": "改详情" },
                 "summary":  { "type": "string", "description": "改任务说明" },
                 "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签；单个标签写成字符串也认，空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些" },
-                "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；该列可多选且任务上已是数组时按追加处理（不会丢已有类型）；传空串=清成未分类" },
+                "type":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "任务类型 id 或 id 数组（数组=整体替换）；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；传单个 id 且任务上已是数组时按追加处理（不会丢已有类型）；传空串或空数组=清成未分类" },
                 "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数；写成数字字符串也认" },
-                "group":    { "type": "string", "description": "分组名；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；该列可多选且任务上已是数组时按追加处理（不会丢已有分组）；传空串=取消分组" },
+                "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（数组=整体替换）；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；传单个名字且任务上已是数组时按追加处理（不会丢已有分组）；传空串或空数组=取消分组" },
                 "deps":     { "type": "array", "items": { "type": "string" }, "description": "整体替换前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，传 [] =清空全部前置" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
@@ -1498,6 +1506,70 @@ fn patch_vals(
     };
     push_history(obj, by, key, &format!("{} -> {}", fmt(&cur), fmt(&next)));
     true
+}
+
+/// 数组形状 = **整体替换**：AI 明确写出了这一列的完整集合。
+///
+/// ⛔ 修前 PATCH 的 type/group/assignee 一律走 `str_field`（只认字符串），
+/// 而 create 走 `enum_value`（认数组）、读侧过滤参数上一轮刚改成认数组。
+/// 于是同一份 `{"type":["dev","bug"]}`：建任务成功、改任务被静默当作「没传」，
+/// body 里只有它时报错「没有可应用的变更」—— 报错把人往「你没改东西」上引，
+/// 实际是形状不认。AI 读 tasks.json 看到 type 是数组，按读到的形状回写就撞上。
+///
+/// 单值路径仍走 `patch_vals`（追加/替换/清空），两条路共用判等与历史格式。
+fn patch_vals_set(
+    obj: &mut Map<String, Value>,
+    key: &str,
+    next: &[String],
+    by: &str,
+    empty_label: &str,
+) -> bool {
+    let cur = vals_from_map(obj, key);
+    if cur == next {
+        return false;
+    }
+    let stored: Value = if next.is_empty() {
+        Value::Null
+    } else {
+        Value::Array(next.iter().cloned().map(Value::String).collect())
+    };
+    obj.insert(key.to_string(), stored);
+    let fmt = |a: &[String]| {
+        if a.is_empty() { empty_label.to_string() } else { a.join("、") }
+    };
+    push_history(obj, by, key, &format!("{} -> {}", fmt(&cur), fmt(next)));
+    true
+}
+
+/// 认领守卫：**只看最终集合是否保留了所有现有认领人**，不管传入形状。
+///
+/// ⛔ 修前守卫写的是「PATCH 是覆盖语义」，而 `patch_vals` 早已改成追加 ——
+/// 两份判据。实测：任务已有 ["张三"]，AI 传 `{"assignee":"李四"}` 想共同认领，
+/// 守卫判 `!cur.contains(next)` 直接拒绝，可 patch_vals 本来会追加成
+/// ["张三","李四"]（不挤掉任何人）。界面支持共同认领，AI 通道却加不了第二个人。
+///
+///   · 单值 + 原数据是数组 → 追加，不丢人 → 放行
+///   · 单值 + 原数据是字符串 → 替换，会丢人 → 拒绝
+///   · 数组 → 显式集合，含全部 cur 才放行（加人 OK，踢人不行）
+///   · 空串 / 空数组 → 显式释放 → 放行
+/// 哨兵值（__none__ 之类）不是真实认领人，不参与判断。
+fn guard_assignee(cur: &[String], next: &[String]) -> Result<(), String> {
+    if next.is_empty() {
+        return Ok(());
+    }
+    let dropped: Vec<String> = cur
+        .iter()
+        .filter(|c| !(c.starts_with("__") && c.ends_with("__")))
+        .filter(|c| !next.iter().any(|n| n == *c))
+        .cloned()
+        .collect();
+    if dropped.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "任务已被 {} 认领；如需接手先与其确认或先退回 todo",
+        cur.join("、")
+    ))
 }
 
 /// 定义表：优先读**平级字段**（前端 toDisk 总是写），回退 `defs.<key>`。
@@ -2119,22 +2191,51 @@ fn patch_task(
                 }
             }
         }
-        // 认领守卫：已被别人认领的任务不能被悄悄抢走（PATCH 是覆盖语义，
-        // 不挡这里的话 A、B 先后认领都返回 200，先认领者毫不知情）。
-        // 传空串 = 主动释放认领。
+        /*
+          数组形状优先：三个「可以是多值」的列都认整体替换。
+          ⛔ 与 create 的 enum_value、读侧 TaskFilter 的过滤参数同一形状口径。
+          放在单值分支之前 —— 一个 key 只能有一种形状，单值的 str_field
+          对数组返回 None，不会重复处理。
+        */
+        for (key, label) in [
+            ("assignee", "未认领"),
+            ("type", "未分类"),
+            ("group", "未分组"),
+        ] {
+            if let Some(arr) = body.get(key).and_then(|v| v.as_array()) {
+                let next = clean_str_array(arr);
+                if key == "assignee" {
+                    guard_assignee(&vals_from_map(obj, key), &next)?;
+                }
+                if patch_vals_set(obj, key, &next, &by, label) {
+                    changed = true;
+                }
+            }
+        }
+        // 认领守卫：已被别人认领的任务不能被悄悄抢走。
+        // 传空串 = 主动释放认领。判据见 guard_assignee（不再内联）。
         if let Some(v) = str_field(body, "assignee") {
             /*
               ⛔ 认领守卫也必须认多值：原来 cur 读数组得空串 →
               对共同认领的任务完全失效（AI 能把别人挤掉还返回 200）。
+              现在算出「追加/替换后的最终集合」交给共用守卫：
+              原数据是数组时单值是追加（不丢人），不再误挡共同认领。
             */
             let cur = vals_from_map(obj, "assignee");
+            let was_array = obj.get("assignee").map(|x| x.is_array()).unwrap_or(false);
             let next = v.trim();
-            if !next.is_empty() && !cur.is_empty() && !cur.iter().any(|x| x == next) {
-                return Err(format!(
-                    "任务已被 {} 认领；如需接手先与其确认或先退回 todo",
-                    cur.join("、")
-                ));
-            }
+            let final_set: Vec<String> = if next.is_empty() {
+                Vec::new()
+            } else if was_array {
+                let mut set = cur.clone();
+                if !set.iter().any(|x| x == next) {
+                    set.push(next.to_string());
+                }
+                set
+            } else {
+                vec![next.to_string()]
+            };
+            guard_assignee(&cur, &final_set)?;
             if patch_vals(obj, "assignee", next, &by, "未认领") {
                 changed = true;
             }

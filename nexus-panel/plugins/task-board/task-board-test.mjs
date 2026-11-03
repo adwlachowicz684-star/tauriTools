@@ -1931,9 +1931,16 @@ t('分组：Rust 新建/改字段/MCP 都要贯通（AI 通道不能漏）', (()
   const rp = path.join(dir, '../../src-tauri/src/task_board.rs');
   if (!fs.existsSync(rp)) return true;   // 环境缺源码目录时跳过，不算失败
   const rus = fs.readFileSync(rp, 'utf8');
-  return rus.indexOf('"group".to_string()') >= 0        // create + patch 写入
-    && rus.indexOf('str_field(body, "group")') >= 0     // patch 读取
-    && rus.indexOf('"group":    { "type": "string"') >= 0;  // MCP schema
+  /*
+    ⛔ 原来钉 `"group": { "type": "string"` 这个**字面量**。
+    update schema 改成允许数组后恒红 —— 恒红的守卫等于没有守卫。
+    改成判「group 这一列在 create/patch/两处 schema 都出现，且 update 允许数组」。
+  */
+  return rus.indexOf('"group".to_string()') >= 0            // create + patch 写入
+    && rus.indexOf('str_field(body, "group")') >= 0         // patch 单值读取
+    && rus.indexOf('("group", "未分组")') >= 0               // patch 数组路径
+    && /"group":\s*\{ "type": \["string", "array"\]/.test(rus)   // update schema
+    && rus.indexOf('"group":    { "type": ["string", "array"]') >= 0; // create schema
 })());
 
 
@@ -6359,9 +6366,15 @@ t('守卫：AI 改任务不丢多值（type/group/assignee 走 patch_vals）', (
 /* ⑧ 认领守卫认多值（cur 是数组，join 进错误文案） */
 t('守卫：认领守卫对共同认领的任务仍生效', (() => {
   if (!rsSrc) return false;
-  return /let cur = vals_from_map\(obj, "assignee"\)/.test(RS_PATCH)
-    && /cur\.iter\(\)\.any\(/.test(RS_PATCH)
-    && /cur\.join\("、"\)/.test(RS_PATCH);
+  /*
+    ⛔ 守卫判据搬进了共用函数 guard_assignee（数组路径 + 单值路径都调），
+    原来钉 patch_task 内联的三行全部失效。改钉函数本体与两处调用。
+  */
+  const G = rsBranch('fn guard_assignee(', '/// 定义表：');
+  return /fn guard_assignee\(cur: &\[String\], next: &\[String\]\)/.test(G)
+    && /cur\.join\("、"\)/.test(G)
+    && /dropped\.is_empty\(\)/.test(G)
+    && (RS_PATCH.match(/guard_assignee\(/g) || []).length === 2;
 })());
 
 /* ⑨ 跨端：Rust search_hay 的列清单 = 前端 LIST_COLUMNS 的 enum 列 */
@@ -7318,6 +7331,184 @@ t('守卫：通杀 —— 读通道分支不再自带过滤循环', (() => {
   return !/\.filter\(\|t\| \{[\s\S]{0,400}if let Some\(st\)/.test(R14_LIST)
     && !/let hit: Vec<&Value> = tasks/.test(R14_LIST)
     && /TaskFilter::from_args\(args\)/.test(R14_LIST);
+})());
+
+/*
+ * ============================================================
+ * 本轮：写通道「同一字段两个入口两种判据」—— 上一轮刚把读侧过滤参数
+ * 改成认数组，写侧 PATCH 没跟上。
+ *
+ * 复现：
+ *   ① `{"type":["dev","bug"]}` 给 tb_create_task 成功（enum_value 认数组），
+ *      给 tb_update_task 被 str_field 当作「没传」→ 报错「没有可应用的变更」
+ *      —— 报错把人往「你没改东西」上引，实际是形状不认
+ *   ② 认领守卫注释写着「PATCH 是覆盖语义」，而 patch_vals 早已改成追加：
+ *      任务已有 ["张三"]，传 `{"assignee":"李四"}` 想共同认领被拒绝，
+ *      界面支持共同认领，AI 通道加不了第二个人
+ *   ③ create schema 的 type/group 声明 ["string","array"]，update 三列只 "string"
+ *
+ * 修法：数组形状走新增的 patch_vals_set（整体替换），单值仍走 patch_vals；
+ * 认领守卫抽成 guard_assignee，只看最终集合是否保留现有认领人，两路共用。
+ * ============================================================
+ */
+
+const R15 = (a, len) => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf(a);
+  return i < 0 ? '' : rsSrc.slice(i, i + len);
+};
+const R15_CODE = STRIP(rsSrc);
+const R15_PATCH = rsBranch('fn patch_task(', 'fn add_event(');
+const R15_SET = rsBranch('fn patch_vals_set(', '/// 认领守卫');
+const R15_GUARD = rsBranch('fn guard_assignee(', '/// 定义表：');
+const R15_TOOLS = rsSrc ? rsSrc.slice(rsSrc.indexOf('pub fn mcp_tools('), rsSrc.indexOf('pub fn mcp_tools(') + 14000) : '';
+/*
+  ⛔ 全文正则会假绿：create / list / update 三处都有 `"type": { "type":
+  ["string","array"]`，注入「update 那处退回单值」时全文正则照样命中别处 →
+  守卫全绿（本轮注入 4/5 抓到）。必须**按工具段**各自判。
+*/
+const R15_CREATE = rsBranch('"tb_create_task",', '"tb_get_task",');
+const R15_UPDATE = rsBranch('"tb_update_task",', '"tb_add_event",');
+
+/* ① 三个多值列都认数组形状（整体替换） */
+t('守卫：PATCH 三个多值列认数组（与 create / 读侧同形状口径）', (() => {
+  if (!rsSrc) return false;
+  return /fn patch_vals_set\(/.test(R15_CODE)
+    && /for \(key, label\) in \[/.test(R15_PATCH)
+    && /\("assignee", "未认领"\)/.test(R15_PATCH)
+    && /\("type", "未分类"\)/.test(R15_PATCH)
+    && /\("group", "未分组"\)/.test(R15_PATCH)
+    && /body\.get\(key\)\.and_then\(\|v\| v\.as_array\(\)\)/.test(R15_PATCH)
+    && /patch_vals_set\(obj, key, &next, &by, label\)/.test(R15_PATCH);
+})());
+
+/* ② 数组路径用 clean_str_array 清洗（不写脏数据） */
+t('守卫：PATCH 数组输入经 clean_str_array 清洗', (() => {
+  if (!rsSrc) return false;
+  return /let next = clean_str_array\(arr\)/.test(R15_PATCH)
+    && /Value::Array\(next\.iter\(\)\.cloned\(\)\.map\(Value::String\)\.collect\(\)\)/.test(R15_SET);
+})());
+
+/* ③ update 三处 schema 声明允许数组，与 create 一致 */
+t('守卫：update schema 三列声明 ["string","array"]', (() => {
+  if (!rsSrc) return false;
+  for (const k of ['assignee', 'type', 'group']) {
+    const re = new RegExp('"' + k + '":\\s*\\{ "type": \\["string", "array"\\]');
+    if (!re.test(R15_UPDATE)) return false;   /* 只判 update 段，不碰 create/list */
+  }
+  /* create 侧本来就允许数组，别让它退化 */
+  return /"type":\s*\{ "type": \["string", "array"\], "items"/.test(R15_CREATE);
+})());
+
+/* ④ 守判据只在 guard_assignee 一处（不许再内联第二份） */
+t('守卫：认领守卫判据只存在一处（guard_assignee）', (() => {
+  if (!rsSrc) return false;
+  return /fn guard_assignee\(/.test(R15_GUARD)
+    && (R15_PATCH.match(/guard_assignee\(/g) || []).length === 2
+    && !/任务已被 .* 认领/.test(R15_PATCH)
+    && /任务已被 .* 认领/.test(R15_GUARD);
+})());
+
+/* ⑤ 单值路径算出最终集合再守卫（共同认领不再被误挡） */
+t('守卫：单值追加先算最终集合再守卫（共同认领不再被挡）', (() => {
+  if (!rsSrc) return false;
+  return /let was_array = obj\.get\("assignee"\)\.map\(\|x\| x\.is_array\(\)\)/.test(R15_PATCH)
+    && /let final_set: Vec<String>/.test(R15_PATCH)
+    && /guard_assignee\(&cur, &final_set\)\?/.test(R15_PATCH)
+    && /patch_vals\(obj, "assignee", next, &by, "未认领"\)/.test(R15_PATCH);
+})());
+
+/* ⑥ 数组路径与单值路径共用同一套判等/历史格式 */
+t('守卫：数组与单值两条路径共用判等与历史格式', (() => {
+  if (!rsSrc) return false;
+  return /let cur = vals_from_map\(obj, key\)/.test(R15_SET)
+    && /if cur == next/.test(R15_SET)
+    && /push_history\(obj, by, key, &format!\("\{\} -> \{\}"/.test(R15_SET)
+    && /if cur == next/.test(R15('fn patch_vals(', 1400));
+})());
+
+/* ⑦ 数据等价：PATCH 数组判据逐用例复现 */
+const R15_EQ = (obj, key, incoming) => {
+  const clean = (a) => [...new Set((Array.isArray(a) ? a : [])
+    .filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()))];
+  const valsFromMap = (o, k) => {
+    const v = o[k];
+    if (typeof v === 'string') return v.trim() ? [v.trim()] : [];
+    if (Array.isArray(v)) return clean(v);
+    return [];
+  };
+  const cur = valsFromMap(obj, key);
+  const isSet = Array.isArray(incoming);
+  const next = isSet ? clean(incoming)
+    : (() => {
+        const t = (incoming || '').trim();
+        const wasArray = Array.isArray(obj[key]);
+        if (!t) return [];
+        if (wasArray) { const s = cur.slice(); if (!s.includes(t)) s.push(t); return s; }
+        return [t];
+      })();
+  /* 认领守卫：最终集合必须保留所有现有认领人 */
+  if (key === 'assignee' && next.length) {
+    const real = cur.filter((c) => !(c.startsWith('__') && c.endsWith('__')));
+    if (real.some((c) => !next.includes(c))) return { ok: false, err: 'guard' };
+  }
+  if (cur.length === next.length && cur.every((c, i) => c === next[i])) return { ok: false, changed: false };
+  obj[key] = next.length ? (isSet || Array.isArray(obj[key]) ? next.slice() : next[0]) : null;
+  return { ok: true, changed: true, value: obj[key] };
+};
+t('守卫：数据等价 —— PATCH 数组/单值/守卫逐用例正确', (() => {
+  const cases = [
+    /* ① 核心：数组整体替换（修前被当没传） */
+    { o: { type: 'dev' }, k: 'type', v: ['dev', 'bug'], want: ['dev', 'bug'] },
+    { o: { type: ['dev', 'bug'] }, k: 'type', v: ['research'], want: ['research'] },
+    { o: { group: '' }, k: 'group', v: ['登录', '支付'], want: ['登录', '支付'] },
+    /* ② 单值：追加 / 替换 / 清空 */
+    { o: { type: ['dev'] }, k: 'type', v: 'bug', want: ['dev', 'bug'] },
+    { o: { type: 'dev' }, k: 'type', v: 'bug', want: 'bug' },
+    { o: { type: ['dev'] }, k: 'type', v: '', want: null },
+    /* ③ 共同认领：单值追加不再被守卫挡 */
+    { o: { assignee: ['张三'] }, k: 'assignee', v: '李四', want: ['张三', '李四'] },
+    /* ④ 数组共同认领：保留已有 → 放行；踢人 → 拒绝 */
+    { o: { assignee: ['张三'] }, k: 'assignee', v: ['张三', '李四'], want: ['张三', '李四'] },
+    { o: { assignee: ['张三'] }, k: 'assignee', v: ['李四'], want: 'guard' },
+    /* ⑤ 释放 */
+    { o: { assignee: ['张三'] }, k: 'assignee', v: [], want: null },
+    /* ⑥ 清洗 */
+    { o: { type: '' }, k: 'type', v: ['', '  ', 'dev', 'dev'], want: ['dev'] },
+  ];
+  return cases.every((c) => {
+    const r = R15_EQ(c.o, c.k, c.v);
+    if (c.want === 'guard') return r.ok === false && r.err === 'guard';
+    return r.ok && JSON.stringify(r.value) === JSON.stringify(c.want);
+  });
+})());
+
+/* ⑨ 通杀：create_task 写进文件的每个字段，schema 里都要列（AI 看不见就填不了）。
+   与「create 不写 summary / deps」「create schema 漏 assignee」同一族。 */
+t('守卫：create schema 列齐实现写入的所有字段（通杀）', (() => {
+  if (!rsSrc) return false;
+  /* 服务端自动生成的字段不需要 AI 填；status 只允许 initial、描述里已说明 */
+  const need = ['title', 'detail', 'priority', 'estimate', 'type', 'tags',
+    'group', 'summary', 'reporter', 'assignee', 'deps'];
+  const create = R15('fn create_task(', 3600);
+  return need.every((k) => {
+    /* detail / summary 是多行 insert(...)，不能钉 `task.insert("x"` 连写；
+       改钉 `"x".to_string()` —— 那才是「写进 task 的 key」的语义。 */
+    const writes = create.includes('"' + k + '".to_string()');
+    const listed = new RegExp('"' + k + '":\\s*\\{').test(R15_CREATE);
+    return writes && listed;
+  });
+})());
+
+/* ⑧ 跨端形状：create 的 enum_value 与 patch 的数组路径同判据 */
+t('守卫：跨端形状一致 —— create/update 都认三个多值列的数组', (() => {
+  if (!rsSrc) return false;
+  const create = R15('fn create_task(', 3600);
+  for (const k of ['type', 'group', 'assignee']) {
+    if (!new RegExp('enum_value\\(body, "' + k + '"\\)').test(create)) return false;
+    if (!new RegExp('"' + k + '":\\s*\\{ "type": \\["string", "array"\\]').test(R15_CREATE)) return false;
+  }
+  return /patch_vals_set/.test(R15_PATCH);
 })());
 
 const readmeCount = (() => {
