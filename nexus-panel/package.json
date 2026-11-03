@@ -301,7 +301,8 @@
     "test:af-theme-mode-persist": "node theme-mode-persist-test.mjs",
     "test:plugin-manifest-sync": "node plugin-manifest-sync-test.mjs",
     "test:plugin-coupling": "node cross-plugin-coupling-test.mjs",
-    "test:plugin-market": "node plugin-market-test.mjs"
+    "test:plugin-market": "node plugin-market-test.mjs",
+    "test:coverage-guard": "node test-coverage-guard-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",
