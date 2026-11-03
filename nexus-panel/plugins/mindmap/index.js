@@ -2797,7 +2797,10 @@ async function gcOrphanAssets(quiet = false) {
         // BUG 195：.mm / .opml 带得走备注，却会削掉首尾与行尾空白
         noteEdge: '备注首尾与行尾空白',
         // BUG 196 / 197：.md 摊平换行 / 削首尾空白；.opml 导回侧削首尾空白
-        titleEdge: '画布标题的空白与换行' };
+        titleEdge: '画布标题的空白与换行',
+        // BUG 198：值被悄悄规范化（不是整条丢）的三类
+        textEdge: '节点文字首尾空白', linkEdge: '超链接里的空白与换行',
+        styleEdge: '样式值里的空白与换行' };
       const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
         .map((k) => `${NAME[k]} ${loss[k]} 处`);
       // 关系线按「条」说。它挂在画布上，"共涉及 N 个节点"对它不成立
@@ -2872,7 +2875,10 @@ async function gcOrphanAssets(quiet = false) {
       // BUG 195：.mm / .opml 带得走备注，却会削掉首尾与行尾空白
       noteEdge: '备注首尾与行尾空白',
       // BUG 196 / 197：.md 摊平换行 / 削首尾空白；.opml 导回侧削首尾空白
-      titleEdge: '画布标题的空白与换行' };
+      titleEdge: '画布标题的空白与换行',
+      // BUG 198：值被悄悄规范化（不是整条丢）的三类
+      textEdge: '节点文字首尾空白', linkEdge: '超链接里的空白与换行',
+      styleEdge: '样式值里的空白与换行' };
     const seg = Object.keys(NAME).filter((k) => loss[k] > 0)
       .map((k) => `${NAME[k]} ${loss[k]} 处`);
     /*
