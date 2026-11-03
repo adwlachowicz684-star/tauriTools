@@ -33,6 +33,9 @@
 - **所有 id 入口统一归一**：新增 `norm_id`（百分号解码 + 首尾空白），MCP 分发的 `s("id")`、HTTP path 的 id 段、新增的删除入口共用。上一轮把 `str_field` 改成统一 trim，但 MCP 的 id 走另一个取值函数没跟上 —— AI 传 `"  tb-0001  "` 会拿到「任务  tb-0001  不存在」，而任务明明在；`GET /api/tasks/%20tb-0001` 也找不到。
 - **AI 通道补齐删除**：新增 `HTTP DELETE /api/tasks/{id}` 与 MCP `tb_delete_task`，共用 `delete_task`。界面早有单条/批量删除，6 个工具里却没有删除 —— AI 误建任务或清理废弃任务只能让用户去界面点。与界面同一判据：**不清其它任务的 deps**（保留给界面标「前置不存在」），但因为 AI 没有确认框，把受影响任务放进响应 `dependents` / `dependentsCount`；不刷新其它任务的 `updatedAt`。删除不存在的 id 返回 404「任务 {id} 不存在」。
 - **单条读 404 文案统一**：`GET /api/tasks/{id}` 原来是硬编码英文 `task not found`（不带 id、不走 `api_status`），而 MCP 是「任务 {id} 不存在」。两条通道的字段/能力/错误码都对齐了，错误体没对齐。现在统一走同一句文案 + `api_status`。
+- **MCP schema 的 6 处 type 声明放行宽进参数**：`tags` / `deps` 原来写 `"type": "array"`、`estimate` 写 `"type": "number"`，而三者的描述都写着「单个写成字符串也认 / 写成数字字符串也认」、服务端也确实认 —— **严格按 `inputSchema` 做本地校验的 MCP 客户端会在请求发出前就拒掉**，curl 手调却一切正常。与之前修过的「status enum 写死 7 个」「PATCH 多值列 type 单值」同族：指了路却把门关着。已改成 `["string","array"]` / `["number","string"]`，并加通杀守卫：凡描述说宽进的字段，type 必须真的放行。
+- **写响应形状两条通道统一**：新建/修改/删除/事件/注册，HTTP 一直用 `{"ok":true,"task":...}`，MCP 却是 `created` / `updated` / `task` 三个名字且没有 `ok`；`entered_notify_status` 反过来只有 MCP 有。现在 MCP 补上 `ok` 与 `task` 别名、HTTP PATCH 补上 `entered_notify_status`，**旧名 `created`/`updated` 全部保留**（不破坏已有客户端）—— 两条通道都能用 `resp.ok` / `resp.task.id` 解析。
+- **id 专属取值闭包改名 `id_of`**：上一轮给 `norm_id` 加了 `pct_decode`，而承载它的闭包仍叫通用的 `s` —— 将来谁复用它读正文，会把 `%20` 静默解成空格。四个调用点全是 id，改名把语义钉死；`search_hay` 里那个只读文本字段的 `s` 保持不变。
 - **CORS 允许 DELETE**：新增 `DELETE /api/tasks/{id}` 时 `Access-Control-Allow-Methods` 仍是 `GET, POST, PATCH, OPTIONS` —— 浏览器跨域 DELETE 的预检会被拒，而服务端用 curl 测一切正常，属于「新增能力但配套没跟上」。已补，并加通杀守卫：从 route 动态抽出所有方法名，逐个核对响应头。文件头的路由清单也同步补上 DELETE 和各通道新增的字段。
 - **工具表 7 个**：Rust 内置测试里 `assert_eq!(tools.len(), 6)` 同步改成 7，避免 `cargo test` 红。
 - **认领守卫与追加语义统一**：守卫注释原写着「PATCH 是覆盖语义」，而 `patch_vals` 早已改成追加 —— 任务已有 `["张三"]` 时，AI 传单值「李四」想共同认领被拒绝，界面却支持共同认领。现在抽成 `guard_assignee`，只看**最终集合是否保留所有现有认领人**：单值追加/数组加人放行，踢人拒绝，空串或空数组显式释放。哨兵值不参与判断。
@@ -124,7 +127,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（624 项，含源码扫描类守卫）
+  task-board-test.mjs   core 单测（632 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -149,7 +152,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 624 项
+npm run test:tb-core        # core 纯逻辑 632 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描

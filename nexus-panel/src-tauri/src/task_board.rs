@@ -777,7 +777,9 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
                         })
                         .to_string()
                     });
-                    (200, json!({"ok": true, "task": t}).to_string(), notice)
+                    /* ⛔ MCP 分支有 entered_notify_status，HTTP 原来没有 ——
+                       同一个「本次是否进入通知状态」的结论两条通道给得不一样。 */
+                    (200, json!({"ok": true, "entered_notify_status": entered_notify, "task": t}).to_string(), notice)
                 }
                 Err(e) => (api_status(&e), err_json(&e), None),
             },
@@ -993,9 +995,9 @@ pub fn mcp_tools() -> Vec<Value> {
                 "detail":   { "type": "string", "description": "复现步骤/期望行为，可选" },
                 "summary":  { "type": "string", "description": "任务说明（与详情分开：说明是要做什么，详情是复现/期望行为）" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "默认 P2" },
-                "tags":     { "type": "array", "items": { "type": "string" }, "description": "标签 id 数组；单个标签写成字符串也认（会自动转成数组），数组里的空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些（用已有项的 id，不要自造裸名字——裸名字没有定义、没有颜色）" },
+                "tags":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "标签 id 数组；单个标签写成字符串也认（会自动转成数组），数组里的空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些（用已有项的 id，不要自造裸名字——裸名字没有定义、没有颜色）" },
                 "type":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "任务类型 id 或 id 数组（该列可多选）；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些（默认 dev/bug/opt/research/review/plan，用户可能自定义过）；缺省=未分类" },
-                "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；写成数字字符串（如 \"2.5\"）也认；缺省 0=没估" },
+                "estimate": { "type": ["number", "string"], "description": "预估工作量，单位人日，可小数（0.5=半天）；写成数字字符串（如 \"2.5\"）也认；缺省 0=没估" },
                 "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（该列可多选；留空=不分组）。先调 tb_list_tasks 看 defs.groupDefs 里已有哪些——归到已有分组，不要自造近义名（'登录'和'登陆'会分成两组）" },
                 /*
                   ⛔ 原来 create schema **没有 assignee**：实现里明明写了
@@ -1006,7 +1008,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 */
                 "assignee": { "type": ["string", "array"], "items": { "type": "string" }, "description": "认领人名字或名字数组（该列可多选）；留空=未认领，交给其他窗口后续认领。先调 tb_list_tasks 看 defs.assigneeDefs 里已有哪些" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
-                "deps":     { "type": "array", "items": { "type": "string" }, "description": "前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，指向不存在任务的 id 会保留（界面会标「前置不存在」）。缺省=[]" },
+                "deps":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，指向不存在任务的 id 会保留（界面会标「前置不存在」）。缺省=[]" },
             }),
             vec!["title"],
         ),
@@ -1027,11 +1029,11 @@ pub fn mcp_tools() -> Vec<Value> {
                 "title":    { "type": "string", "description": "改标题" },
                 "detail":   { "type": "string", "description": "改详情" },
                 "summary":  { "type": "string", "description": "改任务说明" },
-                "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签；单个标签写成字符串也认，空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些" },
+                "tags":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "整体替换标签；单个标签写成字符串也认，空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些" },
                 "type":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "任务类型 id 或 id 数组（数组=整体替换）；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；传单个 id 且任务上已是数组时按追加处理（不会丢已有类型）；传空串或空数组=清成未分类" },
-                "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数；写成数字字符串也认" },
+                "estimate": { "type": ["number", "string"], "description": "预估工作量，单位人日，可小数；写成数字字符串也认" },
                 "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（数组=整体替换）；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；传单个名字且任务上已是数组时按追加处理（不会丢已有分组）；传空串或空数组=取消分组" },
-                "deps":     { "type": "array", "items": { "type": "string" }, "description": "整体替换前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，传 [] =清空全部前置" },
+                "deps":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "整体替换前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，传 [] =清空全部前置" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
             }),
@@ -1077,8 +1079,13 @@ pub fn mcp_tools() -> Vec<Value> {
 /// 对端（这里是网关回传）看到的 isError 原样可达 AI 客户端。
 pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &str) -> Value {
     /* ⛔ 必须走 norm_id：与 str_field 的统一 trim 同一判据。
-       修前 s() 原样取值，"  tb-0001  " 让三个工具都报「任务不存在」。 */
-    let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(norm_id);
+       修前取值原样，"  tb-0001  " 让三个工具都报「任务不存在」。
+
+       ⛔ 也不叫 `s`：上一轮把「通用取值闭包」改成了带 pct_decode 的
+       id 专属行为，而名字完全看不出来 —— 将来谁写 id_of("note") 之类的
+       复用，会把正文里的 %20 静默解成空格。四个调用点全是 id，
+       改名把语义钉死：这个函数只用于 id。 */
+    let id_of = |k: &str| args.get(k).and_then(|v| v.as_str()).map(norm_id);
     let result: Result<Value, String> = match name {
         "tb_list_tasks" => (|| -> Result<Value, String> {
             let store = load_tasks(dir)?;
@@ -1091,15 +1098,20 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
                 .unwrap_or_default();
             Ok(json!({ "count": hit.len(), "tasks": hit,
                        "agents": store.get("agents").cloned().unwrap_or(json!([])),
+                       "ok": true,
                        "defs": defs_of(&store) }))
         })(),
-        "tb_create_task" => create_task(dir, args).map(|t| json!({ "created": t })),
+        /* ⛔ 旧名 created/updated 保留（不破坏已有客户端），但同一个动作
+           HTTP 用的是 task —— 取「刚操作的任务 id」要记三个名字。
+           现在两条通道都能用 ok / task 解析，旧名继续可用。 */
+        "tb_create_task" => create_task(dir, args).map(|t| json!({
+            "ok": true, "created": &t, "task": &t })),
         "tb_get_task" => (|| -> Result<Value, String> {
-            let id = s("id").unwrap_or_default();
+            let id = id_of("id").unwrap_or_default();
             let store = load_tasks(dir)?;
             match find_task(&store, &id) {
                 /* 与 GET /api/tasks/{id} / tb_list_tasks 同一口径 */
-                Some(t) => Ok(json!({ "task": t, "defs": defs_of(&store) })),
+                Some(t) => Ok(json!({ "ok": true, "task": t, "defs": defs_of(&store) })),
                 None => Err(format!("任务 {id} 不存在")),
             }
         })(),
@@ -1120,17 +1132,18 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
               现在改为 `entered_notify_status`：只如实报告"本次进入了通知状态"，
               schema 描述里也写明通知由 HTTP PATCH 通道发出。
             */
-            patch_task(dir, &s("id").unwrap_or_default(), args, notify_status).map(|(t, entered)| {
-                json!({ "updated": t, "entered_notify_status": entered })
+            patch_task(dir, &id_of("id").unwrap_or_default(), args, notify_status).map(|(t, entered)| {
+                json!({ "ok": true, "updated": &t, "task": &t,
+                        "entered_notify_status": entered })
             })
         }
         "tb_add_event" => {
-            add_event(dir, &s("id").unwrap_or_default(), args).map(|t| json!({ "task": t }))
+            add_event(dir, &id_of("id").unwrap_or_default(), args).map(|t| json!({ "ok": true, "task": &t }))
         }
         "tb_register_agent" => {
-            register_agent(dir, args).map(|a| json!({ "agents": a }))
+            register_agent(dir, args).map(|a| json!({ "ok": true, "agents": a }))
         }
-        "tb_delete_task" => delete_task(dir, &s("id").unwrap_or_default()),
+        "tb_delete_task" => delete_task(dir, &id_of("id").unwrap_or_default()),
         other => Err(format!("未知工具: {other}")),
     };
 
@@ -2430,6 +2443,7 @@ fn delete_task(dir: &PathBuf, id: &str) -> Result<Value, String> {
     };
     save_tasks(dir, &store)?;
     Ok(json!({
+        "ok": true,
         "deleted": id,
         "task": removed,
         "dependents": dependents,

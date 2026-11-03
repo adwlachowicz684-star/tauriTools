@@ -6545,11 +6545,16 @@ t('守卫：MCP schema 说明 estimate/tags 兼容字符串', (() => {
     注入「把 estimate 描述里的字符串说明删掉」时**照样全绿**（又一次假绿）。
     现在按行精确取 create/update 两处描述，各自必须自带说明。
   */
+  /*
+    ⛔ 本轮把 6 处 type 从单值放宽成联合类型（描述早写着"字符串也认"，
+       却把门关着），这条守卫钉的 `"type": "number"` / `"type": "array"`
+       字面量随即恒红。改成钉语义：描述必须说实话、type 必须真的放行。
+  */
   const code = STRIP(rsSrc).split('\n');
-  const est = code.filter((l) => l.includes('"estimate": { "type": "number"'));
-  const tag = code.filter((l) => l.includes('"tags":') && l.includes('"type": "array"'));
-  return est.length === 2 && est.every((l) => l.includes('字符串'))
-    && tag.length === 2 && tag.every((l) => l.includes('字符串'));
+  const est = code.filter((l) => l.includes('"estimate": { "type":'));
+  const tag = code.filter((l) => l.includes('"tags":') && l.includes('"type":'));
+  return est.length === 2 && est.every((l) => l.includes('字符串') && l.includes('"string"'))
+    && tag.length === 2 && tag.every((l) => l.includes('字符串') && l.includes('"string"'));
 })());
 
 /*
@@ -6588,7 +6593,7 @@ const R10_PATCH_WATCH = R10_SEG('fn patch_task(', 12000);
 /* ① MCP 的 tb_update_task 不许再写死 "review" */
 t('守卫：MCP 通道用配置里的 notify_status（不写死 review）', (() => {
   if (!rsSrc) return false;
-  return /patch_task\(dir, &s\("id"\)\.unwrap_or_default\(\), args, notify_status\)/.test(R10_MCP_UPDATE)
+  return /patch_task\(dir, &id_of\("id"\)\.unwrap_or_default\(\), args, notify_status\)/.test(R10_MCP_UPDATE)
     && !/patch_task\([^)]*"review"\)/.test(STRIP(rsSrc))
     && /fn mcp_call_tool\(name: &str, args: &Value, dir: &PathBuf, notify_status: &str\)/.test(rsSrc);
 })());
@@ -6884,7 +6889,7 @@ t('守卫：AI 通道 deps 归一与前端 ids() 一致', (() => {
 t('守卫：AI 建任务显式写 deps（不再静默忽略）', (() => {
   if (!rsSrc) return false;
   return /task\.insert\("deps"\.to_string\(\), deps_value\(body, &id\)\)/.test(R12_CREATE)
-    && /"deps":\s*\{ "type": "array"/.test(R12_TOOLS);
+    && /"deps":\s*\{ "type": \["string", "array"\]/.test(R12_TOOLS);
 })());
 
 /* ④ PATCH 有 deps 分支且判等 */
@@ -6896,7 +6901,7 @@ t('守卫：AI 改 deps 走判等（无变化不刷新 updatedAt）', (() => {
   return /deps_value\(body, self_id\)/.test(seg)
     && /obj\.get\("deps"\) != Some\(&next\)/.test(seg)
     && /changed = true/.test(seg)
-    && /"deps":\s*\{ "type": "array"/.test(R12_TOOLS);
+    && /"deps":\s*\{ "type": \["string", "array"\]/.test(R12_TOOLS);
 })());
 
 /* ⑤ add_event 拒绝空事件（与 PATCH 无变化不写盘同一判据） */
@@ -7556,8 +7561,12 @@ t('守卫：norm_id 一处统一解码与 trim', (() => {
 t('守卫：通杀 —— 所有 id 入口共用 norm_id', (() => {
   if (!rsSrc) return false;
   const code = R16_CODE;
-  /* MCP 分发的 s 闭包 */
-  if (!/let s = \|k: &str\| args\.get\(k\)\.and_then\(\|v\| v\.as_str\(\)\)\.map\(norm_id\)/.test(code)) return false;
+  /* MCP 分发的 id 专属取值闭包（⛔ 不叫 s：norm_id 带 pct_decode，
+     通用名会引诱将来把它用到正文字符串上） */
+  if (!/let id_of = \|k: &str\| args\.get\(k\)\.and_then\(\|v\| v\.as_str\(\)\)\.map\(norm_id\)/.test(R16_DISPATCH)) return false;
+  /* ⛔ 只判分发段：search_hay 里另有一个合法的 s 闭包（读任务文本字段），
+     全文件否决会恒红 —— 判据太宽，靠反向验证才发现。 */
+  if (/let s = \|k: &str\|/.test(R16_DISPATCH)) return false;
   /* route 里四个 id 分支：GET 单条 / PATCH / DELETE / events */
   const routeIds = (R16_ROUTE.match(/let id = norm_id\(id\);/g) || []).length;
   if (routeIds < 4) return false;
@@ -7572,7 +7581,7 @@ t('守卫：AI 通道有删除入口（HTTP DELETE + tb_delete_task 共用 delet
   if (!rsSrc) return false;
   return /\("DELETE", \["api", "tasks", id\]\)/.test(R16_ROUTE)
     && /"tb_delete_task"/.test(R16_TOOLS)
-    && /"tb_delete_task" => delete_task\(dir, &s\("id"\)\.unwrap_or_default\(\)\)/.test(R16_DISPATCH)
+    && /"tb_delete_task" => delete_task\(dir, &id_of\("id"\)\.unwrap_or_default\(\)\)/.test(R16_DISPATCH)
     && /fn delete_task\(dir: &PathBuf, id: &str\)/.test(R16_DELETE)
     && /delete_task\(dir, &id\)/.test(R16_ROUTE);
 })());
@@ -7685,6 +7694,148 @@ t('守卫：文件头路由清单列出 DELETE', (() => {
   return /DELETE \/api\/tasks\/\{id\}/.test(head)
     && /GET    \/api\/tasks/.test(head)
     && /POST   \/api\/agents/.test(head);
+})());
+
+/*
+ * ============================================================
+ * 本轮：「相似问题」再翻一层 —— schema 关门、响应形状、通用名藏专属行为。
+ *
+ * 复现（严格按 inputSchema.type 做本地校验的 MCP 客户端）：
+ *   create.tags "tg1" / create.estimate "2.5" / create.deps "tb-0002"
+ *   update.tags / update.estimate / update.deps  —— 6 个请求全部本地被拒，
+ *   而 description 明明写着"字符串也认"、服务端也确实认。
+ *   与之前修过的「status enum 写死 7 个」「PATCH 多值列 type 单值」同族：
+ *   指了路却把门关着，且只在严格校验 schema 的客户端上暴露。
+ *
+ * 写响应：同一个动作 HTTP 用 task、MCP 用 created/updated/task 三个名字；
+ *   ok 只有 HTTP 有、entered_notify_status 只有 MCP 有。
+ *   修法是**补字段、不删旧名**（不破坏已有客户端）。
+ * ============================================================
+ */
+
+const R17_TOOLS = rsSrc ? rsSrc.slice(rsSrc.indexOf('pub fn mcp_tools('), rsSrc.indexOf('pub fn mcp_tools(') + 16000) : '';
+const R17_DISPATCH = rsBranch('pub fn mcp_call_tool(', '/// JSON-RPC 2.0 分发');
+const R17_ROUTE = rsBranch('fn route(', '\nfn ');
+const R17_CODE = STRIP(rsSrc);
+
+/* ① 通杀：凡描述说「字符串也认」/「数字字符串也认」的字段，
+   type 声明必须真的放行。按行扫整个工具表，不硬编码字段名 ——
+   以后再加宽进字段会自动进检查范围。 */
+t('守卫：通杀 —— schema 描述说宽进的字段 type 必须真的放行', (() => {
+  if (!rsSrc) return false;
+  const lines = STRIP(R17_TOOLS).split('\n').filter((l) => l.includes('"description":'));
+  let seen = 0;
+  for (const l of lines) {
+    const m = l.match(/"type":\s*(\[[^\]]*\]|"[^"]*")/);
+    if (!m) continue;
+    const ty = m[1];
+    const d = l.slice(l.indexOf('"description":'));
+    if (d.includes('数字字符串')) {
+      if (!ty.includes('"number"') || !ty.includes('"string"')) return false;
+      seen++;
+    } else if (d.includes('字符串也认')) {
+      if (!ty.includes('"string"') || !ty.includes('"array"')) return false;
+      seen++;
+    }
+  }
+  /*
+    ⛔ 这个数字只是「描述被成批删掉」的下限，**不是检查点**。
+    真正的检查是上面循环里逐字段的 `return false` —— 反向验证时注入
+    「把 >= 6 改成 >= 0」全绿，一度被误判成假绿，其实是注入打偏了：
+    循环判定没动，检测能力分毫未变。留着计数下限是为了防「把描述
+    全删光来绕过通杀守卫」，与守卫②（逐一钉 6 个字段）形成双重覆盖。
+  */
+  return seen >= 6;   /* create/update 各 3 处 */
+})());
+
+/* ② 六个字段逐一钉住（通杀守卫的兜底：防止有人把描述也删掉来绕过） */
+t('守卫：六个宽进字段的 type 声明逐一放行', (() => {
+  if (!rsSrc) return false;
+  const tools = STRIP(R17_TOOLS);
+  const need = [
+    '"tags":     { "type": ["string", "array"]',
+    '"estimate": { "type": ["number", "string"]',
+    '"deps":     { "type": ["string", "array"]',
+  ];
+  for (const x of need) {
+    if ((tools.split(x).length - 1) !== 2) return false;   /* create + update 各一处 */
+  }
+  return true;
+})());
+
+/* ③ 数据等价：严格 schema 客户端的本地校验复现（修前 6 个全 false） */
+t('守卫：数据等价 —— 严格 schema 校验不再拒绝宽进参数', (() => {
+  const accepts = (ty, v) => {
+    const t = Array.isArray(v) ? 'array' : typeof v;
+    return Array.isArray(ty) ? ty.includes(t) : ty === t;
+  };
+  const cases = [
+    [['string', 'array'], 'tg1', true], [['number', 'string'], '2.5', true],
+    [['string', 'array'], 'tb-0002', true], [['string', 'array'], ['tg1', 'tg2'], true],
+    [['number', 'string'], 2.5, true], [['string', 'array'], [], true],
+  ];
+  return cases.every(([ty, v, want]) => accepts(ty, v) === want)
+    /* 反例：单值 type 确实会拒（证明判据有效，不是恒真） */
+    && accepts('array', 'tg1') === false
+    && accepts('number', '2.5') === false;
+})());
+
+/* ④ 通杀：MCP 七个工具分支的响应都带 ok（HTTP 侧一直有） */
+t('守卫：通杀 —— MCP 工具响应统一带 ok', (() => {
+  if (!rsSrc) return false;
+  const d = R17_DISPATCH;
+  const names = ['"tb_list_tasks"', '"tb_create_task"', '"tb_get_task"',
+    '"tb_update_task"', '"tb_add_event"', '"tb_register_agent"', '"tb_delete_task"'];
+  for (let i = 0; i < names.length; i++) {
+    const a = d.indexOf(names[i] + ' =>');
+    if (a < 0) return false;
+    const b = i + 1 < names.length ? d.indexOf(names[i + 1] + ' =>', a + 1) : d.length;
+    if (b < 0) return false;
+    const seg = d.slice(a, b);
+    if (names[i] === '"tb_delete_task"') {
+      /* delete_task 返回的是整个响应对象，ok 写在函数体里（HTTP 展开时也带上） */
+      if (!/delete_task\(dir, &id_of\("id"\)/.test(seg)) return false;
+      if (!/"ok": true/.test(rsBranch('/// 删除一条任务。', 'fn add_event('))) return false;
+      continue;
+    }
+    if (!/"ok": true/.test(seg)) return false;
+  }
+  return true;
+})());
+
+/* ⑤ 同一个动作两条通道都用 task 取任务；旧名保留不破坏已有客户端 */
+t('守卫：写响应形状统一（task 别名 + 保留 created/updated）', (() => {
+  if (!rsSrc) return false;
+  const d = R17_DISPATCH;
+  const createSeg = d.slice(d.indexOf('"tb_create_task" =>'), d.indexOf('"tb_get_task" =>'));
+  const updateSeg = d.slice(d.indexOf('"tb_update_task" =>'), d.indexOf('"tb_add_event" =>'));
+  return /"created": &t/.test(createSeg) && /"task": &t/.test(createSeg)
+    && /"updated": &t/.test(updateSeg) && /"task": &t/.test(updateSeg)
+    && /"ok": true/.test(d);
+})());
+
+/* ⑥ entered_notify_status 两条通道都给（修前只有 MCP 有） */
+t('守卫：entered_notify_status 两条通道都有', (() => {
+  if (!rsSrc) return false;
+  return /"entered_notify_status": entered/.test(R17_DISPATCH)
+    && /"entered_notify_status": entered_notify/.test(R17_ROUTE);
+})());
+
+/* ⑦ 删除响应也带 ok（HTTP 展开 + MCP 直返同一份对象） */
+t('守卫：删除响应两条通道都带 ok', (() => {
+  if (!rsSrc) return false;
+  const seg = rsBranch('/// 删除一条任务。', 'fn add_event(');
+  return /"ok": true/.test(seg) && /"ok": true/.test(R17_ROUTE);
+})());
+
+/* ⑧ 通用取值闭包不许回来（norm_id 带 pct_decode，只能用于 id） */
+t('守卫：id 专属取值闭包不许退回通用名 s', (() => {
+  if (!rsSrc) return false;
+  return /let id_of = \|k: &str\|/.test(R17_DISPATCH)
+    /* 只钉分发段：search_hay 里的 s 闭包是另一回事（不解码 id） */
+    && !/let s = \|k: &str\|/.test(R17_DISPATCH)
+    && (R17_CODE.match(/id_of\("id"\)/g) || []).length >= 4
+    && !/s\("id"\)/.test(STRIP(R17_DISPATCH));
 })());
 
 const readmeCount = (() => {
