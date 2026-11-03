@@ -24,6 +24,10 @@
 - **默认流转表抽成一份常量**：`can_transition` 与 `flow_for_ai` 共用 `DEFAULT_TRANSITIONS`；`patch_task` 与 `defs.transitions` 共用同一份归一表（自定义优先、裁到当前状态清单、空表回退裁剪默认图），AI 看到的图就是服务端校验的图。
 - **AI 列任务可按 type / group 过滤**：支持多值列任一命中与 `__none__` 查空值，两处 schema 都列了参数。
 - **HTTP 业务错误按语义分类**：参数错误 400、目标不存在 404、文件/序列化错误仍 500。原来一律 500，AI 会当成服务端故障去重试、去查端口和 token。
+- **两条读通道共用一份过滤判据**：抽出 `TaskFilter`（`from_args` 给 MCP、`from_query` 给 HTTP、共用 `matches`）。`GET /api/tasks` 原来把 query string 整个丢掉、一个过滤参数都没有，现在支持 `status/priority/type/group/tag/assignee/q`，重复键累加、百分号解码，并带 `count` 与 MCP 对齐。
+- **过滤参数可传数组**：除 `q` 外每个参数都认 `["string","array"]`（OR 命中），写入侧早就能传数组，读侧过滤原来只 `as_str()`，传数组会被静默忽略。
+- **MCP batch 响应始终是数组**：JSON-RPC 2.0 §6 要求；原来 batch 只剩 1 条响应时会返回单个对象，严格客户端解析失败。
+- **错误码判据按形状**：`api_status` 先判 IO 前缀（500），再用 `任务 {id} 不存在` 的形状判 404，其余 400。原来用 `contains("不存在")`，自定义状态名或 IO 错误 detail 含这三个字都会误判。
 
 ### 写入侧归一化（与界面同一判据）
 
@@ -112,7 +116,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（595 项，含源码扫描类守卫）
+  task-board-test.mjs   core 单测（604 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -137,7 +141,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 595 项
+npm run test:tb-core        # core 纯逻辑 604 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描

@@ -702,9 +702,18 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
     match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["api", "health"]) => ok_json(json!({"ok": true, "service": "task-board"})),
         ("GET", ["api", "tasks"]) => match load_tasks(dir) {
-            Ok(store) => ok_json(json!({"ok": true, "tasks": store.get("tasks").cloned().unwrap_or(json!([])),
+            /* 与 MCP tb_list_tasks 同一份过滤判据；count 也一并对齐 */
+            Ok(store) => {
+                let f = TaskFilter::from_query(req);
+                let hit: Vec<&Value> = store
+                    .get("tasks")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter(|t| f.matches(t, &store)).collect())
+                    .unwrap_or_default();
+                ok_json(json!({"ok": true, "count": hit.len(), "tasks": hit,
                        "agents": store.get("agents").cloned().unwrap_or(json!([])),
-                       "defs": defs_of(&store)})),
+                       "defs": defs_of(&store)}))
+            }
             Err(e) => (api_status(&e), err_json(&e), None),
         },
         ("GET", ["api", "tasks", id]) => match load_tasks(dir) {
@@ -872,10 +881,19 @@ fn api_status(e: &str) -> u16 {
         "序列化失败", "写临时文件失败", "替换 tasks.json 失败",
         "tasks 不是数组", "agents 不是数组", "任务不是对象",
     ];
-    if e.contains("不存在") {
-        404
-    } else if IO_PREFIXES.iter().any(|p| e.starts_with(p)) {
+    /*
+      ⛔ 原来是 `e.contains("不存在")` —— 子串匹配太宽：
+        · 自定义状态名恰好叫「不存在」→ 「非法状态 不存在…」被判 404
+        · IO 错误的 detail 里带「目录不存在」→ 文件故障被判 404
+        · 「任务不存在于当前项目」这类别的文案也被判 404
+      先判 IO 前缀（真的服务端/文件故障 = 500），再按**形状**判目标不存在
+      （`任务 {id} 不存在`），其余一律 400。与前面反复修的
+      「indexOf 子串匹配导致守卫假绿」是同一类：判据要看形状，不看子串。
+    */
+    if IO_PREFIXES.iter().any(|p| e.starts_with(p)) {
         500
+    } else if e.starts_with("任务 ") && e.ends_with("不存在") {
+        404
     } else {
         400
     }
@@ -914,14 +932,14 @@ pub fn mcp_tools() -> Vec<Value> {
     vec![
         tool(
             "tb_list_tasks",
-            "列出任务看板全部任务（可按状态/优先级/类型/分组/标签/认领人/关键词过滤）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）、生效状态清单（statuses）、状态完整定义 statusDefs（名字/颜色/是否完成态）、界面实际生效的流转图 transitions、以及新建任务必须落在的初始状态 initial——建任务或改字段前先读它，才知道各列有哪些可选值、当前状态能流转到哪",
+            "列出任务看板全部任务（可按状态/优先级/类型/分组/标签/认领人/关键词过滤；除 q 外每个参数都可传数组表示 OR 命中，HTTP GET /api/tasks 的 query string 也支持同一套参数、重复键累加）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）、生效状态清单（statuses）、状态完整定义 statusDefs（名字/颜色/是否完成态）、界面实际生效的流转图 transitions、以及新建任务必须落在的初始状态 initial——建任务或改字段前先读它，才知道各列有哪些可选值、当前状态能流转到哪",
             json!({
-                "status":   { "type": "string", "description": "按状态过滤，缺省=全部。⛔ 不写 enum：用户可能自定义过流程，写死那 7 个会让严格校验 schema 的 MCP 客户端在本地就拒掉自定义状态；实际生效的状态看响应里的 defs.statuses" },
-                "priority": { "type": "string", "enum": PRIORITIES, "description": "按优先级过滤" },
-                "tag":      { "type": "string", "description": "按标签过滤" },
-                "assignee": { "type": "string", "description": "按认领人过滤（该列可多选，数组里的任一值命中即算）；传 \"__none__\" 查未认领" },
-                "type":     { "type": "string", "description": "按任务类型 id 过滤（可多选，任一命中即算）；传 \"__none__\" 查未分类。可选值看响应 defs.typeDefs" },
-                "group":    { "type": "string", "description": "按分组名过滤（可多选，任一命中即算）；传 \"__none__\" 查未分组。可选值看响应 defs.groupDefs" },
+                "status":   { "type": ["string", "array"], "description": "按状态过滤，缺省=全部；传数组=多个状态 OR 命中。⛔ 不写 enum：用户可能自定义过流程，写死那 7 个会让严格校验 schema 的 MCP 客户端在本地就拒掉自定义状态；实际生效的状态看响应里的 defs.statuses" },
+                "priority": { "type": ["string", "array"], "enum": PRIORITIES, "description": "按优先级过滤；传数组=多档 OR 命中" },
+                "tag":      { "type": ["string", "array"], "description": "按标签过滤；传数组=任一命中" },
+                "assignee": { "type": ["string", "array"], "description": "按认领人过滤（该列可多选，任务上数组里的任一值命中即算；参数本身也能传数组=多人 OR）；传 \"__none__\" 查未认领" },
+                "type":     { "type": ["string", "array"], "description": "按任务类型 id 过滤（任务上可多选，任一命中即算；参数也能传数组=多类型 OR）；传 \"__none__\" 查未分类。可选值看响应 defs.typeDefs" },
+                "group":    { "type": ["string", "array"], "description": "按分组名过滤（任务上可多选，任一命中即算；参数也能传数组=多分组 OR）；传 \"__none__\" 查未分组。可选值看响应 defs.groupDefs" },
                 "q":        { "type": "string", "description": "关键词，匹配 id/标题/详情/说明，以及状态/优先级/分组/认领人/类型/标签的原始值与定义表显示名（多值列逐个匹配；自定义流程的状态按流程里配的名字，默认流程按状态 id）" },
             }),
             vec![],
@@ -1005,84 +1023,13 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
     let result: Result<Value, String> = match name {
         "tb_list_tasks" => (|| -> Result<Value, String> {
             let store = load_tasks(dir)?;
-            let tasks = store
+            /* 与 HTTP GET /api/tasks 同一份 TaskFilter，不再各写一套 */
+            let f = TaskFilter::from_args(args);
+            let hit: Vec<&Value> = store
                 .get("tasks")
                 .and_then(|v| v.as_array())
-                .cloned()
+                .map(|a| a.iter().filter(|t| f.matches(t, &store)).collect())
                 .unwrap_or_default();
-            let status = s("status");
-            let priority = s("priority");
-            let tag = s("tag");
-            let assignee = s("assignee");
-            let typ = s("type");
-            let group = s("group");
-            let q = s("q").map(|x| x.to_lowercase());
-            let hit: Vec<&Value> = tasks
-                .iter()
-                .filter(|t| {
-                    if let Some(st) = &status {
-                        if t.get("status").and_then(|v| v.as_str()) != Some(st.as_str()) {
-                            return false;
-                        }
-                    }
-                    if let Some(p) = &priority {
-                        if t.get("priority").and_then(|v| v.as_str()) != Some(p.as_str()) {
-                            return false;
-                        }
-                    }
-                    if let Some(tag) = &tag {
-                        if !vals_of(t, "tags").iter().any(|x| x == tag.as_str()) {
-                            return false;
-                        }
-                    }
-                    /*
-                      ⛔ assignee 必须走 vals_of（多值认领人）。
-                      原来 `as_str().unwrap_or("")` 把数组读成空串，
-                      筛具体人 0 条、筛 __none__ 反而误命中。
-                    */
-                    if let Some(asg) = &assignee {
-                        let cur = vals_of(t, "assignee");
-                        if asg == "__none__" {
-                            if !cur.is_empty() {
-                                return false;
-                            }
-                        } else if !cur.iter().any(|x| x == asg.as_str()) {
-                            return false;
-                        }
-                    }
-                    /*
-                      ⛔ type / group 原来根本不能筛 —— 而 defs 里明明给了
-                      typeDefs / groupDefs 可选值，界面也能按这两列筛。
-                      AI 想「列出所有开发类型的任务」只能拉全量自己过滤，
-                      又是「看得见却用不了」。与 assignee 同口径：多值列
-                      任一命中；__none__ 查空值（哨兵值不算真实值）。
-                    */
-                    for (field, want) in [("type", &typ), ("group", &group)] {
-                        if let Some(w) = want {
-                            let cur = vals_of(t, field);
-                            let real: Vec<&String> = cur
-                                .iter()
-                                .filter(|v| !(v.starts_with("__") && v.ends_with("__")))
-                                .collect();
-                            if w == "__none__" {
-                                if !real.is_empty() {
-                                    return false;
-                                }
-                            } else if !real.iter().any(|v| v.as_str() == w.as_str()) {
-                                return false;
-                            }
-                        }
-                    }
-                    /* 与界面顶栏同一口径：说明 + 所有 enum 列的原始值与显示名 */
-                    if let Some(q) = &q {
-                        if !search_hay(t, &store).contains(q.as_str()) {
-                            return false;
-                        }
-                    }
-                    true
-                })
-                .collect();
-            /* 与 GET /api/tasks 同一份读通道字段：AI 经 MCP 也要能查窗口台账 */
             Ok(json!({ "count": hit.len(), "tasks": hit,
                        "agents": store.get("agents").cloned().unwrap_or(json!([])),
                        "defs": defs_of(&store) }))
@@ -1187,6 +1134,10 @@ fn mcp_handle(body: &str, dir: &PathBuf, notify_status: &str) -> (u16, String) {
         }
     };
 
+    /* JSON-RPC 2.0 §6：batch 的响应**必须**是数组，哪怕只有一条。
+       修前 `responses.len()==1` 一律返回单个对象 —— 一个含 1 条调用 +
+       1 条无 id 通知的 batch 会让严格客户端解析失败。 */
+    let is_batch = parsed.is_array();
     let responses: Vec<Value> = match parsed {
         Value::Array(batch) => batch
             .iter()
@@ -1200,7 +1151,7 @@ fn mcp_handle(body: &str, dir: &PathBuf, notify_status: &str) -> (u16, String) {
 
     if responses.is_empty() {
         (202, String::new())
-    } else if responses.len() == 1 {
+    } else if !is_batch && responses.len() == 1 {
         (200, responses[0].to_string())
     } else {
         (200, Value::Array(responses).to_string())
@@ -1651,6 +1602,155 @@ fn search_hay(task: &Value, store: &Value) -> String {
 /// 只是一个写不进去，这种不一致最难自查。
 ///
 /// 认两种写法：`[{"id":"todo",...}]`（界面写的）和 `["todo",...]`（手写图省事）。
+/// 百分比解码（query string 里的 `%XX` / `+`）。不引第三方 crate，
+/// 手写就够：AI 传的中文分组名、带空格的 q 都要能还原。
+fn pct_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' if i + 2 < b.len() => {
+                let h = (b[i + 1] as char).to_digit(16);
+                let l = (b[i + 2] as char).to_digit(16);
+                if let (Some(a), Some(c)) = (h, l) {
+                    out.push((a * 16 + c) as u8);
+                    i += 3;
+                    continue;
+                }
+                out.push(b[i]);
+                i += 1;
+            }
+            b'+' => { out.push(b' '); i += 1; }
+            c => { out.push(c); i += 1; }
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// 读通道的过滤条件。**HTTP GET /api/tasks 与 MCP tb_list_tasks 共用这一份**。
+///
+/// ⛔ 修前两条通道的字段一致了（都带 tasks/agents/defs），**能力却不一致**：
+/// MCP 有 7 个过滤参数，HTTP 一个都没有 —— route 里
+/// `req.path.split('?')` 取完 path 就把 query 丢了，从不解析。
+/// AI 经 HTTP 想「列出 todo 的任务」只能拉全量自己筛。
+/// 而若两边各写一份过滤，必然又漂移成「同一判据两个入口」（前十几轮反复抓到）。
+///
+/// 多值也在这里统一：写入侧早就能传数组，读侧过滤原来只 `as_str()`，
+/// 传 `{"status":["todo","doing"]}` 会被静默忽略成"不过滤"。
+#[derive(Default)]
+struct TaskFilter {
+    status: Vec<String>,
+    priority: Vec<String>,
+    tag: Vec<String>,
+    assignee: Vec<String>,
+    typ: Vec<String>,
+    group: Vec<String>,
+    q: Option<String>,
+}
+
+impl TaskFilter {
+    /// MCP：每个键认字符串或字符串数组（数组 = OR）。
+    fn from_args(args: &Value) -> Self {
+        let vals = |k: &str| -> Vec<String> {
+            match args.get(k) {
+                Some(Value::String(v)) => {
+                    let t = v.trim().to_string();
+                    if t.is_empty() { Vec::new() } else { vec![t] }
+                }
+                Some(Value::Array(a)) => a
+                    .iter()
+                    .filter_map(|x| x.as_str())
+                    .map(|x| x.trim().to_string())
+                    .filter(|x| !x.is_empty())
+                    .collect(),
+                _ => Vec::new(),
+            }
+        };
+        Self {
+            status: vals("status"),
+            priority: vals("priority"),
+            tag: vals("tag"),
+            assignee: vals("assignee"),
+            typ: vals("type"),
+            group: vals("group"),
+            q: vals("q").into_iter().next().map(|x| x.to_lowercase()),
+        }
+    }
+
+    /// HTTP：query string。**重复键累加**（`?status=todo&status=doing`），
+    /// 不拆逗号 —— 分组名本身可能含逗号，拆了会静默筛错。
+    fn from_query(req: &Request) -> Self {
+        let mut f = Self::default();
+        let raw = req.path.split_once('?').map(|(_, q)| q).unwrap_or("");
+        for pair in raw.split('&') {
+            if pair.is_empty() { continue; }
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            let key = pct_decode(k);
+            let val = pct_decode(v);
+            if val.is_empty() { continue; }
+            match key.as_str() {
+                "status" => f.status.push(val),
+                "priority" => f.priority.push(val),
+                "tag" => f.tag.push(val),
+                "assignee" => f.assignee.push(val),
+                "type" => f.typ.push(val),
+                "group" => f.group.push(val),
+                "q" => f.q = Some(val.to_lowercase()),
+                _ => {} /* 未知参数忽略，不报错：AI 可能多带 */
+            }
+        }
+        f
+    }
+
+    /// 一条任务是否命中。所有枚举列的判据集中在此，两条通道共用。
+    fn matches(&self, t: &Value, store: &Value) -> bool {
+        /* status / priority 是单值字段；多值 OR 不改变单值时的行为 */
+        for (field, wants) in [("status", &self.status), ("priority", &self.priority)] {
+            if wants.is_empty() { continue; }
+            let cur = t.get(field).and_then(|v| v.as_str()).unwrap_or("");
+            if !wants.iter().any(|w| w.as_str() == cur) { return false; }
+        }
+        if !self.tag.is_empty() {
+            let cur = vals_of(t, "tags");
+            if !self.tag.iter().any(|w| cur.iter().any(|x| x.as_str() == w.as_str())) {
+                return false;
+            }
+        }
+        /*
+          assignee / type / group：多值列，任一命中；__none__ 查空值。
+          哨兵值（__none__ / __nogroup__ …）不算真实值 —— 任务上若残留
+          内部标记，筛 __none__ 时仍应算"未认领/未分组/未分类"。
+        */
+        for (field, wants) in [
+            ("assignee", &self.assignee),
+            ("type", &self.typ),
+            ("group", &self.group),
+        ] {
+            if wants.is_empty() { continue; }
+            let cur = vals_of(t, field);
+            let real: Vec<&String> = cur
+                .iter()
+                .filter(|v| !(v.starts_with("__") && v.ends_with("__")))
+                .collect();
+            let mut ok = false;
+            for w in wants {
+                if w == "__none__" {
+                    if real.is_empty() { ok = true; break; }
+                } else if real.iter().any(|v| v.as_str() == w.as_str()) {
+                    ok = true;
+                    break;
+                }
+            }
+            if !ok { return false; }
+        }
+        if let Some(q) = &self.q {
+            if !search_hay(t, store).contains(q.as_str()) { return false; }
+        }
+        true
+    }
+}
+
 fn flow_statuses(store: &Value) -> Option<Vec<String>> {
     let arr = store.get("flow")?.get("statuses")?.as_array()?;
     let mut out: Vec<String> = Vec::new();

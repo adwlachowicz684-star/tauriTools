@@ -2732,6 +2732,13 @@ const rsBranch = (start, end) => {
   return j < 0 ? rsSrc.slice(i) : rsSrc.slice(i, j);
 };
 
+/* 本轮：两条读通道共用的过滤层。守卫一律钉这一层，不再钉各自分支内部。 */
+const R14_FILTER = rsBranch('#[derive(Default)]\nstruct TaskFilter', 'fn flow_statuses(');
+const R14_MATCHES = rsBranch('    fn matches(&self, t: &Value, store: &Value) -> bool {', 'fn flow_statuses(');
+const R14_HTTPGET = rsBranch('("GET", ["api", "tasks"])', '("GET", ["api", "tasks", id])');
+const R14_LIST = rsBranch('"tb_list_tasks" => (||', '"tb_create_task" =>');
+const R14_TOOLS = rsSrc ? rsSrc.slice(rsSrc.indexOf('pub fn mcp_tools('), rsSrc.indexOf('pub fn mcp_tools(') + 14000) : '';
+
 /*
  * **任务说明（summary）对 AI 通道完全不可用**：
  * · 建任务的 schema 里没有 summary
@@ -3834,8 +3841,10 @@ t('审查：删分组是把任务清成未分组，不是删任务', (() => {
   所以改成按锚点切片，各自在**自己的块内**判。
 */
 t('守卫：HTTP 读通道带定义表（AI 才看得见有哪些分组/类型）', (() => {
-  const seg = rsSeg('("GET", ["api", "tasks"])', 320);
-  return !rsSrc || seg.indexOf('"defs"') >= 0;
+  /* ⛔ 原 320 字符窗口：GET 分支加了过滤代码后 "defs" 被推出窗口 → 恒红。
+     改成切到下一个分支，与长度无关。 */
+  const seg = R14_HTTPGET;
+  return !rsSrc || (seg.indexOf('"defs"') >= 0 && /TaskFilter::from_query\(req\)/.test(seg));
 })());
 /*
   切片长度要够：tb_list_tasks 的实现里过滤逻辑很长，
@@ -6268,10 +6277,13 @@ const RS_HELPERS = RS_SEG('fn vals_from_map(', 5200);
 /* ① list 的 assignee/tag 过滤走 vals_of（不再裸 as_str） */
 t('守卫：AI 列任务的 assignee/tag 过滤认多值', (() => {
   if (!rsSrc) return false;
-  return /vals_of\(t, "assignee"\)/.test(RS_LIST)
-    && /vals_of\(t, "tags"\)/.test(RS_LIST)
-    && /cur\.iter\(\)\.any\(/.test(RS_LIST)
-    && /cur\.is_empty\(\)/.test(RS_LIST);
+  /* 判据搬进共用层 TaskFilter::matches，两条通道一起覆盖 */
+  /* 共用层里三列走同一个循环（field 是变量），不再有字面量 vals_of(t,"assignee") */
+  return /\("assignee", &self\.assignee\)/.test(R14_MATCHES)
+    && /vals_of\(t, field\)/.test(R14_MATCHES)
+    && /vals_of\(t, "tags"\)/.test(R14_MATCHES)
+    && /real\.iter\(\)\.any\(/.test(R14_MATCHES)
+    && /real\.is_empty\(\)/.test(R14_MATCHES);
 })());
 
 /* ② 通杀：多选列不许再裸用 as_str() 读任务上的值 */
@@ -6294,7 +6306,9 @@ t('守卫：AI 的 q 搜索与界面同口径（说明 + 六列原始值与显�
     '("status", ""', '"priorityDefs"', '"groupDefs"', '"assigneeDefs"',
     '"typeDefs"', '"tagDefs"', 'vals_of(task, field)', 'status_label(', 'label_of('];
   return need.every((x) => hay.includes(x))
-    && /search_hay\(t, &store\)/.test(RS_LIST);
+    && /search_hay\(t, store\)/.test(R14_MATCHES)
+    && /f\.matches\(t, &store\)/.test(R14_HTTPGET)
+    && /f\.matches\(t, &store\)/.test(R14_LIST);
 })());
 
 /* ④ 上一轮写下的 q 描述不能是假话（描述提显示名，实现就得有 search_hay） */
@@ -6310,7 +6324,9 @@ t('守卫：MCP 的 q 描述与实现一致（不是只写文档）', (() => {
   */
   return desc.includes('定义表显示名') && rsSrc.includes('fn search_hay(')
     && desc.includes('默认流程按状态 id')
-    && /search_hay\(t, &store\)/.test(RS_LIST);
+    && /search_hay\(t, store\)/.test(R14_MATCHES)
+    && /f\.matches\(t, &store\)/.test(R14_HTTPGET)
+    && /f\.matches\(t, &store\)/.test(R14_LIST);
 })());
 
 /* ⑤ defs_of 兼容 defs-only 文件（平级优先、回退 defs.<key>） */
@@ -6589,7 +6605,9 @@ t('守卫：MCP 返回值不谎报通知已发出', (() => {
 /* ④ 两处 status schema 去掉写死 enum（自定义流程才会被客户端放行） */
 t('守卫：status schema 不写死默认 7 个状态', (() => {
   if (!rsSrc) return false;
-  const st = [...R10_TOOLS.matchAll(/"status":\s*\{ "type": "string"[^\n]*/g)].map((m) => m[0]);
+  /* list 那处 status 现在允许数组（["string","array"]），update 那处仍是 string；
+     两处都不许写死 enum —— 判据要同时认两种 type 形状。 */
+  const st = [...R10_TOOLS.matchAll(/"status":\s*\{ "type": (?:\["string", "array"\]|"string")[^\n]*/g)].map((m) => m[0]);
   return st.length === 2
     && st.every((l) => !l.includes('"enum"'))
     && st.every((l) => l.includes('defs.statuses'))
@@ -7035,12 +7053,16 @@ t('守卫：跨端默认状态定义一致（id / name 逐项）', (() => {
 /* ⑦ tb_list_tasks 认 type / group 过滤（含 __none__），schema 也列了 */
 t('守卫：AI 列任务可按 type / group 过滤（不再看得见却筛不了）', (() => {
   if (!rsSrc) return false;
-  return /let typ = s\("type"\)/.test(R13_LIST)
-    && /let group = s\("group"\)/.test(R13_LIST)
-    && /for \(field, want\) in \[\("type", &typ\), \("group", &group\)\]/.test(R13_LIST)
-    && /w == "__none__"/.test(R13_LIST)
-    && /"type":\s*\{ "type": "string", "description": "按任务类型 id 过滤/.test(R13_TOOLS)
-    && /"group":\s*\{ "type": "string", "description": "按分组名过滤/.test(R13_TOOLS);
+  /* 过滤判据搬进共用层；schema 同时改成允许数组 */
+  return /typ: Vec<String>/.test(R14_FILTER)
+    && /group: Vec<String>/.test(R14_FILTER)
+    && /typ: vals\("type"\)/.test(R14_FILTER)
+    && /group: vals\("group"\)/.test(R14_FILTER)
+    && /\("type", &self\.typ\)/.test(R14_MATCHES)
+    && /\("group", &self\.group\)/.test(R14_MATCHES)
+    && /w == "__none__"/.test(R14_MATCHES)
+    && /"type":\s*\{ "type": \["string", "array"\], "description": "按任务类型 id 过滤/.test(R14_TOOLS)
+    && /"group":\s*\{ "type": \["string", "array"\], "description": "按分组名过滤/.test(R14_TOOLS);
 })());
 
 /* ⑧ 业务错误不再一律 500（route 里 6 处统一走 api_status） */
@@ -7137,6 +7159,165 @@ t('守卫：跨端等价 —— statusDefs 归一与 normalizeFlow 一致', (() 
     const want = normalizeFlow(c.flow).statuses.map((x) => ({ id: x.id, name: x.name, color: x.color, enter: x.enter, done: x.done }));
     return JSON.stringify(R13_STAT_EQ(c)) === JSON.stringify(want);
   }) && R13_STAT_EQ(cases[0]).length === 2;
+})());
+
+/*
+ * ============================================================
+ * 本轮：读通道「能力一致」这一维（前几轮只查过字段/错误码/通知形状一致）。
+ *
+ * 复现：
+ *   ① GET /api/tasks 没有任何过滤参数（route 取完 path 就把 query 丢了），
+ *      而 MCP tb_list_tasks 有 7 个 —— AI 经 HTTP 只能拉全量自己筛
+ *   ② 过滤参数只 as_str()，传数组被静默忽略（写入侧早就能传数组了）
+ *   ③ api_status 用 contains("不存在") 判 404，子串太宽：
+ *      自定义状态名叫「不存在」、IO 错误 detail 含「目录不存在」都会误判
+ *   ④ MCP batch 只剩 1 条响应时返回对象，而 JSON-RPC §6 要求数组
+ *
+ * 修法：抽 TaskFilter，from_args / from_query 两个入口 + 一份 matches，
+ * 两条读通道共用 —— 不再是「同一判据两个入口」。
+ * ============================================================
+ */
+
+const R14_APIST = rsBranch('fn api_status(', 'fn err_json(');
+const R14_BATCH = rsBranch('fn mcp_handle(', '// ---------------------------------------------------------------- 数据');
+const R14_CODE = STRIP(rsSrc);
+
+/* ① 通杀：两条读通道都用 TaskFilter，且各只调一次 matches */
+t('守卫：两条读通道共用 TaskFilter（不再各写一份过滤）', (() => {
+  if (!rsSrc) return false;
+  return /struct TaskFilter/.test(R14_CODE)
+    && /impl TaskFilter/.test(R14_CODE)
+    && /fn from_args\(args: &Value\) -> Self/.test(R14_FILTER)
+    && /fn from_query\(req: &Request\) -> Self/.test(R14_FILTER)
+    && /fn matches\(&self, t: &Value, store: &Value\) -> bool/.test(R14_FILTER)
+    && /TaskFilter::from_query\(req\)/.test(R14_HTTPGET)
+    && /TaskFilter::from_args\(args\)/.test(R14_LIST)
+    && (R14_HTTPGET.match(/f\.matches\(t, &store\)/g) || []).length === 1
+    && (R14_LIST.match(/f\.matches\(t, &store\)/g) || []).length === 1;
+})());
+
+/* ② HTTP GET 认全部七个 query 参数，并带 count 与 MCP 对齐 */
+t('守卫：HTTP GET /api/tasks 认七个过滤参数 + count', (() => {
+  if (!rsSrc) return false;
+  const keys = ['"status" => f.status.push(val)', '"priority" => f.priority.push(val)',
+    '"tag" => f.tag.push(val)', '"assignee" => f.assignee.push(val)',
+    '"type" => f.typ.push(val)', '"group" => f.group.push(val)',
+    '"q" => f.q = Some(val.to_lowercase())'];
+  /* ⛔ pct_decode 定义在 struct **之前**，不在 R14_FILTER 切片里 ——
+     第一版钉错位置导致恒红。用剥注释全文查。 */
+  return keys.every((k) => R14_FILTER.includes(k))
+    && /fn pct_decode\(s: &str\) -> String/.test(R14_CODE)
+    && /"count": hit\.len\(\)/.test(R14_HTTPGET)
+    && /"defs": defs_of\(&store\)/.test(R14_HTTPGET);
+})());
+
+/* ③ MCP from_args 认字符串和数组（多值列读侧不再只认 as_str） */
+t('守卫：MCP 过滤参数认数组（OR 命中）', (() => {
+  if (!rsSrc) return false;
+  return /Some\(Value::String\(v\)\) =>/.test(R14_FILTER)
+    && /Some\(Value::Array\(a\)\) =>/.test(R14_FILTER)
+    && /filter_map\(\|x\| x\.as_str\(\)\)/.test(R14_FILTER)
+    && /status: vals\("status"\)/.test(R14_FILTER)
+    && /typ: vals\("type"\)/.test(R14_FILTER);
+})());
+
+/* ④ 六个过滤参数的 schema 声明数组，且描述写明 OR（描述不能是假话） */
+t('守卫：过滤参数 schema 声明数组并说明 OR', (() => {
+  if (!rsSrc) return false;
+  const keys = ['"status"', '"priority"', '"tag"', '"assignee"', '"type"', '"group"'];
+  for (const k of keys) {
+    const re = new RegExp(k + ':\\s*\\{ "type": \\["string", "array"\\]');
+    if (!re.test(R14_TOOLS)) return false;
+  }
+  return /OR 命中/.test(R14_TOOLS) || /OR\)/.test(R14_TOOLS);
+})());
+
+/* ⑤ api_status 按形状判 404（不再子串匹配） */
+t('守卫：api_status 按形状判 404（不再 contains 子串）', (() => {
+  if (!rsSrc) return false;
+  /* ⛔ 否项必须**剥注释**：api_status 的注释里写着「原来是 contains("不存在")」，
+     不剥就是恒红（第一版踩了）。 */
+  const code = STRIP(R14_APIST);
+  return !/contains\("不存在"\)/.test(code)
+    && /e\.starts_with\("任务 "\) && e\.ends_with\("不存在"\)/.test(code)
+    && /IO_PREFIXES\.iter\(\)\.any/.test(code);
+})());
+
+/* ⑥ IO 错误优先于 404（判据顺序：先看文件故障，再看目标不存在） */
+t('守卫：api_status 判据顺序（IO 500 优先于 404）', (() => {
+  if (!rsSrc) return false;
+  const i = R14_APIST.indexOf('IO_PREFIXES.iter().any');
+  const j = R14_APIST.indexOf('e.starts_with("任务 ")');
+  return i >= 0 && j >= 0 && i < j;
+})());
+
+/* ⑦ MCP batch 响应必须是数组 */
+t('守卫：MCP batch 响应始终是数组（JSON-RPC 2.0 §6）', (() => {
+  if (!rsSrc) return false;
+  return /let is_batch = parsed\.is_array\(\)/.test(R14_BATCH)
+    && /!is_batch && responses\.len\(\) == 1/.test(R14_BATCH)
+    && /Value::Array\(responses\)\.to_string\(\)/.test(R14_BATCH);
+})());
+
+/* ⑧ 数据等价：共用 matches 的判据逐用例复现（单值 / 多值 / 哨兵 / q） */
+const R14_EQ_MATCH = (t, f, hay) => {
+  const vals = (k) => {
+    const v = t[k];
+    if (typeof v === 'string') { const x = v.trim(); return x ? [x] : []; }
+    if (Array.isArray(v)) return v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim());
+    return [];
+  };
+  for (const [field, wants] of [['status', f.status || []], ['priority', f.priority || []]]) {
+    if (!wants.length) continue;
+    const cur = typeof t[field] === 'string' ? t[field] : '';
+    if (!wants.some((w) => w === cur)) return false;
+  }
+  if ((f.tag || []).length) {
+    const cur = vals('tags');
+    if (!f.tag.some((w) => cur.some((x) => x === w))) return false;
+  }
+  for (const [field, wants] of [['assignee', f.assignee || []], ['type', f.typ || []], ['group', f.group || []]]) {
+    if (!wants.length) continue;
+    const real = vals(field).filter((v) => !(v.startsWith('__') && v.endsWith('__')));
+    let ok = false;
+    for (const w of wants) {
+      if (w === '__none__') { if (!real.length) { ok = true; break; } }
+      else if (real.some((v) => v === w)) { ok = true; break; }
+    }
+    if (!ok) return false;
+  }
+  if (f.q && !hay(t).includes(f.q)) return false;
+  return true;
+};
+const R14_TASKS = [
+  { id: 'tb-0001', status: 'todo', priority: 'P2', tags: ['tg1'], assignee: ['张三', '李四'], type: ['dev', 'bug'], group: '登录' },
+  { id: 'tb-0002', status: 'doing', priority: 'P4', tags: [], assignee: [], type: '__none__', group: '' },
+  { id: 'tb-0003', status: 'done', priority: 'P0', tags: ['tg2'], assignee: '__none__', type: 'research', group: '支付' },
+];
+const R14_HAY = (t) => [t.id, t.status, t.priority, t.group, JSON.stringify(t.type), JSON.stringify(t.assignee)]
+  .join(' ').toLowerCase();
+t('守卫：数据等价 —— 共用 matches 判据逐用例正确', (() => {
+  const cases = [
+    { f: {}, want: 3 },
+    { f: { status: ['todo', 'doing'] }, want: 2 },
+    { f: { typ: ['dev', 'research'] }, want: 2 },
+    { f: { group: ['登录'] }, want: 1 },
+    { f: { assignee: ['__none__'] }, want: 2 },   /* 空数组 + 哨兵残留都算未认领 */
+    { f: { typ: ['__none__'] }, want: 1 },
+    { f: { priority: ['P0', 'P4'] }, want: 2 },
+    { f: { tag: ['tg1'] }, want: 1 },
+    { f: { q: 'tb-0002' }, want: 1 },
+    { f: { status: ['todo'], typ: ['dev'] }, want: 1 },
+  ];
+  return cases.every((c) => R14_TASKS.filter((t) => R14_EQ_MATCH(t, c.f, R14_HAY)).length === c.want);
+})());
+
+/* ⑨ 通杀：list 分支不许再自己写过滤循环（判据只在共用层） */
+t('守卫：通杀 —— 读通道分支不再自带过滤循环', (() => {
+  if (!rsSrc) return false;
+  return !/\.filter\(\|t\| \{[\s\S]{0,400}if let Some\(st\)/.test(R14_LIST)
+    && !/let hit: Vec<&Value> = tasks/.test(R14_LIST)
+    && /TaskFilter::from_args\(args\)/.test(R14_LIST);
 })());
 
 const readmeCount = (() => {
