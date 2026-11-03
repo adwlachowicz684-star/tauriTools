@@ -732,7 +732,7 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
         },
         ("POST", ["mcp"]) => {
             // MCP JSON-RPC 2.0 端点：鉴权已在上游 handle_conn 统一做过
-            let (code, body) = mcp_handle(&req.body, dir);
+            let (code, body) = mcp_handle(&req.body, dir, notify_status);
             (code, body, None)
         }
         _ => (404, r#"{"ok":false,"error":"not found"}"#.to_string(), None),
@@ -817,7 +817,7 @@ pub fn mcp_tools() -> Vec<Value> {
             "tb_list_tasks",
             "列出任务看板全部任务（可按状态/优先级/标签/认领人/关键词过滤）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）与生效状态清单（statuses）——建任务或改字段前先读它，才知道分组、类型、认领人、优先级各有哪些可选值",
             json!({
-                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "按状态过滤，缺省=全部。这个 enum 只是**默认值**——用户可能自定义过流程，实际生效的状态看响应里的 defs.statuses" },
+                "status":   { "type": "string", "description": "按状态过滤，缺省=全部。⛔ 不写 enum：用户可能自定义过流程，写死那 7 个会让严格校验 schema 的 MCP 客户端在本地就拒掉自定义状态；实际生效的状态看响应里的 defs.statuses" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "按优先级过滤" },
                 "tag":      { "type": "string", "description": "按标签过滤" },
                 "assignee": { "type": "string", "description": "按认领人过滤（该列可多选，数组里的任一值命中即算）；传 \"__none__\" 查未认领" },
@@ -849,10 +849,10 @@ pub fn mcp_tools() -> Vec<Value> {
         ),
         tool(
             "tb_update_task",
-            "流转/修改任务：认领、开工、提交审查、通过、打回、退回、改字段",
+            "流转/修改任务：认领、开工、提交审查、通过、打回、退回、改字段。返回 entered_notify_status 只表示本次进入了通知状态；webhook 由 HTTP PATCH 通道发出，MCP 通道不发通知",
             json!({
                 "id":       { "type": "string", "description": "任务 id" },
-                "status":   { "type": "string", "enum": ["todo", "claimed", "doing", "hold", "review", "done", "cancelled"], "description": "目标状态（流转图校验：todo/claimed 不可直跳 done）。enum 只是默认值，实际生效的状态看 tb_list_tasks 返回的 defs.statuses" },
+                "status":   { "type": "string", "description": "目标状态（流转图校验，服务端按本项目 flow 校验）。⛔ 不写 enum：写死默认 7 个会让自定义流程的状态在客户端被拒；先调 tb_list_tasks 看响应里的 defs.statuses" },
                 "assignee": { "type": "string", "description": "认领人；该列可多选且任务上已是数组时按追加处理（不会挤掉他人）；已被他人认领且不是共同认领会被拒绝；空串=释放全部认领" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "改优先级" },
                 "title":    { "type": "string", "description": "改标题" },
@@ -897,7 +897,7 @@ pub fn mcp_tools() -> Vec<Value> {
 ///
 /// pub：MCP 网关（mcp_gate.rs）代理转发用 —— 转发时**不拆包重包**，
 /// 对端（这里是网关回传）看到的 isError 原样可达 AI 客户端。
-pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
+pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &str) -> Value {
     let s = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|x| x.to_string());
     let result: Result<Value, String> = match name {
         "tb_list_tasks" => (|| -> Result<Value, String> {
@@ -967,16 +967,23 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
         })(),
         "tb_update_task" => {
             /*
-              MCP 通道没有 HTTP 服务配置可拿（那是 tb_http_start 的参数），
-              这里用默认 "review"。
+              ⛔ 原来这里写死 "review"，而 HTTP PATCH 用的是配置里的 notify_status。
+              自定义流程把送审那步改叫 gate 之后：HTTP 通道认得、MCP 通道不认，
+              同一个动作两条通道结论相反（AI 经 MCP 送审永远不算"进入通知状态"）。
+              默认流程下恰好都是 review，所以这个坑只在自定义流程下暴露 ——
+              与之前修过的「通知状态写死 review」是同一个根因、另一条通道。
 
-              注意：MCP 这个返回值只是**告诉调用方"本次进入了通知状态"**，
-              真正的 POST 由 HTTP 服务侧做（那边读的是配置里的 notify_status）。
-              所以两边在自定义流程下会不一致 —— 已在下方注释里标明，
-              要彻底一致得把通知状态存进 tasks.json（与 flow 同库）。
+              现在由 route 一路透传（POST /mcp 也在 HTTP 服务内，拿得到配置）。
+
+              ⛔ 返回值也不能叫 `review_notice_sent`：MCP 通道**不发 webhook**
+              （/mcp 分支不产生通知 body，handle_conn 不会 spawn_notify）。
+              真正的 POST 只在 HTTP PATCH 请求里发生。原来返回 true 是假话 ——
+              AI 以为 agent-flow 已经被触发了，实际什么都没发。
+              现在改为 `entered_notify_status`：只如实报告"本次进入了通知状态"，
+              schema 描述里也写明通知由 HTTP PATCH 通道发出。
             */
-            patch_task(dir, &s("id").unwrap_or_default(), args, "review").map(|(t, review)| {
-                json!({ "updated": t, "review_notice_sent": review })
+            patch_task(dir, &s("id").unwrap_or_default(), args, notify_status).map(|(t, entered)| {
+                json!({ "updated": t, "entered_notify_status": entered })
             })
         }
         "tb_add_event" => {
@@ -1000,7 +1007,7 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf) -> Value {
 }
 
 /// JSON-RPC 2.0 分发。返回 None = 通知（无 id），调用方回 202 空体。
-fn mcp_dispatch(req: &Value, dir: &PathBuf) -> Option<Value> {
+fn mcp_dispatch(req: &Value, dir: &PathBuf, notify_status: &str) -> Option<Value> {
     // 「没有 id」= 通知；「id: null」= 合法请求，要回 id:null 的响应
     let is_notification = !req
         .as_object()
@@ -1024,7 +1031,7 @@ fn mcp_dispatch(req: &Value, dir: &PathBuf) -> Option<Value> {
             let params = req.get("params").cloned().unwrap_or(json!({}));
             let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
-            Ok(mcp_call_tool(name, &args, dir))
+            Ok(mcp_call_tool(name, &args, dir, notify_status))
         }
         other => Err(json!({ "code": -32601, "message": format!("未知方法: {other}") })),
     };
@@ -1036,7 +1043,7 @@ fn mcp_dispatch(req: &Value, dir: &PathBuf) -> Option<Value> {
 }
 
 /// POST /mcp 的请求体可能是一批 JSON-RPC（数组=batch），逐条分发。
-fn mcp_handle(body: &str, dir: &PathBuf) -> (u16, String) {
+fn mcp_handle(body: &str, dir: &PathBuf, notify_status: &str) -> (u16, String) {
     let parsed: Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => {
@@ -1051,9 +1058,9 @@ fn mcp_handle(body: &str, dir: &PathBuf) -> (u16, String) {
     let responses: Vec<Value> = match parsed {
         Value::Array(batch) => batch
             .iter()
-            .filter_map(|req| mcp_dispatch(req, dir))
+            .filter_map(|req| mcp_dispatch(req, dir, notify_status))
             .collect(),
-        single => match mcp_dispatch(&single, dir) {
+        single => match mcp_dispatch(&single, dir, notify_status) {
             Some(resp) => vec![resp],
             None => vec![], // 纯通知：202 空体
         },
@@ -1155,13 +1162,13 @@ fn defs_of(store: &Value) -> Value {
     /*
       ⛔ statuses 不能省 —— 它是**最该让 AI 看见**的一项。
 
-      MCP schema 里 status 的 enum 是写死的那 7 个默认值，
-      那是**静态 schema**，改不了。用户自定义过流程之后：
-        · AI 照 schema 填，只能填那 7 个里的 → 自定义状态永远用不上
-        · AI 猜一个填进去，Rust 这边按 statuses_for 校验是**接受**的
-      于是 schema 成了假话，而 AI 没有任何途径知道这份数据认哪些状态。
-
-      把当前生效的状态清单放进 defs，AI 才有得查。
+      MCP schema 是**静态**的（mcp_tools() 拿不到 dir，没法按项目动态生成 enum），
+      早期两处 status 参数写了写死的 7 个默认状态 enum，结果是：
+        · 严格校验 schema 的客户端会在**本地**拒掉自定义状态
+        · 描述里却说"实际生效的状态看 defs.statuses" —— 指了路却把门关着
+      现已去掉那两处 enum，只留 type: string + 指向 defs.statuses 的描述；
+      服务端仍按 statuses_for(store) 校验。把当前生效的状态清单放进 defs，
+      AI 才有得查（自定义流程下唯一可信的来源）。
     */
     let list = |legacy: &str, key: &str| -> Value {
         match defs_list(store, legacy, key) {
@@ -1822,8 +1829,14 @@ fn add_event(dir: &PathBuf, id: &str, body: &Value) -> Result<Value, String> {
 }
 
 fn register_agent(dir: &PathBuf, body: &Value) -> Result<Value, String> {
-    let id = str_field(body, "id").unwrap_or_default();
-    if id.trim().is_empty() {
+    /*
+      ⛔ 判空用 trim、写入却用原值：id="  a  " 能通过检查，
+      然后带着空格存进 agents，界面显示一个前后带空格的名字，
+      而下次用 "a" 注册又会当成另一个 agent（同一个实体被拆成两个）。
+      与前端 normalizeTask 的文本字段判据一致：一律先 trim。
+    */
+    let id = str_field(body, "id").unwrap_or_default().trim().to_string();
+    if id.is_empty() {
         return Err("id 不能为空".to_string());
     }
     let mut store = load_tasks(dir)?;
@@ -1835,18 +1848,18 @@ fn register_agent(dir: &PathBuf, body: &Value) -> Result<Value, String> {
         {
             if let Some(obj) = a.as_object_mut() {
                 if let Some(name) = str_field(body, "name") {
-                    obj.insert("name".to_string(), json!(name));
+                    obj.insert("name".to_string(), json!(name.trim()));
                 }
                 if let Some(role) = str_field(body, "role") {
-                    obj.insert("role".to_string(), json!(role));
+                    obj.insert("role".to_string(), json!(role.trim()));
                 }
                 obj.insert("lastSeen".to_string(), json!(now_ms()));
             }
         } else {
             agents.push(json!({
                 "id": id,
-                "name": str_field(body, "name").unwrap_or_else(|| id.clone()),
-                "role": str_field(body, "role").unwrap_or_else(|| "dev".to_string()),
+                "name": str_field(body, "name").unwrap_or_else(|| id.clone()).trim().to_string(),
+                "role": str_field(body, "role").unwrap_or_else(|| "dev".to_string()).trim().to_string(),
                 "lastSeen": now_ms(),
             }));
         }
@@ -1985,13 +1998,13 @@ mod tests {
     fn notification_gets_no_response() {
         // 无 id = 通知，不回包
         let req = serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"});
-        assert!(mcp_dispatch(&req, &PathBuf::new()).is_none());
+        assert!(mcp_dispatch(&req, &PathBuf::new(), "review").is_none());
     }
 
     #[test]
     fn initialize_shape() {
         let req = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}});
-        let resp = mcp_dispatch(&req, &PathBuf::new()).unwrap();
+        let resp = mcp_dispatch(&req, &PathBuf::new(), "review").unwrap();
         assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
         assert_eq!(resp["result"]["serverInfo"]["name"], "nexus-panel-task-board");
     }
@@ -2002,7 +2015,7 @@ mod tests {
         let call = |name: &str, args: serde_json::Value| {
             let req = serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call",
                 "params":{"name":name,"arguments":args}});
-            mcp_dispatch(&req, &dir).unwrap()["result"].clone()
+            mcp_dispatch(&req, &dir, "review").unwrap()["result"].clone()
         };
 
         let r = call("tb_create_task", serde_json::json!({
@@ -2032,12 +2045,12 @@ mod tests {
             {"jsonrpc":"2.0","id":7,"method":"ping"}
         ])
         .to_string();
-        let (code, text) = mcp_handle(&body, &dir);
+        let (code, text) = mcp_handle(&body, &dir, "review");
         assert_eq!(code, 200);
         assert!(text.contains("\"id\":7"));
 
         // 坏 JSON → -32700
-        let (code, text) = mcp_handle("{oops", &dir);
+        let (code, text) = mcp_handle("{oops", &dir, "review");
         assert_eq!(code, 400);
         assert!(text.contains("-32700"));
     }

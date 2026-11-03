@@ -6502,6 +6502,119 @@ t('守卫：MCP schema 说明 estimate/tags 兼容字符串', (() => {
     && tag.length === 2 && tag.every((l) => l.includes('字符串'));
 })());
 
+/*
+ * ============================================================
+ * 本轮：把「通知状态写死 review」这个**修过两次**的老毛病，
+ * 翻到 MCP 通道去查 —— 它一直在，而且注释自己承认了却没修。
+ *
+ * 复现（自定义流程把送审那步叫 gate）：
+ *   HTTP PATCH  watch=cfg.notifyStatus("gate") → entered=true → 发 webhook
+ *   MCP update  watch=写死的 "review"          → entered=false
+ * 默认流程下两边恰好都是 review，所以只在自定义流程下暴露。
+ *
+ * 顺带：/mcp 分支从不产生通知 body，却返回 review_notice_sent:true —— 假话。
+ * 以及两处 status schema 写死 7 个默认状态 enum，把 defs.statuses 的路指了却把门关着。
+ * ============================================================
+ */
+
+const R10_SEG = (a, len) => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf(a);
+  return i < 0 ? '' : rsSrc.slice(i, i + len);
+};
+const R10_MCP_UPDATE = (() => {
+  if (!rsSrc) return '';
+  const i = rsSrc.indexOf('"tb_update_task" => {');
+  const j = i < 0 ? -1 : rsSrc.indexOf('"tb_add_event"', i);
+  return j < 0 ? '' : rsSrc.slice(i, j);
+})();
+const R10_DISPATCH = R10_SEG('fn mcp_dispatch(', 1500);
+const R10_HANDLE = R10_SEG('fn mcp_handle(', 1400);
+const R10_ROUTE_MCP = R10_SEG('("POST", ["mcp"])', 500);
+const R10_TOOLS = R10_SEG('fn mcp_tools(', 9000);
+const R10_AGENT = R10_SEG('fn register_agent(', 1800);
+const R10_PATCH_WATCH = R10_SEG('fn patch_task(', 12000);
+
+/* ① MCP 的 tb_update_task 不许再写死 "review" */
+t('守卫：MCP 通道用配置里的 notify_status（不写死 review）', (() => {
+  if (!rsSrc) return false;
+  return /patch_task\(dir, &s\("id"\)\.unwrap_or_default\(\), args, notify_status\)/.test(R10_MCP_UPDATE)
+    && !/patch_task\([^)]*"review"\)/.test(STRIP(rsSrc))
+    && /fn mcp_call_tool\(name: &str, args: &Value, dir: &PathBuf, notify_status: &str\)/.test(rsSrc);
+})());
+
+/* ② 全链透传：route → mcp_handle → mcp_dispatch → mcp_call_tool */
+t('守卫：notify_status 全链透传（四个环节都带参数）', (() => {
+  if (!rsSrc) return false;
+  return /mcp_handle\(&req\.body, dir, notify_status\)/.test(R10_ROUTE_MCP)
+    && /fn mcp_handle\(body: &str, dir: &PathBuf, notify_status: &str\)/.test(rsSrc)
+    && /fn mcp_dispatch\(req: &Value, dir: &PathBuf, notify_status: &str\)/.test(rsSrc)
+    && /mcp_call_tool\(name, &args, dir, notify_status\)/.test(R10_DISPATCH)
+    && /mcp_dispatch\(req, dir, notify_status\)/.test(R10_HANDLE)
+    && /mcp_dispatch\(&single, dir, notify_status\)/.test(R10_HANDLE);
+})());
+
+/* ③ 返回字段不许谎报"通知已发" */
+t('守卫：MCP 返回值不谎报通知已发出', (() => {
+  if (!rsSrc) return false;
+  const code = STRIP(rsSrc);
+  return /"entered_notify_status": entered/.test(R10_MCP_UPDATE)
+    && !/review_notice_sent/.test(code)
+    /* 这句写在块注释里，STRIP 之后当然查不到 —— 第一版用它查 code 恒假。
+       要查「注释有没有把真实通道说清」就得查原文。 */
+    && /MCP 通道\*\*不发 webhook\*\*/.test(rsSrc);
+})());
+
+/* ④ 两处 status schema 去掉写死 enum（自定义流程才会被客户端放行） */
+t('守卫：status schema 不写死默认 7 个状态', (() => {
+  if (!rsSrc) return false;
+  const st = [...R10_TOOLS.matchAll(/"status":\s*\{ "type": "string"[^\n]*/g)].map((m) => m[0]);
+  return st.length === 2
+    && st.every((l) => !l.includes('"enum"'))
+    && st.every((l) => l.includes('defs.statuses'))
+    && !/"enum": \["todo", "claimed", "doing", "hold", "review", "done", "cancelled"\]/.test(rsSrc);
+})());
+
+/* ⑤ 工具描述得告诉 AI 通知由哪条通道发（否则字段语义又会被误解） */
+t('守卫：tb_update_task 描述说明通知的真实通道', (() => {
+  if (!rsSrc) return false;
+  const d = R10_SEG('"tb_update_task",', 300);
+  return d.includes('entered_notify_status')
+    && d.includes('HTTP PATCH 通道发出')
+    && d.includes('MCP 通道不发通知');
+})());
+
+/* ⑥ 内置测试的全部调用点都带参数（改签名不能把测试落下） */
+t('守卫：内置测试的 dispatch/handle 调用点同步带参数', (() => {
+  if (!rsSrc) return false;
+  const testPart = rsSrc.slice(rsSrc.indexOf('#[cfg(test)]'));
+  const dis = [...testPart.matchAll(/mcp_dispatch\([^\n]*\)/g)].map((m) => m[0]);
+  const han = [...testPart.matchAll(/mcp_handle\([^\n]*\)/g)].map((m) => m[0]);
+  return dis.length >= 3 && han.length >= 2
+    && dis.every((l) => l.includes(', "review")'))
+    && han.every((l) => l.includes(', "review")'));
+})());
+
+/* ⑦ register_agent 写入侧 trim（判空用 trim、写入也用 trim） */
+t('守卫：AI 注册窗口 id/name/role 写入侧归一', (() => {
+  if (!rsSrc) return false;
+  return /let id = str_field\(body, "id"\)\.unwrap_or_default\(\)\.trim\(\)\.to_string\(\)/.test(R10_AGENT)
+    && /json!\(name\.trim\(\)\)/.test(R10_AGENT)
+    && /\.trim\(\)\.to_string\(\)/.test(R10_AGENT);
+})());
+
+/* ⑧ 跨端等价：自定义流程下两条通道的 watch 都来自配置 */
+t('守卫：跨端等价 —— 自定义流程送审状态两条通道一致', (() => {
+  if (!rsSrc) return false;
+  const watchUsed = /let watch = if notify_status\.trim\(\)\.is_empty\(\) \{ "review" \} else \{ notify_status\.trim\(\) \}/.test(R10_PATCH_WATCH);
+  const entered = (watch, from, to) => to === watch && from !== watch;
+  const cfg = 'gate';
+  const http = entered(cfg, 's2', 'gate');
+  const mcp = entered(cfg, 's2', 'gate');   /* 透传后 MCP 用的是同一个 cfg */
+  const oldMcp = entered('review', 's2', 'gate');
+  return watchUsed && http === true && mcp === true && oldMcp === false;
+})());
+
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
   const nums = [...rd.matchAll(/(\d+)\s*项/g)].map((m) => Number(m[1]));
