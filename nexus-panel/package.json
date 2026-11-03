@@ -302,7 +302,8 @@
     "test:plugin-manifest-sync": "node plugin-manifest-sync-test.mjs",
     "test:plugin-coupling": "node cross-plugin-coupling-test.mjs",
     "test:plugin-market": "node plugin-market-test.mjs",
-    "test:coverage-guard": "node test-coverage-guard-test.mjs"
+    "test:coverage-guard": "node test-coverage-guard-test.mjs",
+    "test:orphan-guard": "node orphan-modules-guard-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",
