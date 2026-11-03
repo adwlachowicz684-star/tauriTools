@@ -46,6 +46,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripCommentsFlat } from './test-scan-utils.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const src = (p) => fs.readFileSync(path.join(HERE, p), 'utf8');
@@ -73,7 +74,7 @@ t('icon-picker 自带 preseticons 目录（不再跨插件引用）',
    少了这条，把 ICON_DIR 改回 ../project-group/ 只会让上面那条红，
    但红得含糊（可能被误读成"正则写错了"）；这里明确点名禁用的旧路径。 */
 t('icon-picker 源码里不再出现 ../project-group/preseticons/',
-  !/\.\.\/project-group\/preseticons\//.test(iconPicker.replace(/\/\*[\s\S]*?\*\//g, '')));
+  !/\.\.\/project-group\/preseticons\//.test(stripCommentsFlat(iconPicker)));
 /*
  * 动态拼接是根因 —— 只要它是动态的，Vite 就永远处理不了，
  * 也就意味着**将来改这个 URL 的写法时，拷贝规则不能删**。
