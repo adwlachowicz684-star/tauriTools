@@ -11,6 +11,15 @@
 - **定义表**：`defs_of` 优先读平级字段、回退 `defs.<key>`，导入「只有 defs」的文件时 AI 也能看到候选值。
 - **优先级**：P0~P5 六档，与前端 `PRIORITY_ORDER` 逐项同序（守卫盯着）。
 
+### 写入侧归一化（与界面同一判据）
+
+AI 通道的 `create_task` / `patch_task` 写入前也做归一，避免把静默坏数据写进 tasks.json：
+
+- **id**：`nextId` 与库里实际最大编号取大 —— `nextId` 落后时不会和已有任务撞号，提升后的值一并写回。
+- **estimate**：数字或数字字符串都认（`"2.5"` 不会被当成没估）；负数/非法值归 0。
+- **tags / type / group / assignee**：单个值写成字符串也认；数组逐元素 trim、去空、去重。
+- **历史上限**：`HISTORY_CAP` 跨端同值（守卫盯着）。
+
 ## 优先级与颜色（可改、落盘、随项目带走）
 
 优先级固定 **P0~P5 六档**（P0 最紧急，默认色也最红）。优先级与状态的**颜色都是数据**，不是写死在样式里：
@@ -89,7 +98,7 @@ plugins/task-board/
   types.ts        数据模型
   core.mjs        纯逻辑（状态机/归一化/排序/过滤/分组/统计）+ core.d.ts
   lib/store.ts    配置 + tasks.json 读写 + HTTP 客户端
-  task-board-test.mjs   core 单测（549 项，含源码扫描类守卫）
+  task-board-test.mjs   core 单测（558 项，含源码扫描类守卫）
   docs/AI-CONVENTIONS.md   AI 窗口操作手册（curl 示例 + 认领礼仪）
   docs/AGENT-FLOW.md       agent-flow 联动指南（画布搭法 + 报文格式）
 ```
@@ -114,7 +123,7 @@ token 非空时请求头带 `X-TB-Token`。响应统一 `{"ok":true,...}` / `{"o
 ## 测试
 
 ```bash
-npm run test:tb-core        # core 纯逻辑 549 项
+npm run test:tb-core        # core 纯逻辑 558 项
 node style-audit-test.mjs   # 样式审计（含本插件）
 node style-standard-test.mjs --dir plugins/task-board
 npm run scan:admit          # 插件准入扫描

@@ -6351,6 +6351,157 @@ t('守卫：MCP schema 声明 type/group 可传数组', (() => {
   return a >= 2 && rsSrc.includes('"items": { "type": "string" }');
 })());
 
+/*
+ * ============================================================
+ * 本轮：把「前端早修过、AI 通道没跟上」的**写入侧归一化**一次性补齐。
+ *
+ * HTTP 与 MCP 共用 create_task / patch_task，所以两条通道一起生效。
+ * 复现（按 Rust 原判据等价跑）：
+ *   nextId=2 但库里有 tb-0009 → 第 1 次新建就撞 tb-0002
+ *   "estimate":"2.5" → as_f64()=None → 0（AI 明明填了）
+ *   "tags":"tg1"（少写方括号）→ filter(is_array) 丢成 []
+ *   tags:["","  ","tg1","tg1"] → 原样写盘，空 chip + 重复计数
+ * ============================================================
+ */
+
+const RS_CREATE9 = RS_SEG('fn create_task(', 4600);
+const RS_HELPERS9 = RS_SEG('fn num_of(', 3800);
+
+/* ① create 用 next_seq_for，且它真的扫了 tasks 里的最大编号 */
+t('守卫：AI 建任务不会与已有任务撞号（nextId 与实际最大取大）', (() => {
+  if (!rsSrc) return false;
+  return /next_seq_for\(&store\)/.test(RS_CREATE9)
+    && /store\["nextId"\] = json!\(next_id/.test(RS_CREATE9)
+    && /fn next_seq_for\(/.test(RS_HELPERS9)
+    && /max_seq\.saturating_add\(1\)/.test(RS_HELPERS9)
+    && /strip_prefix\("tb-"\)/.test(RS_HELPERS9)
+    && /get\("tasks"\)/.test(RS_HELPERS9);
+})());
+
+/* ② estimate：create 与 PATCH 同一个 num_of（认数字字符串） */
+t('守卫：AI 通道 estimate 认数字字符串（create/patch 同一判据）', (() => {
+  if (!rsSrc) return false;
+  const code = STRIP(rsSrc);
+  return /fn estimate_of[\s\S]{0,300}num_of\(body\.get\("estimate"\)\)/.test(code)
+    && /let cur = num_of\(obj\.get\("estimate"\)\)/.test(code)
+    && /Value::String\(s\)\) => s\.trim\(\)\.parse::<f64>\(\)/.test(code)
+    && !/obj\.get\("estimate"\)\.and_then\(\|x\| x\.as_f64\(\)\)/.test(code);
+})());
+
+/* ③ tags：两条入口都走 tags_value（字符串也认、数组清洗） */
+t('守卫：AI 通道 tags 写入归一（create/patch 共用 tags_value）', (() => {
+  if (!rsSrc) return false;
+  const code = STRIP(rsSrc);
+  return /task\.insert\("tags"\.to_string\(\), tags_value\(body\)\)/.test(code)
+    && /let next = tags_value\(body\)/.test(code)
+    && /Some\(Value::String\(v\)\) => \{[\s\S]{0,180}json!\(\[t\]\)/.test(code)
+    && !/tags\.clone\(\)/.test(code);
+})());
+
+/* ④ 通杀：多值数组写入一律过 clean_str_array（trim/去空/去重） */
+t('守卫：通杀 —— 数组写入逐元素清洗且去重', (() => {
+  if (!rsSrc) return false;
+  const code = STRIP(rsSrc);
+  const uses = (code.match(/clean_str_array\(a\)/g) || []).length;
+  return /fn clean_str_array\(/.test(code)
+    && /seen\.contains\(&t\)/.test(code)
+    && uses >= 2;   /* enum_value 与 tags_value 各一处 */
+})());
+
+/* ⑤ 跨端脏数据：前端归一结果 = Rust helper 等价实现的结果
+ *
+ * 等价实现与 Rust 源码逐行对应（由上面 4 条源码守卫钉住调用点，
+ * 防止实现漂移后这里还在自说自话）。任何一侧退化，这组断言都会红。
+ */
+const RUST_EQUIV = {
+  numOf: (v) => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+    if (typeof v === 'string') { const n = Number(v.trim()); return Number.isFinite(n) ? n : undefined; }
+    return undefined;
+  },
+  cleanArr: (a) => {
+    const seen = [];
+    for (const x of (Array.isArray(a) ? a : [])) {
+      if (typeof x !== 'string') continue;
+      const t = x.trim();
+      if (t && !seen.includes(t)) seen.push(t);
+    }
+    return seen;
+  },
+  tagsOf: (body) => {
+    const v = body.tags;
+    if (typeof v === 'string') { const t = v.trim(); return t ? [t] : []; }
+    if (Array.isArray(v)) return RUST_EQUIV.cleanArr(v);
+    return [];
+  },
+  enumOf: (body, k) => {
+    const v = body[k];
+    if (typeof v === 'string') return v.trim();
+    if (Array.isArray(v)) return RUST_EQUIV.cleanArr(v);
+    return '';
+  },
+  estOf: (body) => {
+    const n = RUST_EQUIV.numOf(body.estimate);
+    return (n !== undefined && Number.isFinite(n) && n > 0) ? n : 0;
+  },
+  nextSeq: (store) => {
+    const declared = Number.isInteger(store.nextId) && store.nextId >= 0 ? store.nextId : 1;
+    let mx = 0;
+    for (const t of (store.tasks || [])) {
+      const m = /^tb-(\d+)$/.exec(String((t && t.id) || ''));
+      if (m) { const x = Number(m[1]); if (Number.isFinite(x) && x > mx) mx = x; }
+    }
+    return Math.max(declared, mx + 1);
+  },
+};
+
+const DIRTY = {
+  id: 'tb-0001', title: '  hi  ', status: 'todo', priority: 'P4',
+  estimate: '2.5', tags: ['', '  ', 'tg1', 'tg1'],
+  type: ['dev', 'dev', '  ', 'bug'], group: '  登录  ', assignee: ['张三', '张三', ' '],
+  deps: [], createdAt: '1700000000000', updatedAt: '1700000000001', history: [],
+};
+const FRONT = normalizeTask(DIRTY);
+
+t('守卫：跨端一致 —— estimate 数字字符串', (() => {
+  return FRONT.estimate === 2.5 && RUST_EQUIV.estOf(DIRTY) === 2.5
+    && RUST_EQUIV.estOf({ estimate: -1 }) === 0
+    && RUST_EQUIV.estOf({ estimate: 'x' }) === 0;
+})());
+t('守卫：跨端一致 —— tags 字符串/空值/重复', (() => {
+  const a = JSON.stringify(FRONT.tags), b = JSON.stringify(RUST_EQUIV.tagsOf(DIRTY));
+  return a === b && a === '["tg1"]'
+    && JSON.stringify(RUST_EQUIV.tagsOf({ tags: 'tg2' })) === '["tg2"]'
+    && JSON.stringify(RUST_EQUIV.tagsOf({ tags: '   ' })) === '[]';
+})());
+t('守卫：跨端一致 —— 多值列 trim/去空/去重', (() => {
+  return ['type', 'group', 'assignee'].every((k) =>
+    JSON.stringify(FRONT[k]) === JSON.stringify(RUST_EQUIV.enumOf(DIRTY, k)))
+    && JSON.stringify(RUST_EQUIV.enumOf(DIRTY, 'type')) === '["dev","bug"]'
+    && JSON.stringify(RUST_EQUIV.enumOf(DIRTY, 'assignee')) === '["张三"]';
+})());
+t('守卫：跨端一致 —— nextId 取实际最大编号+1', (() => {
+  const store = { nextId: 2, tasks: [{ id: 'tb-0002' }, { id: 'tb-0009' }, { id: 'tb-0005' }] };
+  return normalizeStore(store).nextId === 10 && RUST_EQUIV.nextSeq(store) === 10
+    && RUST_EQUIV.nextSeq({ nextId: 20, tasks: [{ id: 'tb-0003' }] }) === 20;
+})());
+
+/* ⑥ MCP schema 得告诉 AI 这两个字段是宽进的（否则 AI 不知道能传字符串） */
+t('守卫：MCP schema 说明 estimate/tags 兼容字符串', (() => {
+  if (!rsSrc) return false;
+  /*
+    ⛔ 第一版用 `estimate[\s\S]{0,320}(字符串|string)` 取窗口 —— 几乎恒真：
+    窗口里必然有别的 `"type": "string"`，甚至下一行 tags 的描述也带"字符串"。
+    注入「把 estimate 描述里的字符串说明删掉」时**照样全绿**（又一次假绿）。
+    现在按行精确取 create/update 两处描述，各自必须自带说明。
+  */
+  const code = STRIP(rsSrc).split('\n');
+  const est = code.filter((l) => l.includes('"estimate": { "type": "number"'));
+  const tag = code.filter((l) => l.includes('"tags":') && l.includes('"type": "array"'));
+  return est.length === 2 && est.every((l) => l.includes('字符串'))
+    && tag.length === 2 && tag.every((l) => l.includes('字符串'));
+})());
+
 const readmeCount = (() => {
   const rd = fs.readFileSync(path.join(dir, 'README.md'), 'utf8');
   const nums = [...rd.matchAll(/(\d+)\s*项/g)].map((m) => Number(m[1]));

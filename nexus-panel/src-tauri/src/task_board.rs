@@ -833,9 +833,9 @@ pub fn mcp_tools() -> Vec<Value> {
                 "detail":   { "type": "string", "description": "复现步骤/期望行为，可选" },
                 "summary":  { "type": "string", "description": "任务说明（与详情分开：说明是要做什么，详情是复现/期望行为）" },
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "默认 P2" },
-                "tags":     { "type": "array", "items": { "type": "string" }, "description": "标签；先调 tb_list_tasks 看 defs.tagDefs 里已有哪些（用已有项的 id，不要自造裸名字——裸名字没有定义、没有颜色）" },
+                "tags":     { "type": "array", "items": { "type": "string" }, "description": "标签 id 数组；单个标签写成字符串也认（会自动转成数组），数组里的空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些（用已有项的 id，不要自造裸名字——裸名字没有定义、没有颜色）" },
                 "type":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "任务类型 id 或 id 数组（该列可多选）；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些（默认 dev/bug/opt/research/review/plan，用户可能自定义过）；缺省=未分类" },
-                "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；缺省 0=没估" },
+                "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数（0.5=半天）；写成数字字符串（如 \"2.5\"）也认；缺省 0=没估" },
                 "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（该列可多选；留空=不分组）。先调 tb_list_tasks 看 defs.groupDefs 里已有哪些——归到已有分组，不要自造近义名（'登录'和'登陆'会分成两组）" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
             }),
@@ -858,9 +858,9 @@ pub fn mcp_tools() -> Vec<Value> {
                 "title":    { "type": "string", "description": "改标题" },
                 "detail":   { "type": "string", "description": "改详情" },
                 "summary":  { "type": "string", "description": "改任务说明" },
-                "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签；先调 tb_list_tasks 看 defs.tagDefs 里已有哪些" },
+                "tags":     { "type": "array", "items": { "type": "string" }, "description": "整体替换标签；单个标签写成字符串也认，空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些" },
                 "type":     { "type": "string", "description": "任务类型 id；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；该列可多选且任务上已是数组时按追加处理（不会丢已有类型）；传空串=清成未分类" },
-                "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数" },
+                "estimate": { "type": "number", "description": "预估工作量，单位人日，可小数；写成数字字符串也认" },
                 "group":    { "type": "string", "description": "分组名；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；该列可多选且任务上已是数组时按追加处理（不会丢已有分组）；传空串=取消分组" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
@@ -1189,6 +1189,77 @@ fn str_field(body: &Value, key: &str) -> Option<String> {
     body.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
 }
 
+/// 与前端 `normalizeTask` 里的 `Number(v)` 等价：数字、**数字字符串**都认。
+///
+/// ⛔ 原来 `estimate_of` 只走 `as_f64()` —— AI 手写 JSON 把数字写成
+/// 字符串（`"estimate": "2.5"`）是常事，于是明明填了却静默落成 0（没估）。
+/// 前端那一侧早修过（`Number.isFinite("2.5")` 是 false 的坑），
+/// AI 通道是**同一根因、另一条路**。PATCH 里读旧值也必须用同一判据，
+/// 否则旧值是字符串时 cur=0，会误判"有变化"并写一条无意义历史。
+fn num_of(v: Option<&Value>) -> Option<f64> {
+    match v {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.trim().parse::<f64>().ok().filter(|x| x.is_finite()),
+        _ => None,
+    }
+}
+
+/// 字符串数组清洗：逐元素 trim、去空、去重（与前端 `oneOrMany` / `ids` 一致）。
+fn clean_str_array(a: &[Value]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for x in a.iter().filter_map(|x| x.as_str()) {
+        let t = x.trim().to_string();
+        if !t.is_empty() && !seen.contains(&t) {
+            seen.push(t);
+        }
+    }
+    seen
+}
+
+/// 建/改任务时的「标签」列：字符串也认（转单项），数组逐元素清洗。
+///
+/// ⛔ 原来 create 只 `filter(is_array)`、PATCH 直接 `tags.clone()`：
+///   · AI 传 `"tags": "tg1"`（少写了方括号）→ 静默丢成 []，任务没标签
+///   · 数组里 `["", "  ", "tg1", "tg1"]` 原样写盘 → 界面冒出零宽度 chip、
+///     重复标签让"有 N 个标签"计数虚高（前端读盘会清，但 AI 读原始文件看到的是脏的）
+/// 写入侧就归一，两条通道看到同一份干净数据。
+fn tags_value(body: &Value) -> Value {
+    match body.get("tags") {
+        Some(Value::String(v)) => {
+            let t = v.trim();
+            if t.is_empty() { json!([]) } else { json!([t]) }
+        }
+        Some(Value::Array(a)) => Value::Array(
+            clean_str_array(a).into_iter().map(Value::String).collect(),
+        ),
+        _ => json!([]),
+    }
+}
+
+/// 下一个任务 id 的序号：**max(nextId, 库里实际最大编号 + 1)**。
+///
+/// ⛔ 原来只信 `nextId` 字段。一旦它落后于数据（AI 自建 id、导入、手改文件），
+/// 新建任务就和已有任务**撞号** —— 而 id 是依赖、历史、筛选、详情的键，
+/// `find_task` / `patch_task` 都用 `.find()` 只取第一个，
+/// 撞号之后改一条会动到另一条，完全不报错。
+/// 前端 `normalizeStore` / `nextTaskId` 早就是这个判据。
+fn next_seq_for(store: &Value) -> u64 {
+    let declared = store.get("nextId").and_then(|v| v.as_u64()).unwrap_or(1);
+    let mut max_seq = 0u64;
+    if let Some(arr) = store.get("tasks").and_then(|v| v.as_array()) {
+        for t in arr.iter() {
+            if let Some(id) = t.get("id").and_then(|v| v.as_str()) {
+                if let Some(rest) = id.strip_prefix("tb-") {
+                    if let Ok(x) = rest.parse::<u64>() {
+                        if x > max_seq { max_seq = x; }
+                    }
+                }
+            }
+        }
+    }
+    declared.max(max_seq.saturating_add(1))
+}
+
 /// 把任务上某个字段**统一展开成字符串数组**。
 ///
 /// ⛔ 多选列（tags / type / group / assignee）在列设置里勾了「多选」之后
@@ -1232,12 +1303,7 @@ fn enum_value(body: &Value, key: &str) -> Value {
             if t.is_empty() { json!("") } else { json!(t) }
         }
         Some(Value::Array(a)) => Value::Array(
-            a.iter()
-                .filter_map(|x| x.as_str())
-                .map(|x| x.trim())
-                .filter(|x| !x.is_empty())
-                .map(|x| Value::String(x.to_string()))
-                .collect(),
+            clean_str_array(a).into_iter().map(Value::String).collect(),
         ),
         _ => json!(""),
     }
@@ -1486,11 +1552,7 @@ fn fmt_est(n: f64) -> String {
 /// ⛔ 不报错：这只是个估算字段，因为填了 -1 或 "三天" 就让 AI 建任务失败，
 /// 代价远大于把它当"没估"处理 —— 后者至少任务建成了，人能看到并改。
 fn estimate_of(body: &Value) -> f64 {
-    let n = match body.get("estimate") {
-        Some(v) => v.as_f64().or_else(|| v.as_i64().map(|x| x as f64)),
-        None => None,
-    };
-    match n {
+    match num_of(body.get("estimate")) {
         Some(x) if x.is_finite() && x > 0.0 => x,
         _ => 0.0,
     }
@@ -1524,9 +1586,10 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
             ));
         }
     }
-    let next_id = store.get("nextId").and_then(|v| v.as_u64()).unwrap_or(1);
+    /* 提升后的值一并写回，导出/导入后不会重新撞号（与前端 normalizeStore 一致） */
+    let next_id = next_seq_for(&store);
     let id = format!("tb-{:04}", next_id);
-    store["nextId"] = json!(next_id + 1);
+    store["nextId"] = json!(next_id.saturating_add(1));
 
     let reporter = str_field(body, "reporter").unwrap_or_else(|| "manual".to_string());
     let mut task = Map::new();
@@ -1547,13 +1610,7 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
       AI 根本不知道有这一项。（与前端 createTask 同一判据。）
     */
     task.insert("type".to_string(), enum_value(body, "type"));
-    task.insert(
-        "tags".to_string(),
-        body.get("tags")
-            .filter(|v| v.is_array())
-            .cloned()
-            .unwrap_or(json!([])),
-    );
+    task.insert("tags".to_string(), tags_value(body));
     /*
       分组列：相当于以前的"手动分组"，但只是一列字符串值 ——
       归拢由"按列分组"机制表达，不再有组记录/父子层级。
@@ -1669,7 +1726,7 @@ fn patch_task(
             }
         }
         if let Some(v) = body.get("estimate") {
-            let cur = obj.get("estimate").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let cur = num_of(obj.get("estimate")).unwrap_or(0.0);
             let next = estimate_of(&json!({ "estimate": v.clone() }));
             if (cur - next).abs() > 1e-9 {
                 obj.insert("estimate".to_string(), json!(next));
@@ -1709,9 +1766,17 @@ fn patch_task(
                 push_history(obj, &by, "status", &format!("{} -> {}{}", old, status, suffix));
             }
         }
-        if let Some(tags) = body.get("tags").filter(|v| v.is_array()) {
-            obj.insert("tags".to_string(), tags.clone());
-            changed = true;
+        /*
+          ⛔ 整体替换也要清洗：原来 `tags.clone()` 原样写入，
+          空串 / 全空格 / 重复 id 都进了文件。create 用 tags_value，
+          两条入口必须同一判据（前端读盘虽会清，但 AI 读的是原始文件）。
+        */
+        if body.get("tags").is_some() {
+            let next = tags_value(body);
+            if obj.get("tags") != Some(&next) {
+                obj.insert("tags".to_string(), next);
+                changed = true;
+            }
         }
         if !changed {
             return Err("没有可应用的变更".to_string());
