@@ -431,28 +431,23 @@ export function expandCanvasRefs(
  * 内部节点写 `{{A.output}}`，展开后 A 变成了 `inst__A`，
  * **不重写就取不到值，而且不报错** —— 只是渲染成空串。
  * 这是模块那一轮踩过的坑，这里直接复用同一套处理。
+ *
+ * 必须完全递归到数组里的**对象元素**：常量卡的 items、条件卡的 rules
+ * 都是对象数组，值藏在元素的 .value / .expr 里。以前数组分支只改字符串
+ * 元素（`'{{A.output}}'` 那种），对象元素原样放过 —— 于是同一张卡在模块
+ * 里是对的、跨画布里变空串，且不报错、测试也不红。
+ * 模块那侧 engine/modules.ts 的 rewriteData 一直是递归的，形状在这里对齐。
  */
 export function rewriteDataTemplates(
   data: unknown,
   idMap: Map<string, string>,
 ): unknown {
+  if (typeof data === 'string') return rewriteRefsInText(data, idMap);
+  if (Array.isArray(data)) return data.map((x) => rewriteDataTemplates(x, idMap));
   if (!data || typeof data !== 'object') return data;
-  const src = data as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(src)) {
-    if (typeof v === 'string') {
-      out[k] = rewriteRefsInText(v, idMap);
-      continue;
-    }
-    if (Array.isArray(v)) {
-      out[k] = v.map((x) => (typeof x === 'string' ? rewriteRefsInText(x, idMap) : x));
-      continue;
-    }
-    if (v && typeof v === 'object') {
-      out[k] = rewriteDataTemplates(v, idMap);
-      continue;
-    }
-    out[k] = v;
+  for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+    out[k] = rewriteDataTemplates(v, idMap);
   }
   return out;
 }
