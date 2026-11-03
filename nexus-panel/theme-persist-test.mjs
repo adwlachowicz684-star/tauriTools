@@ -24,7 +24,7 @@
  * 会抛错的桩，看 takePersistError() 到底返不返回东西。不靠"源码里有没有
  * takePersistError 这几个字" —— 后者证明不了失败真能被取到。
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join as pjoin } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
@@ -131,12 +131,17 @@ failWrite = true;
 tm.saveCustomColors('accent', ['#123456']);
 is('saveCustomColors 写不进去 → 取得到', tm.takePersistError() instanceof Error, 'saveCustomColors 没走统一判据');
 
-/* 成功要能把上一次的失败清掉 —— 否则一次失败之后永远报红 */
+/* 跨操作不串味：调用方**取走**本次失败之后，下一次成功不该再报上一次的。
+   判据的语义是「自上次取走以来，任一写入失败」—— 设置页每个操作后都会经
+   toastPersist / warnNotPersisted 取走，不存在「没取就做下一个操作」的正常路径。
+   旧断言钉的是「没取走也会被下一次成功清掉」，那等于允许一个操作内**中间**
+   那次失败被后面的成功抹掉 —— 正是下面第 7 节要防的形状，故改为取走后再验。 */
 failWrite = true;
 tm.setAccent('#111111');
+is('先取走本次的失败', tm.takePersistError() instanceof Error, '本次失败没被记录');
 failWrite = false;
 tm.setAccent('#222222');
-is('成功会把上一次的失败清掉', tm.takePersistError() === null, '写成功之后仍在报上一次的失败');
+is('取走后成功不再串味', tm.takePersistError() === null, '取走之后仍在报上一次的失败');
 
 /* ---------------- 第 3 节：setBgImage「判了但判不准」 ---------------- */
 console.log('\n[3] setBgImage 的返回值判不出落盘失败');
@@ -248,6 +253,123 @@ if (existsSync(pjoin(HERE, normPath))) {
     bare === 0 && uses,
     `还有 ${bare} 处裸写入${uses ? '' : '，且没用 writeLS/removeLS'} —— 同一件事两边各写一份会各改各的`);
 }
+
+
+/* ---------------- 第 7 节：一次操作写多个键 ---------------- */
+console.log('\n[7] 一次操作写多个键：中间那次失败不许被后面的成功抹掉');
+
+/* 「最近一次写入」这层判据有个盲区：applyTheme 一次写 6 个键，
+   setAccent 经 applyTo 也会先写 3 个首屏防闪键。第一个键写失败、
+   后面几个成功时，旧写法把错误清成 null —— 界面照样 toast「已应用」，
+   而重启后只有那个键悄悄回到旧值（有的记住了、有的没记住，最难查）。
+
+   桩支持两种投失败方式：failKey 精确投到某个键、failNext 只让**下一次**
+   写入失败。后者用来造「中间失败、后续全成功」，不依赖对键名的猜测，
+   也避免内层恰好也失败时把判据喂成假绿。 */
+let failKey = null;
+let failNext = false;
+let writeCount = 0;
+let failCount = 0;
+const origSet = lsStub.setItem;
+const origDel = lsStub.removeItem;
+const guardWrite = (k, fn) => {
+  writeCount += 1;
+  if (String(k) === failKey || failNext) {
+    failNext = false;
+    failCount += 1;
+    throw quotaErr();
+  }
+  return fn();
+};
+lsStub.setItem = (k, v) => guardWrite(k, () => origSet(k, v));
+lsStub.removeItem = (k) => guardWrite(k, () => origDel(k));
+const resetProbe = () => { failKey = null; failNext = false; writeCount = 0; failCount = 0; };
+
+failWrite = false;
+const other = tm.listThemes().find((x) => x.id !== tm.getCurrent()?.id) || tm.listThemes()[0];
+resetProbe();
+failKey = 'nexus:theme';
+tm.applyTheme(other.id);
+const batchErr = tm.takePersistError();
+is('applyTheme 第一个键失败、后面成功 → 仍取得失败',
+  batchErr instanceof Error,
+  `取到 ${String(batchErr)} —— 中间失败被后面的成功抹掉了，界面会谎报「已应用」`);
+is('磁盘上那个键确实没写进去（不是全成功）',
+  store.get('nexus:theme') !== other.id,
+  '前置条件不成立：nexus:theme 居然写成功了，这一节没验到东西');
+is('失败原因还是真实原因',
+  /配额|Quota|存储/.test(String(batchErr?.message || batchErr)),
+  `原因不明：${String(batchErr?.message || batchErr)}`);
+is('这一段是「中间失败 + 后面还有成功写入」',
+  failCount >= 1 && writeCount > failCount,
+  `失败 ${failCount} 次 / 共写 ${writeCount} 次 —— 不是中间失败的形状，判据会空跑`);
+
+/* 偏移是两条键一组：只让第一次写失败、第二次成功，同样不许被抹掉。
+   用 failNext 而不是猜键名（键按主题 id 派生，猜错就会全成功 → 假绿）。 */
+resetProbe();
+failNext = true;
+tm.setThemeShift(30, 0);
+is('setThemeShift 两键写入，中间失败仍取得到',
+  tm.takePersistError() instanceof Error,
+  '两组偏移键之间也会互相抹掉');
+is('偏移这段确实只失败一次、后面还有写入',
+  failCount === 1 && writeCount >= 2,
+  `失败 ${failCount} 次 / 共写 ${writeCount} 次 —— 没造出「中间失败」`);
+
+/* 静态守卫：所有会写入的导出函数都得先划边界，漏一个就漏一类操作。
+   内部函数（applyTo / resetOne / clearShift …）不划，靠外层批次覆盖。 */
+const tmSrc = stripComments(read('js/theme-manager.js'));
+const fnHeads = [...tmSrc.matchAll(/(?:^|\n)(export\s+)?function\s+(\w+)\s*\(/g)];
+const writers = [];
+for (let i = 0; i < fnHeads.length; i++) {
+  const m = fnHeads[i];
+  if (!m[1] || m[2] === 'writeLS' || m[2] === 'removeLS' || m[2] === 'beginPersist') continue;
+  const end = i + 1 < fnHeads.length ? fnHeads[i + 1].index : tmSrc.length;
+  const body = tmSrc.slice(m.index, end);
+  if (/\b(?:writeLS|removeLS)\s*\(/.test(body)) writers.push([m[2], body]);
+}
+is('存在会写入的导出函数（守卫范围非空）', writers.length >= 10,
+  `只找到 ${writers.length} 个，扫描本身可能失效`);
+const noBoundary = writers.filter(([, body]) => !/\bbeginPersist\s*\(/.test(body)).map(([n]) => n);
+is('每个会写入的导出函数都调 beginPersist',
+  noBoundary.length === 0,
+  `漏了：${noBoundary.join(' / ')} —— 这个操作里中间失败仍会被抹掉`);
+const beginBody = (tmSrc.match(/export function beginPersist\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/) || [])[1] || '';
+is('beginPersist 只在批次外清零（嵌套不重置）',
+  /if\s*\(\s*persistDepth\s*===\s*0\s*\)/.test(beginBody),
+  '嵌套调用会清掉外层已经记下的失败（resetColors → applyTheme）');
+
+/* 嵌套的行为证据：resetColors 先删 4 个键，再调 applyTheme 写 6 个。
+   只让**外层第一次**写入失败，内层全部成功。若内层边界无条件清零，
+   外层那次失败就被抹掉 —— 界面照样报「已恢复」。 */
+resetProbe();
+failNext = true;
+tm.resetColors();
+is('嵌套调用不清掉外层已记下的失败',
+  tm.takePersistError() instanceof Error,
+  'resetColors → applyTheme 的边界把前半段的失败抹掉了（界面照样报「已恢复」）');
+is('嵌套这段确实只失败一次、后面还有写入',
+  failCount === 1 && writeCount > 1,
+  `失败 ${failCount} 次 / 共写 ${writeCount} 次 —— 内层也失败了会喂出假绿`);
+
+/* 反向验证：把 beginPersist 边界整段撤掉，同一场景必须重新变成「谎报」。
+   不靠"源码里有没有这几个字"，而是造一份去掉边界的真模块跑一遍。 */
+const probePath = pjoin(HERE, 'js', '_tm_no_batch_probe.js');
+const noBatchSrc = read('js/theme-manager.js').replace(/^  beginPersist\(\);\n/gm, '');
+writeFileSync(probePath, noBatchSrc);
+try {
+  const bad = await import(new URL('js/_tm_no_batch_probe.js', import.meta.url).href + '?v=' + Date.now());
+  resetProbe();
+  bad.takePersistError();
+  failKey = 'nexus:theme';
+  bad.applyTheme(other.id);
+  is('撤掉边界后：中间失败被后面的成功抹掉（反向验证）',
+    bad.takePersistError() === null,
+    '反向验证没复现缺陷 —— 说明第 7 节的判据可能恒绿，没在把关');
+} finally {
+  unlinkSync(probePath);
+}
+resetProbe();
 
 /* ---------------- 汇总 ---------------- */
 console.log(`\n通过 ${pass} 项，失败 ${fails.length} 项`);
