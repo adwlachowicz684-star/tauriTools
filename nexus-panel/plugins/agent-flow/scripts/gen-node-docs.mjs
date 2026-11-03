@@ -293,11 +293,16 @@ function fnReturnOf(name) {
 let ROOT_TYPES = null;
 function rootTypes() {
   if (ROOT_TYPES === null) {
-    const p = path.join(ROOT, 'types.ts');
-    if (!fs.existsSync(p)) {
-      throw new Error('文档生成器找不到 types.ts，无法解引用 META 表');
+    // types.ts 现在是 re-export 桶；META 表在 types/ 十卷里。
+    // 只解引用桶会一无所获，然后静默退回代码形态（看着像修好了其实没修好）。
+    const ORDER = ['core', 'condition', 'flow', 'io', 'update', 'llm', 'tools', 'canvas', 'ops', 'trigger'];
+    const parts = ORDER.map((n) => path.join(ROOT, 'types', n + '.ts'));
+    for (const p of parts) {
+      if (!fs.existsSync(p)) {
+        throw new Error(`文档生成器找不到 ${{p}}，无法解引用 META 表`);
+      }
     }
-    ROOT_TYPES = fs.readFileSync(p, 'utf-8');
+    ROOT_TYPES = parts.map((p) => fs.readFileSync(p, 'utf-8')).join('\n');
   }
   return ROOT_TYPES;
 }

@@ -103,11 +103,14 @@ function scan() {
   const exports: [string, string][] = [];
   const words = new Map<string, number>();
   for (const f of files) {
+    // types/ 十卷是 types.ts 的物理分卷，逻辑上仍属同一个入口；
+    // 基线项写的是 types.ts::X，别让改个文件名就把守卫放瞎。
+    const rel = f.rel.startsWith('types/') ? 'types.ts' : f.rel;
     for (const m of f.src.matchAll(EXP_RE)) {
-      if (m[1]) { exports.push([f.rel, m[1]]); continue; }
+      if (m[1]) { exports.push([rel, m[1]]); continue; }
       for (const part of (m[2] || '').split(',')) {
         const nm = part.trim().split(' as ').pop()!.trim();
-        if (/^\w+$/.test(nm)) exports.push([f.rel, nm]);
+        if (/^\w+$/.test(nm)) exports.push([rel, nm]);
       }
     }
     for (const m of f.src.matchAll(WORD_RE)) {

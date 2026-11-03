@@ -463,6 +463,7 @@ test('清理护栏: 源码里不再出现内联密钥保险箱的任何标识符
   const files = collectTs(join(root, 'engine'))
     .concat(collectTs(join(root, 'components')))
     .concat(collectTs(join(root, 'nodes')))
+    .concat(collectTs(join(root, 'types')))
     .concat([join(root, 'App.tsx'), join(root, 'types.ts')]);
 
   const hits: string[] = [];

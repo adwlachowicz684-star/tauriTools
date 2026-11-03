@@ -8,6 +8,7 @@ import {
 } from '../engine/nodeSpec';
 import { REQUIRES, requiresOf } from '../engine/nodeRequires';
 import { UPDATE_SOURCE_KEYS } from '../types';
+import { readSrc } from './srcScan';
 
 /** 仓库根；由 run-tests.sh 导出（测试在 $OUT/tests 下跑） */
 const AF_SRC = process.env.AF_SRC || '';
@@ -636,7 +637,7 @@ test('manualParams 节点的契约参数与 makeXxxNode 的真实字段对得上
    * types.ts 是 ts（不含 JSX），测试链路能直接读源码 ——
    * 但要走 AF_SRC，因为测试跑在 $OUT/tests 下，相对路径到不了仓库。
    */
-  const typesSrc = fs.readFileSync(path.join(AF_SRC, 'types.ts'), 'utf-8');
+  const typesSrc = readSrc('types.ts');
 
   /** 运行时状态字段：不是参数，拼装方不该写 */
   const RUNTIME = new Set([

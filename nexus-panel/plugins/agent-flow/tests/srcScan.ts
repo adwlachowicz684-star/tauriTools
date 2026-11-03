@@ -28,12 +28,31 @@ export function stripComments(src: string): string {
  * 传多个文件是常态：同一段逻辑可能在 App.tsx 或某个 hook 里，
  * 两边都要扫 —— 只扫一处会在代码搬走后假通过。
  */
+/**
+ * types.ts 拆成 types/ 十卷之后，源码守卫仍按「主类型文件」这个名字读。
+ * 只读桶会拿到 10 行 re-export —— 守卫静默失效，而且失效的样子是全绿，
+ * 比报错更危险。与上面 App.tsx 拆 hook 那条是同一件事，只是方向反过来。
+ *
+ * 顺序必须是**原卷序**（不是文件名字母序）：有的守卫用
+ * `src.slice(src.indexOf('export function constsOf'))` 取「之后的部分」，
+ * 字母序会把别卷的内容接到后面，凭空造出假红。
+ */
+const TYPES_ORDER = ['core', 'condition', 'flow', 'io', 'update', 'llm', 'tools', 'canvas', 'ops', 'trigger'];
+function expand(rel: string): string[] {
+  if (rel !== 'types.ts') return [rel];
+  const d = path.join(AF_SRC, 'types');
+  if (!fs.existsSync(d)) return [rel];
+  return TYPES_ORDER.map((n) => `types/${n}.ts`);
+}
+
 export function readSrc(...rels: string[]): string {
   const parts: string[] = [];
   for (const rel of rels) {
-    const abs = path.join(AF_SRC, rel);
-    if (!fs.existsSync(abs)) continue;
-    parts.push(fs.readFileSync(abs, 'utf-8'));
+    for (const r of expand(rel)) {
+      const abs = path.join(AF_SRC, r);
+      if (!fs.existsSync(abs)) continue;
+      parts.push(fs.readFileSync(abs, 'utf-8'));
+    }
   }
   return stripComments(parts.join('\n'));
 }
