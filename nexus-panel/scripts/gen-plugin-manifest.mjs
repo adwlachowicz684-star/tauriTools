@@ -15,9 +15,17 @@
  *
  * 哪些字段手工维护（脚本不会覆盖）
  * ------------------------------------------------------------
- *   version / repo / ref / homepage / author / license / minHost / permissions
+ *   version / ref / homepage / author / license / minHost / permissions
  * 这些与 registry 无关（registry 里根本没有），属于"仓库自己的事"。
- * 脚本保留文件里已有的值 —— 否则拆仓库时填好的 repo 会被一次生成抹掉。
+ * 脚本保留文件里已有的值。
+ *
+ * ⚠️ repo **不是**手工字段
+ * ------------------------------------------------------------
+ * 12 个独立仓库已经建好，仓库名由 scripts/plugin-repo-map.mjs 唯一决定。
+ * repo 若让人手写 12 份，就是第二份无守卫的映射表：改了仓库名而 manifest
+ * 没跟着改 → 装插件指向一个不存在的地址，且不报错不崩溃。
+ * 所以 repo 由生成器从映射表**派生并纠正**，写错会被改写回来，
+ * 由 plugin-repo-sync-test.mjs 用独立算法反推逐份盯住。
  *
  * ⚠️ 只给 type: 'iframe' 的插件生成
  * ------------------------------------------------------------
@@ -29,16 +37,17 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { repoFieldFor } from './plugin-repo-map.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const PLUGINS = join(ROOT, 'plugins');
 
-/** 手工维护、脚本保留的字段 */
-const HAND_KEYS = ['version', 'repo', 'ref', 'homepage', 'author', 'license', 'minHost', 'permissions'];
+/** 手工维护、脚本保留的字段（repo 不在此列：它由映射表派生，见文件头） */
+const HAND_KEYS = ['version', 'ref', 'homepage', 'author', 'license', 'minHost', 'permissions'];
 
-/** 由 registry 派生的字段（顺序固定，便于 diff） */
-const DERIVED_KEYS = ['id', 'name', 'version', 'entry', 'kind', 'icon', 'description'];
+/** 由 registry / 映射表派生的字段（顺序固定，便于 diff） */
+const DERIVED_KEYS = ['id', 'name', 'version', 'entry', 'kind', 'icon', 'description', 'repo'];
 
 const registry = await import('../plugins/registry.js');
 
@@ -54,6 +63,9 @@ function derive(p) {
     kind: p.kind || 'app',
     icon: p.icon || '◻',
     description: p.description || '',
+    /* 唯一真值源：plugin-repo-map.mjs。不许由 manifest 自己保留，
+     * 否则仓库改名后 12 份 manifest 会静默指向旧地址。 */
+    repo: repoFieldFor(p.id),
   };
 }
 
@@ -70,10 +82,11 @@ function buildText(keep, want) {
  *
  * ⛔ 存在但解析失败 → 一律不写盘
  * ------------------------------------------------------------
- * 手工字段（repo / ref / author / license / minHost / permissions）
+ * 手工字段（ref / author / license / minHost / permissions）
  * **只存在于 manifest 文件里** —— registry 里根本没有，重算不出来。
- * 解析失败时 keep 为空，按模板重写就等于把拆仓库时填好的 repo
- * 一次性抹掉，而脚本只打印「✅ 已生成 12 份」，一句提示都没有。
+ * repo 虽可由映射表重建，但其它字段不能；解析失败时 keep 为空，
+ * 按模板重写就会把发布元信息一次性抹掉，而脚本只打印
+ * 「✅ 已生成 12 份」，一句提示都没有。
  * 这正是文件头那句「脚本保留已有的值」承诺不了的情况。
  *
  * 所以：坏文件不写、报出来、退出码非 0，让人先修好 JSON。
