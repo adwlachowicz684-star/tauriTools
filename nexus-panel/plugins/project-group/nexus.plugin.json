@@ -5,5 +5,6 @@
   "entry": "index.html",
   "kind": "app",
   "icon": "🗂",
-  "description": "项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份"
+  "description": "项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份",
+  "repo": "adwlachowicz684-star/nexusPanel_plugin_projectGroup"
 }
