@@ -5,5 +5,6 @@
   "entry": "index.html",
   "kind": "app",
   "icon": "❖",
-  "description": "kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存"
+  "description": "kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存",
+  "repo": "adwlachowicz684-star/nexusPanel_plugin_mindmap"
 }
