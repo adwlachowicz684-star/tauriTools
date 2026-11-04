@@ -8811,8 +8811,13 @@ group('BUG 110 · 不认识的 XMind 标记必须原样保住');
     // 只写 `/unsupportedMarkersTip\(sheets\)/` 会被**函数定义**本身命中
     // （`function unsupportedMarkersTip(sheets) {`），删掉调用点照样绿 ——
     // 和上面 collectXMarkers 那个坑是同一个。所以数出现次数：定义 1 + 调用 ≥1。
-    const sites = (idx.match(/unsupportedMarkersTip\(sheets\)/g) || []).length;
-    ok(sites >= 2, '★ 导入成功后立即调用（不能等用户点到节点）', String(sites));
+    /* BUG 203 改写：五元手写数组收成 UNSUPPORTED_GROUPS 派生后，
+       逐个调用点没了。想守的事没变 —— 标记提示必须真的接进导入回执，
+       所以改成钉「登记进清单」+「unsupportedTips 遍历清单」，不放宽成两种都认。 */
+    ok(/UNSUPPORTED_GROUPS\s*=[\s\S]{0,700}tip:\s*unsupportedMarkersTip/.test(idx),
+      '★ 标记提示登记进单一清单（不是只定义）');
+    ok(/UNSUPPORTED_GROUPS\.map\(\(g\) => g\.tip\(sheets\)\)/.test(idx),
+      '★ 导入回执遍历清单（只定义不接等于没修）');
     const i = idx.indexOf('function unsupportedMarkersTip');
     const body = idx.slice(i, i + 1200);
     ok(/不显示/.test(body) && /写回/.test(body),
@@ -19219,10 +19224,8 @@ group('BUG 127 · FreeMind 的 <font> / <icon> / <cloud> 双向');
     const code = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
     // ⓘ 只写 `unsupportedFmExtrasTip(` 会被**函数定义**那一行命中 ——
     //   删掉调用点照样绿（BUG 110 / BUG 122 都栽过）。先剥掉定义行再数。
-    const body = code.split('\n')
-      .filter((l) => !/^\s*function unsupportedFmExtrasTip\b/.test(l)).join('\n');
-    const uses = (body.match(/unsupportedFmExtrasTip\(/g) || []).length;
-    eq(uses, 1, '★ 导入回执里真的调用了它（不是只定义）—— 实测 ' + uses + ' 处');
+    ok(/UNSUPPORTED_GROUPS\s*=[\s\S]{0,900}tip:\s*unsupportedFmExtrasTip/.test(code),
+      '★ 图标/外框提示登记进单一清单（不是只定义）');
     ok(/warnForeignAssets\(sheets\)[\s\S]{0,240}unsupportedTips\(sheets\)/.test(code),
       '★ 提示接进了 warns（自己 status 会把「已导入」那句盖掉）');
     ok(/导出 \.mm 时会写回/.test(code), '★ 措辞里写回的是 .mm，不是 .xmind');
@@ -20611,10 +20614,12 @@ group('BUG 141 · 标注（callout）必须原样保留并写回，不能变成�
     const idx = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
     /* ⓘ 锚 `unsupportedCalloutsTip(` 会命中函数定义本身，所以锚的是
        **调用形状**：它必须真的接进 warns 里。 */
-    ok(/unsupportedRelationshipsTip\(sheets\),\s*unsupportedFmExtrasTip\(sheets\),\s*unsupportedCalloutsTip\(sheets\)/.test(idx),
-      '★ 标注提示必须接进导入回执（光有函数、没接进去等于没提示）');
-    const calls = (idx.match(/unsupportedCalloutsTip\(sheets\)/g) || []).length;
-    eq(calls, 2, '★ 定义 1 处 + 调用 1 处（少一处说明有地方没接上）');
+    /* BUG 203 改写：五元手写数组收成 UNSUPPORTED_GROUPS 派生后，逐个调用点
+       没了。想守的事没变 —— 标注提示必须真的接进导入回执。 */
+    ok(/UNSUPPORTED_GROUPS\s*=[\s\S]{0,900}tip:\s*unsupportedCalloutsTip/.test(idx),
+      '★ 标注提示登记进单一清单（光有函数、没接进去等于没提示）');
+    ok(/UNSUPPORTED_GROUPS\.map\(\(g\) => g\.tip\(sheets\)\)/.test(idx),
+      '★ 导入回执遍历清单（少一处就有一类不提示）');
   }
 
   // ⑦ 源码契约：写侧必须按 xcallout 分桶（一律塞 attached 就是本 BUG 本身）
@@ -20856,9 +20861,8 @@ group('BUG 143 · XMind 概要（summary）必须原样保留并写回，不能�
     const idx = stripCommentsFlatJs(fs.readFileSync(path.join(HERE, 'index.js'), 'utf8'));
     ok(/function unsupportedSummariesTip\(/.test(idx), '定义了 unsupportedSummariesTip');
     // 只写函数名会命中**函数定义本身** —— 必须先摘掉定义行，再数剩下的调用点
-    const noDef = idx.replace(/function unsupportedSummariesTip\(sheets\)\s*\{/, '');
-    const calls = (noDef.match(/unsupportedSummariesTip\(sheets\)/g) || []).length;
-    eq(calls, 1, '★ unsupportedSummariesTip 必须真的接进导入回执（定义那行不算）');
+    ok(/UNSUPPORTED_GROUPS\s*=[\s\S]{0,900}tip:\s*unsupportedSummariesTip/.test(idx),
+      '★ unsupportedSummariesTip 登记进单一清单（定义那行不算）');
     ok(/个概要（summary）本工具显示为普通分支/.test(idx), '提示要说清是概要、且显示为普通分支');
   }
 
@@ -24894,6 +24898,159 @@ group('BUG 201 · 丢失提示手写清单统一派生');
   eq(X200.xmindLossTotal({ ...X200.xmindLossCount([]), future202: 1 }), 1,
     '★ 新增字段自动计入总数（派生清单不漏）');
 }
+
+/* ============================================================
+   BUG 203 · 导入别人的 .xmind：外框分组不显示却一句不说
+             + 导入侧最后一份手写清单收成单一来源
+   ------------------------------------------------------------
+   一次性排查的对称一半：导出侧（BUG 198/199/202）已经把「声称 vs 实测」
+   做成常驻矩阵，导入侧 unsupportedTips() 却仍是手写五元数组。逐类实测：
+     xmarkers / xrelationships / fmIcons+fmCloud / xcallout / xsummary
+   都「保留 + 写回 + 有提示」，唯独 XMind boundaries（读侧落成
+   boundaryGroup / boundaryLabel）保留、写回，界面却一句不说 ——
+   kityminder 内核没有"给一批兄弟节点画框"的概念，用户导入后看不到框，
+   只会以为文件被改坏。BUG 190 补四类时漏的正是这第五类。
+   ============================================================ */
+group('BUG 203 · XMind 外框分组提示 + 导入侧单一清单');
+
+{
+  const idx203 = fs.readFileSync(path.join(HERE, 'index.js'), 'utf8');
+  const code203 = stripCommentsFlatJs(idx203);
+  const F203 = await import('file://' + path.join(HERE, 'formats.js'));
+  const X203 = await import('file://' + path.join(HERE, 'xmind.js'));
+
+  /* 内部函数不导出：按结构性边界把整段抽成可调用（历轮验证过的做法） */
+  const a203 = idx203.indexOf('function unsupportedTips(sheets)');
+  const b203 = idx203.indexOf('async function backupNow(', a203);
+  ok(a203 > 0 && b203 > a203, '★ 能定位 unsupportedTips 段');
+  const seg203 = idx203.slice(a203, b203);
+  const tips203 = new Function('sheets', seg203 + '\nreturn unsupportedTips(sheets);');
+  const groups203 = new Function(seg203 + '\nreturn UNSUPPORTED_GROUPS;')();
+
+  const mk203 = (children, extra = {}) => {
+    const km = { data: { id: 'r', text: '中心主题' }, children: [
+      { data: { id: 'a', text: 'A' }, children },
+      { data: { id: 'b', text: 'B' }, children: [] } ] };
+    return { id: 's1', title: '项目', content: F203.stringifyKm(km, 'default', 'classic'), ...extra };
+  };
+  const C203 = (text, extra) => ({ data: { text, ...extra }, children: [] });
+  const bdTip = (sheets) => tips203(sheets).filter((t) => /XMind 外框分组本工具不显示/.test(t));
+  const bdSheet = (grp = 'g1', label = '甲组') => mk203([
+    C203('甲', { boundaryGroup: grp, boundaryLabel: label }),
+    C203('乙', { boundaryGroup: grp, boundaryLabel: label }),
+  ]);
+
+  // ① 事实：修好了必须提示；措辞要说清「不显示 / 已保留 / 写回 .xmind」
+  {
+    const t = bdTip([bdSheet()]);
+    eq(t.length, 1, '★ 导入带外框分组的画布必须提示（修复前 0 条）');
+    ok(/已原样保留/.test(t[0] || ''), '★ 要说「已原样保留」');
+    ok(/导出 \.xmind 时会写回/.test(t[0] || ''), '★ 写回的是 .xmind');
+    ok(!/导出 \.mm 时会写回/.test(t[0] || ''), '★ 不能串成 FreeMind 那条（写回 .mm）');
+  }
+
+  // ② 按「组」计数，不是按节点：一个框里两个子节点只算 1 个
+  {
+    ok(/1 张画布上的 1 个 XMind 外框分组/.test(bdTip([bdSheet()])[0] || ''),
+      '★ 同组两个节点只算 1 个外框');
+    const two = mk203([
+      C203('甲', { boundaryGroup: 'g1' }), C203('乙', { boundaryGroup: 'g1' }),
+      C203('丙', { boundaryGroup: 'g2' }), C203('丁', { boundaryGroup: 'g2' }),
+    ]);
+    ok(/1 张画布上的 2 个 XMind 外框分组/.test(bdTip([two])[0] || ''),
+      '★ 两个不同组算 2 个');
+    ok(/2 张画布上的 2 个 XMind 外框分组/.test(
+      bdTip([bdSheet('g1'), bdSheet('g2')])[0] || ''), '★ 跨画布累加');
+  }
+
+  // ③ 反向边界：干净 / 空组 / 只有标题 / 坏内容，一律不许虚报
+  {
+    eq(bdTip([mk203([C203('甲', {})])]).length, 0, '★ 干净画布不报');
+    eq(bdTip([mk203([C203('甲', { boundaryGroup: '' })])]).length, 0, '★ 空组名不报');
+    eq(bdTip([mk203([C203('甲', { boundaryGroup: '   ' })])]).length, 0, '★ 纯空白组名不报');
+    eq(bdTip([mk203([C203('甲', { boundaryLabel: '甲组' })])]).length, 0,
+      '★ 只有外框标题、没有组不报');
+    eq(bdTip([{ id: 'x', title: '坏', content: '{不是 JSON' }]).length, 0,
+      '★ 坏内容不抛也不报');
+  }
+
+  // ④ FreeMind 的 <cloud>（fmCloud）是另一套数据，不能与 XMind 外框混
+  {
+    const fm = mk203([C203('云', { fmCloud: '#00ff00' })]);
+    const all = tips203([fm]);
+    ok(all.some((t) => /导出 \.mm 时会写回/.test(t)), '★ FreeMind 外框仍走 .mm 那条提示');
+    eq(bdTip([fm]).length, 0, '★ fmCloud 不能被算成 XMind 外框分组');
+    const both = tips203([mk203([
+      C203('云', { fmCloud: '#00ff00' }),
+      C203('甲', { boundaryGroup: 'g1' }), C203('乙', { boundaryGroup: 'g1' }),
+    ])]);
+    ok(both.some((t) => /导出 \.mm 时会写回/.test(t))
+      && both.some((t) => /导出 \.xmind 时会写回/.test(t)),
+      '★ 两套外框同时存在时各说各的写回格式');
+    /* ⓘ 光看「有没有 .mm / .xmind 两句」不够：若把 boundaryGroup 也混进
+       unsupportedFmExtrasTip 的计数，两句照样在、只是数字变了 —— 必须钉
+       整串相等，否则这一处改动没有任何断言会把关。 */
+    const fmLine = (arr) => arr.filter((t) => /导出 \.mm 时会写回/.test(t)).join('|');
+    eq(fmLine(both), fmLine(all),
+      '★ XMind 外框不能混进 FreeMind 外框的计数与提示串');
+  }
+
+  // ⑤ 「会写回」不是空话：真的导出 .xmind，剥掉无损快照（模拟被别的软件
+  //    打开重写过）再导入，boundaryGroup 必须还在
+  await (async () => {
+    const sheet = bdSheet();
+    const loadAsset = async () => new Uint8Array([9, 9, 9]);
+    const saveAsset = async () => 'asset:ok';
+    const blob = await X203.writeXMind([sheet], 's1', loadAsset);
+    const bytes = new Uint8Array(await new Blob([blob]).arrayBuffer());
+    const entries = await X203.zipRead(bytes);
+    const files = [];
+    for (const [k, v] of entries)
+      if (['content.json', 'metadata.json', 'manifest.json'].includes(k) || k.startsWith('resources/'))
+        files.push({ name: k, data: v });
+    const zen = await X203.zipWrite(files);
+    const r = await X203.readXMind(zen, saveAsset);
+    /* ⓘ 组号会被重新编号（BUG 140 的既定取舍：g1 → bg1），所以判的是
+       「甲 / 乙 仍同属一个非空组」—— 分组结构没散，写回就是真的。 */
+    const groups = [];
+    F203.walkKm(F203.parseKm(r.sheets?.[0]?.content)?.root, (n) => {
+      if (n?.data?.text === '甲' || n?.data?.text === '乙')
+        groups.push(String(n.data.boundaryGroup || '').trim());
+    });
+    eq(groups.length, 2, '★ zen 档往返后甲乙都还在');
+    ok(groups[0] && groups[0] === groups[1],
+      '★ zen 档往返后甲乙仍同属一个外框组（写回是真的）', groups.join(','));
+  })();
+
+  // ⑥ 源码契约：清单派生 + 两条导入路径都接进回执
+  {
+    ok(/UNSUPPORTED_GROUPS\.map\(\(g\) => g\.tip\(sheets\)\)/.test(code203),
+      '★ unsupportedTips 遍历单一清单（不再手写五元数组）');
+    ok(/const warns = unsupportedTips\(workbook\.sheets\)/.test(code203),
+      '★ .xmind 导入路径接进提示');
+    ok(/unsupportedTips\(sheets\)/.test(code203),
+      '★ 交换格式 / Markdown 导入路径接进提示');
+    ok(/function unsupportedBoundariesTip/.test(code203), '★ 新增外框提示函数');
+  }
+
+  // ⑦ 单一清单的**覆盖性**断言：能力矩阵里所有「保留但不显示」类键
+  //    都必须登记；新增一类不登记就红（这是 202 收口在导入侧的对称一半）
+  {
+    const declared = new Set(groups203.flatMap((g) => g.keys));
+    const expect = Object.entries(F203.NODE_DATA_KEYS)
+      .filter(([, d]) => ['xmind', 'fm', 'boundary'].includes(d.bucket))
+      .map(([k]) => k);
+    for (const k of expect)
+      ok(declared.has(k), `★ 能力矩阵里的 ${k} 必须登记进 UNSUPPORTED_GROUPS`);
+    eq(declared.size, expect.length + 1,
+      '★ 清单全集 = 矩阵三类键 + 画布级 xrelationships（不多不少）');
+    eq(groups203.length, 6, '★ 六类提示各一组');
+    for (const g of groups203)
+      ok(typeof g.tip === 'function' && g.keys.length > 0,
+        '★ 每组都要有 keys 与 tip 函数');
+  }
+}
+
 console.log(`通过 ${pass} 项，失败 ${fail} 项，跳过 ${skipped} 项`);
 if (fail) {
   console.log('\n失败项：');

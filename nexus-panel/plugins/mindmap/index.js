@@ -3386,9 +3386,12 @@ async function gcOrphanAssets(quiet = false) {
    * @returns {string[]} 非空提示串数组（可能为空数组）
    */
   function unsupportedTips(sheets) {
-    return [unsupportedMarkersTip(sheets), unsupportedRelationshipsTip(sheets),
-      unsupportedFmExtrasTip(sheets), unsupportedCalloutsTip(sheets),
-      unsupportedSummariesTip(sheets)].filter(Boolean);
+    /*
+     * BUG 203：早先这里手写五元数组，新增一类「不显示但保留」的数据就漏
+     * 登记 —— XMind 的 boundaries（读侧落成 boundaryGroup）正是这样被漏掉的。
+     * 现在遍历下面的单一清单：新增一类只填一次，两条导入路径自动都覆盖。
+     */
+    return UNSUPPORTED_GROUPS.map((g) => g.tip(sheets)).filter(Boolean);
   }
 
   /**
@@ -3560,6 +3563,66 @@ async function gcOrphanAssets(quiet = false) {
     return `${sheetsWith} 张画布上的 ${total} 个概要（summary）本工具显示为普通分支`
       + '（已原样保留，导出 .xmind 时会写回）';
   }
+
+  /**
+   * BUG 203：XMind 外框分组（boundaries）本工具不显示，但已原样保留。
+   *
+   * 读侧 applyBoundaries / applyXmlBoundaries 把父话题上的 <boundaries> 区间
+   * 落成子节点的 data.boundaryGroup / boundaryLabel，写侧 buildBoundaries 再
+   * 汇总写回 content.json —— 实测 zen 档（剥掉无损快照、只剩 content.json）
+   * 往返也保住。但 kityminder 内核没有"给一批兄弟节点画框"的概念，导入后
+   * 画布上**看不到框**，用户会以为导入把文件改坏了。
+   *
+   * 这与 BUG 190 补的四类（xmarkers / xrelationships / xcallout / xsummary）
+   * 完全同类，那次把 boundaryGroup 漏了；unsupportedFmExtrasTip 说的"外框"
+   * 是 FreeMind 的 <cloud>（fmCloud）、写回 .mm，是另一套数据，不能混。
+   *
+   * 按**组**计数：一个 XMind boundary 区间 = 一个 boundaryGroup 值，框里
+   * 每个子节点都带同一个组号，按节点数会重复报。
+   *
+   * @param {Array} sheets 画布数组
+   * @returns {string} 提示串；没有则 ''
+   */
+  function unsupportedBoundariesTip(sheets) {
+    let total = 0;
+    let sheetsWith = 0;
+    for (const sh of sheets || []) {
+      let root = null;
+      try { root = JSON.parse(sh?.content || '{}').root; } catch { /* 坏内容跳过 */ }
+      const groups = new Set();
+      const walk = (n, depth) => {
+        if (!n || depth > 200) return;
+        const g = String(n?.data?.boundaryGroup ?? '').trim();
+        if (g) groups.add(g);
+        for (const c of n.children || []) walk(c, depth + 1);
+      };
+      walk(root, 0);
+      if (groups.size) { total += groups.size; sheetsWith++; }
+    }
+    if (!total) return '';
+    return `${sheetsWith} 张画布上的 ${total} 个 XMind 外框分组本工具不显示`
+      + '（已原样保留，导出 .xmind 时会写回）';
+  }
+
+  /*
+   * BUG 203：导入侧最后一份手写清单 → 单一来源。
+   *
+   * 每类登记 keys（覆盖 formats.NODE_DATA_KEYS 里 bucket 为 xmind / fm /
+   * boundary 的全部键）与 tip 函数。常驻测试逐键核对 keys 的并集，新增一类
+   * 「不显示但保留」的数据没登记就红 —— 不再靠人记得回来补一遍。
+   *
+   * ⓘ xrelationships 是画布级字段、不在 NODE_DATA_KEYS 里，单独登记。
+   * ⓘ 常量定义排在**所有** tip 函数之后：unsupportedTips 的函数体在调用时
+   *   才求值，此处模块顶层已完成初始化，没有 TDZ 风险（BUG 176 的坑）。
+   */
+  const UNSUPPORTED_GROUPS = [
+    { keys: ['xmarkers'], tip: unsupportedMarkersTip },
+    { keys: ['xrelationships'], tip: unsupportedRelationshipsTip },
+    { keys: ['fmIcons', 'fmCloud'], tip: unsupportedFmExtrasTip },
+    { keys: ['xcallout'], tip: unsupportedCalloutsTip },
+    { keys: ['xsummary', 'xsummaryRange', 'xsummaryId'], tip: unsupportedSummariesTip },
+    { keys: ['boundaryGroup', 'boundaryLabel'], tip: unsupportedBoundariesTip },
+  ];
 
   async function backupNow(force = false) {
     capture();
