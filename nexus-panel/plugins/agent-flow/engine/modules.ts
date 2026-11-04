@@ -1,4 +1,5 @@
 import { cloneData } from './duplicate';
+import { rewriteRefHeads } from './template';
 import { defaultKV, loadList, saveWrapped, type KV } from './kv';
 import { redactNodes, stripViewKeys } from './sanitize';
 import { assertNoReplaceWipe } from './impExp';
@@ -235,23 +236,15 @@ type AnyNode = { id: string; data?: Record<string, unknown> };
 type AnyEdge = { id: string; source: string; target: string; branch?: string; loopRole?: string };
 
 /**
- * 把 {{innerId.xxx}} 之类的引用改写成展开后的 id。
+ * 递归改写 data 里的所有字符串值。
  *
- * 必须做这一步：内部节点之间互相引用 `{{A.output}}`，
- * 展开后 A 的 id 变成了 `inst__A`，不重写就取不到值 ——
- * 而这种失效不报错，只是模板渲染成空串，极难发现。
+ * 字符集与简写形式**一律交给 template.ts 的 rewriteRefHeads**——
+ * 以前这里自带一份 `[A-Za-z0-9_-]+` 的 `{{id.` 正则：认 `-` 不认
+ * 中文、且不认 `{{A}}` 简写；跨画布那份又恰好相反。同一句引用在
+ * 两种展开里结果不同，全是静默空串。详见 template.ts 里的说明。
  */
-function rewriteTemplates(text: unknown, map: Map<string, string>): unknown {
-  if (typeof text !== 'string' || text.indexOf('{{') < 0) return text;
-  return text.replace(/\{\{\s*([A-Za-z0-9_-]+)\s*\./g, (m, id: string) => {
-    const to = map.get(id);
-    return to ? `{{${to}.` : m;
-  });
-}
-
-/** 递归改写 data 里的所有字符串值 */
 function rewriteData(data: unknown, map: Map<string, string>): unknown {
-  if (typeof data === 'string') return rewriteTemplates(data, map);
+  if (typeof data === 'string') return rewriteRefHeads(data, map);
   if (Array.isArray(data)) return data.map((x) => rewriteData(x, map));
   if (data && typeof data === 'object') {
     const out: Record<string, unknown> = {};

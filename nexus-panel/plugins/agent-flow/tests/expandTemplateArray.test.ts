@@ -115,13 +115,13 @@ test('源码守卫：数组分支不许退回「只改字符串元素」', () =>
   );
 });
 
-test('源码守卫：重写仍走 refHeadRe()，不许为省事自带正则', () => {
+test('源码守卫：重写走统一入口，不许为省事自带正则', () => {
   /*
-   * 与 refToken.test.ts 同源约束呼应：那份钉的是「canvasRef 要调
-   * refHeadRe()」，这里补一条「补递归时别顺手把字符集换成自己写的」。
+   * 与 refToken.test.ts 同源约束呼应：那份钉的是「两处展开都要调
+   * rewriteRefHeads()」，这里补一条「补递归时别顺手把字符集换成自己写的」。
    */
   const src = readSrc('engine/canvasRef.ts');
-  assert.ok(/refHeadRe\(\)/.test(src), '引用头字符集必须与渲染同源');
+  assert.ok(/rewriteRefHeads\(/.test(src), '引用头重写必须与渲染同源');
   assert.ok(
     !/replace\(\s*\/\\[{]/.test(src),
     'canvasRef.ts 里不该再出现硬写的 {{ 正则',

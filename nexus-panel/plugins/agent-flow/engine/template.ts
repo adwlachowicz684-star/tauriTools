@@ -26,7 +26,14 @@ export type RenderResult = {
  */
 const REF_CHARS = 'A-Za-z0-9_.\\-\\u4e00-\\u9fa5';
 
-/** 引用的**第一段**是节点 id / params 这类名字，不含 `.` 与 `-`（后面紧跟 `.`） */
+/**
+ * 名字（参数名 / 卡名）能用的字符 —— 与"引用能取到的名字"同源。
+ *
+ * 注意：这**不是**「改节点 id 时扫引用」用的字符集了。那份职责已由
+ * rewriteRefHeads 走 tokenRe()（完整引用）承担，因为节点 id 本身可以
+ * 带 `-`，而参数名不许带（避免与减号、路径分隔混淆）。
+ * 两件事以前被同一个常量捆着，正是两边字符集分叉的来源。
+ */
 const REF_HEAD_CHARS = 'A-Za-z0-9_\\u4e00-\\u9fa5';
 
 /** 名字（参数名 / 卡名）能用的字符 —— 与"引用能取到的名字"同源 */
@@ -46,11 +53,61 @@ export function tokenRe(): RegExp {
 }
 
 /**
- * 只取引用的头一段 `{{id.` —— 改节点 id 时要顺带改写引用。
- * 字符集与 tokenRe 同源（否则 id 含中文时扫不到，引用就断在原地）。
+ * 改节点 id 时，把文本里的引用**头一段**跟着改掉。
+ *
+ * ================= 为什么必须走 tokenRe()，不能自己写 head 正则 =================
+ *
+ * 以前模块展开与跨画布展开各写了一份「只认 `{{id.`」的正则：
+ *
+ *   · modules.ts   `[A-Za-z0-9_-]+` —— 认 `-`，不认中文
+ *   · canvasRef.ts `refHeadRe()`     —— 认中文，不认 `-`
+ *
+ * 两份都**只认带点**的 `{{id.xxx}}`，而 `{{id}}` 是 output 的简写
+ * （engine.test.ts 里有专门用例），两边都不重写它。
+ * 渲染器认的却是 tokenRe()：简写、`-`、中文全都认。
+ *
+ * 于是同一句引用，展开后是三种不同结果，且全是**静默空串**：
+ *
+ *   {{A}}           → 两种展开都原样留着，指向展开图里不存在的 A
+ *   {{a-b.output}}  → 模块改对了，跨画布没改
+ *   {{价格.output}} → 跨画布改对了，模块没改
+ *
+ * 界面上都是「下游没数据」，排查会去查下游节点，想不到是展开那一步。
+ * 判据与渲染同源后，三种一起消失；也不再需要 refHeadRe 那份
+ * 「只取带点头」的第二字符集。
+ *
+ * ================= 只换第一段，其余原样保留 =================
+ *
+ * 用匹配文本里的位置替换，不重建整句：`{{ A.output }}` 的空白、
+ * 多级后缀、以及没命中的引用（{{input}} / {{params.名字}} / {{loop.item}}）
+ * 都原封不动。
  */
-export function refHeadRe(): RegExp {
-  return new RegExp(`\\{\\{\\s*([${REF_HEAD_CHARS}]+)\\s*\\.`, 'g');
+/**
+ * 渲染器保留的引用头 —— 这六个名字在 renderTemplate 里有专门分支，
+ * **不是节点 id**。
+ *
+ * 展开时 idMap 的键是模块/子画布内部的节点 id。若某个内部节点恰好叫
+ * input / params，文本里的 {{input}}（全局输入）、{{params.价格}}
+ * （画布参数）被改成 {{inst__input}} 之后，就从「全局输入」反转成
+ * 「引用一个常量节点」—— 不报错，界面上只是值不对。
+ *
+ * 清单与 renderTemplate 的分支由 refHeadRewrite.test.ts 里的守卫
+ * 逐项比对（从函数体提取 nodeId === 'xxx'），不另抄一份。
+ */
+const RESERVED_REF_HEADS = new Set(['input', 'chain', 'loop', 'var', 'params', 'env']);
+
+export function rewriteRefHeads(text: string, map: Map<string, string>): string {
+  if (!text.includes('{{')) return text;
+  return text.replace(tokenRe(), (m, raw: string) => {
+    const key = raw.trim();
+    const head = key.split('.')[0];
+    if (RESERVED_REF_HEADS.has(head)) return m;
+    const to = map.get(head);
+    if (!to) return m;
+    const at = m.indexOf(head);
+    if (at < 0) return m;
+    return m.slice(0, at) + to + m.slice(at + head.length);
+  });
 }
 
 export type RenderCtx = {

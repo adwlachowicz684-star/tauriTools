@@ -29,7 +29,7 @@
  */
 
 import type { AnyNode, AnyEdge } from './moduleTypes';
-import { refHeadRe } from './template';
+import { rewriteRefHeads } from './template';
 
 /* ------------------------------------------------------------------ */
 /* 类型                                                                */
@@ -430,7 +430,8 @@ export function expandCanvasRefs(
  *
  * 内部节点写 `{{A.output}}`，展开后 A 变成了 `inst__A`，
  * **不重写就取不到值，而且不报错** —— 只是渲染成空串。
- * 这是模块那一轮踩过的坑，这里直接复用同一套处理。
+ * 字符串这一层与模块侧共用 template.ts 的 rewriteRefHeads（同一份判据）；
+ * 下面这层递归是两张图各自的形状，此前这里只递归到字符串元素。
  *
  * 必须完全递归到数组里的**对象元素**：常量卡的 items、条件卡的 rules
  * 都是对象数组，值藏在元素的 .value / .expr 里。以前数组分支只改字符串
@@ -442,7 +443,7 @@ export function rewriteDataTemplates(
   data: unknown,
   idMap: Map<string, string>,
 ): unknown {
-  if (typeof data === 'string') return rewriteRefsInText(data, idMap);
+  if (typeof data === 'string') return rewriteRefHeads(data, idMap);
   if (Array.isArray(data)) return data.map((x) => rewriteDataTemplates(x, idMap));
   if (!data || typeof data !== 'object') return data;
   const out: Record<string, unknown> = {};
@@ -453,16 +454,10 @@ export function rewriteDataTemplates(
 }
 
 /*
- * 字符集取 template.ts 的 refHeadRe()，不自己写 ——
- * 否则哪天放开/收紧了引用的字符集，这里扫不到，改 id 后引用就断在原地。
+ * 字符集与简写形式都由 template.ts 的 rewriteRefHeads 决定 ——
+ * 以前这里调 refHeadRe()（只认带点的 `{{id.`）：带 `-` 的 id 改不了、
+ * `{{A}}` 简写也改不了，而模块那份恰好相反。不另写一份。
  */
-function rewriteRefsInText(text: string, idMap: Map<string, string>): string {
-  if (!text.includes('{{')) return text;
-  return text.replace(refHeadRe(), (m, id: string) => {
-    const to = idMap.get(id);
-    return to ? `{{${to}.` : m;
-  });
-}
 
 /* ------------------------------------------------------------------ */
 /* 收集：一张画布引用了哪些画布                                          */

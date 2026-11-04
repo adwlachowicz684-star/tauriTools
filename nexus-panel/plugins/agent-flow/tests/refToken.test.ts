@@ -13,8 +13,9 @@
  * 画布上跑能取到值，导出成脚本就原样留在那里 ——
  * 不报错，只有结果不对。
  *
- * 现在统一由 template.ts 的 tokenRe() / refHeadRe() 提供，
- * 其余地方一律来取。这条守卫盯的就是"不许再长出第二份"。
+ * 现在统一由 template.ts 的 tokenRe() 提供字符集、rewriteRefHeads()
+ * 提供「改 id 时改写引用」，其余地方一律来取。
+ * 这条守卫盯的就是"不许再长出第二份"。
  * ==================================================================
  */
 import test from 'node:test';
@@ -57,10 +58,29 @@ test('运行时与导出用的是同一个 tokenRe（导出不再自带一份）
   assert.ok(!exp.includes(CN), 'scriptExport.ts 里不该再自带一份字符集');
 });
 
-test('改 id 时改写引用用的也是同源字符集（refHeadRe）', () => {
-  const ref = readSrc('engine/canvasRef.ts');
-  assert.ok(/refHeadRe\(\)/.test(ref), 'canvasRef.ts 应调用 refHeadRe()');
-  assert.ok(!ref.includes(CN), 'canvasRef.ts 里不该再自己写一份');
+test('改 id 时改写引用：两处展开共用同一份 rewriteRefHeads', () => {
+  /*
+   * 以前这里钉的是「canvasRef.ts 要调 refHeadRe()」，而 modules.ts
+   * 自带另一份 `[A-Za-z0-9_-]+` 的 `{{id.` 正则 —— 守卫只看了
+   * 跨画布那一侧，模块侧的分叉就这么一直没被拦住。
+   *
+   * 两份都只认带点的 `{{id.xxx}}`，于是 `{{A}}`（output 简写）两边
+   * 都不重写；`-` / 中文又各认一半。现在统一到 template.ts 的
+   * rewriteRefHeads（走 tokenRe()），这条守卫改成盯两处都不许自带。
+   */
+  for (const f of ['engine/canvasRef.ts', 'engine/modules.ts']) {
+    const src = readSrc(f);
+    assert.ok(
+      /from '\.\/template'/.test(src) && /rewriteRefHeads\(/.test(src),
+      `${f} 必须 import 并调用 template.ts 的 rewriteRefHeads()`,
+    );
+    assert.ok(!src.includes(CN), `${f} 里不该再自己写一份字符集`);
+    assert.ok(
+      !/\/\{\{/.test(src),
+      `${f} 里不该再自带 {{...}} 正则（简写与字符集必须和渲染同源）`,
+    );
+    assert.ok(!/refHeadRe\(/.test(src), `${f} 不该再调旧的 refHeadRe()`);
+  }
 });
 
 test('参数名校验与"引用能取到的名字"同源', () => {
