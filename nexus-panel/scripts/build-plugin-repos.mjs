@@ -6,8 +6,10 @@
  * 共享依赖按原路径摆在 js/ css/ src/。于是插件里所有 ../../js/xxx、
  * ../../../css/xxx 相对引用一行都不用改 —— 独立仓库里它们照样解析得到。
  *
- * 这是过渡形态：共享文件在 13 个仓库里各一份，靠 vendor-repos-sync-test.mjs
- * 逐字节盯住，漂移即红。等 @nexus/plugin-sdk 包落地后收敛成一条 import。
+ * 这是过渡形态：共享文件在 13 个仓库里各一份，靠
+ * scripts/verify-plugin-repos.mjs 逐仓逐文件比对 git blob sha，漂移即红
+ * （联网探针，不进 CI；网络故障单独判，不冒充通过）。
+ * 等 @nexus/plugin-sdk 包落地后收敛成一条 import。
  * 不现在抽包，是因为 plugin-sdk.js 自身还 import tauri-core / runtime-deps /
  * invoke-policy / owned / plugin-fs，闭包不小；抽包是大重构，不该和拆仓绑一起。
  *
@@ -157,8 +159,9 @@ nexus-panel 独立插件仓库（id: \`${id}\`）。
 - 安装：主面板「插件市场」输入 \`adwlachowicz684-star/${repoName}\` 即可，
   用户侧**不需要 node / npm**
 
-> \`js/ css/ src/\` 是主仓共享依赖的镜像副本，由 \`vendor-repos-sync-test.mjs\`
-> 逐字节盯住。不要在这里单独改它们 —— 改主仓，再重跑生成器与建仓脚本。
+> \`js/ css/ src/\` 是主仓共享依赖的镜像副本，一致性由**主仓**的
+> \`scripts/verify-plugin-repos.mjs\` 逐仓逐文件核验（本仓库内没有该脚本）。
+> 不要在这里单独改它们 —— 改主仓，再重跑生成器与建仓脚本。
 `);
 
   const tpl = path.join(ROOT, 'templates', 'plugin-repo', 'release.yml');
