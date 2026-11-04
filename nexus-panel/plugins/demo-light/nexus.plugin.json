@@ -5,5 +5,6 @@
   "entry": "index.html",
   "kind": "app",
   "icon": "☀",
-  "description": "第三方面板风格的数据页，配色走外壳主题变量"
+  "description": "第三方面板风格的数据页，配色走外壳主题变量",
+  "repo": "adwlachowicz684-star/nexusPanel_plugin_demoLight"
 }
