@@ -36,6 +36,10 @@ import { fileURLToPath } from 'node:url';
 import { PATHS } from '../config/nexus.config.mjs';
 import { STALE_ROOT } from './stale-root.mjs';
 import { inlineHtml, checkSingleFile } from './single-file.mjs';
+/* 退场态判据放在零依赖小模块里：守卫（test:retired-supply）要能在
+   vite/react 未安装的沙盒里直接 import 它，不会 MODULE_NOT_FOUND。 */
+import { retiredSupplyState, retiredExitCode } from './retired-supply-state.mjs';
+export { retiredSupplyState, retiredExitCode };
 
 /**
  * 「不能交给 Vite 处理」的原生子目录，构建后原样补拷。
@@ -94,6 +98,16 @@ export function scanIframePlugins() {
     return [];
   }
   return entries
+    .filter((d) => d.isDirectory() && existsSync(resolve(dir, d.name, 'index.html')))
+    .map((d) => d.name)
+    .sort();
+}
+
+/** 列出 runtime-plugins/ 下「有 index.html」的产物目录。 */
+export function listProductPluginIds() {
+  const dir = PATHS.runtimePlugins;
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isDirectory() && existsSync(resolve(dir, d.name, 'index.html')))
     .map((d) => d.name)
     .sort();
@@ -320,6 +334,20 @@ function verifyOne(id, outDir) {
 }
 
 async function main() {
+  /* --verify：退场态验收。主仓已无插件源码，构建能力迁到 12 个独立仓库；
+     本模式不构建，只逐个校验 runtime-plugins/<id>/ 产物自身引用是否完整。
+     判「12/12 齐备」不在这里 —— 那是 test:retired-supply 的职责，
+     构建脚本不该自己定义市场插件名单（否则又多一份无守卫的第二映射表）。 */
+  if (process.argv.includes('--verify')) {
+    const ids = listProductPluginIds();
+    if (!ids.length) {
+      console.error('[build-plugins] --verify：runtime-plugins/ 下没有任何带 index.html 的产物目录，供给链断裂');
+      process.exit(1);
+    }
+    for (const id of ids) verifyOne(id, resolve(PATHS.runtimePlugins, id));
+    console.log(`[build-plugins] --verify：${ids.length} 个产物目录引用完整（${ids.join(', ')}）`);
+    return;
+  }
   const onlyIdx = process.argv.indexOf('--only');
   const only = onlyIdx >= 0 ? process.argv[onlyIdx + 1] : null;
   let ids = scanIframePlugins();
@@ -331,9 +359,18 @@ async function main() {
     }
     ids = [only];
   }
-  if (ids.length === 0) {
-    console.log('[build-plugins] 没有发现 iframe 插件（plugins/<id>/index.html）');
-    return;
+  const supply = retiredSupplyState(ids, listProductPluginIds());
+  if (supply.mode !== 'source') {
+    if (supply.mode === 'retired') {
+      console.error('[build-plugins] 主仓插件源码已迁出至 12 个独立私有仓，本脚本不再从 plugins/<id>/ 构建。');
+      console.error(`[build-plugins] 当前供给：runtime-plugins/ 产物 ${supply.productIds.length} 个`
+        + `（${supply.productIds.join(', ')}）。`);
+      console.error('[build-plugins] 请到对应独立仓库构建并发布 release；用 --verify 校验主仓产物完整性。');
+    } else {
+      console.error('[build-plugins] 既无 plugins/<id>/index.html 源码，也无 runtime-plugins/<id>/index.html 产物：供给链断裂。');
+    }
+    /* 旧行为是打印一句后 return（exit 0），与「全部构建成功」无法区分。 */
+    process.exit(retiredExitCode(supply));
   }
   mkdirSync(PATHS.runtimePlugins, { recursive: true });
   const singleFile = process.argv.includes('--single-file');

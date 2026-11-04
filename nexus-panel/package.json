@@ -304,6 +304,7 @@
     "test:plugin-repo-sync": "node plugin-repo-sync-test.mjs",
     "test:plugin-coupling": "node cross-plugin-coupling-test.mjs",
     "test:plugin-market": "node plugin-market-test.mjs",
+    "test:retired-supply": "node retired-supply-test.mjs",
     "test:coverage-guard": "node test-coverage-guard-test.mjs",
     "test:orphan-guard": "node orphan-modules-guard-test.mjs"
   },

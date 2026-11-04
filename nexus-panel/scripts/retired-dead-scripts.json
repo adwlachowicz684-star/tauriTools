@@ -1,0 +1,821 @@
+{
+  "note": "主仓插件源码已迁出至 12 个独立私有仓；本台账登记仍指向 plugins/<id>/ 的死 script 引用。销账 = 迁到对应独立仓的 package.json 后从主仓删除，并同步缩小本台账。判据为纯文本引用，与本地是否仍有源码副本无关。",
+  "rows": [
+    {
+      "script": "test:af",
+      "target": "plugins/agent-flow/scripts/run-tests.sh",
+      "id": "agent-flow",
+      "repo": "nexusPanel_plugin_agentFlow"
+    },
+    {
+      "script": "test:af-dirpicker-picked",
+      "target": "plugins/agent-flow/dirpicker-picked-test.mjs",
+      "id": "agent-flow",
+      "repo": "nexusPanel_plugin_agentFlow"
+    },
+    {
+      "script": "test:drag-payload",
+      "target": "plugins/project-group/drag-payload-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:dv-cache-sweep",
+      "target": "plugins/dupview/cache-sweep-test.mjs",
+      "id": "dupview",
+      "repo": "nexusPanel_plugin_dupview"
+    },
+    {
+      "script": "test:dv-rename-collision",
+      "target": "plugins/dupview/rename-collision-test.mjs",
+      "id": "dupview",
+      "repo": "nexusPanel_plugin_dupview"
+    },
+    {
+      "script": "test:dv-rename-stale-path",
+      "target": "plugins/dupview/rename-stale-path-test.mjs",
+      "id": "dupview",
+      "repo": "nexusPanel_plugin_dupview"
+    },
+    {
+      "script": "test:mindmap",
+      "target": "plugins/mindmap/mindmap-test.mjs",
+      "id": "mindmap",
+      "repo": "nexusPanel_plugin_mindmap"
+    },
+    {
+      "script": "test:mm-export-name",
+      "target": "plugins/mindmap/mm-export-name-test.mjs",
+      "id": "mindmap",
+      "repo": "nexusPanel_plugin_mindmap"
+    },
+    {
+      "script": "test:mm-opml-title",
+      "target": "plugins/mindmap/mm-opml-title-test.mjs",
+      "id": "mindmap",
+      "repo": "nexusPanel_plugin_mindmap"
+    },
+    {
+      "script": "test:mm-palette",
+      "target": "plugins/mindmap/mm-palette-test.mjs",
+      "id": "mindmap",
+      "repo": "nexusPanel_plugin_mindmap"
+    },
+    {
+      "script": "test:mm-shrink-name",
+      "target": "plugins/mindmap/mm-shrink-name-test.mjs",
+      "id": "mindmap",
+      "repo": "nexusPanel_plugin_mindmap"
+    },
+    {
+      "script": "test:pg",
+      "target": "plugins/project-group/drag-payload-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-action-sort",
+      "target": "plugins/project-group/action-sort-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-addcard-cross-tab",
+      "target": "plugins/project-group/addcard-cross-tab-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-assertion-hygiene",
+      "target": "plugins/project-group/assertion-hygiene-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-avail-height",
+      "target": "plugins/project-group/avail-height-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-backup",
+      "target": "plugins/project-group/backup-dirs-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-backup-auto-truth",
+      "target": "plugins/project-group/backup-auto-truth-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-backup-interval",
+      "target": "plugins/project-group/backup-interval-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-backup-mirror-guard",
+      "target": "plugins/project-group/backup-mirror-guard-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-backup-reentry",
+      "target": "plugins/project-group/backup-reentry-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-backup-report-truth",
+      "target": "plugins/project-group/backup-report-truth-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-backup-targets",
+      "target": "plugins/project-group/backup-targets-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-builtins",
+      "target": "plugins/project-group/chain-builtins-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-busy-indicator",
+      "target": "plugins/project-group/busy-indicator-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-card-nav",
+      "target": "plugins/project-group/card-nav-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain",
+      "target": "plugins/project-group/chain-placeholder-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-confirm-reset",
+      "target": "plugins/project-group/chain-confirm-reset-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-default-fill",
+      "target": "plugins/project-group/chain-default-fill-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-hotkey-conflict",
+      "target": "plugins/project-group/chain-hotkey-conflict-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-panel-input",
+      "target": "plugins/project-group/chain-panel-input-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-preview-client",
+      "target": "plugins/project-group/chain-preview-client-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-preview-empty",
+      "target": "plugins/project-group/chain-preview-empty-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-preview-override",
+      "target": "plugins/project-group/chain-preview-override-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-send-scope",
+      "target": "plugins/project-group/chain-send-scope-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-chain-tpl-norm",
+      "target": "plugins/project-group/chain-template-normalize-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-click-debounce",
+      "target": "plugins/project-group/click-debounce-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-clients",
+      "target": "plugins/project-group/chain-clients-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-clipboard",
+      "target": "plugins/project-group/clipboard-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-color-forward",
+      "target": "plugins/project-group/color-forward-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-config-corrupt-notice",
+      "target": "plugins/project-group/config-corrupt-notice-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-config-normalize",
+      "target": "plugins/project-group/config-normalize-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-config-schema",
+      "target": "plugins/project-group/config-schema-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-confirm",
+      "target": "plugins/project-group/chain-confirm-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-confirm-enter",
+      "target": "plugins/project-group/confirm-enter-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-content-read-race",
+      "target": "plugins/project-group/content-read-race-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-content-tree",
+      "target": "plugins/project-group/content-tree-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-cycle-tab-empty",
+      "target": "plugins/project-group/cycle-tab-empty-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-deadcode",
+      "target": "plugins/project-group/deadcode-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-deadzone-swap",
+      "target": "plugins/project-group/deadzone-swap-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-detect",
+      "target": "plugins/project-group/client-detect-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-disk-link",
+      "target": "plugins/project-group/disk-link-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-drag",
+      "target": "plugins/project-group/drag-sort-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-drop-springback",
+      "target": "plugins/project-group/drop-springback-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-error-boundary",
+      "target": "plugins/project-group/error-boundary-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-escape-layer",
+      "target": "plugins/project-group/escape-layer-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-external-drop",
+      "target": "plugins/project-group/external-drop-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-feedback",
+      "target": "plugins/project-group/feedback-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-file-lock",
+      "target": "plugins/project-group/file-lock-token-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-folder-lock-ace",
+      "target": "plugins/project-group/folder-lock-ace-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-hint",
+      "target": "plugins/project-group/hint-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-hotkey-capture",
+      "target": "plugins/project-group/hotkey-capture-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-hotkey-settings",
+      "target": "plugins/project-group/hotkey-settings-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-hotkeys",
+      "target": "plugins/project-group/hotkeys-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-ico-build",
+      "target": "plugins/project-group/ico-build-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-icon-clip",
+      "target": "plugins/project-group/icon-clip-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-icon-del-hover",
+      "target": "plugins/project-group/icon-del-hover-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-icon-gui",
+      "target": "plugins/project-group/icon-gui-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-icon-modeless",
+      "target": "plugins/project-group/icon-modeless-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-icon-prune",
+      "target": "plugins/project-group/icon-prune-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-icon-rename",
+      "target": "plugins/project-group/icon-rename-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-icon-thumbs",
+      "target": "plugins/project-group/icon-thumbs-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-ime-guard",
+      "target": "plugins/project-group/ime-guard-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-ini",
+      "target": "plugins/project-group/ini-icon-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-layout",
+      "target": "plugins/project-group/layout-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-ledger-merge",
+      "target": "plugins/project-group/ledger-merge-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-empty-names",
+      "target": "plugins/project-group/link-empty-names-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-pick-all",
+      "target": "plugins/project-group/link-pick-all-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-pick-badge",
+      "target": "plugins/project-group/link-pick-badge-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-preset-keep",
+      "target": "plugins/project-group/link-preset-keep-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-rename",
+      "target": "plugins/project-group/link-rename-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-rename-esc",
+      "target": "plugins/project-group/link-rename-esc-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-row-edit",
+      "target": "plugins/project-group/link-row-edit-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-row-real",
+      "target": "plugins/project-group/link-row-real-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-link-switch-ci",
+      "target": "plugins/project-group/link-switch-ci-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-links",
+      "target": "plugins/project-group/link-agents-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-lock",
+      "target": "plugins/project-group/lock-preset-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-lock-live-state",
+      "target": "plugins/project-group/lock-live-state-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-log",
+      "target": "plugins/project-group/log-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-addcard-guard",
+      "target": "plugins/project-group/mcp-addcard-guard-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-create",
+      "target": "plugins/project-group/mcp-create-folder-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-enum-args",
+      "target": "plugins/project-group/mcp-enum-args-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-exit",
+      "target": "plugins/project-group/mcp-exit-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-notify",
+      "target": "plugins/project-group/mcp-notify-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-status-linkcount",
+      "target": "plugins/project-group/mcp-status-linkcount-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-string-args",
+      "target": "plugins/project-group/mcp-string-args-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-token-keep",
+      "target": "plugins/project-group/mcp-token-keep-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-mcp-typed-args",
+      "target": "plugins/project-group/mcp-typed-args-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-md",
+      "target": "plugins/project-group/md-edit-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-migrate",
+      "target": "plugins/project-group/migrate-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-move-across-tab",
+      "target": "plugins/project-group/move-across-tab-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-movecard-source",
+      "target": "plugins/project-group/movecard-source-tab-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-new-folder-align",
+      "target": "plugins/project-group/new-folder-align-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-rail-hover",
+      "target": "plugins/project-group/rail-hover-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-record-corrupt-guard",
+      "target": "plugins/project-group/record-corrupt-guard-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-remove-card",
+      "target": "plugins/project-group/remove-card-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-rename-relink",
+      "target": "plugins/project-group/rename-relink-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-reserved-name",
+      "target": "plugins/project-group/reserved-name-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-saveguard",
+      "target": "plugins/project-group/saveguard-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-screen-capture",
+      "target": "plugins/project-group/screen-capture-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-seg-rename-truth",
+      "target": "plugins/project-group/seg-rename-truth-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-segment-name-scope",
+      "target": "plugins/project-group/segment-name-scope-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-select",
+      "target": "plugins/project-group/select-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-selfwrite",
+      "target": "plugins/project-group/self-write-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-settings-datadir",
+      "target": "plugins/project-group/settings-datadir-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-shell-icon-ascii",
+      "target": "plugins/project-group/shell-icon-ascii-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-shell-icon-notify",
+      "target": "plugins/project-group/shell-icon-notify-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-shift-anim",
+      "target": "plugins/project-group/shift-anim-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-splitter-commit",
+      "target": "plugins/project-group/splitter-commit-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-stack-collapse-timer",
+      "target": "plugins/project-group/stack-collapse-timer-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-stack-hotzone",
+      "target": "plugins/project-group/stack-head-hotzone-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-stack-reveal-once",
+      "target": "plugins/project-group/stack-reveal-once-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-structure",
+      "target": "plugins/project-group/structure-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-tab-name-dup",
+      "target": "plugins/project-group/tab-name-dup-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-tab-name-validate",
+      "target": "plugins/project-group/tab-name-validate-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-tabs",
+      "target": "plugins/project-group/tab-index-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-texttrunc-charset",
+      "target": "plugins/project-group/texttrunc-charset-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-type-hygiene",
+      "target": "plugins/project-group/type-hygiene-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-types-fix",
+      "target": "plugins/project-group/types-fix-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-verify-batch",
+      "target": "plugins/project-group/verify-batch-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-visual",
+      "target": "plugins/project-group/visual-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-watch",
+      "target": "plugins/project-group/watch-suppress-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-watch-scope",
+      "target": "plugins/project-group/watch-scope-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-watch-toggle",
+      "target": "plugins/project-group/watch-toggle-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:pg-win-icon",
+      "target": "plugins/project-group/win-icon-test.mjs",
+      "id": "project-group",
+      "repo": "nexusPanel_plugin_projectGroup"
+    },
+    {
+      "script": "test:tb-core",
+      "target": "plugins/task-board/task-board-test.mjs",
+      "id": "task-board",
+      "repo": "nexusPanel_plugin_taskBoard"
+    }
+  ]
+}
