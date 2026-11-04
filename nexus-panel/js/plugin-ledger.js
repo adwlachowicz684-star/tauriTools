@@ -42,7 +42,7 @@
 import { readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { API_BASE, parseRepoInput, compareVersion, pickAsset, fetchRelease } from './plugin-store-client.js';
+import { API_BASE, parseRepoInput, compareVersion, pickAsset, fetchRelease, ghHeaders } from './plugin-store-client.js';
 
 /** 台账文件名（点开头：扫描器只认子目录，不会把它当插件） */
 export const LEDGER_FILE = '.nexus-installed.json';
@@ -302,7 +302,9 @@ export async function fetchRefSha(repo, ref, opts = {}) {
   if (!ref) return { ok: false, sha: null, error: '未指定 ref' };
   const url = `${API_BASE}/repos/${repo.owner}/${repo.repo}/commits/${encodeURIComponent(ref)}`;
   try {
-    const res = await f(url, { headers: { Accept: 'application/vnd.github+json' } });
+    /* 与 fetchRelease 共用一份请求头：私有仓的 /commits/{ref} 同样要授权，
+       否则 sha 取不到 → 台账指纹退化 → 更新检测静默漏报。 */
+    const res = await f(url, { headers: ghHeaders(opts) });
     if (!res) return { ok: false, sha: null, error: '无响应' };
     if (res.status === 404 || res.status === 422) return { ok: false, sha: null, error: `ref 不存在: ${ref}` };
     if (res.status >= 400) return { ok: false, sha: null, error: `GitHub 返回 ${res.status}` };
@@ -323,7 +325,7 @@ export async function fetchRefSha(repo, ref, opts = {}) {
  * 对台账里每个「市场来源」的插件查一次有没有新版。
  *
  * @param {object} ledger
- * @param {object} [opts] { fetch, includeCustom }
+ * @param {object} [opts] { fetch, headers, includeCustom }
  * @returns {Promise<{results:object[], errors:string[]}>}
  *
  * 设计要点
@@ -345,7 +347,7 @@ export async function checkUpdates(ledger, opts = {}) {
       results.push({ id, checked: false, hasUpdate: false, reason: '非市场来源（没有仓库信息），无法检查更新' });
       continue;
     }
-    const r = await fetchRelease(e.repo, { fetch: opts.fetch, ref: e.ref || null });
+    const r = await fetchRelease(e.repo, { fetch: opts.fetch, ref: e.ref || null, headers: opts.headers });
     if (!r.ok) {
       results.push({ id, checked: false, hasUpdate: false, reason: `查询失败: ${r.error}` });
       errors.push(`${id}: ${r.error}`);
