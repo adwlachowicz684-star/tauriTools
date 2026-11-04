@@ -23,6 +23,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { repoNameFor, repoFieldFor, OWNER } from './plugin-repo-map.mjs';
+
+/* 兼容既有调用方（create-plugin-repos.mjs / verify-plugin-repos.mjs）
+ * 仍从本文件 import repoNameFor，唯一真值源在 plugin-repo-map.mjs。 */
+export { repoNameFor, repoFieldFor, OWNER } from './plugin-repo-map.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(HERE, '..');           // nexus-panel/
@@ -36,33 +41,15 @@ export const IDS = fs.readdirSync(path.join(ROOT, 'plugins'))
 
 /**
  * 仓库名：nexusPanel_plugin_<驼峰 id>，全部私有。
+ * 唯一真值源已抽到 scripts/plugin-repo-map.mjs —— 本文件不再持有第二份表。
  *
  * ⚠️ 只改「仓库名」，不要改「产物名」：
  *   js/plugin-store-client.js 的 ASSET_PREFIX 固定为 'nexus-plugin-'，
  *   release.yml 拼的是 `nexus-plugin-${ID}-${VER}.tar.gz`（ID 取自 manifest.id，
  *   与仓库名无关）。把产物前缀跟着仓库一起改，宿主 pickAsset 会认不出
  *   release asset，表现为「装了却永远找不到产物」且不报具体原因。
- *   新增插件时必须同步补这张表，否则 fail-closed 拒绝建仓。
+ *   新增插件时只需补 plugin-repo-map.mjs 的 CAMEL 表，否则 fail-closed 拒绝建仓。
  */
-const CAMEL = {
-  'agent-flow': 'agentFlow',
-  'color-picker': 'colorPicker',
-  'demo-iframe': 'demoIframe',
-  'demo-light': 'demoLight',
-  'demo-react': 'demoReact',
-  'demo-service': 'demoService',
-  'dupview': 'dupview',
-  'icon-picker': 'iconPicker',
-  'md-editor': 'mdEditor',
-  'mindmap': 'mindmap',
-  'project-group': 'projectGroup',
-  'task-board': 'taskBoard',
-};
-export function repoNameFor(id) {
-  const c = CAMEL[id];
-  if (!c) throw new Error(`未登记的插件 id: ${id}（新增插件须同步补 CAMEL 映射）`);
-  return `nexusPanel_plugin_${c}`;
-}
 
 /** 共享依赖 = 整目录镜像 js/ css/ src/（70 文件 / 1.18 MB）。不做 import 闭包 BFS：
  *  精确收集容易漏（src/nexus-react 是文件不是目录，早期版本漏过）；
@@ -111,9 +98,18 @@ export function skeletonFiles(id) {
   const repoName = repoNameFor(id);
   const version = manifest.version || '0.1.0';
 
+  /* repo 只在主仓 manifest 里存在一份（由 gen-plugin-manifest.mjs 从
+   * plugin-repo-map.mjs 派生）。骨架生成器**不再自己拼** —— 否则又多一个
+   * 会说谎的源：主仓改了 repo，12 个仓库照样按老名字发版，且无人发现。
+   * 这里反过来做校验：主仓没写/写错就拒绝生成骨架，不静默补全。 */
+  const wantRepo = repoFieldFor(id);
+  if (manifest.repo !== wantRepo) {
+    throw new Error(`${id}: 主仓 manifest.repo=${JSON.stringify(manifest.repo)}，应为 ${wantRepo}`
+      + ' —— 请先跑 node scripts/gen-plugin-manifest.mjs 刷新主仓 manifest');
+  }
+
   files['nexus.plugin.json'] = Buffer.from(JSON.stringify({
     ...manifest,
-    repo: `adwlachowicz684-star/${repoName}`,
     ref: `v${version}`,
   }, null, 2) + '\n');
 
