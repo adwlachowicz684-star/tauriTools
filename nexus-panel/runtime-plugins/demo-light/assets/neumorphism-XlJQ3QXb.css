@@ -1,0 +1,2834 @@
+/* ============================================================
+   Nexus Panel · 设计系统
+   一份 CSS 覆盖三种风格：新拟态 / 扁平 / 玻璃（靠变量切换，见文末「主题风格增强」）
+   所有插件共享同一套 CSS 变量，改这里即可整体换肤
+   ============================================================
+
+   改样式前请先读完下面八条，它们是从实际 bug 里长出来的约束。
+
+   ── 一、变量分层 ────────────────────────────────────────────
+     :root 只给兜底值，真实值由 js/theme-manager.js 按主题覆写到 :root。
+     按 基底 → 塑形 → 文本 → 主色 → 状态色 → 风格 → 圆角 分组排列。
+     --hairline / --mask / --scroll-thumb / --badge-fg / --accent-glow
+     是派生量，由 theme-manager 统一算，本文件与主题数据里都不要写。
+
+   ── 二、文字四档，按信息层级取用 ────────────────────────────
+     --text       标题、正文、卡片名            对比度 ≥ 4.5
+     --text-soft  次级正文（表单值、列表主行）   ≥ 4.5
+     --text-dim   小标题、分组名、标签           ≥ 4.5
+     --text-mute  辅助说明、占位符、时间戳       ≥ 3
+     用法红线：≥ 12.5px 的说明文字至少用 --text-dim；--text-mute 只服务
+     ≤ 12px 的辅助信息。mute 是"能看清但不吸引注意"，不是"次要正文"。
+     弱化一律换档位（mute → dim），不要叠 opacity ——
+     --text-mute 的对比度本就卡在 3 的线上，再乘 .8 就跌到 2.4。
+     确需 opacity 表达未选中时，下限 .8。
+
+   ── 三、颜色只从**当前主题**取 ──────────────────────────────
+     面板上的任何文字都只能写 var(--text) 这类当前主题变量。
+     唯一例外：主题卡片的缩略图内部 —— 那一小块属于"被预览的主题"，
+     可以用 t.vars 里的色值（.theme-prev / .tp-* 就是干这个的）。
+     反例（已修）：.theme-name 曾用预览主题的 --text 上色，而卡片底板是
+     当前主题的 --surface —— 深色面板下预览浅色主题，深色字压深色底，
+     实测 1.3:1，名字完全看不见。
+
+   ── 四、状态色与装饰色分离 ──────────────────────────────────
+     --ok / --running / --warn / --danger 语义固定，不随 --accent /
+     --env-color 变化。成功提示只能用 --ok：若用环境色，用户把它调成
+     红色就会得到"红色的成功提示"。
+
+   ── 五、交互态三件套 ────────────────────────────────────────
+     hover          文字提亮一档（--text-dim → --text）或轻微抬起 -2px
+     :active        内凹阴影 inset，表示"按下去"
+     选中 / 聚焦     --accent 描边或文字，两者都要带上 focus-visible，
+                     键盘走位时"当前项"只能有一种长相
+     强调色文字用于激活态时，字号 ≥ 12.5px 且字重 ≥ 600 ——
+     --accent 的对比度下限是 3.25，小字细体吃不住。
+
+   ── 六、间距节奏 ────────────────────────────────────────────
+     4 / 8 / 12 / 16 / 20 / 24，不用奇数与半档。
+     分组与分组之间必须显式留白（.theme-group + .theme-group），
+     不能指望上一个分组的子元素 margin 撑开 —— 子元素被折叠时就贴上了。
+
+   ── 七、圆角 ────────────────────────────────────────────────
+     --r-xl(26) > --r-lg(20) > --r-md(17) > --r(14) > --r-sm(9)
+
+     ⚠️ 注意 --r-md(17) 比 --r(14) **大**，与"md 应在中间"的命名直觉相反。
+        这一行此前写成了 `--r(14) > --r-md(17)`（14 > 17 不成立），
+        是**错的排序** —— 我照着它写测试断言时直接被带偏，
+        以为 r-md 在 r 之下，结果断言报红才回头发现是注释错了。
+        注释里的数字必须与实际定义核对，不能凭命名直觉写。
+
+     --r-md 目前**零引用**：控件实际都用 --r-sm(9px)。
+     它是预留档，改值没有视觉风险，但改之前要确认意图
+     （是"比 sm 大一点的控件"还是"比卡片小一点的容器"——
+       两种解读对应的值分别在 9~14 与 14~20 之间，不能靠猜）。
+
+     容器用 xl/lg，卡片用 r，控件用 md/sm。风格可整组覆写（扁平更硬朗），
+     但四个变量要么都写、要么都不写，写一半会让上一主题的内联值残留。
+
+   ── 八、阴影 ────────────────────────────────────────────────
+     外凸：右下 --sh-dark、左上 --sh-light，两向成对，缺一就"歪了"
+     内凹：inset + --surface-sunk 表示"按下去 / 凹进去"
+     扁平风格下 --sh-* 被调成与底色接近，阴影自然隐形，改由 --border 描边
+
+     ⚠️ 已知约束：新拟态下卡片与底板**完全同色**，边界 100% 靠阴影勾，
+     所以阴影一弱，元素就整个糊在背景里。实测（ΔL* 为阴影色与底色的
+     感知明度差，blur 9px 时有效强度约为其 29%）：
+       · 早期各主题阴影 ΔL* 只有 6~7 → 有效 1.6~2.2，低于"勉强可见"的 3.0
+       · 浅色主题的 --sh-light 撞物理上限：底色 L* 已 90+，
+         亮影最多再提 6~8，怎么调都是徒劳 —— 浅色主题只能靠 --sh-dark
+       · 12px 模糊比 5px 模糊多摊薄约 30%，大卡片别盲目加大模糊
+
+     现已按三管齐下修好（改完 17 套非扁平主题全部跨过"可辨"线）：
+       ① --sh-* 亮度提到 ΔL* ≈ 11（深色）/ 14（浅色暗影），不动色相饱和度
+       ② 外凸档位挂一层 inset 描边（--relief-edge，由基调派生）：
+          关键是它**没有模糊、不参与摊薄**，实测直接贡献 ΔL* 7~8，
+          比阴影那点有效强度强一倍多 —— 单靠阴影怎么调到不了"清晰"
+       ③ 大卡片一档的模糊 14px → 12px，有效系数 23% → 25%
+     纯色阴影调到底也只是"勉强"：实测只调色值的话，17 套里仍有 14 套
+     低于可辨线，加上描边后降到 0 套。物理上限（纯黑底提不亮、纯白底
+     压不暗）决定了必须靠描边这条不受限制的路。
+     想退回"纯阴影无描边"的观感：把 --relief-edge 设为 transparent 即可。
+   ============================================================ */
+
+/* 与主题无关的尺度（阴影档位 / 时长 / 字体 / 层级）统一在 tokens.css，
+   插件也能单独引入它而不用背上一整套组件样式。必须在所有规则之前。 */
+@import url('./tokens.css');
+/* 通用控件：按钮 / 输入框 / 下拉 / 标签 / 开关（.nx-* 与各插件的 .p-* .mm-* 同组） */
+@import url('./controls.css');
+/* 通用弹窗：外壳与所有引了本文件的插件都能用（settings / agent-flow） */
+@import url('./dialog.css');
+
+:root {
+  /* 基底色 —— 新拟态要求元素与背景同色，靠阴影塑形 */
+  --bg:            #2b2f36;
+  --surface:       #2b2f36;
+  --surface-sunk:  #282c33;
+
+  /* 双向阴影：右下暗、左上亮 */
+  --sh-dark:       #1d2027;
+  --sh-light:      #383e49;
+
+  /* 文本 */
+  --text:          #d9dee8;
+  --text-dim:      #8b93a2;
+  --text-mute:     #5f6773;
+
+  /* 强调色 */
+  --accent:        #5b8cff;
+  /* 环境色：与强调色并列的第二个可调主色，只作次要点缀。
+     注意它不等于状态色 —— 下面 --ok / --running 才是语义固定的那组。 */
+  --env-color:     #48e0c0;
+  --accent-glow:   rgba(91, 140, 255, .32);
+  --warn:          #f59e0b;
+  --danger:        #ef4444;
+
+  /* 状态色：与强调色、主题色分离，不参与用户的配色微调。
+     否则把主题色设成红色，就会出现"红色的成功提示"。
+     本文件只给兜底值，且刻意与 js/themes.js 预设里那一组完全相同 ——
+     新增主题漏写某个状态色时才不会串出另一种绿/另一种红。
+     各主题可在 js/themes.js 里覆写。 */
+  --ok:            #22c55e;
+  --running:       #4c8dff;
+
+  /* 衍生层：多数主题不必单独定义，缺省时回退到下面这些派生值。
+     需要特别处理的主题（如浅色底要压暗）在 themes.js 里显式覆盖。 */
+  --surface-raised: var(--surface);
+  /* 浮层底面：弹窗 / 吐司 / 下拉这类盖在别的内容上的容器。
+     默认比 --surface 浮起一档（--surface-raised）—— 光靠阴影勾边不够，
+     弹窗与背景同色时会整个糊在背景里。玻璃主题在 themes.js 里进一步
+     调成高不透明度，避免后面的界面透上来。 */
+  --surface-overlay: var(--surface-raised);
+  --text-soft:      var(--text-dim);
+
+  /* 风格层（由 js/theme-manager.js 按主题覆写，这里只是兜底默认值）
+     · 新拟态：--surface 与 --bg 同色，靠 --sh-* 塑形，--border 透明
+     · 扁平：  --sh-* 调到与底色接近（阴影隐形），改由 --border 描边
+     · 玻璃：  --surface 半透明 + --blur 打开毛玻璃 */
+  /* --border 是**风格开关**、不是分隔线颜色：新拟态下它是 transparent，
+
+     边界由 --sh-* 阴影塑形；扁平/玻璃恰好给它赋了值才"碰巧"看得见。
+
+     真正保证任何风格都可见的边界请一律用 --divider，不要接到 --border 上。
+
+     （agent-flow 曾把 26 处分隔线接到 --border，新拟态下整片消失） */
+
+  --border:        transparent;
+
+  --divider:       rgba(255,255,255,.10);
+  --blur:          0px;
+
+  /* ---- 磨砂质感：光有 blur 是不够的 ----
+     高斯模糊在数学上会**压低对比度、稀释饱和度**，
+     单独 blur() 出来的不是磨砂玻璃，是"蒙尘的塑料片" —— 发灰、发闷。
+     真实的磨砂玻璃由四层共同构成，缺一层就不像：
+
+       ① blur()      虚化背后内容（项目已有）
+       ② saturate()  补回被模糊吃掉的饱和度 —— 这一条是"廉价 vs 高级"的
+                     分水岭。真玻璃因折射会让透过的颜色更浓郁，
+                     saturate(140%~180%) 才出玻璃感。
+       ③ 颗粒层      磨砂的物理质感。纯 blur 是**数字化平滑**的，
+                     而真实磨砂表面有细微颗粒散射光 —— 少了它就是
+                     "虚化"而不是"磨砂"。用 SVG feTurbulence 生成。
+       ④ 边缘高光    勾出玻璃的厚度。见下方 --frost-edge。
+
+     ② 与 ③ 是本轮新增（此前只有 ①）。 */
+  --saturate:      100%;
+  /* 颗粒强度。上限 0.12：超过约 0.15 就不再是质感，
+     而是肉眼可见的噪点（资料实测值）。深色端略高、浅色端略低，
+     因为浅底上噪点更容易显脏。 */
+  --frost-grain:   0;
+  /* 颗粒的 SVG data URI（feTurbulence）。
+     用**平铺小块**而不是全屏 filter:url()：后者会在首屏按元素尺寸
+     光栅化一次，4K 视口下开销明显；前者只渲 128px 再 repeat。 */
+  --frost-noise:   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  /* 边缘高光：模拟玻璃切断光线时边缘的镜面反射。
+     没有它，玻璃面板会"薄得像张贴纸"。 */
+  --frost-edge:    transparent;
+  /*
+   * 颗粒与底色的混合方式。深色 overlay / 浅色 soft-light ——
+   * overlay 在浅底上会把噪点压成脏斑，soft-light 才像磨砂。
+   *
+   * 这里必须有 :root 默认值（与其它 frost-* 一致）：早先只在**使用处**
+   * 写了 `var(--frost-blend, overlay)`，于是它是整套 frost 变量里唯一
+   * 没有兜底定义的一个 —— 非玻璃主题下读到空值，主题参数面板也显示
+   * 不出当前值（面板读的是变量本身，不是使用处的兜底）。
+   */
+  --frost-blend:   overlay;
+
+  /* 风格层兜底（由 js/theme-manager.js 按主题覆写） */
+  --edge:          rgba(255,255,255,.08);
+  --bg-image:      none;
+  --hairline:      rgba(255,255,255,.05);
+  --mask:          rgba(10,12,16,.62);
+  --scroll-thumb:  #4a515e;
+  --badge-fg:      #ffffff;
+
+  /* 圆角 */
+  --r-xl: 26px;
+  --r-lg: 20px;
+  --r-md: 17px;
+  --r:    14px;
+  --r-sm: 9px;
+
+  /* 尺寸 */
+  --titlebar-h:   46px;
+  --sidebar-w:    86px;
+  --sidebar-open: 218px;
+
+  /* 动效：--t 已移到 tokens.css（原因见那里的注释）——
+     controls.css 也用 var(--t)，而有些插件只 import tokens/controls/dialog、
+     不 import 本文件，定义在这里它们就拿不到，整条 transition 会静默失效。 */
+
+  color-scheme: dark;
+}
+
+/* 浅色档兜底：与上面 :root 同一批变量，只换成"深色墨"方向。
+   只覆盖颜色类兜底，圆角/尺寸不随基调变，不动。
+
+   为什么必须单独给一份：上面那批是**深色档**，只在 JS 未跑（首屏）
+   或主题模块不可用时生效。若浅色主题首屏先用深色兜底，
+   分隔线会变成白线压在浅底上（等于看不见），等 JS 落地再跳变一次 ——
+   切换主题时那个"闪一下"，多半就是它。 */
+:root[data-theme-base="light"] {
+  --divider:  rgba(0,0,0,.12);
+  --edge:     rgba(0,0,0,.10);
+  --hairline: rgba(0,0,0,.07);
+  --mask:     rgba(90,96,110,.32);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* iframe 插件页：上面这条规则在这里是**错的**，必须覆盖
+   =================================================================
+   `html, body { height:100%; overflow:hidden }` 是给**主面板**写的：
+   主面板自己不滚，滚动交给内部的 #stage-scroll。
+
+   但 iframe 插件页也引入同一份 CSS（home / settings / project-group /
+   agent-flow / demo-react 都引了），而 iframe 内部**没有** #stage-scroll
+   —— 于是这条规则在插件页里只剩"禁止滚动"这一半：
+
+       body 高度锁死 100% + overflow:hidden
+       → 内容超出可视高度时无处可滚
+       → 超出部分被直接裁掉；iframe 高度是 100%、不随内容长高，
+         所以超出部分是**永久不可达**的，不是被盖住
+
+   表现就是「插件页下面的内容看不见」，以及内容带最小宽度时
+   （.p-grid 的 minmax(220px, 1fr) 就是典型：容器再窄，网格项也不肯
+   小于 220px）横向被切掉一截 —— 卡片看着比 body 宽，右边缺一块。
+
+   body.nexus-iframe-plugin 是 js/plugin-sdk.js 为这个场景打的标记，
+   但**此前全仓零配套规则**：标记了却没人用，等于没标记。
+
+   ⚠️ 只改 overflow，**不要动 height**：
+   settings 插件的 #root 是 height:100%（见 plugins/settings/settings.css），
+   它必须有 body 这个确定高度当参照物；把 height 改成 auto 会让那条
+   100% 退化成 auto，设置页的分栏布局当场塌掉（分页条与内容区不再分栏）。
+   overflow:auto 后 body 自己成为滚动容器，而 settings 那种"内容刚好
+   一屏"的情况不会多出滚动条 —— 两种滚动机制不打架。
+*/
+body.nexus-iframe-plugin {
+  overflow: auto;
+}
+
+body {
+  background: var(--bg);
+  background-image: var(--bg-image);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-14, 14px);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* ---------- 新拟态基元 ----------
+ *
+ * 这一组是**备用工具类**，不是死代码。
+ *
+ * 全仓扫描显示 5 个类目前**零引用** —— 因为各插件的卡片/按钮
+ * 都在自己的规则里直接写 box-shadow，没有走这套基类。
+ *
+ * 之所以保留而不是删掉：新拟态的"凸起/凹陷"是本项目三种风格里
+ * 唯一靠阴影塑形的一种，新加元素时最容易写错方向（用 --sh-out
+ * 还是 --sh-in、配哪个底色）。这 5 个类把正确组合固化下来，
+ * 新元素直接挂类名即可，不必再猜。
+ *
+ * 归类说明（供新增元素时选用）：
+ *   .nm-raised      凸起（大）—— 浮层、对话框
+ *   .nm-raised-sm   凸起（小）—— 卡片、按钮
+ *   .nm-inset       凹陷（大）—— 输入框、代码区
+ *   .nm-inset-sm    凹陷（小）—— 内嵌小控件
+ *   .nm-pressed     按下去 —— 同底色 + 内阴影，用于选中/激活态
+ */
+
+.nm-raised {
+  background: var(--surface);
+  box-shadow: var(--sh-out-lg);
+}
+.nm-raised-sm {
+  background: var(--surface);
+  box-shadow: var(--sh-out-md);
+}
+.nm-inset {
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-lg);
+}
+.nm-inset-sm {
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-md);
+}
+.nm-pressed {
+  background: var(--surface);
+  box-shadow: var(--sh-in-lg);
+}
+
+/* ---------- 布局骨架 ---------- */
+#app {
+  display: grid;
+  /* minmax(0, 1fr) 而非 1fr：1fr 的最小尺寸是 auto，
+     内容一旦超高就会把这一行撑破，100vh 也就守不住了。 */
+  grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
+  height: 100vh;
+}
+
+/* ---------- 标题栏 ---------- */
+#titlebar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: 0 var(--sp-6) 0 var(--sp-8);
+  background: var(--surface);
+  box-shadow: 0 4px 10px var(--sh-dark);
+  z-index: var(--z-sticky);
+  position: relative;
+  /*
+   * 标题栏整体可拖（data-tauri-drag-region="deep"），
+   * 拖动时若不禁用选中，会把「Nexus Panel」品牌文字和窗口标题
+   * 一起刷成蓝色选区 —— 松手后还留着。
+   * 按钮文字本来也不需要选中，整条标题栏禁用是安全的。
+   *
+   * 不要用 -webkit-app-region: drag 代替：那会让区域内所有
+   * 子元素失去点击能力，标题栏六个按钮会全部失效。
+   * Tauri 2 走 JS 方案（drag.js），不需要这个 CSS。
+   */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tb-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: var(--fw-strong, 600);
+  letter-spacing: .4px;
+  font-size: var(--fs-13, 13px);
+  min-width: 0;
+}
+.tb-logo {
+  width: 24px; height: 24px;
+  border-radius: var(--r-sm);
+  display: grid; place-items: center;
+  font-size: var(--fs-12, 12px);
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--sh-in-sm);
+}
+.tb-title {
+  color: var(--text-dim);
+  /* 三档标题制：这是分组标题档。原先 12/500 是自成一格的写法 */
+  font-weight: var(--title-2-fw, 600);
+  font-size: var(--title-2-fs, 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tb-spacer { flex: 1; height: 100%; }
+
+
+
+.tb-btns { display: flex; gap: var(--sp-4); }
+.tb-btn {
+  /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
+     将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
+  width: 30px; height: 26px;
+  border: 0; border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  display: grid; place-items: center;
+  box-shadow: var(--sh-out-sm);
+  transition: color, background-color, box-shadow var(--t);
+  font-size: var(--fs-12, 12px);
+  line-height: 1;
+}
+.tb-btn:hover { color: var(--text); }
+.tb-btn:active { box-shadow: var(--sh-in-sm); }
+.tb-btn.danger:hover { color: var(--danger); }
+
+/* ---------- 主体 ---------- */
+#body {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  /* 必须显式声明行：只写 columns 的话行是隐式 auto，
+     #main 的高度就由内容决定。而 #stage-scroll 是 absolute、
+     不贡献内容高度，于是整条链自我实现地塌到只剩标题栏 54px ——
+     表现就是「所有插件只看得见标题，看不见内容」。 */
+  grid-template-rows: minmax(0, 1fr);
+  transition: grid-template-columns var(--t);
+  min-height: 0;
+}
+#body.open { grid-template-columns: var(--sidebar-open) 1fr; }
+
+/* ---------- 响应式断点 ----------
+   窗口最小 940×620（见 src-tauri/tauri.conf.json），但**插件感知的是
+   iframe 自己的宽度**，不是窗口宽度：
+
+     窗口 940 − 侧边栏 218(展开) − stage padding 36 = 686px
+     窗口 940 − 侧边栏  86(收起) − stage padding 36 = 818px
+
+   所以插件里的断点按 iframe 宽度定，与窗口宽度差 150~250px。
+
+     1200px 及以上   宽松（双栏 / 三栏）
+     900 ~ 1200px    紧凑（单栏 / 收窄侧栏）
+     700px 及以下    极窄（纵向栏转横向条）
+
+   两条通用规则（"看不见右边"与"看不见下面"的根因）：
+
+   1) 横向 flex 容器必须能换行，或让子项可收缩
+      flex 子项默认 `min-width: auto`（不能比内容窄），窗口一窄就
+      把后面的兄弟挤出容器 —— 表现是"右边的东西不见了"。
+      要么容器加 `flex-wrap: wrap`，要么子项加 `min-width: 0` + 省略号。
+
+   2) 纵向 flex 容器滚动区必须写 `min-height: 0`
+      否则 `min-height: auto` 会让滚动区被内容顶开、`overflow: auto`
+      失效 —— 表现是"下面的内容看不见，且滚不动"。
+
+   本项目此前只有 project-group 有断点，其余界面在全尺寸下才正常。
+   ------------------------------------------------------------------ */
+
+/* ---------- 侧边栏 ---------- */
+#sidebar {
+  background: var(--surface);
+  box-shadow: 6px 0 14px var(--sh-dark);
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-7) var(--sp-6);
+  gap: var(--sp-6);
+  z-index: var(--z-raised);
+  overflow: hidden;
+}
+
+.side-toggle {
+  /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
+     将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
+  height: 34px;
+  border: 0; border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  box-shadow: var(--sh-out-md);
+  transition: color, background-color, box-shadow, padding var(--t);
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-4);
+  font-size: var(--fs-13, 13px);
+  flex: none;
+}
+.side-toggle:active { box-shadow: var(--sh-in-md); }
+.side-toggle span { white-space: nowrap; text-overflow: ellipsis; opacity: 0; width: 0; transition: opacity var(--t); font-size: var(--fs-12, 12px); }
+#body.open .side-toggle span { opacity: 1; width: auto; }
+#body.open .side-toggle { justify-content: flex-start; padding: 0 var(--sp-6); }
+
+#plugin-list {
+  flex: 1;
+  min-height: 0;   /* 缺它滚动区会被内容顶开、overflow 失效 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-2) var(--sp-1);
+}
+
+.nav-item {
+  /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
+     将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
+  position: relative;
+  height: 52px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-7);
+  border: 0;
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  box-shadow: var(--sh-out-md);
+  transition: color, background-color, box-shadow var(--t);
+  overflow: hidden;
+}
+.nav-item:hover { color: var(--text); }
+.nav-item.active {
+  color: var(--accent);
+  box-shadow: var(--sh-in-lg);
+  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+}
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 3px; height: 26px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  box-shadow: var(--glow-md);
+}
+.nav-icon {
+  font-size: var(--fs-18, 18px);
+  width: 22px;
+  text-align: center;
+  flex: none;
+  display: grid; place-items: center;
+}
+.nav-label {
+  font-size: var(--title-1-fs, 13px);
+  white-space: nowrap; text-overflow: ellipsis;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity var(--t), transform var(--t);
+  pointer-events: none;
+}
+#body.open .nav-label { opacity: 1; transform: none; }
+
+.nav-badge {
+  position: absolute;
+  right: 10px; top: 10px;
+  min-width: 16px; height: 16px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--danger);
+  color: var(--badge-fg);
+  font-size: var(--fs-10, 10px);
+  display: none;
+  place-items: center;
+  font-weight: var(--fw-strong, 600);
+}
+
+#sidebar-foot { display: flex; flex-direction: column; gap: var(--sp-5); flex: none; }
+
+/* ---------- 内容区 ---------- */
+#main {
+  display: grid;
+  /* #main 只有一个子元素 #main-inner，必须让它占满整格。
+     这里若写成两行（54px 1fr），main-inner 会被塞进第一行 54px，
+     它内部再分 54px + 1fr 时，#plugin-bar 吃掉全部高度，
+     #stage 只剩 1fr = 0 —— 标题栏正常、插件内容完全看不见。 */
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--sp-7) var(--sp-8) var(--sp-8) var(--sp-2);
+}
+#main-inner {
+  display: grid;
+  grid-template-rows: 54px minmax(0, 1fr);
+  min-height: 0;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--sh-out-lg);
+}
+
+#plugin-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-6);
+  padding: 0 var(--sp-9);
+  border-bottom: 1px solid var(--hairline);
+}
+#plugin-bar h1 {
+  font-size: var(--fs-15, 15px);
+  font-weight: var(--fw-strong, 600);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  letter-spacing: .3px;
+}
+#plugin-bar .sub { font-size: var(--fs-12, 12px); min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  color: var(--text-mute); }
+.bar-actions { margin-left: auto; display: flex; flex: none;
+  gap: var(--sp-4); }
+.bar-btn {
+  /* 不用 transition: all —— 它连 width / padding / font-size 一起动画，
+     将来谁加个尺寸属性就会变成"缓慢变形"。显式列出只让颜色与阴影过渡。 */
+  height: 30px; padding: 0 var(--sp-6);
+  border: 0; border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-12, 12px);
+  cursor: pointer;
+  box-shadow: var(--sh-out-sm);
+  transition: color, background-color, box-shadow var(--t);
+}
+.bar-btn:hover { color: var(--text); }
+.bar-btn:active { box-shadow: var(--sh-in-md); }
+
+#stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--sp-9);
+}
+#stage-scroll {
+  position: absolute;
+  inset: 18px;
+  overflow: auto;
+}
+
+/* ---------- 空状态 / 错误态 ---------- */
+/* 全屏大空态（原 .empty / .empty-mark）已移到 css/controls.css 的
+   .nx-empty.lg / .nx-empty-mark —— host.js 改用新类名，旧定义删除。
+   .drawer-empty 保留在这里：它是抽屉里的提示块（凹陷底板），
+   与全屏空态不是一个东西。 */
+.nx-empty.lg p { font-size: var(--fs-13, 13px); }
+
+.err-box {
+  max-width: 620px;
+  margin: 40px auto;
+  padding: 22px 24px;
+  border-radius: var(--r-lg);
+  background: var(--surface-overlay);
+  box-shadow: var(--sh-out-lg);
+}
+.err-box h3 { color: var(--danger); font-size: var(--fs-14, 14px); margin-bottom: 10px; }
+.err-box pre {
+  font-size: var(--fs-11, 11px);
+  line-height: 1.7;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--sp-6);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-md);
+  /* 必须显式改回 text。
+     根 body 上有 user-select:none（整个面板按桌面应用的观感处理，
+     拖标题栏时不会误选文字），而它会**继承**进来 ——
+     于是报错文字鼠标划不动、选不中，只能靠折叠区的"复制"按钮。
+     报错信息正是最需要手动摘一段贴给别人的东西，这里必须放开。 */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.err-box .row { margin-top: 16px; display: flex; gap: var(--sp-5); }
+
+/* ---------- 更新说明（UpdateCard 里的 upd-notes）----------
+   与 .err-box 同理：根 body 的 user-select:none 会继承进来，
+   而更新说明是"我要摘一段发给同事"的典型场景 —— 必须显式改回 text。
+   顺序不能反（先标准后前缀）：守卫按类名起、到第一个闭合花括号切块，
+   属性写到了块外就等于没写。 */
+.upd-notes {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-md);
+  color: var(--text-dim);
+  font-size: var(--fs-12, 12px);
+  line-height: var(--lh-relaxed, 1.6);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* ---------- 错误框里的诊断日志 ----------
+   默认折叠：多数人只关心「重试能不能好」，一大坨环境信息糊在脸上
+   反而挡住了那行错误。需要排查或要贴给开发者时再展开。 */
+.err-diag { margin-top: 16px; border-top: 1px solid var(--divider); padding-top: 12px; }
+.err-diag > summary {
+  cursor: pointer; font-size: var(--fs-12, 12px); color: var(--text-dim);
+  list-style: none; display: flex; align-items: center; gap: var(--sp-3);
+  user-select: none;
+}
+.err-diag > summary::-webkit-details-marker { display: none; }
+.err-diag > summary::before {
+  content: '▸'; font-size: var(--fs-10, 10px); transition: transform var(--dur-fast);
+}
+.err-diag[open] > summary::before { transform: rotate(90deg); }
+.err-diag > summary:hover { color: var(--text); }
+.err-diag-actions { margin: var(--sp-5) 0; display: flex; gap: var(--sp-4); }
+/*
+ * 日志正文：等宽 + 限制高度，长堆栈不会把整个错误框撑到屏幕外。
+ *
+ * ⚠️ 这里曾残留一个**没有规则体**的 `.err-diag-actions` 选择器，
+ * 于是下面这条被解析成 `.err-diag-actions .err-diag-body`（后代选择器）——
+ * 等宽与限高只在 .err-diag-actions 内部生效，正文本身一条都没吃到。
+ * 同类损伤 dead-class-test 的「截断规则」一项会拦（本次就是这样发现的）。
+ */
+.err-diag-body {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11, 11px);
+  line-height: 1.65;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+  padding: var(--sp-6);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+}
+
+/* ---------- 加载态 ---------- */
+.loader {
+  height: 100%;
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-5);
+  color: var(--text-mute); font-size: var(--fs-12, 12px);
+}
+
+/* ---------- 插件加载覆盖层 ----------
+   为什么要盖一层、而不是像以前那样把「正在加载…」直接塞进 stage：
+   以前 host.js 一挂上 iframe 就执行 hostEl.innerHTML = ''，
+   加载提示当场被清掉，而 iframe 又要等适配滤镜挂上才淡入 ——
+   中间那段时间（几十毫秒到 10 秒）屏上只有 iframe 的 --bg 底色，
+   什么都没有，用户分不清是「加载中」还是「坏了」。
+
+   现在加载层是**覆盖在插件之上**的兄弟节点，插件在下面照常加载渲染：
+     · 加载中 → 看到主题化的加载框
+     · 成功   → 加载层淡出，底下的插件已经就绪，不会闪
+     · 失败   → 换成主题化错误框
+   所以它必须有不透明底色（--bg），不能是 transparent —— 否则盖不住
+   下面还没显形的 iframe。 */
+/* .plugin-loading 的基础实现已移到 css/controls.css（.nx-loading）。
+   外壳这里挂 .nx-loading + 自己的 .plugin-loading，只保留两点差异：
+     · .loading-inner（外壳用它包圈 + 两行字：插件名 + 状态文案）
+     · .loading-done 这个类名（JS 里用的是它，不是 controls 的 .done） */
+.plugin-loading .loading-inner {
+  display: flex; align-items: center; gap: var(--sp-5);
+  padding: var(--sp-7) 20px;
+  border-radius: var(--r-lg);
+  background: var(--surface-overlay);
+  box-shadow: var(--sh-out-md);
+}
+.plugin-loading .loading-text { line-height: 1.5; }
+.plugin-loading .loading-name { color: var(--text); }
+/* 淡出：先让下面已就绪的插件透出来，再把自己摘掉 */
+.plugin-loading.loading-done { opacity: 0; pointer-events: none; }
+/* 系统开了「减少动效」就别淡出了，直接消失 */
+@media (prefers-reduced-motion: reduce) {
+  .plugin-loading { transition: none; }
+}
+/* .spinner 已移到 css/controls.css（动画改名 nx-spin，与 .nx-spinner 同组） */
+
+/* ---------- Toast ---------- */
+/* #toasts 的基础样式已移到 css/controls.css（与 .nx-toasts 同组）。 */
+/* .toast 的基础实现已移到 css/controls.css（与 .nx-toast 同组）。
+   状态色也一并过去了 —— .ok 必须是 --ok 而不是环境色，否则用户把环境色
+   调成红色就会得到「红色的成功提示」。这条曾被全量覆盖打回过一次，
+   controls.css 里的注释同样写明了原因，两边不要再各自漂移。 */
+
+/* ---------------- 悬浮提示（接管原生 title） ----------------
+   原生 title 有约 1 秒延迟且无法调整，所以自己实现一个"移上去立刻显示"。
+   样式对齐 .toast：同样用 --surface-overlay 实色底板，保证在玻璃主题下
+   也能读（详见 .dialog 处关于底板的说明）。 */
+.nexus-tip {
+  position: fixed;
+  z-index: var(--z-tooltip, 1200);
+  max-width: 280px;
+  padding: var(--sp-3) var(--sp-5);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-12, 12px);
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface-overlay, var(--surface-raised));
+  box-shadow: var(--sh-out-md);
+  border: 1px solid var(--border);
+
+  /* 关键：不能吃鼠标事件。否则提示出现在光标下方时会抢走 hover 目标，
+     立刻触发 mouseout → 隐藏 → 又 mouseover，疯狂闪烁。 */
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  /* 只做透明度过渡，位移由 JS 直接定位（避免过渡期间位置飘） */
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease;
+}
+.nexus-tip.on { opacity: 1; }
+
+/* ---------------- 开发者模式 · 元素检查器 ----------------
+   结构：.nx-insp-overlay 是一个 fixed 容器，里面四条边 + 一个尺寸角标，
+   中间镂空 —— 既能看清边界，又不遮住元素本身。
+   整体 pointer-events:none，否则它会抢走 hover 目标导致元素反复切换。 */
+.nx-insp-overlay {
+  position: fixed;
+  left: var(--x, 0); top: var(--y, 0);
+  width: var(--w, 0); height: var(--h, 0);
+  z-index: var(--z-inspector, 1500);
+  pointer-events: none;
+  display: none;
+}
+.nx-insp-overlay.on { display: block; }
+
+/* 四条边用 outline 般的实线 + 半透明填充：
+   实线保证在任意主题下都看得见（不依赖 --sh-* 双向阴影） */
+.nx-insp-overlay > div {
+  position: absolute;
+  border: 1px solid #4f9cf9;
+  background: rgba(79, 156, 249, .12);
+}
+.nx-insp-top    { left: -1px; right: -1px; top: -1px; height: 3px; }
+.nx-insp-bottom { left: -1px; right: -1px; bottom: -1px; height: 3px; }
+.nx-insp-left   { top: -1px; bottom: -1px; left: -1px; width: 3px; }
+.nx-insp-right  { top: -1px; bottom: -1px; right: -1px; width: 3px; }
+
+/* 信息条 */
+.nx-insp-badge {
+  position: fixed;
+  z-index: calc(var(--z-inspector, 1500) + 1);
+  display: none;
+  align-items: center;
+  gap: var(--sp-4);
+  max-width: 460px;
+  padding: 5px var(--sp-5);
+  border-radius: var(--r-xs, 6px);
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #e8eaed;
+  background: #1f2430;
+  border: 1px solid #4f9cf9;
+  box-shadow: var(--sh-cast-sm);
+  pointer-events: none;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.nx-insp-badge.on { display: flex; }
+.nx-insp-name   { color: #8ec5ff; font-weight: var(--fw-strong, 600); }
+.nx-insp-size   { color: #b9c0cc; }
+.nx-insp-plugin {
+  color: #ffd479;
+  padding: 1px var(--sp-3);
+  border-radius: var(--r-xs, 3px);
+  background: rgba(255, 212, 121, .14);
+}
+.nx-insp-warn   { color: #ff9d9d; }
+.nx-insp-locked { color: #9ae6a0; }
+
+/* 锁定后的一键复制按钮。
+   **必须** pointer-events:auto —— 信息条整体是 none（否则它挡在光标下会
+   抢走 hover 目标，元素反复切换、疯狂闪烁），按钮要能点就得单独打开。
+   选择器写成 `.nx-insp-badge .nx-insp-copy`（两个类）而不是单个类：
+   上面 `body.nx-inspecting *` 把光标强制成 crosshair 且带 !important，
+   单个类的优先级压不过它，按钮会显示成十字光标，看着不像能点。 */
+.nx-insp-badge .nx-insp-copy {
+  pointer-events: auto;
+  cursor: pointer !important;
+  flex: none;
+  padding: 0 5px;
+  margin-left: -2px;
+  font: inherit;
+  line-height: 1.4;
+  color: #9ae6a0;
+  background: rgba(154, 230, 160, .12);
+  border: 1px solid rgba(154, 230, 160, .45);
+  border-radius: var(--r-xs, 3px);
+}
+.nx-insp-badge .nx-insp-copy:hover { background: rgba(154, 230, 160, .24); }
+.nx-insp-badge .nx-insp-copy.ok { color: #b9f6bd; }
+
+/* 开启时把光标换成十字，给一个"当前在检查模式"的明确信号。
+   用 !important 是因为插件自己的 CSS 可能给按钮设了 cursor:pointer。 */
+body.nx-inspecting,
+body.nx-inspecting * { cursor: crosshair !important; }
+
+/* ============================================================
+   插件通用组件库（插件里直接用这些 class 就能保持风格统一）
+   ============================================================ */
+.p-card {
+  padding: 20px;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--sh-out-lg);
+}
+.p-card + .p-card { margin-top: 16px; }
+.p-card h2 {
+  font-size: var(--fs-13, 13px);
+  font-weight: var(--fw-strong, 600);
+  color: var(--text);
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: var(--sp-4);
+}
+.p-card h2::before {
+  content: "";
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: var(--glow-sm);
+}
+
+.p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--sp-8); }
+
+
+/* 外壳输入框的基础实现在 css/controls.css（与 .nx-input / .mm-input 同组）。
+   这里只写外壳特有的两点差异：
+     · width:100% —— 外壳表单是竖排撑满的，脑图那种紧凑行内则不是
+     · 内凹更深一档（--sh-in-lg）—— 外壳卡片面积大，浅了看不出来
+   两条都必须留：直接套用统一层会让现有输入框变窄、凹陷变浅。 */
+.p-input {
+  width: 100%;
+  padding: 0 var(--sp-7);
+  box-shadow: var(--sh-in-lg);
+}
+.p-input:focus { box-shadow: var(--sh-in-lg), 0 0 0 2px var(--accent-glow); }
+
+/* 以下四条的基础实现同样在 controls.css，这里只写外壳与默认值的差异：
+   .p-row 默认换行且间距更大；.p-muted 用更弱的 --text-mute */
+.p-row { gap: var(--sp-6); flex-wrap: wrap; }
+.p-muted { color: var(--text-mute); }
+.p-tag {
+  /* 胶囊圆角 + 内凹是外壳标签的观感，与脑图 .mm-chip 的方角外凸不同 ——
+     两者都是"标签"，但长相有意区分，所以这里保留差异 */
+  border-radius: var(--r-pill);
+  padding: 3px 9px;
+  font-size: var(--fs-11, 11px);
+  box-shadow: var(--sh-in-sm);
+}
+.p-stat {
+  padding: var(--sp-8);
+  border-radius: var(--r);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-lg);
+}
+.p-stat .k { font-size: var(--fs-11, 11px); color: var(--text-mute); }
+.p-stat .v { font-size: var(--fs-22, 22px); font-weight: var(--fw-strong, 600); color: var(--accent); margin-top: 4px; }
+
+/* ============================================================
+   插件容器与主题适配层
+   ============================================================ */
+.plugin-wrap {
+  position: relative;
+  /* height 必须显式给：只有 min-height 的话，本元素 height 仍是 auto，
+     子元素的百分比高度就没有参照物、会退化成 auto/0。
+     #stage-scroll 是 absolute + inset，有确定高度，所以这里的 100% 成立。 */
+  height: 100%;
+  min-height: 100%;
+  isolation: isolate;          /* 把 mix-blend-mode 限制在容器内，不影响外壳 */
+}
+
+/*
+ * 外框修饰层。host.js 里写的是 'plugin-wrap plugin-wrap-frame' 两个类，
+ * 但 frame 这层历史上定义过又消失，属于"覆盖写丢失"——
+ * 与 project-group 那 8 个类是同一类损伤，现在一并补回并由
+ * dead-class-test.mjs 守住。
+ *
+ * 只做视觉修饰（描边 + 圆角），不改布局：
+ * .plugin-wrap 已设 position:relative + height:100% + isolation:isolate，
+ * 在这里重复写会引入层叠冲突，所以刻意不碰。
+ *
+ * ⚠️ 这段在 2026-09-23 的「设置页卡片分组」提交里又被整段删掉过一次
+ * （同一处损伤第二次复现），现在补回第二版。
+ */
+.plugin-wrap-frame {
+  border: 1px solid var(--border, rgba(255, 255, 255, .12));
+  /* --r-card 全仓零定义，10px 恒生效。圆角档位实际是 --r-xl/lg/md/sm/xs，
+     没有 card 这一档 —— 要么归到 --r-md，要么补一个 --r-card 令牌，
+     两者都会改观感，故维持现状并记在这里。 */
+  border-radius: var(--r-card, 10px);
+  overflow: hidden;
+}
+
+.plugin-root { min-height: 100%; position: relative; }
+/* 挂载期遮罩：iframe 先隐身，等主题变量推完、适配滤镜也挂上再淡入。
+   --------------------------------------------------------------------
+   iframe 内是**独立文档**，UA 默认画布是白的，且不受父级 color-scheme 影响。
+   于是切换插件时会出现两段白：
+     ① iframe 文档已开始渲染、插件自己的 CSS 还没生效；
+     ② 插件是浅色第三方页面，主题适配（invert 滤镜）还没算完。
+   两段都在「挂载 → 适配完成」之间，深色面板下就是一闪而过的刺眼白底。
+
+   这里让 iframe 一开始 opacity:0（透出 #main-inner 的深色），
+   由 host.js 的 revealFrame() 在适配完成后摘掉，短淡入收尾。
+   不要给 .plugin-wrap 加背景色兜底 —— 插件文档背景是 transparent 时
+   （demo-iframe / mindmap）会永久露出那层底色，扁平主题下 bg 与 surface
+   不同色，等于把插件底的观感改掉了。
+
+   注意区分两件事：这里不给 .plugin-wrap 加底色（那是"永久"垫在插件底下，
+   会改掉透明插件的观感）；但 .plugin-frame 自己必须有 --bg —— 它只在
+   插件文档画不出东西时才露出来，正是需要兜底的那些时刻。 */
+.plugin-frame {
+  width: 100%;
+  /* 同理：靠 height 撑满，而不是只给 min-height。
+     否则 iframe 会退回替换元素的默认高度（150px），
+     在 #stage 高度不足时被 overflow:hidden 整块裁掉。 */
+  height: 100%;
+  min-height: 100%;
+  display: block;
+  border: 0;
+
+  /* 底板用主题底色，不能是 transparent：
+     ------------------------------------------------------------------
+     iframe 内是**独立文档**，UA 默认画布是白的，且不吃父级 color-scheme。
+     以下几种情况下内部文档根本画不出东西（或还没来得及画）：
+       · 入口文件缺失 / 未构建（webview 里就是一片白）
+       · 插件脚本报错，DOM 一个节点都没挂上
+       · 主题变量正经 postMessage 推过来之前的那一两百毫秒
+     这些时候露出的是 iframe **自己**的背景，transparent 就等于白底。
+     给成 --bg 后，上述三种情况都显示主题底色，深色面板下不再刺眼。
+
+     为什么是 --bg 而不是 --surface：--surface 在玻璃风格下是半透明的
+     （rgba），叠在 iframe 元素上会与下面的 #main-inner 叠两次、颜色发浑；
+     --bg 恒为不透明色，且新拟态下与 --surface 同值，观感一致。
+     插件文档自己声明了背景时会盖住这里，所以不影响 demo-light 这类
+     自带白底的第三方插件。 */
+  background: var(--bg);
+  color-scheme: dark;          /* 让 iframe 里的表单控件/滚动条也走深色 */
+  opacity: 0;
+  transition: opacity var(--dur-base) ease;
+}
+.plugin-frame.revealed { opacity: 1; }
+/* 系统开了「减少动效」就别淡入了，直接显示 */
+@media (prefers-reduced-motion: reduce) {
+  .plugin-frame { transition: none; }
+}
+
+/* 标题栏置顶按钮激活态 */
+.tb-btn.on {
+  color: var(--accent);
+  box-shadow: var(--sh-in-sm);
+}
+
+/* ---------- 工具栏插件（右上角那一排） ----------
+   主题 / 置顶 / 托盘 / MCP 状态 已抽成 kind:'toolbar' 插件，
+   由 js/toolbar-plugin.js 渲染进这个容器。
+   用 flex 而不是让按钮直接进 .tb-btns：插件那一排与窗口控制按钮
+   之间要留出间隔，且插件数量会变。 */
+.tb-toolbar {
+  display: flex;
+  gap: var(--sp-4, 8px);
+  margin-right: var(--sp-3, 6px);
+}
+
+/* 工具栏插件弹出的小菜单。
+   层级取 --z-tooltip 同档：菜单是"点开就消失"的临时层，
+   不必压过检查器（1500），但要压过普通内容。 */
+.tb-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-tooltip, 1200);
+}
+.tb-menu {
+  min-width: 160px;
+  padding: var(--sp-3, 6px);
+  border-radius: var(--r);
+  background: var(--surface);
+  /* 工具栏下拉菜单是**浮层**，阴影要够重才看得出浮在内容上。
+     此前写的是 var(--sh-out) —— 这个变量**从未定义过**，
+     整条声明直接失效，菜单是"贴"在页面上的，没有浮起感。 */
+  box-shadow: var(--sh-out-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1, 2px);
+}
+.tb-menu-item {
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: var(--sp-3, 6px) var(--sp-4, 8px);
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-12, 12px);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* --accent-soft 与 --surface-2 **两个都没定义**：兜底项自己也是空的，
+   于是整条声明失效 —— 鼠标划过菜单项**没有任何反馈**。 */
+.tb-menu-item:hover:not(:disabled) { background: var(--surface-raised); }
+.tb-menu-item:disabled {
+  color: var(--text-dim);
+  cursor: var(--ctl-disabled-cursor, not-allowed);
+}
+.tb-menu-sep {
+  height: 1px;
+  margin: var(--sp-2, 4px) 0;
+  background: var(--border, var(--text-dim));
+  opacity: 0.4;
+}
+
+/* ---------------- 插件设置抽屉 ----------------
+   这一整套 class（.drawer / .drawer-head / ...）此前**完全没有样式定义** ——
+   两个外壳（React 的 PluginSettingsDrawer.tsx 与原生 js/shell.js）都在用，
+   但 css/ 下搜不到任何一条规则。结果 aside.drawer 就是个裸 div：
+   标题栏里的 h2、副标题、关闭按钮按普通文档流各占一行，也没有底板。
+   .drawer-mask 继承了 .mask 的 place-items:center（居中弹窗用的），
+   抽屉是右侧滑出，必须覆盖成"满高 + 靠右"。 */
+.drawer-mask {
+  place-items: stretch end;
+  /* 默认透明且不挡点击：mask 创建后要等 raf 才加 .on，
+     中间那一帧若仍可交互，会吃掉用户对背后界面的操作 */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-base) ease;
+}
+.drawer-mask.on { opacity: 1; pointer-events: auto; }
+
+.drawer {
+  width: 420px;
+  max-width: 92vw;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* 用 --bg 而不是 --surface：这是最外层容器，底下就是遮罩，
+     用卡片色会和里面的 p-card 撞成一片，分不出层次 */
+  background: var(--bg);
+  box-shadow: var(--sh-cast-lg);
+  /* 右侧滑入。放在 transform 上（而非 margin/left）是为了走合成层，
+     不触发逐帧重排 */
+  transform: translateX(100%);
+  transition: transform var(--dur-base) ease;
+}
+.drawer-mask.on .drawer { transform: none; }
+
+/* 标题框：左标题 + 右关闭，自带底板与下分隔线 */
+.drawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: var(--sp-6);
+  padding: var(--sp-7) var(--sp-9);
+  background: var(--surface-overlay);
+  /* 必须用 --divider：--border 是风格开关，新拟态下是 transparent，
+     用它会让这条分隔线整条消失（与 agent-flow 那次同一个坑） */
+  border-bottom: 1px solid var(--divider);
+}
+.drawer-title { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+/* 副标题（运行模式 · 版本）。原先是 .p-muted + 内联写死 11px，
+   与标题的字号关系全靠那个内联值撑着，改不动。 */
+.drawer-sub {
+  font-size: var(--fs-note);
+  color: var(--text-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.drawer-title h2 {
+  margin: 0;
+  font-size: var(--title-1-fs, 13px);
+  font-weight: var(--title-1-fw, 600);
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 关闭按钮：.tb-btn 默认是 30×26、底板用 --surface，
+   在 --surface-overlay 的标题框上会糊，这里垫高一级并放大一点 */
+.drawer-head .tb-btn {
+  flex: none;
+  width: 32px; height: 30px;
+  font-size: var(--fs-14, 14px);
+  background: var(--surface-raised);
+}
+
+/* 内容区：标题栏固定，剩下的可滚动 —— min-height:0 不能省，
+   flex 子项默认 min-height:auto，会被内容顶开导致滚动失效 */
+.drawer-scroll { flex: 1; min-height: 0; overflow: auto; }
+.drawer-body { padding: var(--sp-8) var(--sp-9); }
+/* 抽屉只有 420px，而 .err-box 是给居中弹窗设计的（620px + 40px 外边距），
+   直接放进来会又窄又偏，这里按抽屉宽度重排 */
+.drawer-body .err-box { max-width: none; margin: 0; }
+
+.drawer-empty {
+  padding: var(--sp-7) var(--sp-8);
+  border-radius: var(--r);
+  color: var(--text-dim);
+  font-size: var(--fs-12, 12px);
+  line-height: 1.7;
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+}
+
+/* ---------- 外壳区块（#dw-shell）----------
+   抽屉里插件自己的设置在 .drawer-body（自带 16px 18px 内边距），
+   外壳固定提供的这一段紧随其后，但 #dw-shell 原先**没有内边距** ——
+   于是上面的插件区缩在里面、下面的外壳区贴着抽屉边，两块根本不对齐。
+   这是它看起来"没排版"的第一眼原因。 */
+#dw-shell { padding: 0 var(--sp-9) var(--sp-9); }
+/* 插件没提供设置面板时 .drawer-body 是空的，这里要自己撑出上边距，
+   否则第一张分区卡片会直接贴到标题栏分隔线上。 */
+.drawer-body:empty + #dw-shell { padding-top: var(--sp-9); }
+
+/* 尊重系统"减少动效"：滑入改为直接出现 */
+@media (prefers-reduced-motion: reduce) {
+  .drawer-mask, .drawer { transition: none; }
+  .drawer { transform: none; }
+}
+
+/* ---------------- 弹窗 ---------------- */
+.mask {
+  position: fixed;
+  inset: 0;
+  background: var(--mask);
+  display: grid;
+  place-items: center;
+  z-index: var(--z-mask);
+  backdrop-filter: blur(2px);
+}
+/* 弹窗同时挂着 .p-card，底板要在这里压过 .p-card 的 --surface：
+   弹窗是模态的，要盖住后面的界面并承载阅读，底板必须比普通卡片更实。
+   此前玻璃主题下弹窗只有 7% 白，后面 93% 的界面直接透上来，
+   弹窗里的文字和背景里的文字叠在一起，根本读不了。
+   
+   投影也叠了一层**固定黑色**（不依赖 --sh-*）：主题那组双向阴影在
+   浅色主题下最弱（纯白底没有"更亮"的空间，见顶部规范八），
+   而弹窗是最需要"浮起来"的容器，不能把边界寄托在它上面。 */
+.dialog {
+  width: 440px;
+  max-width: calc(100vw - 40px);
+  background: var(--surface-overlay);
+  box-shadow: var(--sh-out-lg), var(--sh-cast-md);
+}
+.dialog select.p-input { appearance: none; cursor: pointer; }
+.dialog select.p-input option { background: var(--surface-overlay); color: var(--text); }
+
+/* ============================================================
+   主题风格增强
+   同一套 CSS 靠变量切换三种风格（由 theme-manager 覆写 --border / --blur）：
+     新拟态 → --border 透明、--blur 0，靠双向阴影
+     扁平   → --sh-* 与底色接近（阴影隐形），靠 --border 描边
+     玻璃   → --surface 半透明 + --blur 毛玻璃
+   ============================================================ */
+#titlebar, #sidebar, #main-inner, .p-card, .p-stat, .p-input,
+.nx-toast, .toast, .err-box, .dialog, .nx-empty-mark, .p-tag, .nav-item,
+.p-btn, .bar-btn, .tb-btn, .side-toggle {
+  border: 1px solid var(--border);
+}
+
+/* 毛玻璃：只给页面级容器，且**只在玻璃风格下**应用。
+   --------------------------------------------------------------------
+   backdrop-filter 只要不是 none，就会**同时**造成两件事：
+     1. 该元素成为一个层叠上下文；
+     2. 该元素成为其 position:fixed 后代的包含块。
+   两者都不是"想要就有、不想要就没"的可选项，而是这个属性的固有副作用。
+
+   于是：一个 .p-card 里的 fixed 浮层（右键菜单、凭证弹层、颜色拾取器……）
+     · 位置会相对**这张卡片**计算，而 left/top 写的是视口坐标 → 整体偏移；
+     · z-index 被关进卡片的层叠上下文，只在卡片内部参与排序，
+       再也无法和相邻卡片比较 → 被 DOM 里靠后的兄弟卡片盖住。
+
+   两点容易踩的坑，特此写明：
+
+   ① **--blur 为 0 时副作用照样存在。** blur(0px) 不等于 none，
+      规范看的是"计算值是否为 none"，不是"模糊半径是否为 0"。
+      所以新拟态 / 扁平这些默认风格（--blur: 0px）同样会踩到，
+      这也是这个问题一直没被联想到 backdrop-filter 上的原因。
+      按 data-theme-style 限定后，非玻璃风格根本不声明该属性 → 副作用消失。
+
+   ② **.p-card 不参与毛玻璃。** 它本来就嵌在 #main-inner（或 iframe 内的
+      对应容器）里，而那层已经模糊过一次；对"已模糊 + 半透明覆盖"的内容
+      再模糊一次，视觉增益几乎为零，却要付出上面两个副作用的代价 ——
+      收益与成本严重不成比例，因此直接移除。
+      需要浮层的插件（project-group 的菜单、agent-flow 的凭证弹层、
+      mindmap 的各类浮层）都因此受益。
+
+   注：插件若在 iframe 里，宿主这边的 #main-inner 影响不到它，
+   但插件自己引入的本文件里 .p-card 仍在生效 —— 所以 .p-card 这一处
+   对两种挂载模式都有效。
+*/
+/* 玻璃主题下的毛玻璃容器。
+   ------------------------------------------------------------------
+   .dialog **刻意不在此列**：
+
+   `backdrop-filter` 只要计算值不是 none，就会同时造成两件不可分离的事：
+     ① 该元素成为层叠上下文 → 内部浮层的 z-index 被关在里面排序
+     ② 该元素成为其 position:fixed 后代的包含块 → fixed 相对它而非视口
+
+   .dialog 里会再开一层弹窗（IconPickDialog / BackupDialog 就是嵌套的），
+   而它们的遮罩 .mask 是 position:fixed; inset:0。
+   一旦 .dialog 带 backdrop-filter，嵌套的遮罩就只盖住父弹窗那一块，
+   而不是整个视口 —— 表现为"弹窗里再弹窗，外面那圈没被遮住"。
+
+   而模糊在这里**根本看不见**：.dialog 的底板是 --surface-overlay，
+   注释里写明"必须比普通卡片更实"（弹窗要承载阅读），背景已被完全遮住。
+   收益为零，代价是困住遮罩 —— 与 .p-card 那次是同一个判断。 */
+html[data-theme-style='glass'] #titlebar,
+html[data-theme-style='glass'] #sidebar,
+html[data-theme-style='glass'] #main-inner,
+html[data-theme-style='glass'] .toast,
+html[data-theme-style='glass'] .err-box {
+  /*
+   * ② saturate 必须与 blur 写在**同一条声明**里。
+   * 拆成两行时后者会整条覆盖前者（Safari 尤其如此），
+   * 结果只剩饱和度、模糊没了。
+   */
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+  /* ④ 边缘高光：勾出玻璃厚度 */
+  border-color: var(--frost-edge);
+}
+
+/* 
+ * ③ 颗粒层 —— 磨砂感的物理来源。
+ * ------------------------------------------------------------------
+ * 纯 blur 是"数字化平滑"，真实磨砂表面有细微颗粒在散射光。
+ * 少了这一层，再大的 blur 也只是"虚化"，不是"磨砂"。
+ *
+ * 实现要点（都是踩过的坑）：
+ *   · ::before 而非 ::after —— 伪元素默认画在内容之后，
+ *     用 after 会盖在文字上方，把正文也糊上一层颗粒。
+ *   · pointer-events: none —— 否则这一层会吞掉整块面板的点击。
+ *   · z-index: 0 + 容器 position: relative —— 让它待在背景层，
+ *     不参与内容的层叠排序。
+ *   · 只平铺 128px 小块 —— 全屏 filter:url() 会按元素尺寸光栅化，
+ *     4K 视口下首屏开销明显。
+ *   · 必须 static，绝不动画 —— 动 baseFrequency 会让整个
+ *     湍流场每帧重算。
+ *
+ * --frost-grain 为 0 时（非玻璃风格）整层自动失效，不产生任何绘制。
+ */
+html[data-theme-style='glass'] #titlebar,
+html[data-theme-style='glass'] #sidebar,
+html[data-theme-style='glass'] #main-inner,
+html[data-theme-style='glass'] .toast,
+html[data-theme-style='glass'] .err-box {
+  position: relative;
+}
+html[data-theme-style='glass'] #titlebar::before,
+html[data-theme-style='glass'] #sidebar::before,
+html[data-theme-style='glass'] #main-inner::before,
+html[data-theme-style='glass'] .toast::before,
+html[data-theme-style='glass'] .err-box::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-flat);
+  pointer-events: none;
+  border-radius: inherit;
+  background-image: var(--frost-noise);
+  background-size: 128px 128px;
+  opacity: var(--frost-grain);
+  /* overlay 让颗粒"烧进"表面而不压死底色；
+     浅色主题下颗粒偏对比，改用 soft-light（见 themes.js 按基调分档） */
+  mix-blend-mode: var(--frost-blend, overlay);
+}
+
+/* 切换主题时的短暂过渡（由 theme-manager 临时挂上 .theme-transition） */
+html.theme-transition,
+html.theme-transition *:not(.spinner) {
+  transition: background-color var(--dur-slow) ease, background-image var(--dur-slow) ease,
+              color var(--dur-slow) ease, border-color var(--dur-slow) ease,
+              box-shadow var(--dur-slow) ease !important;
+}
+
+/* ---------------- 主题选择器 ---------------- */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(152px, 1fr));
+  gap: var(--sp-7);
+}
+/* 标题栏弹出层里用更密的网格，一屏能看更多套 */
+.theme-grid.compact {
+  grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+  gap: var(--sp-5);
+}
+
+/* ---------- 标题栏主题弹出层 ---------- */
+.theme-pop-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+}
+.theme-pop {
+  position: fixed;
+  z-index: var(--z-pop);
+  width: min(430px, calc(100vw - 24px));
+  max-height: min(70vh, 620px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  box-shadow: var(--sh-out-xl);
+  overflow: hidden;
+  animation: pop-in var(--anim-in) ease-out;
+}
+.theme-pop:focus { outline: none; }
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+.theme-pop-head {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: var(--sp-4);
+  padding: 13px var(--sp-8) 9px;
+  font-size: var(--title-1-fs, 13px);
+  font-weight: var(--title-1-fw, 600);
+  border-bottom: 1px solid var(--hairline);
+}
+/* 键盘提示右对齐，不抢标题的位置 */
+.theme-pop-hint {
+  margin-left: auto;
+  font-size: var(--fs-11, 11px);
+  font-weight: 400;
+  color: var(--text-mute);
+}
+.theme-pop-body {
+  padding: var(--sp-6) var(--sp-8) var(--sp-8);
+  overflow-y: auto;
+}
+/* ---------- 分组容器（设置页与弹出层共用同一套结构） ----------------
+   .theme-group 必须包住「标题 + 网格」两层：设置页与标题栏弹出层都这么写，
+   间距规则才能只用一条 .theme-group + .theme-group 表达。
+   此前弹出层是直接往 body 里平铺标题与网格，于是 .theme-group-title
+   只在 .theme-pop-body 下才有 margin —— 设置页里它是一条没有任何样式的
+   裸 div，上下间距为 0，卡片直接压在标题文字上。 */
+.theme-group + .theme-group { margin-top: 24px; }
+.theme-group-title {
+  margin: 0 0 var(--sp-5);
+  padding-left: 2px;
+  font-size: var(--title-2-fs, 12px);
+  font-weight: var(--title-2-fw, 600);
+  letter-spacing: .3px;
+  color: var(--text-dim);
+}
+/* 弹出层里分组之间收紧一点，一屏能多看几套 */
+.theme-pop-body .theme-group + .theme-group { margin-top: 16px; }
+.theme-pop-body .theme-group:first-child .theme-group-title { margin-top: 2px; }
+/* 弹出层里卡片更紧凑：预览矮一点、名称字号小一点 */
+.theme-pop .theme-prev { height: 48px; padding: var(--sp-4) var(--sp-5); gap: 7px; }
+.theme-pop .theme-prev .sw { width: 26px; height: 26px; border-radius: var(--r-sm); }
+.theme-pop .theme-foot { padding: 7px var(--sp-5) 1px; }
+.theme-pop .theme-name { font-size: var(--fs-12, 12px); }
+.theme-pop .theme-desc { padding: 0 var(--sp-5) 9px; font-size: var(--fs-10, 10px); }
+.theme-pop .theme-badge { font-size: var(--fs-10, 10px); padding: 1px 5px; }
+
+/* ---------- 设置页分页 ----------
+   由横排改为**左竖排**：
+     · 7 个标签横排要折行，且白占内容区顶部一条
+     · 竖排后内容区能占满宽度 —— 主题缩略图因此能多排一列
+
+   为什么放 neumorphism.css 而不是 settings.css：
+   设置页**两种模式下都是同页插件**（type:'module'），
+   而 settings.css 是给 iframe 写的补丁、同页下刻意不加载（它那条
+   #root 规则会命中宿主自己的根容器）。放那里等于没写。
+
+   同页下不需要滚动容器：设置页挂在 .plugin-root 里，滚动由宿主的
+   #stage-scroll 负责。这里刻意**不给 .set-body 设 overflow**，
+   否则会出现"内容区自己滚、宿主也在滚"的双滚动条。
+   iframe 下由 settings.css 的 #root 滚动链接管（.set-wrap 的
+   flex:1 / min-height:0 正是为那条链准备的）。 */
+.set-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-7);
+  flex: 1;
+  min-height: 0;
+}
+.set-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  flex: none;
+  width: 136px;
+  position: sticky;
+  top: 0;
+  /*
+   * 整条导航放进一个内凹槽里。
+   * 竖排后它是一条**侧栏**，不再只是"顶上一排按钮"——
+   * 有个容器边界才看得出"这是导航、那边是内容"。
+   */
+  padding: 5px;
+  border-radius: var(--r);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-md);
+}
+.set-tab {
+  /*
+   * 38px 而不是横排时的 32px。
+   * 横排时一行挤 7 个，高度必须压着；竖排后每个独占一行，
+   * 沿用 32px 会显得又扁又挤（尤其带 13px 文字时上下留白只剩 6px）。
+   */
+  position: relative;
+  height: 38px;
+  padding: 0 var(--sp-6) 0 var(--sp-8);
+  display: flex;
+  align-items: center;
+  text-align: left;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-13, 13px);
+  cursor: pointer;
+  transition: color var(--t), background var(--t), box-shadow var(--t);
+  white-space: nowrap;
+}
+.set-tab:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+.set-tab.active {
+  color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--sh-out-sm);
+  /* 强调不改 font-weight：字重会改字形宽度 → 按钮宽度变 → 整排布局跳动。
+     改用描边模拟"变实"，描边不参与布局计算（见 :root 的 --ctl-faux-bold） */
+  -webkit-text-stroke: var(--ctl-faux-bold, 0.4px) currentColor;
+}
+/*
+ * 选中态左侧的强调色竖条。
+ * 只靠"变个颜色"在竖排里不够显眼 —— 7 个灰字排一列时，
+ * 视线扫过去很难立刻定位当前在哪一页。
+ * 用 ::before 而不是改 border-left：border 会把文字往右推 3px，
+ * 选中的那一项会因此和其余项错位。
+ */
+.set-tab.active::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: var(--r-xs, 2px);
+  background: var(--accent);
+}
+/* 内容区：占满剩余宽度。min-width:0 不可省 ——
+   flex 子项默认 min-width:auto，里面的 p-mono 长路径会把这一列撑破，
+   表现为内容区越来越宽、把导航挤出去。 */
+.set-body { flex: 1; min-width: 0; }
+
+/* ---------- 插件行：末尾两格定宽 ----------
+   插件管理里每行是「图标 · 名称(弹性) · 沙箱 · 样式 · 主题下拉 · 内置/移除」。
+
+   ⚠️ 为什么必须定宽，不能靠内容自然撑开
+   名称那一列是 flex:1，它吃掉**所有剩余空间**。于是末尾任何一格宽度
+   发生变化，被挤掉的宽度都由它承担 —— 结果是它前面（右侧）的所有格子
+   整体左右挪动。
+
+   实测表现：「内置」是 .p-tag（11px + padding 3/9），「移除」是
+   .p-btn.danger（12px + padding 0/10 + 边框），同一个位置两种宽度 ≈ 差 6px。
+   内置行与非内置行之间，主题下拉框（就是那个「跟随全局」的下拉）
+   会左右错位；样式徽标「样式 ✓」与「样式 12」同理也会跳。
+
+   所以这两格写死宽度，与里面放什么无关。数值取两种形态里较宽的那一档：
+     · 样式徽标：最宽是「样式 12」≈ 62px
+     · 末尾动作：最宽是「移除」按钮 ≈ 46px
+   内容居中右对齐，短的那个（如「内置」）靠右排，视觉上仍是同一列。 */
+.p-slot-audit {
+  flex: none;
+  width: 64px;
+  display: flex;
+  justify-content: flex-end;
+}
+.p-slot-act {
+  flex: none;
+  width: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+/* 格内的按钮撑满格子，宽度就与格子一致，不再随字数变 */
+.p-slot-audit > button { width: 100%; }
+/* 「内置」这类标签放进格子后不要被压缩，也不要撑破格子 */
+.p-slot-act > .p-tag { flex: none; max-width: 100%; }
+
+/* ---------- 主题卡片 ---------- */
+.theme-card {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--sh-out-md);
+  border: 1px solid var(--border);
+  transition: transform var(--t), box-shadow var(--t);
+  color: var(--text);
+  font-family: inherit;
+}
+.theme-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sh-out-lg);
+}
+/* 键盘走位时的焦点环与选中态外观一致，避免两套"当前项"长得不一样 */
+.theme-card:focus-visible {
+  outline: none;
+  box-shadow: var(--sh-out-lg), 0 0 0 2px var(--accent);
+}
+.theme-card.active {
+  box-shadow: var(--sh-in-md),
+              0 0 0 2px var(--accent);
+}
+/* 缩略图：左块（主题自己的阴影）+ 右半的"迷你界面"（正文线 / 强调色条） */
+.theme-prev {
+  position: relative;
+  height: 58px;
+  padding: var(--sp-5) 11px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  overflow: hidden;
+}
+.theme-prev .sw { width: 30px; height: 30px; border-radius: var(--r-sm); flex: none; }
+.tp-mid {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.tp-line { height: 4px; width: 100%; border-radius: var(--r-pill); opacity: .95; }
+.tp-line.dim { width: 62%; opacity: .65; }
+/* ⚠️ 这里**不能**叫 .tp-row —— 那是个撞车的名字。
+   controls.css 第 1945 行有一条 `.tp-row`（主题参数面板的「参数行」：
+   左文右控件，带内凹底色与圆角），与本条**同名而不同物**：本条是
+   主题缩略图里那排小色条。二者都出现在设置页，而本文件后于
+   controls.css 加载，于是：
+     · 缩略图那条会平白吃到参数行的 padding / background / box-shadow
+       → 预览里多出一个下沉小盒子；
+     · 参数行的 align-items / gap / margin-top 又被本条改掉
+       → 行距与对齐不是 controls.css 里写的设计值。
+   改名（tp-bars）把两者彻底分开：缩略图这组只在 .tp-mid 内出现，
+   与参数行毫无关系，不该共用类名。
+   同理 .tp-line 也在 .tp-mid 内，但它没有被别的组件占用，故未改。 */
+.tp-bars { display: flex; align-items: center; gap: var(--sp-2); margin-top: 2px; }
+.theme-prev .bar { flex: 1; height: 8px; border-radius: var(--r-pill); }
+.theme-prev .bar.s { flex: none; width: 18px; opacity: .6; }
+/* 当前主题：缩略图很小，光靠描边看不出来，再补一个勾 */
+.theme-check {
+  position: absolute; top: 5px; left: 5px;
+  width: 15px; height: 15px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: var(--fs-10, 10px); line-height: 1; color: var(--badge-fg);
+  background: var(--accent);
+  box-shadow: var(--sh-cast-xs);
+}
+.theme-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-6) var(--sp-1);
+}
+/* 主题名用**当前主题**的正文色，不是预览主题自己的 --text。
+   卡片底板、阴影、描边都是当前主题的（--surface / --sh-*），
+   只有缩略图那一小块才属于"被预览的主题"。
+   若拿预览主题的 --text 写名字，深色面板下预览浅色主题就是
+   深色字压深色底（实测最低 1.3:1）—— 名字直接看不见。
+   颜色一律交给 CSS，JS 侧不要再 inline 覆盖。 */
+.theme-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs-12, 12px);
+  font-weight: var(--fw-strong, 600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 选中态除了描边与勾，名字走强调色、说明提亮一档 ——
+   内凹阴影会把卡片面压暗，辅助文字留在 --text-mute 会显得脏 */
+.theme-card.active .theme-name { color: var(--accent); }
+.theme-card.active .theme-desc { color: var(--text-dim); }
+/* 风格角标：新拟态 / 扁平 / 玻璃 */
+.theme-badge {
+  flex: none;
+  padding: 1px var(--sp-3);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-10, 10px);
+  line-height: 1.6;
+  color: var(--text-dim);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-xs);
+}
+.theme-desc { padding: 0 var(--sp-6) 11px; font-size: var(--fs-11, 11px); color: var(--text-mute); line-height: 1.5; }
+.theme-del {
+  position: absolute; top: 6px; right: 6px;
+  width: 20px; height: 20px; border: 0; border-radius: 50%;
+  background: var(--danger); color: var(--badge-fg); cursor: pointer;
+  font-size: var(--fs-12, 12px); line-height: 1; display: none; place-items: center;
+}
+.theme-card:hover .theme-del { display: grid; }
+
+/* 插件注入的侧边栏条目：与普通插件项区分开（缩进 + 弱化 + 左侧标记） */
+.nav-item.nav-item-injected {
+  padding-left: 26px;
+  opacity: .88;
+  font-size: var(--fs-12, 12px);
+}
+.nav-item.nav-item-injected .nav-icon { opacity: .8; font-size: var(--fs-12, 12px); }
+.nav-item.nav-item-injected:hover { opacity: 1; }
+.nav-item.nav-item-injected::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: .55;
+}
+
+
+/* ---------------- 主题色调整滑块 ---------------- */
+/* 面板里没用过 range，这里补一套贴合当前主题的样式。
+   thumb 用强调色，轨道用凹陷底色 —— 与 slider 的语义一致。 */
+.p-range {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunk, rgba(0, 0, 0, .2));
+  border: 1px solid var(--border, transparent);
+  outline: none;
+  cursor: pointer;
+}
+.p-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--border, transparent);
+  cursor: pointer;
+}
+.p-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--border, transparent);
+  cursor: pointer;
+}
+.p-range:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-glow, rgba(91, 140, 255, .3));
+}
+
+/* ---------------- 右上角按钮 · 插件卡片矩阵（设置页） ----------------
+   放在本文件而不是 plugins/settings/settings.css：
+   后者是 **iframe 专用补丁**，同页嵌合模式刻意不引入它
+   （见 plugins/settings/module.tsx 的说明）。写在那里的规则
+   在同页模式下等于没写 —— 设置页两种模式都得能看见这张卡片。
+
+   布局照"商店货架"：铺满可用宽度自动换行，每张卡自成一格。
+
+   列宽下限 300px（原 148px）：148 是**只有图标 + 名称 + 两个按钮**时
+   量出来的，再窄按钮就会挤成两行、看着像两个不同的控件。后来卡片里
+   又加了两行内容 —— entry 路径（沙箱插件的入口文件，往往很长）和
+   基调判定方式下拉（"跟随全局"加上箭头就百来像素）——
+   148px 下这两行会各被折成两段、下拉被压到只剩箭头。放到 300px 才排得下。 */
+.tb-shop {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-4, 8px);
+  margin-top: var(--sp-4, 8px);
+}
+.tb-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3, 6px);
+  min-width: 0;
+  padding: var(--sp-4, 8px) var(--sp-5, 10px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  /* 走 --sh-in-sm：与 tokens.css 那一档数值完全一致（inset 2px/5px）。
+     在这里重写一遍等于同时维护两份，改档位时容易只改一边。 */
+  box-shadow: var(--sh-in-sm);
+}
+/* 已加入的给一圈内描边：一眼能分出"已经在右上角了"和"还可以加"，
+   不靠颜色区分 —— 语义色（--accent）留给状态，不要拿来当装饰。 */
+.tb-card.joined {
+  box-shadow: var(--sh-in-sm), inset 0 0 0 1px var(--accent);
+}
+/* 已隐藏的整卡压暗：右上角没有它，卡片也不该是"待命"的观感。 */
+.tb-card.is-hidden { opacity: .55; }
+
+.tb-card-top {
+  display: flex; align-items: center; gap: var(--sp-3, 6px);
+  min-width: 0;
+}
+.tb-card-icon {
+  flex: none; width: 22px; text-align: center;
+  font-size: var(--fs-15, 15px);
+}
+/* 名称可能很长（插件名是用户自己起的），截断但不换行 ——
+   卡片高度必须一致，否则矩阵会出现参差的空洞。 */
+.tb-card-name {
+  min-width: 0; flex: 1;
+  font-size: var(--fs-12, 12px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tb-card-meta {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-dim);
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* margin-top:auto 把两个按钮压到卡片底部：
+   名称占一行还是两行不影响按钮对齐 —— 矩阵里高度参差最显眼的就是按钮。 */
+.tb-card-btns {
+  display: flex; gap: var(--sp-3, 6px);
+  margin-top: auto;
+}
+/* ⚠️ 这里曾有 .tb-card-entry（入口文件路径）、.tb-card-field（基调判定行）、
+   .tb-group（三组容器）三条规则，均为**幽灵规则**：全仓代码 0 处引用。
+   来历：设置页插件栏改「左列表 + 右详情」（.pg-*）时，这三行对应的 UI
+   就撤掉了，规则却留了下来。无构建版 index.js 仍是平铺 .tb-card，但它
+   只用到 top/icon/name/meta/btns，不含这三块。
+   已删。
+
+   ⚠️ 本注释原写「同类问题由 mindmap-test『CSS 幽灵规则』一节与全仓扫描
+   守着」—— 这句**是错的**，2026-09-29 已核实并更正：
+     · mindmap-test 那一节扫的是 plugins/mindmap/ 自己的 styles.css 与
+       本插件的 js/html，**不覆盖本文件**；
+     · dead-class-test 第 7 节确实守反方向（「真废弃」= 定义了没人用），
+       但它只守**全仓汇总不超过基线**，不守单个文件、也不逐个点名。
+   ⚠️ 下面这段原写的实测底数也是错的，一并更正。
+
+   复核实测（2026-09-29，与 dead-class-test 同口径、排除 dist）：
+   本文件 **222** 个定义类中 **25** 个全仓 0 引用（原写 224 / 7 是错的）。
+     · is-ok / is-fail / is-hidden —— `is-${state}` 拼接，在用；
+     · md-toc-lv1~6 —— `md-toc-lv${level}` 拼接，在用；
+     · 其余（nm-* / nx-insp-* / joined / mute）已登记在第 7 节
+       的档位与前缀白名单里，由汇总守卫兜住。
+   ⚠️ 原文说「nexus-tone-overlay 是唯一真候选、样式却留了下来」—— 也是
+   错的：它的规则本文件里**已被整块注释掉**（见 2710 行附近），
+   stripComments 后根本不在 222 个定义类里，谈不上"留了下来"。
+   把它当真候选，会让人去找一个已经不存在的规则。
+
+   这一维的守卫仍待补；在此之前，别再引用不存在的那一节。 */
+
+/* ============================================================
+   md 插件（同页 module 插件）
+   ------------------------------------------------------------
+   写在 neumorphism.css 而不是 settings.css：
+   后者是 iframe 专用补丁，同页嵌合模式刻意不加载它，
+   写在那里的样式对同页插件等于没写（这条踩过一次，故显式说明）。
+
+   F6 主题跟随：颜色**全部**读宿主变量，一处都不写死色板。
+   写死的后果是切主题时这片不变，而其它地方都变了 ——
+   看起来像"插件坏了"，实际是没跟随。
+   ============================================================ */
+.md-wrap {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  padding: var(--sp-4, 8px);
+  box-sizing: border-box;
+}
+.md-panes {
+  display: flex; gap: var(--sp-4, 8px);
+  flex: 1; min-height: 0;
+}
+.md-pane {
+  display: flex; flex-direction: column;
+  flex: 1; min-width: 0; min-height: 0;
+}
+.md-pane-t {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-dim);
+  margin-bottom: 3px;
+  flex: none;
+}
+/* 左：源文本 */
+.md-src {
+  flex: 1; min-height: 0; resize: none;
+  background: var(--surface-sunk);
+  color: var(--text);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm, 8px);
+  padding: var(--sp-4, 8px);
+  font: var(--fs-12, 12px)/1.6 var(--font-mono);
+  /*
+   * user-select 必须显式打开。
+   * 根 body 上有 user-select:none（面板按桌面应用观感处理，
+   * 拖标题栏时不误选文字），它会被继承下来。
+   * 不加这句，md 里的文字**选不中** —— 而阅读器选不中文字基本等于废掉，
+   * 且这个失效不报错，只表现为"划不动"。
+   */
+  user-select: text; -webkit-user-select: text;
+}
+/* 右：渲染结果 */
+.md-out {
+  flex: 1; min-height: 0; overflow: auto;
+  background: var(--surface-sunk);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm, 8px);
+  padding: var(--sp-4, 8px);
+  color: var(--text);
+  user-select: text; -webkit-user-select: text;
+}
+
+/* ---- markdown 正文排版 ----
+   只定结构与间距，颜色一律走变量，不写死。 */
+.markdown-body > *:first-child { margin-top: 0; }
+
+/*
+ * .md-block —— 分块渲染 + 虚拟滚动的单元（批次 4）
+ * ------------------------------------------------------------
+ * content-visibility: auto 让**浏览器**跳过不可见块的渲染与布局，
+ * 而不是自己在 JS 里算高度、维护估算值。
+ *
+ * 为什么不用 JS 虚拟滚动：
+ *   自己算要测量每块真实高度、处理滚动时高度变化导致的跳动，
+ *   这套逻辑错了的表现是"滚动条乱跳"，很难查。
+ *   content-visibility 由浏览器负责，且**不支持时自动退化成普通渲染**
+ *   （未知属性被忽略）—— 最坏只是没优化，不会坏。
+ *
+ * contain-intrinsic-size 必须给值：
+ *   不给的话跳过的内容高度为 0，滚动条会随渲染一路变长，
+ *   表现为"拖到底又被弹回来"。auto 320px = 记住上次真实高度，
+ *   没渲染过就先按 320px 估。
+ *
+ * 【注意】这里只跳渲染，DOM 仍在：
+ *   TOC 靠 querySelectorAll 找标题、靠 getElementById 跳转，
+ *   在 content-visibility: auto 下都正常（auto 不同于 hidden）。
+ */
+.md-block {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
+}
+
+/*
+ * .md-mm —— Mermaid 图表容器（F10）
+ * ------------------------------------------------------------
+ * 颜色**不写死**：图的配色由 mermaid 的 themeVariables 从宿主变量
+ * 映射（见 plugins/md/mermaid.js themeVarsOf）。这里只管容器自身。
+ *
+ * svg 要 max-width:100% —— mermaid 输出的 svg 带固定 width，
+ * 窄栏里会横向溢出，而溢出部分在 .md-out 里是被裁掉的
+ * （看不全，且没有滚动条提示）。
+ */
+.md-mm {
+  margin: var(--sp-5) 0;
+  overflow-x: auto;
+}
+.md-mm svg {
+  max-width: 100%;
+  height: auto;
+}
+/* 渲染中占位：高度必须给，图画出来时下面的内容才不会被顶得跳一下 */
+.md-mm-loading {
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim, var(--muted, #888));
+  font-size: var(--fs-12);
+}
+/* 语法错误：图源码一起显示出来 —— 只显示错误消息的话，
+   用户没法对照改（且不知道是自己写错了还是插件坏了） */
+.md-mm-err {
+  border-left: 3px solid var(--danger, #ff6b6b);
+  padding-left: 10px;
+}
+.md-mm-msg {
+  color: var(--danger, #ff6b6b);
+  font-size: var(--fs-12);
+  margin-bottom: 6px;
+}
+.md-mm-src {
+  margin: 0;
+  font-size: var(--fs-12);
+  opacity: 0.8;
+}
+
+/*
+ * .md-puml-box —— PlantUML 图表容器（F10）
+ * ------------------------------------------------------------
+ * 与 mermaid 不同：PlantUML 的 renderToString **没有 options 参数**，
+ * 不能像 render() 那样传 { dark: true }，所以图本身是**白底**的。
+ *
+ * 因此这里给容器一个边框 + 圆角 + 内边距，把白底图变成一张"图卡"：
+ *   · 暗色主题下是深色面板里的一张亮色卡片，边界清楚、可读
+ *   · 不用 filter: invert() —— 那会把品牌色一起反掉
+ *   · 不在 SVG 内部改配色 —— PlantUML 的 SVG 结构没有稳定契约
+ *
+ * svg 必须 max-width:100%：引擎输出的 SVG 带固定 width，
+ * 窄栏里会横向溢出，而溢出部分在 .md-out 里是被裁掉的
+ * （看不全，且没有滚动条提示）。
+ */
+.md-puml-box {
+  margin: var(--sp-5) 0;
+  overflow-x: auto;
+  padding: var(--sp-4);
+  border: 1px solid var(--edge, #3a3a3a);
+  border-radius: var(--r-xs);
+  background: var(--surface-sunk, #1e1e1e);
+}
+.md-puml-box svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+/* 渲染中占位：高度必须给，否则图画出来时下面内容会被顶得跳一下。
+   PlantUML 首次渲染要初始化 WASM，比 mermaid 更慢，占位给高一点 */
+.md-puml-loading {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  color: var(--text-dim, var(--muted, #888));
+  font-size: var(--fs-12);
+}
+/* 语法错误：源码一起显示 —— 只显示错误消息的话用户没法对照改 */
+.md-puml-err {
+  border-left: 3px solid var(--danger, #ff6b6b);
+  padding-left: 10px;
+}
+.md-puml-msg {
+  color: var(--danger, #ff6b6b);
+  font-size: var(--fs-12);
+  margin-bottom: 6px;
+}
+.md-puml-src {
+  margin: 0;
+  font-size: var(--fs-12);
+  opacity: 0.8;
+}
+
+/*
+ * .md-export —— 导出按钮组（F9）
+ * ------------------------------------------------------------
+ * 不写死颜色：跟 .md-bar 里其它元素同一套变量，切主题时一起变。
+ * 写死的话会出现"整条栏变了、按钮没变"，看着像没生效。
+ */
+.md-export {
+  display: inline-flex;
+  gap: var(--sp-3);
+  margin-left: auto;
+}
+.md-export .md-btn:disabled {
+  /* 走 --ctl-disabled-opacity，不写死 .45：全仓 6 种写法已合并为一个
+     变量（定义在 controls.css，本文件第 98 行已 @import），
+     想调整"禁用看起来有多淡"只改那一处即可。 */
+  opacity: var(--ctl-disabled-opacity);
+  cursor: not-allowed;
+}
+.markdown-body h1, .markdown-body h2,
+.markdown-body h3, .markdown-body h4 {
+  margin: .6em 0 .3em;
+  color: var(--text);
+  line-height: 1.3;
+}
+.markdown-body h1 { font-size: 1.5em; }
+.markdown-body h2 { font-size: 1.3em; }
+.markdown-body h3 { font-size: 1.15em; }
+.markdown-body h4 { font-size: 1em; }
+.markdown-body p { margin: .5em 0; line-height: 1.7; }
+.markdown-body ul, .markdown-body ol { padding-left: 1.5em; margin: .5em 0; }
+.markdown-body li { margin-bottom: .2em; }
+.markdown-body a { color: var(--accent); }
+/* 引用块：左边框走强调色，随主题变 */
+.markdown-body blockquote {
+  border-left: 3px solid var(--accent);
+  margin: .5em 0; padding-left: .8em;
+  color: var(--text-dim);
+}
+/* 行内码 */
+.markdown-body code {
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--r-xs);
+  padding: 1px var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: .9em;
+}
+/* 围栏代码块：行内码样式不能盖住它 */
+.markdown-body pre {
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm, 8px);
+  padding: var(--sp-4, 8px);
+  margin: .5em 0;
+  overflow: auto;
+}
+.markdown-body pre code {
+  background: transparent; padding: 0; border-radius: 0;
+}
+/* 表格 */
+.markdown-body table {
+  border-collapse: collapse;
+  margin: .5em 0;
+  font-size: .95em;
+}
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--edge);
+  padding: .35em .7em;
+}
+.markdown-body th { color: var(--text); font-weight: 600; }
+/* 任务列表：去掉默认 checkbox 的 disabled 灰化观感 */
+.markdown-body input[type="checkbox"] { margin-right: .35em; }
+/* 分隔线 */
+.markdown-body hr { border: 0; border-top: 1px solid var(--edge); margin: 1em 0; }
+/* 图片不撑破容器 */
+.markdown-body img { max-width: 100%; }
+
+/* ---- E1 拖入 ---- */
+/* 顶部一行：文件名 + 提示。
+   单独一条而不是塞进 md-pane-t：文件名属于"当前打开的是哪个文件"，
+   跟"这两栏分别是什么"不是同一层信息，混在一起会分不清。 */
+.md-bar {
+  display: flex; align-items: center; gap: var(--sp-4, 8px);
+  flex: none; margin-bottom: 3px;
+  font-size: var(--fs-11, 11px);
+  min-height: 16px;
+}
+.md-file {
+  color: var(--text-dim);
+  /*
+   * 文件名可能很长（拖进深层目录的文件），不裁会把右边提示挤出可视区，
+   * 而提示往往更重要（"文件过大"这类）。
+   */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 60%;
+}
+.md-hint { color: var(--danger); }
+/* 拖入悬停：整块描边。
+   用 outline 而不是 border —— border 会改变盒模型尺寸，
+   一进一出导致整个插件布局抖一下。 */
+.md-wrap.is-drag { outline: 2px dashed var(--accent); outline-offset: -3px; }
+
+/* ---- md · 代码块复制 / 目录 / 右键菜单（批次 3） ----
+   全部走令牌，不写死色值：写死后切主题时唯独这几处是另一个体系的，
+   且这类"局部不跟随"不会报错，只能靠肉眼发现。 */
+
+/* 代码块顶栏 */
+.md-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2, 8px);
+  margin: 0 0 var(--sp-2, 8px);
+  padding-bottom: var(--sp-2, 8px);
+  border-bottom: 1px solid var(--border);
+}
+.md-code-lang {
+  font-size: var(--fs-11);
+  letter-spacing: .04em;
+  color: var(--text-mute);
+}
+.md-code-copy {
+  font-size: var(--fs-11);
+  padding: 2px var(--sp-2, 8px);
+  border: 1px solid var(--border);
+  /* 原名写的是 --radius-sm（全仓零定义），兜底 4px 恒生效 —— 本文件的
+     圆角档位是 --r-sm / --r-xs 这套，没有 --radius-* 命名。改成 --r-sm 后
+     这枚按钮才跟随主题（--r-sm 现为 9px，此前恒为 4px）。 */
+  border-radius: var(--r-sm, 4px);
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+}
+.md-code-copy:hover { color: var(--text); border-color: var(--accent); }
+.md-code-copy.is-ok { color: var(--accent); border-color: var(--accent); }
+.md-code-copy.is-fail { color: var(--danger); border-color: var(--danger); }
+
+/* 目录栏 */
+.md-toc {
+  border-bottom: 1px solid var(--border);
+  padding: var(--sp-2, 8px) var(--sp-3, 12px);
+  max-height: 30vh;
+  overflow: auto;
+}
+.md-toc-list { list-style: none; margin: 0; padding: 0; }
+/* 按级别缩进：level 直接进类名，不用内联 style（内联样式吃不到主题） */
+.md-toc-lv1 { padding-left: 0; }
+.md-toc-lv2 { padding-left: 10px; }
+.md-toc-lv3 { padding-left: 20px; }
+.md-toc-lv4 { padding-left: 30px; }
+.md-toc-lv5 { padding-left: 40px; }
+.md-toc-lv6 { padding-left: 50px; }
+.md-toc-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute);
+  font-size: var(--fs-12);
+  line-height: 1.7;
+  padding: 1px 0;
+  cursor: pointer;
+  /* 长标题截断：不截断会把整个目录栏撑宽，挤压正文 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-toc-item:hover { color: var(--text); }
+.md-toc-item.is-on { color: var(--accent); }
+
+/* 右键菜单：fixed + z-index 才不会被引流区裁掉 */
+.md-menu {
+  position: fixed;
+  z-index: var(--z-menu);
+  min-width: 140px;
+  padding: var(--sp-1, 4px) 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  /* 原写 var(--shadow-md, 0 6px 20px rgba(0,0,0,.28))：--shadow-md 在全仓
+     从未定义过，真正生效的一直是那个兜底值 —— 等于写死，却看着像走了令牌。
+     改为投射档 --sh-cast-sm（浮层压暗背景，本就刻意不跟主题色）。 */
+  box-shadow: var(--sh-cast-sm);
+}
+.md-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-12);
+  padding: var(--sp-2, 8px) var(--sp-3, 12px);
+  cursor: pointer;
+}
+.md-menu-item:hover { background: var(--accent); color: var(--bg); }
+
+/* ---- md · 最近阅读（批次 5） ----
+   同样全走令牌：写死色值的话切主题时这块是另一个体系，
+   且"局部不跟随"不会报错，只能靠肉眼发现。 */
+.md-recent {
+  flex: none;
+  margin-bottom: var(--sp-3, 8px);
+  padding: var(--sp-2, 8px);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+}
+.md-recent-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2, 8px);
+  font-size: var(--fs-11, 11px);
+  color: var(--text-mute);
+  margin-bottom: var(--sp-2, 8px);
+}
+.md-recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  /* 超过 6 条才滚：列表本身不该抢走正文的高度 */
+  max-height: 168px;
+  overflow-y: auto;
+}
+.md-recent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+}
+.md-recent-item {
+  flex: 1;
+  min-width: 0;
+  /* 长路径不裁会把右边的 × 挤出可视区；三条配套，缺一不生效 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-12);
+  padding: var(--sp-1, 4px) var(--sp-2, 8px);
+  cursor: pointer;
+}
+/* 目录选择器浮层（.fp-*）
+   --------------------------------------------------------------------
+   ⚠️ 刻意写在宿主主样式表，**不是** plugins/folder-picker/ 下另起一份：
+      folder-picker 是 kind:'service' 的 module 插件，被弹成浮层显示；
+      它自己目录里的 style.css 在部分加载路径下不引入，
+      那时弹出来就只剩文字（demo-iframe 踩过的同款坑）。
+      写在这里则只要宿主样式在，浮层就一定有样子。
+
+   module.js 里**一个内联 style 都没有**（0 处），
+   所以本段就是它观感的**主要**来源 —— 少一条就少一处样式。
+
+   ⚠️ 2026-10 前这里还写着"下面这些类就是它**全部**的观感来源"，是错的：
+      文件更靠前处另有同名的一套（旧版整段重写后没删），
+      两套**都生效**，实际观感是二者叠加（面板的 width / max-width /
+      max-height / min-height 当初就只写在旧的那份里）。
+      现已合并到本段，删掉旧的那份。改本段任一条都会真的改观感。
+
+   全部走令牌：切主题（尤其玻璃）时跟着变，不写裸值。
+*/
+.fp-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4, 8px);
+  padding: var(--sp-6, 12px);
+  border-radius: var(--r-lg, 20px);
+  background: var(--surface-overlay, var(--surface-raised));
+  box-shadow: var(--sh-out-lg, 0 8px 24px rgba(0, 0, 0, .28));
+  color: var(--text);
+  font-size: var(--fs-body, 13px);
+  /* 浮层必须自己滚：目录多时列表会顶出容器，
+     没有 overflow 就顶到遮罩外面去，下半截点不到。 */
+  overflow: hidden;
+
+  width: 100%;
+  max-width: 620px;
+  max-height: 100%;
+  min-height: 0;
+}
+
+.fp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4, 8px);
+  /* 标题行不随内容滚动 */
+  flex: none;
+}
+
+/* 标题吃掉剩余宽度，把关闭按钮挤到最右 */
+.fp-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-h3, 15px);
+  font-weight: var(--fw-strong, 600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  color: var(--text);
+}
+
+.fp-x {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--r-sm, 9px);
+  background: transparent;
+  color: var(--text-dim, var(--text));
+  font-family: inherit;
+  font-size: var(--fs-body, 13px);
+  cursor: pointer;
+
+  padding: 0 var(--sp-3, 6px);
+}
+
+.fp-x:hover { filter: brightness(var(--hover-bright, 1.06)); 
+  color: var(--text);
+}
+
+.fp-hint {
+  flex: none;
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+  color: var(--text-dim, var(--text));
+
+  margin-top: var(--sp-3, 6px);
+}
+
+/* 常用文件夹：一排胶囊，多了换行而不是横向溢出 */
+.fp-chips {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3, 6px);
+  max-height: 72px;
+  overflow-y: auto;
+
+  margin-top: var(--sp-4, 8px);
+}
+
+.fp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2, 4px);
+  max-width: 100%;
+  padding: var(--sp-2, 4px) var(--sp-4, 8px);
+  border: 0;
+  border-radius: var(--r-pill, 999px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+  color: var(--text-soft, var(--text));
+  font-family: inherit;
+  font-size: var(--fs-11, 11px);
+  cursor: pointer;
+}
+
+.fp-chip:hover { filter: brightness(var(--hover-bright, 1.06)); 
+  box-shadow: var(--sh-in-sm);
+}
+
+/*
+ * .plain = 快速起点（盘符 / 家目录这类兜底入口）。
+ * 它与"收藏"是两种东西：收藏是用户自己加的，快速起点是系统给的兜底，
+ * 摆在同一排胶囊里必须能一眼分开 —— 否则用户会以为自己收藏了 C: 盘。
+ * 用更弱的文字色 + 虚线描边区分，不动底色（动底色会破坏整排的节奏）。
+ */
+.fp-chip.plain {
+  color: var(--text-dim, var(--text));
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.fp-chip.on { color: var(--accent); }
+
+/* 名字过长时截断 —— 收藏可能是一长串路径 */
+.fp-chip > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 删除收藏：只在胶囊内露一个小叉，不单独占一行 */
+.fp-chip-x {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute, var(--text-dim));
+  font-family: inherit;
+  font-size: var(--fs-11, 11px);
+  cursor: pointer;
+
+  padding: 0;
+}
+
+.fp-chip-x:hover { color: var(--danger); }
+
+.fp-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 6px);
+
+  margin-top: var(--sp-4, 8px);
+}
+
+/* 路径输入框自己撑开 */
+.fp-bar > .p-input { flex: 1; min-width: 0; }
+/* 后代写法：上面那条是子选择器（>），只匹配直接子级；这条兜住更深一层的嵌套 */
+.fp-bar .p-input { flex: 1; min-width: 0; }
+
+.fp-crumbs {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1, 2px);
+  font-size: var(--fs-11, 11px);
+
+  margin-top: var(--sp-4, 8px);
+}
+
+.fp-crumb {
+  border: 0;
+  padding: 0 var(--sp-1, 2px);
+  background: transparent;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--fs-11, 11px);
+  cursor: pointer;
+}
+
+.fp-crumb:hover { text-decoration: underline; }
+
+.fp-crumb-sep { color: var(--text-mute, var(--text-dim)); }
+
+.fp-cur { color: var(--text-soft, var(--text)); 
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, Menlo, Consolas, monospace);
+  font-size: var(--fs-11, 11px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fp-err {
+  flex: none;
+  padding: var(--sp-3, 6px) var(--sp-4, 8px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  color: var(--danger);
+  font-size: var(--fs-11, 11px);
+  line-height: var(--lh-relaxed, 1.6);
+
+  margin-top: var(--sp-3, 6px);
+}
+
+.fp-err:empty { display: none; }
+
+/* 目录列表：唯一会滚的区域 */
+.fp-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1, 2px);
+  padding: var(--sp-2, 4px);
+  border-radius: var(--r-sm, 9px);
+  background: var(--surface-sunk);
+  box-shadow: var(--sh-in-sm);
+
+  overflow: auto;
+  margin-top: var(--sp-4, 8px);
+}
+
+.fp-dirrow { display: flex; align-items: center; gap: var(--sp-3, 6px); 
+  padding: var(--sp-2, 4px) var(--sp-3, 6px);
+  border-radius: var(--r-xs);
+}
+.fp-dirrow:hover { background: var(--surface); }
+
+/* 目录名按钮吃掉整行宽度：整行可点，不是只有文字那几个像素能点 */
+.fp-dirname {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-3, 6px) var(--sp-4, 8px);
+  border: 0;
+  border-radius: var(--r-sm, 9px);
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-body, 13px);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-recent-item:hover { color: var(--accent); }
+.md-recent-del {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute);
+  font-size: var(--fs-13);
+  line-height: 1;
+  padding: 2px var(--sp-1, 4px);
+  cursor: pointer;
+}
+.md-recent-del:hover { color: var(--danger); }
+.md-recent-empty {
+  font-size: var(--fs-11, 11px);
+  color: var(--text-mute);
+  padding: var(--sp-1, 4px) var(--sp-2, 8px);
+}
+
+/* ============================================================
+   全局「进行中」胶囊（BusyIndicator）
+   ------------------------------------------------------------
+   容器**始终挂在 DOM 上**，只由 data-on 控制显隐 —— 这是 aria-live
+   的硬要求：屏幕阅读器只对「先存在、后变化」的区域播报，临时挂载的
+   节点往往读不到。
+
+   所以隐藏**绝不能**用 display:none：
+   它会把节点从可访问性树里摘掉，播报直接失效，而无障碍检查不会报错，
+   界面上也看不出来（反正本来就是隐藏的）。只能用 opacity/visibility。
+   ============================================================ */
+.fpx-busy {
+  position: fixed;
+  right: var(--sp-6, 12px);
+  bottom: var(--sp-6, 12px);
+  z-index: var(--z-tooltip, 1200);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3, 6px);
+  max-width: 60vw;
+  padding: var(--sp-3, 6px) var(--sp-5, 10px);
+  border-radius: var(--r-lg, 20px);
+  background: var(--surface-overlay);
+  box-shadow: var(--sh-out-lg);
+  font-size: var(--fs-12, 12px);
+  color: var(--text-dim);
+  pointer-events: none;
+  transition: opacity var(--dur-base) ease;
+}
+/* 隐藏态：visibility 而非 display —— 见上方说明。
+   保留 pointer-events:none 是因为它只是提示，不该拦住底下的点击。 */
+.fpx-busy[data-on='0'] {
+  opacity: 0;
+  visibility: hidden;
+}
+.fpx-busy[data-on='1'] {
+  opacity: 1;
+  visibility: visible;
+}
+.fpx-busy-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  /* 呼吸节奏原写死 1s。--anim-pulse 是 600ms，直接替换会明显变快；
+     取 2 倍（1.2s），与 project-group/style.css 里那条更具体的
+     `.fpx-busy[data-on="1"] .fpx-busy-dot` 保持同一节奏 —— 两份是
+     同一个元素，速度不一致会看出「亮起瞬间突然变了个频率」。 */
+  animation: fpx-busy-pulse calc(var(--anim-pulse) * 2) ease-in-out infinite;
+}
+@keyframes fpx-busy-pulse {
+  0%, 100% { opacity: .35; transform: scale(.85); }
+  50%      { opacity: 1;   transform: scale(1); }
+}
+/* 文字必须能截断：文案是「正在xxx…」，操作名长起来会顶破胶囊、
+   把右下角撑出一块。外层是 flex，不加 min-width:0 的话
+   text-overflow 对 flex 子项**不起作用**（这类"写了没效果"最难查）。 */
+.fpx-busy-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   适配 L3：色调统一覆盖层（.nexus-tone-overlay）
+   ------------------------------------------------------------
+   它由 theme-normalizer 创建并 append 到 wrap（wrap 是 position:relative），
+   但创建时**没有设置任何背景色**，CSS 里原本也没有规则 ——
+   等于一个空 div：看不见、不影响布局，三层适配里的 L3 实际是空转的。
+
+   这里补的是**骨架**，不是视觉：
+   · absolute + inset:0 —— 覆盖层没有定位就等于没铺开，将来真加了背景
+     只会是内容流里一条 0 高度的线；
+   · pointer-events:none —— 这一条是**必要的安全底线**。缺少它时，
+     一旦有人给这层加了背景，它会盖住整个插件并吃掉所有点击，
+     表现为"插件点了没反应"且不报错，极难归因到这一层。
+
+   为什么**不在这里补背景色**：L3 想统一成什么色调，代码里没有任何
+   依据（创建时没传色调、也没有 tone/hue 计算），凭空写一个色值等于
+   替所有被适配的插件发明观感。等视觉意图定了再补，那时定位与
+   pointer-events 都已就位，加上去即可生效。
+   ============================================================ */
+
+/* ⚠️ 这里原先写着「全仓代码 0 处引用，判定为旧 UI 残留，暂不删除，仅注释」，
+   并把下面的规则整段注释掉。那条判定的**理由**是错的，但**结论**是对的：
+
+   理由错在："0 处引用"不成立 —— js/theme-normalizer.js 里有两处真实引用
+   （L3 创建覆盖层时赋类名、幂等清理时按类名查询）。当时 theme-normalizer.js
+   不在那次扫描的范围内，于是"有引用"被看成了"零引用"。
+
+   结论对在：theme-normalizer.js **自身**是个死模块 —— 全仓只有它自己的两个
+   测试 import 它，没有任何生产入口能到达（见 dead-module-test.mjs 的可达性分析）。
+   js/themes.js 顶部写明：「早期曾据此做滤镜反转（theme-normalizer.js），
+   那套"采样 → 反转"已废弃」，现在是宿主把变量推到哪、插件就渲染到哪。
+   所以这两个类**传递地**也是死的。
+
+   这里仍恢复为生效状态，是出于两条与"死不死的"无关的理由 ——
+   万一这套适配哪天被接回来（下面两条都是那时才会暴露、且极难归因的症状）：
+   · absolute + inset:0 缺失 → 覆盖层铺不开，补了背景色也只是内容流里一条线；
+   · pointer-events:none 缺失 → 一旦有人补上背景色，它会盖住整个插件并
+     吃掉所有点击，表现为"插件点了没反应"且不报错，极难归因到这一层。
+
+   若确认不复活，应连同 js/theme-normalizer.js、adapt-test.mjs、
+   adapt-sequential-test.mjs 与本段下面 .nexus-adapted 一起删除
+   （dead-module-test.mjs 的白名单里也记着这一条，删完它会提醒同步）。 */
+
+.nexus-tone-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: var(--z-flat);
+}
+
+/* .nexus-adapted：installAdapter 施加滤镜后打在 target 上的标记类
+   （施加时 add、teardown 时 remove），此前全仓没有对应规则。
+   同样只对已废弃的那套适配有意义，处置同上。
+   这里只补一条有依据的声明：isolation: isolate ——
+   L3 覆盖层将来要用 mix-blend-mode 与**本容器内**的内容混合；不隔离的话
+   混合会穿透到页面背景，表现为"整个面板被一起染色"而不是"只统一插件自己的色调"。
+   缺它时滤镜照常生效，所以症状只在补上 L3 背景色之后才暴露，比没有滤镜更难查。 */
+.nexus-adapted { isolation: isolate; }
+
+
+.fp-dirname:hover { filter: brightness(var(--hover-bright, 1.06)); }
+
+/* 改名 / 新建子目录的输入框：在行内吃掉剩余宽度。
+   这两个类不只是 JS 钩子 —— 少了 flex 它们会在窄容器里被挤成 0 宽。 */
+.fp-name,
+.fp-newname { flex: 1; min-width: 0; }
+
+.fp-namerow,
+.fp-newrow {
+  flex: none;
+  display: flex;
+  gap: var(--sp-3, 6px);
+
+  align-items: center;
+  margin-top: var(--sp-3, 6px);
+}
+
+.fp-namerow > .p-input,
+.fp-newrow > .p-input { flex: 1; min-width: 0; }
+/* 同上：子选择器之外的后代兜底 */
+.fp-namerow .p-input,
+.fp-newrow .p-input { flex: 1; min-width: 0; }
+
+.fp-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-3, 6px);
+
+  margin-top: var(--sp-5, 10px);
+}
+
+.fp-ok-tag { color: var(--ok); 
+  flex: none;
+  padding: 0 var(--sp-2, 4px);
+  border-radius: var(--r-xs);
+  /* --accent-soft 全仓**没有任何一处定义**，兜底 transparent 恒生效
+     （即这个标签目前没有底色）。它不是预留钩子：同批把 --surface-2 改成
+     --surface-raised 时漏了它（见上面 1097 行那条修复记录）。
+     不补定义是因为加上底色会改观感；要让它真的跟随主题，
+     请在 tokens.css 里定义 --accent-soft，别在这里写死色值。 */
+  background: var(--accent-soft, transparent);
+  font-size: var(--fs-10, 10px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fp-panel { transition: none; }
+}
+
+/* ---- 设置页「依赖」页签 ----
+   这些类名由 plugins/settings/DepsCard.tsx 使用，样式**必须**进主样式表：
+   写在插件自己的 settings.css 里，弹出来会变成只有文字
+   （demo-iframe 打开后只有文字就是这个原因）。 */
+.dep-filters { flex-wrap: wrap; gap: var(--sp-4, 8px); }
+.dep-chip { padding: 0 var(--sp-5); font-size: var(--fs-12, 12px); }
+.dep-chip.on {
+  color: var(--accent);
+  /* 与 --sh-in-md 数值完全一致：别把档位抄一遍，
+     抄了就与 tokens.css 那份必然漂移（改一档忘另一处）。 */
+  box-shadow: var(--sh-in-md);
+}
+.dep-item { min-width: 0; overflow: hidden; }
+.dep-name { font-size: var(--fs-13, 13px); color: var(--text); word-break: break-all; }
+.dep-tag {
+  margin-left: 6px; padding: 1px var(--sp-3); border-radius: var(--r-sm);
+  font-size: var(--fs-11, 11px); color: var(--text-mute); background: var(--surface);
+}
+/* 「已装 xx」要能一眼看出来 —— 不写这条它就和「运行时/锁定」那些灰色
+   标签长得一模一样，用户得逐个读文字才知道装没装。 */
+.dep-tag.ok { color: var(--ok); font-weight: var(--fw-strong, 600); }
+/* 「与声明不符」「已装 N 个版本」—— 必须和 ok 那个区分开，
+   否则"装着两份、其中一份是残留"这件事在界面上完全看不见。 */
+.dep-tag.warn { color: var(--warn, #e0a030); font-weight: var(--fw-strong, 600); }
+/* 已装版本逐条列出：一个包可能装着多份（换过声明版本后旧的仍在）。
+   三条缺一不可：
+     · 没有 margin-top → 行与 dep-meta 挤在一起，分不清是同一条还是下一条
+     · 没有 min-width  → 包名长时移除按钮被挤出右边，看着像没有按钮
+     · 没有 flex-wrap  → 窄屏上按钮换行即错位                            */
+.dep-installed { margin-top: 6px; }
+.dep-inst-row {
+  display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap;
+  margin-top: 4px; padding: 3px 0; min-width: 0;
+}
+.dep-inst-ver {
+  font-size: var(--fs-12, 12px); color: var(--text);
+  /* 版本号短，但 scoped 包的文件名可能很长 —— 不截断会把按钮顶出屏幕 */
+  max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dep-inst-row .dep-meta { margin-top: 0; }
+/* 残留区（已装、但清单里已没有的）。给它一个可见的边界 ——
+   它是"清单之外的东西"，与下面的清单行没有视觉区分的话，
+   用户会以为是某个包的附属内容，而不是需要单独清理的一坨。 */
+.dep-orphans {
+  padding: var(--sp-4) var(--sp-5); border-radius: var(--r-sm);
+  /* 走 --sh-in-sm：数值与它完全一致，在文件里重写一遍的话换主题/调档位
+     都不会跟着变（且守卫只能按字面量比对，抄对了也照样报红） */
+  box-shadow: var(--sh-in-sm);
+}
+.dep-badge { flex: 0 0 auto; padding: 1px var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-11, 11px); }
+.dep-badge.ok { color: var(--ok); }
+.dep-badge.err { color: var(--danger); }
+.dep-badge.warn { color: var(--warn); }
+.dep-badge.mute { color: var(--text-mute); }
+.dep-meta { margin-top: 4px; font-size: var(--fs-11, 11px); color: var(--text-mute); word-break: break-all; }
+.dep-note { margin-top: 4px; font-size: var(--fs-11, 11px); color: var(--text-mute); line-height: 1.7; }
+/* 「不适合运行时安装」的说明：比普通 note 更显眼一点 ——
+   它是"为什么没有安装按钮"的唯一解释，混在灰字里会被当成没写。 */
+.dep-blocked {
+  padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm); margin-top: 6px;
+  font-size: var(--fs-11, 11px); line-height: 1.7;
+  color: var(--text-mute); background: var(--surface-sunk);
+  border-left: 2px solid var(--warn, #e0a030);
+}
+.dep-cmd {
+  flex: 1; min-width: 0; padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm);
+  font-size: var(--fs-11, 11px); color: var(--text); background: var(--surface);
+  /* 复制失败时要能手动选中：根 body 的 user-select 是 none，
+     不显式声明就选不中，而复制不了也选不了最让人无从下手。 */
+  user-select: text; -webkit-user-select: text;
+  overflow-x: auto; white-space: nowrap;
+}
+/*
+ * 版本输入框。
+ * 等宽是刻意的：版本号要能一眼看出 12.0.0 与 12.0.0-beta 的差别，
+ * 比例字体下 l / 1 / I 分不清。
+ */
+.dep-ver {
+  /* 原名 --mono（全仓零定义），兜底那串字体恒生效。设计系统的等宽变量是
+     --font-mono（tokens.css 定义，本文件第 96 行已 @import），
+     project-group 那边的代码块用的也是它 —— 改成同名才跟随设计系统。 */
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--fs-11, 11px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dep-chip { transition: none; }
+}

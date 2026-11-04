@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>示例·订单面板</title>
+<style>
+  /* 配色一律走外壳推过来的主题变量，不写死任何颜色。
+     插件自己写死颜色是它自己的选择 —— 外壳不做反转、不做覆盖，
+     变量给到哪就渲染到哪。 */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: var(--text);
+    font-size: 14px;
+    padding: 20px;
+  }
+  h1 { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .lead { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--divider);
+    border-radius: var(--r-sm, 4px);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .card h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit; cursor: pointer;
+    padding: 8px 16px;
+    border: 0; border-radius: var(--r-sm, 3px);
+    background: var(--accent);
+    /* 叠在强调色上的前景色按强调色明暗派生（黑或白），
+       写死白字在亮黄强调色上对比度只有 1.09，等于看不见。 */
+    color: var(--badge-fg, #fff);
+  }
+  button.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--divider); }
+  input {
+    font: inherit; padding: 8px 12px;
+    border: 1px solid var(--divider); border-radius: var(--r-sm, 3px);
+    background: var(--surface); color: var(--text);
+    width: 220px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--hairline); }
+  th { color: var(--text-dim); font-weight: 500; background: var(--surface-sunk); }
+  .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 2px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent); font-size: 12px;
+  }
+  .tag.green { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .tag.red   { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+  .stats { display: flex; gap: 14px; }
+  .stat { flex: 1; background: var(--surface); border: 1px solid var(--divider); border-radius: var(--r-sm, 4px); padding: 14px; }
+  .stat .k { font-size: 12px; color: var(--text-dim); }
+  .stat .v { font-size: 24px; font-weight: 600; color: var(--accent); margin-top: 4px; }
+  .bar { height: 8px; background: var(--surface-sunk); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 68%; }
+  .thumb { width: 100%; height: 90px; object-fit: cover; border-radius: 4px; margin-top: 10px; }
+  #plugin-mount { min-height: 100%; }
+</style>
+  <script type="module">
+(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const i of document.querySelectorAll('link[rel="modulepreload"]'))s(i);new MutationObserver(i=>{for(const l of i)if(l.type==="childList")for(const e of l.addedNodes)e.tagName==="LINK"&&e.rel==="modulepreload"&&s(e)}).observe(document,{childList:!0,subtree:!0});function o(i){const l={};return i.integrity&&(l.integrity=i.integrity),i.referrerPolicy&&(l.referrerPolicy=i.referrerPolicy),i.crossOrigin==="use-credentials"?l.credentials="include":i.crossOrigin==="anonymous"?l.credentials="omit":l.credentials="same-origin",l}function s(i){if(i.ep)return;i.ep=!0;const l=o(i);fetch(i.href,l)}})();const V="fpx_rt_dep_list";function U(r){return String(r||"").trim().replace(/[@/\\]/g,"_")}function X(r){return String(r||"").trim().replace(/[^0-9A-Za-z._-]/g,"")}const Y={"@plantuml/core":{esm:"plantuml.js",classic:"viz-global.js"}};function G(r){return Y[String(r||"")]||null}function Z(r,t){const o=U(r),s=X(t);return`${o}@${s||"latest"}.classic.js`}async function J(r,t,o){if(!r||typeof r.invoke!="function")return{__missing:!0};try{return await r.invoke(t,o)}catch(s){const i=String(s&&(s.message||s)||"");return/not found|unknown command|不存在|未注册/i.test(i)?{__missing:!0}:{__error:i||"调用失败"}}}async function Q(r){const t=await J(r,V,{});if(t&&t.__missing)return{missing:!0,list:[]};if(t&&t.__error)return{missing:!1,list:[],error:t.__error};const o=t&&(t.list??t)||[];return{missing:!1,list:Array.isArray(o)?o:[]}}function D(r,t){const o=r&&typeof r.convertFileSrc=="function"?r.convertFileSrc:typeof globalThis<"u"&&globalThis.__TAURI__&&globalThis.__TAURI__.tauri&&globalThis.__TAURI__.tauri.convertFileSrc;return o?o(t,"asset"):`http://asset.localhost/${String(t||"").replace(/\\/g,"/").replace(/^\/+/,"")}`}async function ee(r,t,o){const{list:s}=await Q(r),i=U(String(t||""));return s.find(e=>e&&U(String(e.name))===i&&(!o||e.version===o))||null}const F=new Map,te=new Map;function re(r,t){return`${r}@${String(t||"").trim()||"*"}`}function M(r,t,o){try{te.set(re(r,o&&o.version?o.version:t),{name:r,requested:String(t||"").trim(),version:String(o&&o.version||"").trim(),source:o&&o.source||"none",error:o&&o.error||"",at:Date.now()})}catch{}}async function ne(r,t,o={}){const s=String(o.version||"").trim(),i=`${t}@${s||"*"}`,l=F.get(i);if(l)return l;const e=se(r,t,s,o).catch(u=>{const d={mod:null,source:"none",error:String(u&&u.message||u||"取用失败")};return M(t,s,d),d});return F.set(i,e),e}async function se(r,t,o,s){const i=await oe(r,t,o,s);return M(t,o,i),i}async function oe(r,t,o,s){const{fallback:i=null,importModule:l=ie,loadClassic:e=ce}=s,u=await ee(r,t,o),d=u?u.path||u.file:"";if(d){if(u&&u.classicFile&&G(t))try{await e(D(r,le(u)))}catch(f){const k=`伴生脚本加载失败: ${String(f&&f.message||f)}`;return i?{mod:await i(),source:"bundle",error:k}:{mod:null,source:"none",error:k}}const h=D(r,d);try{const f=await l(h);if(f)return{mod:f,source:"runtime",error:"",version:String(u.version||"")}}catch(f){return i?{mod:await i(),source:"bundle",error:String(f&&f.message||f)}:{mod:null,source:"none",error:String(f&&f.message||f)}}}if(!i)return{mod:null,source:"none",error:""};try{return{mod:await i(),source:"bundle",error:""}}catch(h){return{mod:null,source:"none",error:String(h&&h.message||h)}}}function ie(r){return import(r)}function le(r){if(!r)return"";if(r.classicPath)return r.classicPath;const t=r.path||r.file||"";if(r.classicFile&&t){const o=t.lastIndexOf(r.file||"");if(o>=0)return t.slice(0,o)+r.classicFile}return Z(r.name,r.version)}function ce(r){return new Promise((t,o)=>{if(typeof document>"u"){o(new Error("当前环境没有 document，无法注入经典脚本"));return}const s=document.createElement("script");s.src=r,s.async=!1,s.onload=()=>t(!0),s.onerror=()=>o(new Error("伴生脚本加载失败")),document.head.appendChild(s)})}function ae(r,t={}){const o=t.warn||((...u)=>console.warn("[owned]",...u)),s=[],i=new Set;let l=!1;const e={pluginId:r,addUndo(u,d){if(typeof d!="function")return d;if(l){try{d()}catch{}return d}return u&&i.add(u),s.push(d),d},addListener(u,d,h,f){if(!u?.addEventListener)return()=>{};try{u.addEventListener(d,h,f)}catch{return()=>{}}return e.addUndo("global-listen",()=>{try{u.removeEventListener(d,h,f)}catch{}})},addNode(u,d){if(!u?.appendChild||!d)return()=>{};try{u.appendChild(d)}catch{return()=>{}}return e.addUndo("portal",()=>{try{d.remove()}catch{}})},addTimer(u,d){const h=u==="raf"?()=>cancelAnimationFrame(d):()=>clearInterval(d);return e.addUndo("timer",h)},setInterval(u,d){const h=setInterval(u,d);return e.addUndo("timer",()=>clearInterval(h)),h},setTimeout(u,d){const h=setTimeout(u,d);return e.addUndo("timer",()=>clearTimeout(h)),h},addStyle(u){return e.addNode(document.head,u)},addHandle(u,d){return d?e.addUndo(u,()=>{try{d.disconnect?.()}catch{}try{d.close?.()}catch{}}):()=>{}},dispose(){if(l)return{undone:0,failed:0};l=!0;let u=0,d=0;for(;s.length;){const h=s.pop();try{h(),u+=1}catch(f){d+=1,o(`撤销失败（${r}）:`,f)}}return{undone:u,failed:d}},capabilities(){return[...i].sort()},size(){return s.length},isDisposed(){return l}};return e}const ue="nexus-bridge-v1",de=["mod+b","mod+r","mod+,","esc"];function K(r){const t=String(r||"").toLowerCase().split("+").map(s=>s.trim()).filter(Boolean);if(!t.length)return null;const o={key:"",mod:!1,ctrl:!1,shift:!1,alt:!1,meta:!1};for(const s of t)s==="mod"?o.mod=!0:s==="ctrl"||s==="control"?o.ctrl=!0:s==="shift"?o.shift=!0:s==="alt"||s==="option"?o.alt=!0:s==="meta"||s==="cmd"||s==="command"||s==="super"?o.meta=!0:o.key=s;return o.key?o:null}function H(r,t){if(!t||!(!t.mod||(P()?r.metaKey:r.ctrlKey)))return!1;const s=t.meta?r.metaKey:!r.metaKey||t.mod&&P(),i=t.ctrl?r.ctrlKey:!r.ctrlKey||t.mod&&!P();if(!s||!i||t.alt!==r.altKey||t.shift!==r.shiftKey)return!1;const l=String(r.key||"").toLowerCase(),e=String(r.code||"").toLowerCase();return l===t.key||e===t.key||e==="key"+t.key||t.key==="esc"&&l==="escape"||t.key==="space"&&(l===" "||e==="space")||t.key==="?"&&l==="?"}function P(){try{return/mac|iphone|ipad/i.test(globalThis.navigator?.platform||globalThis.navigator?.userAgent||"")}catch{return!1}}function me(r){const{call:t,list:o,available:s}=r,i=l=>()=>Promise.resolve(s?s(l):!0);return{...r,color:{pick:(l,e)=>t("color-picker","pick",{initial:l,...e||{}}),pickHex:async(l,e)=>(await t("color-picker","pick",{initial:l,...e||{}})||{}).hex??null,normalize:l=>t("color-picker","normalize",{color:l}),presets:()=>t("color-picker","presets"),hsv:l=>t("color-picker","hsv",{color:l}),available:i("color-picker")},icon:{browse:l=>t("icon-picker","browse",{keyword:l}),list:()=>t("icon-picker","list"),url:l=>t("icon-picker","url",{name:l}),available:i("icon-picker")},md:{edit:(l,e)=>t("md-editor","edit",{text:l,title:e}),render:l=>t("md-editor","render",{text:l}),available:i("md-editor")}}}function fe(r){const{id:t,manifest:o,mode:s,root:i,container:l,transport:e,bus:u,onDestroy:d,owned:h}=r,f=[],k={id:t,mode:s,manifest:o,openArgs:r.openArgs??null,onOpenArgs(n){return u.on(`plugin:open-args:${t}`,n,t)},owned:h,services:me(r.services||{call:(n,a,y)=>e.request("service.call",{id:n,method:a,args:y}),list:()=>e.request("service.list",{}),available:n=>e.request("service.available",{id:n})}),root:i,container:l,version:o.version||"0.0.0",async invoke(n,a={}){return e.request("invoke",{cmd:n,args:a})},convertFileSrc(n,a="asset"){const y=typeof window<"u"?window:globalThis,g=y.__TAURI_INTERNALS__,C=g&&g.convertFileSrc||y.__TAURI__&&y.__TAURI__.tauri&&y.__TAURI__.tauri.convertFileSrc;if(typeof C=="function")try{return C(n,a)}catch{}const L=encodeURIComponent(n||"");return typeof navigator<"u"&&navigator.userAgent.includes("Windows")?`http://${a}.localhost/${L}`:`${a}://${L}`},on(n,a){return u.on(n,a,t)},emit(n,a){u.emit(n,a,t)},async listenTauri(n,a){return e.request("listen",{event:n,handler:a})},store:{get:(n,a=null)=>e.request("store.get",{k:n,def:a}),set:(n,a)=>e.request("store.set",{k:n,v:a}),del:n=>e.request("store.del",{k:n}),all:()=>e.request("store.all",{})},fs:{claim:(n,a={})=>e.request("fs.claim",{path:n,meta:a}),claims:()=>e.request("fs.claims",{}),release:n=>e.request("fs.release",{path:n})},requireDep(n,a={}){return ne(k,n,a)},setTitle(n){e.notify("title",{text:n})},setBadge(n){e.notify("badge",{n})},toast(n,a="info"){e.notify("toast",{msg:n,type:a})},reload(){e.notify("reload",{})},openPlugin(n,a){return Promise.resolve(r.openPlugin?r.openPlugin(n,a):e.request("open-plugin",{id:n,args:a})).catch(()=>!1)},registerShortcut(n,a,y=""){e.notify("shortcut.register",{accel:n,event:a,label:y})},unregisterShortcut(n){e.notify("shortcut.unregister",{accel:n})},addSidebarItem(n){e.notify("sidebar.add",{item:n})},removeSidebarItem(n){e.notify("sidebar.remove",{itemId:n})},addStyle(n){const a=document.createElement("style");return s==="module"&&!o.shadow?a.textContent=ye(n,`[data-plugin-id="${t}"]`):a.textContent=n,i.appendChild(a),()=>a.remove()},shortcut(n,a,y={}){const g=(Array.isArray(n)?n:[n]).map(K).filter(Boolean);return!g.length||typeof a!="function"?()=>{}:r.bindShortcut?.(g,a,y)??(()=>{})},onDestroy(n){f.push(n)},shell:{pluginConfig:{get:n=>e.request("shell.call",{ns:"pluginConfig",method:"getPluginConfig",args:[n]}),set:(n,a)=>e.request("shell.call",{ns:"pluginConfig",method:"setPluginConfig",args:[n,a]})},external:{load:()=>e.request("shell.call",{ns:"external",method:"loadPolicy",args:[]}),save:n=>e.request("shell.call",{ns:"external",method:"savePolicy",args:[n]}),list:()=>e.request("shell.call",{ns:"external",method:"listHosts",args:[]}),pending:()=>e.request("shell.call",{ns:"external",method:"pendingHosts",args:[]}),decide:(n,a)=>e.request("shell.call",{ns:"external",method:"decideHost",args:[n,a]}),setStatus:(n,a,y)=>e.request("shell.call",{ns:"external",method:"setHostStatus",args:[n,a,y]}),remove:n=>e.request("shell.call",{ns:"external",method:"removeHost",args:[n]}),suggestCsp:n=>e.request("shell.call",{ns:"external",method:"suggestCsp",args:[n]}),rescan:()=>e.request("shell.call",{ns:"external",method:"scanEntry",args:[]})},isIsolated:()=>e.request("shell.isIsolated",{}),theme:{listThemes:()=>e.request("shell.call",{ns:"theme",method:"listThemes",args:[]}),getThemeId:()=>e.request("shell.call",{ns:"theme",method:"getThemeId",args:[]}),getCurrent:()=>e.request("shell.call",{ns:"theme",method:"getCurrent",args:[]}),getAccent:()=>e.request("shell.call",{ns:"theme",method:"getAccent",args:[]}),getEnvColor:()=>e.request("shell.call",{ns:"theme",method:"getEnvColor",args:[]}),getBase:()=>e.request("shell.call",{ns:"theme",method:"getBase",args:[]}),getHueShift:()=>e.request("shell.call",{ns:"theme",method:"getHueShift",args:[]}),getLightShift:()=>e.request("shell.call",{ns:"theme",method:"getLightShift",args:[]}),applyTheme:(n,a,y)=>e.request("shell.call",{ns:"theme",method:"applyTheme",args:[n,a,y]}),setAccent:n=>e.request("shell.call",{ns:"theme",method:"setAccent",args:[n]}),setEnvColor:n=>e.request("shell.call",{ns:"theme",method:"setEnvColor",args:[n]}),resetColors:()=>e.request("shell.call",{ns:"theme",method:"resetColors",args:[]}),setThemeShift:(n,a)=>e.request("shell.call",{ns:"theme",method:"setThemeShift",args:[n,a]}),saveAsCustom:n=>e.request("shell.call",{ns:"theme",method:"saveAsCustom",args:[n]}),deleteCustomTheme:n=>e.request("shell.call",{ns:"theme",method:"deleteCustomTheme",args:[n]})},window:{getCloseAction:()=>e.request("shell.call",{ns:"window",method:"getCloseAction",args:[]}),setCloseAction:n=>e.request("shell.call",{ns:"window",method:"setCloseAction",args:[n]}),saveCloseAction:n=>e.request("shell.call",{ns:"window",method:"saveCloseAction",args:[n]})}},async __destroy(){for(const n of f.reverse())try{await n()}catch(a){console.error("[plugin destroy]",t,a)}},theme:r.theme||{}};return k.notify=n=>k.toast(n?.body??String(n),"info"),k}function he(r,t,o){if(!r)return;let s=document.getElementById("nexus-theme-vars");s||(s=document.createElement("style"),s.id="nexus-theme-vars",document.head.appendChild(s)),s.textContent=":root{"+Object.entries(r).map(([l,e])=>`${l}:${e}`).join(";")+"}";const i=t==="light"||t==="dark"?t:ge(r["--bg"])?"light":"dark";document.documentElement.style.colorScheme=i;try{o&&(document.documentElement.dataset.theme=o)}catch{}try{document.dispatchEvent(new CustomEvent("nexus-theme-applied",{detail:{themeId:o??null,base:i}}))}catch{}try{document.documentElement.dataset.nexusBase=i}catch{}return i}function ge(r){if(!r)return!1;const t=String(r).match(/rgba?\(([^)]+)\)/);let o,s,i;if(t)[o,s,i]=t[1].split(/[,\s/]+/).filter(Boolean).map(Number);else{const l=String(r).trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);if(!l)return!1;let e=l[1];e.length===3&&(e=e.split("").map(u=>u+u).join("")),o=parseInt(e.slice(0,2),16),s=parseInt(e.slice(2,4),16),i=parseInt(e.slice(4,6),16)}return .2126*o+.7152*s+.0722*i>140}function pe(r,t,o){const s=ue;let i=new Map,l=0,e,u,d="main",h={},f=!1,k=null,n=!1,a="*";const y=new Promise(m=>u=m);function g(m){window.parent.postMessage({channel:s,...m},a)}let C=null;function L(m){if(C?.(),C=null,!m)return;let c=0;const v=p=>{if(c)return;const S=p.clientX,b=p.clientY;c=requestAnimationFrame(()=>{c=0,g({type:"inspect-move",x:S,y:b})})},T=p=>{p.preventDefault(),p.stopPropagation(),g({type:"inspect-click",x:p.clientX,y:p.clientY})};window.addEventListener("mousemove",v,!0),window.addEventListener("click",T,!0),C=()=>{c&&cancelAnimationFrame(c),window.removeEventListener("mousemove",v,!0),window.removeEventListener("click",T,!0)}}window.addEventListener("message",m=>{const c=m.data;if(!(!c||c.channel!==s)&&m.source===window.parent){if(c.type==="init"||c.type==="theme"){let R=function(w,_,E={}){const O=I=>{for(const W of w)if(H(I,W)){E.preventDefault!==!1&&I.preventDefault();try{_(I)}catch(z){console.error("[shortcut]",v.id,z)}return}};window.addEventListener("keydown",O);const A=()=>{window.removeEventListener("keydown",O);const I=q.indexOf(A);I>=0&&q.splice(I,1)};return q.push(A),A};var T=R;if(c.type==="init"){var{manifest:v}=c;d=c.view||"main",c.hostOrigin&&(a=c.hostOrigin),"openArgs"in c&&(k=c.openArgs??null)}else v=v||c.manifest;if(c.theme&&(h=c.theme,he(c.theme,c.themeBase,c.themeId),c.type==="theme"&&g({type:"theme-applied"})),c.type!=="init")return;f=!!c.isolated,document.body.classList.add("nexus-iframe-plugin"),document.body.classList.toggle("nexus-view-settings",d==="settings"),document.body.classList.toggle("nexus-isolated",f);const p=N(),S={request(w,_){const E=++l;return new Promise((O,A)=>{i.set(E,{resolve:O,reject:A}),g({type:"req",id:E,method:w,payload:_}),setTimeout(()=>{i.has(E)&&(i.delete(E),A(new Error(`桥接超时: ${w}`)))},15e3)})},notify(w,_){g({type:"notify",notifyType:w,payload:_})}},b=document.getElementById("plugin-mount")||document.body,q=[],B=ae(v.id,{warn:(...w)=>console.warn("[owned]",...w)}),$=fe({id:v.id,manifest:v,mode:"iframe",root:b,container:b,transport:S,bus:p,theme:h,bindShortcut:R,owned:B,openArgs:k}),j=$.__destroy;$.__destroy=async()=>{try{B.dispose()}catch(w){console.error("[owned dispose]",w)}q.splice(0).forEach(w=>{try{w()}catch{}}),C?.(),await j()},window.addEventListener("keydown",w=>{for(const _ of de)if(H(w,K(_))){g({type:"shell-shortcut",combo:_,key:w.key});return}}),e=$,u($)}if(c.type==="inspect"){L(!!c.on);return}if(c.type==="res"){const p=i.get(c.id);if(!p)return;i.delete(c.id),c.ok?p.resolve(c.data):p.reject(new Error(c.error))}if(c.type==="service.call"){const p=(S,b,q)=>g({type:"service.res",id:c.id,ok:S,data:b,error:q});{p(!1,null,`服务未提供方法: ${c.method}`);return}}if(c.type==="event"&&e&&x.emit(c.event,c.payload),c.type==="mount"&&e&&!n){n=!0;const p=r;Promise.resolve(p(e)).then(S=>{typeof S=="function"&&e.onDestroy(S),g({type:"mounted",ok:!0,view:d})}).catch(S=>g({type:"mounted",ok:!1,view:d,error:String(S?.stack||S)}))}}});const x=(()=>{const m=new Map;return{on(c,v){return m.has(c)||m.set(c,new Set),m.get(c).add(v),()=>m.get(c).delete(v)},emit(c,v){m.get(c)?.forEach(T=>T(v))}}})();function N(){return{on(m,c){const v=x.on(m,c);return g({type:"subscribe",event:m}),()=>{v(),g({type:"unsubscribe",event:m})}},emit(m,c){x.emit(m,c),g({type:"publish",event:m,payload:c})}}}return window.addEventListener("error",m=>g({type:"error",error:String(m.message)})),window.addEventListener("unhandledrejection",m=>g({type:"error",error:String(m.reason?.stack||m.reason)})),window.addEventListener("securitypolicyviolation",m=>{g({type:"csp-violation",blockedURI:String(m.blockedURI||"").slice(0,300),directive:String(m.violatedDirective||""),view:d})}),g({type:"ready",hasSettings:!1}),y}function ye(r,t){return r.replace(/(^|\})([^{}@]+)\{/g,(o,s,i)=>{if(/^\s*(@|from|to|\d+%)/.test(i))return o;const l=i.split(",").map(e=>(e=e.trim(),!e||e.startsWith(":root")||e.startsWith("html")||e.startsWith("body")?e:`${t} ${e}`)).join(", ");return`${s}${l}{`})}pe(async r=>{document.getElementById("go").onclick=()=>{const t=document.getElementById("kw").value||"(空)";document.getElementById("out").textContent=`查询：${t} · mode=${r.mode}`,r.toast("已查询："+t)},document.getElementById("reset").onclick=()=>{document.getElementById("kw").value="",document.getElementById("out").textContent=""},r.setBadge(2)});
+
+</script>
+</head>
+<body>
+<div id="plugin-mount">
+  <h1>Order Dashboard</h1>
+  <div class="lead">第三方面板风格的数据页；配色全部走外壳推来的主题变量，切主题时跟着变。</div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">今日订单</div><div class="v">1,284</div><div class="bar"><i style="width:68%"></i></div></div>
+    <div class="stat"><div class="k">成交额</div><div class="v">¥86K</div><div class="bar"><i style="width:42%"></i></div></div>
+    <div class="stat"><div class="k">退款率</div><div class="v">1.2%</div><div class="bar"><i style="width:12%"></i></div></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>筛选</h2>
+    <div class="row">
+      <input id="kw" placeholder="搜索订单号…" />
+      <button id="go">查询</button>
+      <button class="ghost" id="reset">重置</button>
+      <span class="tag">示例</span>
+      <span class="tag green">运行中</span>
+      <span class="tag red">2 异常</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>最近订单</h2>
+    <table>
+      <thead><tr><th>订单号</th><th>客户</th><th>金额</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td>#10231</td><td>张三</td><td>¥1,280</td><td><span class="tag green">已完成</span></td></tr>
+        <tr><td>#10232</td><td>李四</td><td>¥320</td><td><span class="tag">处理中</span></td></tr>
+        <tr><td>#10233</td><td>王五</td><td>¥2,450</td><td><span class="tag red">已退款</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>图示配色</h2>
+    <!-- 内联 SVG：状态色走主题变量，切主题时跟着变 -->
+    <svg class="thumb" viewBox="0 0 400 90" xmlns="http://www.w3.org/2000/svg">
+      <rect width="400" height="90" fill="var(--surface-sunk)"/>
+      <circle cx="60" cy="45" r="24" fill="var(--danger)"/>
+      <rect x="120" y="30" width="120" height="30" rx="4" fill="var(--ok)"/>
+      <polygon points="290,20 330,70 250,70" fill="var(--accent)"/>
+      <text x="16" y="82" font-size="12" fill="var(--text-dim)">状态色跟随主题</text>
+    </svg>
+    <div id="out" style="margin-top:10px;color:var(--text-dim);font-size:12px"></div>
+  </div>
+</div>
+
+</body>
+</html>
