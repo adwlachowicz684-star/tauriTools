@@ -168,11 +168,12 @@ t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问�
  *
  * 守什么
  * ------------------------------------------------------------------
- * 手工字段（repo / ref / author / license / minHost / permissions）
+ * 手工字段（ref / author / license / minHost / permissions）
  * **只存在于 manifest 文件里** —— registry 里没有，重算不出来。
  * 旧写法在 JSON 解析失败时 keep 为空、直接按模板重写，
- * 于是拆仓库时填好的 repo 被一次生成抹掉，而脚本只打印
+ * 于是拆仓库时填好的发布元信息被一次生成抹掉，而脚本只打印
  * 「✅ 已生成/刷新 12 份」、退出码 0 —— 静默且不可逆。
+ * （repo 已改由映射表派生，不再属于手工字段，见第 7 节 A。）
  *
  * 为什么用子进程跑真脚本
  * ------------------------------------------------------------------
@@ -187,6 +188,12 @@ t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问�
     mkdirSync(join(tmp, 'plugins', 'fx'), { recursive: true });
     copyFileSync(join(HERE, 'scripts', 'gen-plugin-manifest.mjs'),
       join(tmp, 'scripts', 'gen-plugin-manifest.mjs'));
+    /* 生成器静态 import ./plugin-repo-map.mjs。fixture 的插件 id 是 'fx'，
+     * 不在真映射表里（真表对未登记 id 是 fail-closed 抛错），所以放一个桩
+     * 映射源：既让生成器跑得起来，又顺带验证「repo 来自映射源，
+     * 不是从 manifest 里保留下来的」。 */
+    writeFileSync(join(tmp, 'scripts', 'plugin-repo-map.mjs'),
+      "export function repoFieldFor() { return 'stub-owner/fixtureRepo'; }\n");
     /* 桩 registry：形状与真 registry 一致（entry 相对项目根） */
     writeFileSync(join(tmp, 'plugins', 'registry.js'),
       "export const plugins = [{ id: 'fx', name: 'FX', type: 'iframe', entry: './plugins/fx/index.html', icon: '◆', kind: 'app', description: 'fixture' }];\n");
@@ -194,7 +201,8 @@ t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问�
     const mf = join(tmp, 'plugins', 'fx', MANIFEST_FILE);
     const script = join(tmp, 'scripts', 'gen-plugin-manifest.mjs');
 
-    /* A：正常文件 —— 手工字段必须还在（基线：保留机制本身是好的） */
+    /* A：正常文件 —— 手工字段保留；repo 由映射源纠正（它已不是手工字段）。
+     * 故意写一个旧 repo，若生成器还把 repo 当手工字段保留，这里就会留着旧值。 */
     writeFileSync(mf, JSON.stringify({
       id: 'fx', name: 'FX', version: '0.1.0', entry: 'index.html',
       kind: 'app', icon: '◆', description: 'fixture',
@@ -202,9 +210,13 @@ t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问�
     }, null, 2) + '\n');
     execFileSync(process.execPath, [script], { stdio: 'pipe' });
     const afterA = JSON.parse(readFileSync(mf, 'utf8'));
-    t('生成器：正常 manifest 的手工字段被保留',
-      afterA.repo === 'git@x/fx.git' && afterA.author === 'me' && afterA.license === 'MIT',
-      JSON.stringify(afterA));
+    t('生成器：repo 由映射源派生，旧值被纠正',
+      afterA.repo === 'stub-owner/fixtureRepo', JSON.stringify(afterA));
+    t('生成器：正常 manifest 的其它手工字段被保留',
+      afterA.author === 'me' && afterA.license === 'MIT', JSON.stringify(afterA));
+    t('元断言F：repo 判据不是恒真（旧值与桩值确实不同）',
+      'git@x/fx.git' !== 'stub-owner/fixtureRepo' && afterA.repo !== 'git@x/fx.git',
+      '判据空跑 → 上一条会假绿');
 
     /* B：坏文件 —— 不得写盘，且必须报出来 */
     const BROKEN = '{ "id": "fx", "repo": 坏掉了\n';
@@ -228,15 +240,17 @@ t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问�
       kind: afterA.kind, icon: afterA.icon, description: afterA.description,
     }, null, 2) + '\n';
     t('元断言E：旧写法（解析失败即按模板重写）确实会丢手工字段',
-      !asTemplate.includes('git@x') && String(afterA.repo).includes('git@x'),
+      !asTemplate.includes('"author"') && afterA.author === 'me',
       '元断言空跑 → 第 7 节假绿');
 
     /* C：缺文件 —— 仍要正常新建（别因为加了拒绝逻辑就建不出来了） */
     rmSync(mf);
     execFileSync(process.execPath, [script], { stdio: 'pipe' });
+    const made = existsSync(mf) ? JSON.parse(readFileSync(mf, 'utf8')) : {};
     t('生成器：缺 manifest 时正常新建',
-      existsSync(mf) && JSON.parse(readFileSync(mf, 'utf8')).id === 'fx',
-      '新建失败 → 拒绝逻辑写宽了');
+      made.id === 'fx', '新建失败 → 拒绝逻辑写宽了');
+    t('生成器：新建的 manifest 也带派生 repo',
+      made.repo === 'stub-owner/fixtureRepo', JSON.stringify(made));
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
