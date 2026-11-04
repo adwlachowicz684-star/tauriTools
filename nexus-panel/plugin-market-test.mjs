@@ -131,7 +131,10 @@ function makeFetch(cfg) {
     if (cfg.badDigest) return { ...base, digest: `sha256:${'0'.repeat(64)}` };
     return { ...base, digest: `sha256:${createHash('sha256').update(buf).digest('hex')}` };
   });
-  return async (url) => {
+  return async (url, opts) => {
+    /* 记录请求头：第 8 节用它钉住「凭据真的发到了每一处」，
+       只看返回值的话，判据写恒真也会全绿。 */
+    if (cfg.seen) cfg.seen.push({ url, headers: (opts && opts.headers) || null });
     if (/\/releases\/(latest|tags\/)/.test(url)) {
       return jsonRes({ tag_name: cfg.tag || 'v1.0.0', assets });
     }
@@ -163,6 +166,7 @@ function makeMarket(cfg) {
     installedDir, ledgerFile, dataRoot, dataStore,
     staticPlugins: cfg.staticPlugins || [],
     fetch: makeFetch(cfg),
+    headers: cfg.headers || null,
     reservedIds: ['settings', 'home'],
   });
   return { market, installedDir, ledgerFile, dataRoot, dataStore, base };
@@ -491,6 +495,57 @@ console.log('\n--- 7. 台账损坏 / 写入失败 ---');
   t('⛔ 卸载时台账写入失败也不抛异常',
     !thrown3 && ru3 && ru3.ok === false && ru3.stage === 'ledger',
     thrown3 || JSON.stringify(ru3));
+}
+
+/* ==========================================================================
+   8. 私有仓凭据整链透传
+   --------------------------------------------------------------------------
+   12 个插件仓库全部 private。漏掉任何一处（release / 下载 / commit sha /
+   查更新）都不会让安装当场失败，而是表现为「装上了但永远查不到更新」
+   或「下载失败」四个字 —— 全都不报错、不崩、不红。
+   ========================================================================== */
+console.log('\n--- 8. 私有仓凭据整链透传 ---');
+{
+  const AUTH = 'Bearer OFFLINE_TEST';
+  const tar = makeTarGz(pluginEntries('demo', '1.0.0'));
+  const mk = (headers) => ({
+    assets: [{ name: assetNameFor('demo', '1.0.0') }], tar,
+    headers, seen: [],
+  });
+
+  const cfg = mk({ Authorization: AUTH });
+  const ctx = makeMarket(cfg);
+  const r = await ctx.market.install('owner/demo-repo');
+  t('前置：带凭据安装成功（本节不是空跑）', r.ok === true, `${r.stage || ''} ${r.error || ''}`);
+  const seen = cfg.seen;
+  /* ⚠️ seen 是同一个数组引用：checkUpdates 会继续往里 push。
+     取数字快照，否则 slice(seen.length) 永远是空数组，
+     会把「链路正常」误报成「查更新没发请求」。 */
+  const seenCount = seen.length;
+  const rel = seen.filter((x) => /\/releases\//.test(x.url));
+  const dl = seen.filter((x) => x.url.startsWith('https://dl.example/'));
+  const commits = seen.filter((x) => /\/commits\//.test(x.url));
+  const has = (x) => !!(x && x.headers && x.headers.Authorization === AUTH);
+  t('release 查询带凭据', rel.length >= 1 && rel.every(has), `n=${rel.length}`);
+  t('产物下载带凭据', dl.length === 1 && has(dl[0]), `n=${dl.length}`);
+  t('commit sha 查询带凭据（漏了会让指纹退化）', commits.length === 1 && has(commits[0]), `n=${commits.length}`);
+  t('下载那一路确实是 octet-stream',
+    dl.length === 1 && dl[0].headers.Accept === 'application/octet-stream');
+
+  await ctx.market.checkUpdates();
+  const after = cfg.seen.slice(seenCount);
+  t('查更新也带凭据（契约①的后续动作不能裸奔）',
+    after.length >= 1 && after.some((x) => /\/releases\//.test(x.url) && has(x)),
+    `新增请求 ${after.length}`);
+
+  /* 对照组：不注入凭据时记录里确实没有 Authorization。
+     没有这一条，「带凭据」的断言写成恒真也会全绿。 */
+  const cfg2 = mk(null);
+  const ctx2 = makeMarket(cfg2);
+  const r2 = await ctx2.market.install('owner/demo-repo');
+  t('元断言：对照组安装同样成功（假 fetch 不鉴权）', r2.ok === true, `${r2.stage || ''} ${r2.error || ''}`);
+  t('元断言：对照组请求头里确实没有 Authorization',
+    cfg2.seen.length >= 3 && cfg2.seen.every((x) => !has(x)));
 }
 
 for (const d of cleanup) { try { rmSync(d, { recursive: true, force: true }); } catch { /* 临时目录 */ } }
