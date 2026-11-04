@@ -11,6 +11,14 @@
  * 这里用 git blob sha1 逐文件比，与 create-plugin-repos.mjs 推送时的
  * gitBlobSha() 同口径。
  *
+ * ⚠️ 源码退场后的口径（与 refresh 一致）
+ * ------------------------------------------------------------
+ * 12 个插件源码已移出主仓、各仓自治，主仓只还持有共享镜像 js/ css/ src/。
+ * 因此核验范围严格限定为 sharedMirrorFiles()：插件源码 / README /
+ * package.json 不再比（主仓无权威副本，比了就是拿旧留档冒充判据）。
+ * 但**必须**额外验入口 plugins/<id>/index.html 存在、元数据齐全，
+ * 否则「空仓 + 共享文件全对」会是一次假绿。
+ *
  * ⚠️ 联网探针，刻意不登记 npm script：网络失败会让「内容漂移」和
  * 「GitHub 不可达」混成同一种红。CI 里只跑离线守卫，本脚本人工/联调时跑。
  *    node scripts/verify-plugin-repos.mjs
@@ -32,7 +40,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { IDS, skeletonFiles, repoNameFor, ROOT } from './build-plugin-repos.mjs';
+import { IDS, sharedMirrorFiles, repoNameFor, ROOT } from './build-plugin-repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN_PATH = '/data/user_persistent_data/tools/.git_token';
@@ -60,29 +68,44 @@ async function gh(p) {
   return r.json();
 }
 
+/* 共享镜像只取一次，空集合直接拒：0 文件全对是最完美的假绿 */
+const MIRROR = sharedMirrorFiles();
+if (!MIRROR.size) {
+  console.error('⛔ 主仓共享镜像为空，拒绝空跑假绿');
+  process.exit(1);
+}
+const expected = [...MIRROR].map(([rel, buf]) => [rel, gitBlobSha(buf)]);
+const META_FILES = ['nexus.plugin.json', 'package.json', 'vite.config.mjs',
+  '.gitignore', 'README.md', '.github/workflows/release.yml'];
+console.log(`核验口径：共享镜像 ${expected.length} 文件 + 入口 + ${META_FILES.length} 元数据\n`);
+
 let drift = 0, netFail = 0, checkedFiles = 0, stateDrift = 0;
 const heads = new Map();                 // 只有「逐文件一致 + private」通过的仓才进这里
 for (const id of IDS_TODO) {
   const repo = repoNameFor(id);
-  const files = skeletonFiles(id);
-  const expected = Object.entries(files).map(([rel, buf]) => [rel, gitBlobSha(buf)]);
   try {
     // ① 仓库必须存在且私有 —— 用户要的是「全部私有」，这条不能只靠建仓时的参数
     const meta = await gh(`/repos/${OWNER}/${repo}`);
     if (!meta.private) { console.log(`  ❌ ${repo}: 不是私有仓库`); drift++; continue; }
-    // ② 取 HEAD tree，逐文件比 sha
+    // ② 取 HEAD tree，共享镜像逐文件比 sha
     const head = await gh(`/repos/${OWNER}/${repo}/git/ref/heads/main`);
     const tree = await gh(`/repos/${OWNER}/${repo}/git/trees/${head.object.sha}?recursive=1`);
     if (tree.truncated) { console.log(`  ❌ ${repo}: tree 被截断，无法判定`); drift++; continue; }
     const remote = new Map(tree.tree.filter(x => x.type === 'blob').map(x => [x.path, x.sha]));
-    let repoOk = true;
-    let diff = 0;
-    for (const [rel, want] of expected) if (remote.get(rel) !== want) diff++;
-    if (diff || remote.size !== expected.length) {
-      console.log(`  ❌ ${repo}: 本地 ${expected.length} / 远端 ${remote.size} / sha 不一致 ${diff}`);
-      drift++; repoOk = false;
+    let diff = 0, missing = 0;
+    for (const [rel, want] of expected) {
+      if (!remote.has(rel)) missing++;
+      else if (remote.get(rel) !== want) diff++;
+    }
+    const hasEntry = remote.has(`plugins/${id}/index.html`);
+    const metaMissing = META_FILES.filter(x => !remote.has(x));
+    if (diff || missing || !hasEntry || metaMissing.length) {
+      console.log(`  ❌ ${repo}: 共享 ${expected.length} / 漂移 ${diff} / 缺失 ${missing}`
+        + ` / 入口 ${hasEntry} / 元数据缺 ${metaMissing.length}${metaMissing.length ? '（' + metaMissing.join(', ') + '）' : ''}`);
+      drift++;
     } else {
-      console.log(`  ✅ ${repo.padEnd(40)} ${expected.length} 文件逐字节一致 / private`);
+      console.log(`  ✅ ${repo.padEnd(40)} 共享 ${expected.length} 逐字节一致 / 入口在 / 元数据齐 / private / ${remote.size} blobs`);
+      heads.set(repo, head.object.sha);
     }
     checkedFiles += expected.length;
     // ③ manifest 的 repo 字段必须指向本仓，不能留着旧名
@@ -90,11 +113,11 @@ for (const id of IDS_TODO) {
     const mf = JSON.parse(Buffer.from(c.content, 'base64').toString('utf8'));
     if (mf.repo !== `${OWNER}/${repo}`) {
       console.log(`  ❌ ${repo}: manifest.repo=${mf.repo}（应为 ${OWNER}/${repo}）`);
-      drift++; repoOk = false;
+      drift++;
+      /* ② 记过也要撤回：只有三类检查全过的仓才允许 --fix-state 把 HEAD
+       * 当合法基线，否则漂移会被洗白成新基线。 */
+      heads.delete(repo);
     }
-    /* 只有三类检查全过的仓才记录 HEAD —— 否则 --fix-state 会把一个
-     * 已经漂移的仓的 sha 当成「合法基线」写进状态，漂移就此被洗白。 */
-    if (repoOk) heads.set(repo, head.object.sha);
   } catch (e) {
     console.log(`  ⚠️  ${repo}: 无法核验（${e.message}）—— 网络/API 故障，不算通过`);
     netFail++;

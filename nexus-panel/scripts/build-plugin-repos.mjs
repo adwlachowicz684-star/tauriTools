@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { repoNameFor, repoFieldFor, OWNER } from './plugin-repo-map.mjs';
+import { CAMEL, repoNameFor, repoFieldFor, OWNER } from './plugin-repo-map.mjs';
 
 /* 兼容既有调用方（create-plugin-repos.mjs / verify-plugin-repos.mjs）
  * 仍从本文件 import repoNameFor，唯一真值源在 plugin-repo-map.mjs。 */
@@ -34,10 +34,15 @@ export const ROOT = path.resolve(HERE, '..');           // nexus-panel/
 export const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const read = p => fs.readFileSync(p);
 
-/** 12 个可安装插件 = 有 nexus.plugin.json 的（home/settings/store 是 module 外壳） */
-export const IDS = fs.readdirSync(path.join(ROOT, 'plugins'))
-  .filter(d => fs.existsSync(path.join(ROOT, 'plugins', d, 'nexus.plugin.json')))
-  .sort();
+/**
+ * 12 个可安装插件 = 唯一映射表 CAMEL 的键。
+ *
+ * ⚠️ 源码退场后**不能再扫 plugins/ 目录**：12 个 iframe 插件已移出主仓，
+ * 那里只剩 module 外壳，扫出来的 IDS 会是空数组 —— 骨架 / 刷新 / 核验
+ * 整套工具链随之「空跑报 0」，不报错、不崩、不红，是最危险的假绿。
+ * 映射表本来就是仓库名的唯一真值源，这里复用它，不新增第二份表。
+ */
+export const IDS = Object.keys(CAMEL).sort();
 
 /**
  * 仓库名：nexusPanel_plugin_<驼峰 id>，全部私有。
@@ -74,10 +79,34 @@ export function collectShared() {
 }
 export const SHARED = collectShared();
 
+/**
+ * 共享镜像的**内容源**：主仓 js/ css/ src/ 当前字节。
+ *
+ * 源码退场后主仓只还持有这一份共享实现，它才是 12 仓镜像的权威。
+ * 刷新与核验都以此为准，不再重建整仓骨架 —— 那样会顺手把各仓自己的
+ * 插件源码、README、package.json 也判成「该改」，而主仓根本没有它们的
+ * 权威副本了。
+ */
+export function sharedMirrorFiles() {
+  const out = new Map();
+  for (const rel of SHARED) {
+    const p = path.join(ROOT, rel);
+    if (fs.existsSync(p) && fs.statSync(p).isFile()) out.set(rel, read(p));
+  }
+  return out;
+}
+
 /** 单个插件仓库的完整文件清单 { relPath: Buffer } */
 export function skeletonFiles(id) {
   const files = {};
   const srcdir = path.join(ROOT, 'plugins', id);
+  /* fail-closed：源码已退场。 silently 返回空会让「建了 0 个文件」看起来
+   * 像成功；直接 ENOENT 崩溃又会把真因埋在栈里，两者都不要。 */
+  if (!fs.existsSync(path.join(srcdir, 'index.html'))) {
+    throw new Error(`${id}: 插件源码已退场（${srcdir}/index.html 不存在）。`
+      + '如需重建整仓骨架，请把留档解压到某目录并设 NEXUS_PLUGIN_SRC；'
+      + '日常刷新/核验请用 sharedMirrorFiles()，不走本函数。');
+  }
   const cp = (d, prefix) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       if (['node_modules', 'dist', '.tmp-'].some(x => e.name.startsWith(x))) continue;

@@ -9,15 +9,22 @@
  * 照样正常 —— 漂移静默发生。全量重推 1872 个文件既慢又容易撞限流，
  * 且会覆盖别人可能推过的东西。
  *
- * 所以这里只做一件事：**把「远端 tree 与本地骨架」逐文件比对出的
- * 内容差异，用 contents API 带 sha 乐观锁逐文件替换**。
+ * 所以这里只做一件事：**把主仓共享镜像（js/ css/ src/）与远端 tree
+ * 逐文件比对出的内容差异，用 contents API 带 sha 乐观锁逐文件替换**。
+ *
+ * ⚠️ 源码退场后的口径变更（不是放宽）
+ * ------------------------------------------------------------
+ * 12 个插件源码已从主仓移出，各仓自治。主仓不再持有它们的权威副本，
+ * 因此**不再重建整仓骨架** —— 那会把各仓自己的 README / package.json /
+ * 插件源码一并判成「该改」，而主仓根本无从判断对错。刷新范围严格限定
+ * 在 SHARED 路径集合；其它文件一律不碰，复验还会核对 blob 总数不变。
  *
  * 防覆盖（三层，缺一不可）
  * ------------------------------------------------------------
- *  ① 远端 tree 不得有骨架里没有的文件（有人往仓里加过东西 → 拒绝）
- *  ② 骨架里不得有远端缺失的文件（本通道不支持新增，报告后拒绝）
+ *  ① 只有 private 仓才刷新；非私有视为异常，不碰
+ *  ② 远端必须**已存在全部** SHARED 路径（本通道不支持新增，缺失即拒绝）
  *  ③ 每个待替换文件 PUT 时带远端当前 blob sha：期间被改过 → 412 拒绝
- * 另：只有 private 仓才刷新；非私有视为异常，不碰。
+ * 复验另核对远端 blob 总数不变，防 PUT 误删/误加别的文件。
  *
  * 状态同步
  * ------------------------------------------------------------
@@ -36,7 +43,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { IDS, skeletonFiles, repoNameFor, ROOT } from './build-plugin-repos.mjs';
+import { IDS, sharedMirrorFiles, repoNameFor, ROOT } from './build-plugin-repos.mjs';
 
 const TOKEN = fs.readFileSync('/data/user_persistent_data/tools/.git_token', 'utf8').trim();
 const OWNER = 'adwlachowicz684-star';
@@ -100,10 +107,18 @@ function saveState(s) {
 let rejected = 0, netFail = 0, refreshed = 0, already = 0;
 let state = loadState();
 
+/* 共享镜像只取一次：12 仓用的是同一份主仓权威字节。
+ * 空集合必须直接拒 —— 否则「0 文件、全部一致」会是一次完美的假绿。 */
+const MIRROR = sharedMirrorFiles();
+if (!MIRROR.size) {
+  console.error('⛔ 主仓共享镜像为空（js/ css/ src/ 都不存在？），拒绝空跑假绿');
+  process.exit(1);
+}
+const expected = new Map([...MIRROR].map(([rel, buf]) => [rel, { buf, want: gitBlobSha(buf) }]));
+console.log(`共享镜像：${expected.size} 文件；刷新范围严格限定于此，其余文件一律不碰\n`);
+
 for (const id of IDS_TODO) {
   const repo = repoNameFor(id);
-  const files = skeletonFiles(id);
-  const expected = new Map(Object.entries(files).map(([rel, buf]) => [rel, { buf, want: gitBlobSha(buf) }]));
   try {
     const meta = await gh('GET', `/repos/${OWNER}/${repo}`);
     if (!meta.private) { console.log(`  ⛔ ${repo}: 不是私有仓库，拒绝刷新`); rejected++; continue; }
@@ -113,22 +128,27 @@ for (const id of IDS_TODO) {
     if (tree.truncated) { console.log(`  ⛔ ${repo}: tree 被截断，无法判定`); rejected++; continue; }
     const remote = new Map(tree.tree.filter(x => x.type === 'blob').map(x => [x.path, x.sha]));
 
-    const extra = [...remote.keys()].filter(rel => !expected.has(rel));
-    const missing = [...expected.keys()].filter(rel => !remote.has(rel));
-    const changed = [...expected.keys()].filter(rel => remote.has(rel) && remote.get(rel) !== expected.get(rel).want);
-
-    /* ① ② 前置：不认识的文件 / 新增文件一律不碰，避免把别人的提交洗掉 */
-    if (extra.length || missing.length) {
-      console.log(`  ⛔ ${repo}: 远端独有 ${extra.length} / 本地独有 ${missing.length}，拒绝增量刷新`);
-      if (extra.length) console.log(`     远端独有示例: ${extra.slice(0, 3).join(', ')}`);
-      if (missing.length) console.log(`     本地独有示例: ${missing.slice(0, 3).join(', ')}`);
+    /* 插件入口必须在：空仓 / 误删源码时拒绝，不能只对着共享文件刷完报绿 */
+    const entry = `plugins/${id}/index.html`;
+    if (!remote.has(entry)) {
+      console.log(`  ⛔ ${repo}: 插件入口 ${entry} 不存在，拒绝刷新`);
       rejected++; continue;
     }
+
+    /* ② 远端必须已有全部 SHARED 路径。缺一个都拒绝：本通道不支持新增，
+     * 静默跳过会让「新共享文件没进仓」表现为全绿。 */
+    const missing = [...expected.keys()].filter(rel => !remote.has(rel));
+    if (missing.length) {
+      console.log(`  ⛔ ${repo}: 共享镜像在远端缺失 ${missing.length} 文件，拒绝增量刷新`);
+      console.log(`     示例: ${missing.slice(0, 3).join(', ')}`);
+      rejected++; continue;
+    }
+    const changed = [...expected.keys()].filter(rel => remote.get(rel) !== expected.get(rel).want);
     if (!changed.length) {
-      console.log(`  ✅ ${repo.padEnd(40)} ${expected.size} 文件已一致，无需刷新`);
+      console.log(`  ✅ ${repo.padEnd(40)} ${expected.size} 共享文件已一致，无需刷新`);
       already++; continue;
     }
-    console.log(`  🔄 ${repo}: 待刷新 ${changed.length} 文件 → ${changed.join(', ')}`);
+    console.log(`  🔄 ${repo}: 待刷新 ${changed.length} 共享文件 → ${changed.join(', ')}`);
     if (DRY) { refreshed++; continue; }
 
     /* ③ 逐文件 PUT，带远端当前 blob sha 作乐观锁 */
@@ -151,14 +171,16 @@ for (const id of IDS_TODO) {
       console.log(`     · ${rel} → ${lastCommit.slice(0, 8)}`);
     }
 
-    /* 复验：刷新后整棵树必须与骨架逐文件一致，不能只信 PUT 的返回 */
+    /* 复验：共享文件逐字节对齐 + 远端 blob 总数不变（证明没碰别的文件），
+     * 不能只信 PUT 的返回。 */
     const head2 = await gh('GET', `/repos/${OWNER}/${repo}/git/ref/heads/main`);
     const tree2 = await gh('GET', `/repos/${OWNER}/${repo}/git/trees/${head2.object.sha}?recursive=1`);
     if (tree2.truncated) throw Object.assign(new Error('复验 tree 被截断'), { fatal: true });
     const remote2 = new Map(tree2.tree.filter(x => x.type === 'blob').map(x => [x.path, x.sha]));
     const bad = [...expected.keys()].filter(rel => remote2.get(rel) !== expected.get(rel).want);
-    if (bad.length || remote2.size !== expected.size) {
-      throw Object.assign(new Error(`复验失败：${bad.length} 处不一致 / 文件数 ${remote2.size}≠${expected.size}`), { fatal: true });
+    if (bad.length || remote2.size !== remote.size) {
+      throw Object.assign(new Error(
+        `复验失败：共享不一致 ${bad.length} 处 / blob 总数 ${remote.size}→${remote2.size}`), { fatal: true });
     }
 
     /* 状态同步：新 HEAD 才是我方最新提交，不写回去下次刷新会被防覆盖拦住 */
@@ -166,11 +188,13 @@ for (const id of IDS_TODO) {
       ...(state[repo] || {}), owned: true, done: true,
       commit: head2.object.sha,
       refreshedAt: new Date().toISOString(),
+      scope: 'shared-only',
       refreshedFiles: changed,
     };
     saveState(state);
     refreshed++;
-    console.log(`     ✅ 复验通过，状态 commit → ${head2.object.sha.slice(0, 8)}`);
+    console.log(`     ✅ 复验通过（共享 ${expected.size} 文件对齐 / blob 总数 ${remote.size} 不变）`
+      + `，状态 commit → ${head2.object.sha.slice(0, 8)}`);
     await new Promise(z => setTimeout(z, 1500));
   } catch (e) {
     if (e.fatal || /412|409|422|乐观锁|复验|拒绝/.test(e.message)) {

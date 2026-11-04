@@ -166,6 +166,7 @@
     "test:af-theme-mode-persist": "node theme-mode-persist-test.mjs",
     "test:plugin-manifest-sync": "node plugin-manifest-sync-test.mjs",
     "test:plugin-repo-sync": "node plugin-repo-sync-test.mjs",
+    "test:repo-mirror-sync": "node repo-mirror-sync-test.mjs",
     "test:plugin-coupling": "node cross-plugin-coupling-test.mjs",
     "test:plugin-market": "node plugin-market-test.mjs",
     "test:retired-supply": "node retired-supply-test.mjs",
