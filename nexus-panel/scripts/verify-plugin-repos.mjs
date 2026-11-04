@@ -15,8 +15,18 @@
  * 「GitHub 不可达」混成同一种红。CI 里只跑离线守卫，本脚本人工/联调时跑。
  *    node scripts/verify-plugin-repos.mjs
  *    node scripts/verify-plugin-repos.mjs --only mindmap,task-board
+ *    node scripts/verify-plugin-repos.mjs --fix-state
  *
- * 退出码：0 全部一致 / 1 存在漂移或仓库不私有 / 2 网络或 API 故障（不算通过）
+ * --fix-state：校准断点续跑状态里的 commit。
+ *   状态文件记的是「初始化那次提交的 sha」，而后续我又给 12 个仓各推过
+ *   一次 README 修正（commit message：共享镜像一致性守卫指向主仓真实脚本）。
+ *   HEAD 变了、状态没变 → 下次任何刷新/续跑都会撞上防覆盖：
+ *   「HEAD 与状态记录不一致，拒绝覆盖（可能有人推过）」。
+ *   这不是别人推的，是我自己推的，但脚本分不出来。
+ *   前置条件极严：**全部仓逐文件一致 + 零网络故障 + 仓数齐全**才允许改；
+ *   有内容漂移时绝不改状态（否则会把漂移当成基线记下来）。
+ *
+ * 退出码：0 全部一致 / 1 存在漂移、非私有或未校准的状态 / 2 网络或 API 故障
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,6 +41,8 @@ const API = 'https://api.github.com';
 const arg = (k, def) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : def; };
 const ONLY = arg('--only', null);
 const IDS_TODO = ONLY ? ONLY.split(',').filter(x => IDS.includes(x)) : IDS;
+const FIX_STATE = process.argv.includes('--fix-state');
+const STATE = path.join(ROOT, '.git', 'plugin-repos-v2-state.json');
 
 const token = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
 const gitBlobSha = b => crypto.createHash('sha1')
@@ -48,7 +60,8 @@ async function gh(p) {
   return r.json();
 }
 
-let drift = 0, netFail = 0, checkedFiles = 0;
+let drift = 0, netFail = 0, checkedFiles = 0, stateDrift = 0;
+const heads = new Map();                 // 只有「逐文件一致 + private」通过的仓才进这里
 for (const id of IDS_TODO) {
   const repo = repoNameFor(id);
   const files = skeletonFiles(id);
@@ -62,11 +75,12 @@ for (const id of IDS_TODO) {
     const tree = await gh(`/repos/${OWNER}/${repo}/git/trees/${head.object.sha}?recursive=1`);
     if (tree.truncated) { console.log(`  ❌ ${repo}: tree 被截断，无法判定`); drift++; continue; }
     const remote = new Map(tree.tree.filter(x => x.type === 'blob').map(x => [x.path, x.sha]));
+    let repoOk = true;
     let diff = 0;
     for (const [rel, want] of expected) if (remote.get(rel) !== want) diff++;
     if (diff || remote.size !== expected.length) {
       console.log(`  ❌ ${repo}: 本地 ${expected.length} / 远端 ${remote.size} / sha 不一致 ${diff}`);
-      drift++;
+      drift++; repoOk = false;
     } else {
       console.log(`  ✅ ${repo.padEnd(40)} ${expected.length} 文件逐字节一致 / private`);
     }
@@ -76,13 +90,52 @@ for (const id of IDS_TODO) {
     const mf = JSON.parse(Buffer.from(c.content, 'base64').toString('utf8'));
     if (mf.repo !== `${OWNER}/${repo}`) {
       console.log(`  ❌ ${repo}: manifest.repo=${mf.repo}（应为 ${OWNER}/${repo}）`);
-      drift++;
+      drift++; repoOk = false;
     }
+    /* 只有三类检查全过的仓才记录 HEAD —— 否则 --fix-state 会把一个
+     * 已经漂移的仓的 sha 当成「合法基线」写进状态，漂移就此被洗白。 */
+    if (repoOk) heads.set(repo, head.object.sha);
   } catch (e) {
     console.log(`  ⚠️  ${repo}: 无法核验（${e.message}）—— 网络/API 故障，不算通过`);
     netFail++;
   }
 }
-console.log(`\n结果：${IDS_TODO.length} 仓 / ${checkedFiles} 文件 / 漂移 ${drift} / 网络故障 ${netFail}`);
+/* ------------------------------------------------------------------ *
+ * ④ 断点续跑状态里的 commit 是否还是当前 HEAD
+ * ------------------------------------------------------------------ *
+ * 状态落后时 create-plugin-repos.mjs 的防覆盖会把「我自己后来推的 README
+ * 修正」当成「别人推过」而拒绝任何刷新。不修，下一轮改动就推不进去。 */
+let state = {};
+try { state = JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { /* 无状态文件：只报告 */ }
+for (const [repo, head] of heads) {
+  const want = state[repo] && state[repo].commit;
+  if (want !== head) {
+    console.log(`  ⚠️  ${repo}: 状态 commit ${String(want).slice(0, 8)} != HEAD ${head.slice(0, 8)}`);
+    stateDrift++;
+  }
+}
+if (stateDrift) {
+  const canFix = FIX_STATE && drift === 0 && netFail === 0 && heads.size === IDS_TODO.length;
+  if (canFix) {
+    for (const [repo, head] of heads) {
+      const old = state[repo] && state[repo].commit;
+      state[repo] = { ...(state[repo] || {}), owned: true, done: true, commit: head };
+      console.log(`  🔧 ${repo}: 状态 ${String(old).slice(0, 8)} → ${head.slice(0, 8)}`);
+    }
+    /* 原子写：502 中断写到一半会留下非法 JSON，下次 loadState() 直接当空状态，
+     * 12 个仓全被判成「别人的仓」而拒绝覆盖（本项目已栽过两次）。 */
+    const tmp = STATE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n');
+    fs.renameSync(tmp, STATE);
+    console.log('  ✅ 状态已校准（原子写）');
+    stateDrift = 0;
+  } else if (FIX_STATE) {
+    console.log('  ⛔ --fix-state 前置条件不满足（内容漂移 / 网络故障 / 仓数不齐），拒绝改状态');
+  } else {
+    console.log('  ℹ️  状态漂移未校准；确认内容一致后可加 --fix-state');
+  }
+}
+console.log(`\n结果：${IDS_TODO.length} 仓 / ${checkedFiles} 文件 / 漂移 ${drift}`
+  + ` / 状态漂移 ${stateDrift} / 网络故障 ${netFail}`);
 if (netFail) process.exit(2);
-if (drift) process.exit(1);
+if (drift || stateDrift) process.exit(1);
