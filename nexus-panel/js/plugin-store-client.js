@@ -36,6 +36,41 @@ export const ASSET_SUFFIX = '.tar.gz';
 
 export const API_BASE = 'https://api.github.com';
 
+/**
+ * 构造 GitHub API 请求头。
+ *
+ * 为什么必须有这个入口（2026-11-04 真实私有仓联调查出来的）：
+ *   12 个插件仓库**全部是 private**。`fetchRelease` / `downloadAsset` 原本
+ *   不带任何凭据，不带 token 访问私有仓 releases 实测返回 **403**；
+ *   而所有单元测试都注入假 fetch、真实探针跑的是公开仓，
+ *   于是这条链路从来没暴露过「凭证根本传不进去」这件事。
+ *
+ *   ⚠️ 凭据由**调用方注入**（opts.headers），本模块不读环境变量、不存 token。
+ *   这些模块属于宿主 Node 侧逻辑层，将来接线走后端 IPC：
+ *   token 只在后端持有，绝不能进 webview bundle。
+ *
+ * @param {object} [opts]
+ * @param {object} [opts.headers] 附加请求头（通常 Authorization: Bearer …）
+ * @param {boolean} [opts.octet]  下载二进制产物时用 octet-stream
+ * @returns {Record<string,string>}
+ */
+export function ghHeaders(opts = {}) {
+  const h = {
+    Accept: opts.octet ? 'application/octet-stream' : 'application/vnd.github+json',
+    'User-Agent': 'nexus-panel',
+  };
+  const extra = opts.headers && typeof opts.headers === 'object' ? opts.headers : null;
+  if (!extra) return h;
+  for (const [k, v] of Object.entries(extra)) {
+    if (typeof k !== 'string' || typeof v !== 'string' || !v) continue;
+    /* 大小写不敏感去重重：调用方传 accept 时不该同时留下两个 Accept */
+    const dup = Object.keys(h).find((x) => x.toLowerCase() === k.toLowerCase());
+    if (dup && dup !== k) delete h[dup];
+    h[k] = v;
+  }
+  return h;
+}
+
 /* ------------------------------------------------------------------ *
  * 1. 地址解析
  * ------------------------------------------------------------------ */
@@ -200,8 +235,38 @@ export async function fetchRelease(repo, opts = {}) {
   const base = `${API_BASE}/repos/${repo.owner}/${repo.repo}/releases`;
   const url = opts.ref ? `${base}/tags/${encodeURIComponent(opts.ref)}` : `${base}/latest`;
   try {
-    const res = await f(url, { headers: { Accept: 'application/vnd.github+json' } });
-    if (!res || res.status === 404) return { ok: false, release: null, error: `找不到 release: ${opts.ref || 'latest'}` };
+    const sent = ghHeaders(opts);
+    const res = await f(url, { headers: sent });
+    /* 真跑又撞出一层：GitHub 对**无权访问的私有仓**也会返回 404
+       （隐藏仓库存在性），与「确实没有 release」是同一个状态码。
+       旧文案以「找不到 release」开头、把私有仓/授权塞进括号里，
+       用户第一眼仍被引到「插件没发版」，而真相可能是授权没接上
+       （真实私有仓联调里这条断言就是这么红的）。
+       主因改为 404 + 三种可能并列，不臆断是哪一种，且不以
+       「找不到 release」作为句首结论。 */
+    if (!res || res.status === 404) {
+      return { ok: false, release: null,
+        error: `GitHub 返回 404：仓库不存在、尚未发版，或仓库为私有且请求未带有效授权（GitHub 对无权访问的私有仓同样返回 404）` };
+    }
+    /* 私有仓未授权实测返回 403。只报「GitHub 返回 403」会把用户引到
+       「这个插件没发版」的方向，而真相是凭据没传进来。
+       rate limit 也是 403，用剩余额度区分，别把两种原因说成一种。 */
+    if (res.status === 403) {
+      let left = null;
+      try {
+        if (res.headers && typeof res.headers.get === 'function') left = res.headers.get('x-ratelimit-remaining');
+      } catch { /* 假 fetch / 无 headers 的响应：按「未提供授权」解释 */ }
+      /* 真跑撞出来的：匿名请求的 x-ratelimit-remaining 也可能是 0。
+         只看这个头会把「没带凭据访问私有仓」误报成「限额用尽」——
+         用户就会去等额度，而真相是授权没接上。只有**带凭据**时
+         额度为 0 才归为限额。 */
+      const authed = Object.keys(sent).some(
+        (k) => k.toLowerCase() === 'authorization' && typeof sent[k] === 'string' && sent[k]);
+      const why = authed && (left === '0' || left === 0)
+        ? 'GitHub API 限额已用尽'
+        : '仓库为私有且请求未带有效授权（或账号无权访问）';
+      return { ok: false, release: null, error: `GitHub 返回 403：${why}` };
+    }
     if (res.status >= 400) return { ok: false, release: null, error: `GitHub 返回 ${res.status}` };
     const j = await res.json();
     return { ok: true, release: j, error: null };
@@ -243,17 +308,32 @@ export function resolveUpdate(installedVersion, latest, id) {
  * @param {object} [opts] { fetch }
  * @returns {Promise<{ok:boolean, buffer:Buffer|null, error:string|null, bytes:number}>}
  *
- * 只走 asset.browser_download_url：那是 GitHub 给的、指向产物本身的地址。
- * 不接受调用方另传 url —— 否则「下载 A 却装 B」这类错配无从防起。
+ * 优先走 GitHub API 给的 `asset.url`（私有仓可用 Bearer token 访问），
+ * 没有才回退 `browser_download_url`（公开仓 / 老夹具）。
+ * 两者都来自 API 响应本身，**不接受调用方另传 url** ——
+ * 否则「下载 A 却装 B」这类错配无从防起。
  */
 export async function downloadAsset(asset, opts = {}) {
   const f = opts.fetch || globalThis.fetch;
-  if (!asset || typeof asset.browser_download_url !== 'string') {
+  if (!asset || (typeof asset.browser_download_url !== 'string' && typeof asset.url !== 'string')) {
     return { ok: false, buffer: null, error: '产物没有下载链接', bytes: 0 };
   }
   if (typeof f !== 'function') return { ok: false, buffer: null, error: '环境没有 fetch', bytes: 0 };
   try {
-    const res = await f(asset.browser_download_url);
+    /* 私有 release 的 browser_download_url 是**浏览器会话 URL**；
+       真正能用 Bearer token 访问的是 API 端点 asset.url
+       （带 Accept: octet-stream → 302 到签名地址）。
+       两者都来自 GitHub API 响应本身，不接受调用方另传 url：
+       否则「下载 A 却装 B」无从防起。对 url 做域名限制，
+       免得一个伪造的 asset 对象把请求指到别处。 */
+    const apiUrl = typeof asset.url === 'string'
+      && /^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/releases\/assets\/\d+$/.test(asset.url)
+      ? asset.url : null;
+    const url = apiUrl || asset.browser_download_url;
+    if (typeof url !== 'string' || !url) {
+      return { ok: false, buffer: null, error: '产物没有可用的下载链接', bytes: 0 };
+    }
+    const res = await f(url, { headers: ghHeaders({ ...opts, octet: true }) });
     if (!res || res.status >= 400) return { ok: false, buffer: null, error: `下载失败 ${res && res.status}`, bytes: 0 };
     const ab = await res.arrayBuffer();
     const buf = Buffer.from(ab);
