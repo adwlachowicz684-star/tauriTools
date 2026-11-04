@@ -1,0 +1,31 @@
+{
+  "note": "由 scripts/probe-retired-state.mjs 生成；离线守卫只认这份快照，不联网。",
+  "capturedBy": "probe-retired-state.mjs",
+  "reds": [
+    "orphan-modules-guard-test.mjs\u0000①a 没有台账外的「仅测试可达」模块",
+    "orphan-modules-guard-test.mjs\u0000①c 集合恰为台账（与元断言共用判据）",
+    "plugin-repo-sync-test.mjs\u0000agent-flow: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000color-picker: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000demo-iframe: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000demo-light: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000demo-react: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000demo-service: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000dupview: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000icon-picker: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000md-editor: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000mindmap: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000project-group: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000task-board: manifest.repo 指向本仓",
+    "plugin-repo-sync-test.mjs\u0000骨架 agent-flow: 能生成（主仓 repo 必须已派生正确）",
+    "plugin-repo-sync-test.mjs\u0000骨架 demo-iframe: 能生成（主仓 repo 必须已派生正确）",
+    "plugin-repo-sync-test.mjs\u0000骨架 dupview: 能生成（主仓 repo 必须已派生正确）",
+    "test-coverage-guard-test.mjs\u0000② 漏网集合恰为台账（多漏一条 / 修好一条都要喊）",
+    "test-coverage-guard-test.mjs\u0000③ 台账条目 test:af 真实存在于 scripts（不能靠加假条目消红）",
+    "test-coverage-guard-test.mjs\u0000④ 欠账对应的目录级 runner 真实存在",
+    "test-coverage-guard-test.mjs\u0000④ 欠账背后确有 >100 个 .test.ts（不是空壳条目）",
+    "test-coverage-guard-test.mjs\u0000⑤ 元断言 F：同一判据对「台账清空」返回 false（不是恒假）",
+    "test-registry-test.mjs\u0000共享测试框架自身会按失败数退出（一处放行不能拖垮几十个测试）",
+    "test-registry-test.mjs\u0000收集判据覆盖 .test.ts（漏扫会让整批测试悄悄消失、报告却仍是绿的）",
+    "test-registry-test.mjs\u0000目录级运行器（run-tests.sh）被 npm script 点名（否则它跑的整批测试都没人跑）"
+  ]
+}

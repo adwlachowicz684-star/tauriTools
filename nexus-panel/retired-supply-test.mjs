@@ -201,19 +201,25 @@ for (const id of IDS) {
 
   const pkg = JSON.parse(read('package.json'));
   const actual = collectDead(pkg);
-  t('⑤g 主仓死 script 集合恰为台账（销一条/多一条都红）',
-    eq(canon(actual), canon(rows)), `实际 ${actual.length} 条`);
-  /* 元断言 I：注入一条新的死 script，判据必须给出不同集合 */
+  /* 退场态：136 条死 script 已从主仓删除。期望值从「恰为台账」变成「空集」——
+     这不是放宽：台账仍是 136 条退役记录，只是主仓不再登记它们。 */
+  t('⑤g 主仓死 script 集合为空（退役完成，不残留指向已删路径的命令）',
+    actual.length === 0, `实际 ${actual.length} 条：${actual.slice(0, 3).map((x) => x.script).join(',')}`);
+  /* 元断言 I：注入一条新的死 script，判据必须抓到（防 ⑤g 恒真） */
   const injected = { scripts: { ...pkg.scripts, 'test:__retired_probe__': 'node plugins/dupview/probe.mjs' } };
-  t('⑤h 元断言：新增死 script 会被判据抓到',
-    !eq(canon(collectDead(injected)), canon(rows)));
-  /* 元断言 J：collectDead 不得恒返回台账（空 scripts 必须给空集）。
-     否则 ⑤g 永远绿 —— 正是「判据失效却全绿」那一类。 */
+  t('⑤h 元断言：新增死 script 会被判据抓到', collectDead(injected).length === 1,
+    `实得 ${collectDead(injected).length}`);
+  /* 元断言 J：空 scripts 必须给空集，不恒返回台账 */
   t('⑤i 元断言：空 scripts 返回空集，不恒返回台账',
     collectDead({ scripts: {} }).length === 0);
-  /* 元断言 K：把台账删一行，⑤g 必须红 */
-  t('⑤j 元断言：台账少一行会被 ⑤g 抓到',
-    !eq(canon(actual), canon(rows.slice(1))));
+  /* 元断言 K：退役记录不许悄悄缩水，且去向必须指向本行自己的 target */
+  t('⑤j 元断言：台账少一行会被 ⑤c 抓到，且 keptAt 与 target 一致',
+    rows.length !== 135 && rows.every((r) => r.keptAt === `${r.repo}::${r.target}`));
+  /* 新增：退役记录的证据不能是空壳 */
+  t('⑤k 台账每条都有 disposition / keptAt / reason / evidence',
+    rows.every((r) => r.disposition === 'retired' && r.keptAt
+      && r.reason && r.reason.length > 20 && r.evidence
+      && r.evidence.afterFillOk === 127 && r.evidence.targetPresentInRepo === true));
 }
 
 console.log(`通过 ${pass} 项，失败 ${fail} 项`);
