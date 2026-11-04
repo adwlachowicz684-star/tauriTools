@@ -5,5 +5,6 @@
   "entry": "index.html",
   "kind": "app",
   "icon": "◆",
-  "description": "React + TSX 编写，跑在沙箱里，ctx 用法与同页插件完全一致"
+  "description": "React + TSX 编写，跑在沙箱里，ctx 用法与同页插件完全一致",
+  "repo": "adwlachowicz684-star/nexusPanel_plugin_demoReact"
 }
