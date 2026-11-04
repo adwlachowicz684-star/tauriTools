@@ -5,5 +5,6 @@
   "entry": "index.html",
   "kind": "service",
   "icon": "📝",
-  "description": "左编辑右预览的 md 编辑器，返回编辑后的文本"
+  "description": "左编辑右预览的 md 编辑器，返回编辑后的文本",
+  "repo": "adwlachowicz684-star/nexusPanel_plugin_mdEditor"
 }
