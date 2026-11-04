@@ -112,6 +112,11 @@ function readManifestFromEntries(entries) {
  * @param {string} p.dataRoot       appDataDir（用户数据根）
  * @param {object[]} [p.staticPlugins] 静态注册表
  * @param {function} [p.fetch]      可注入（测试/代理）
+ * @param {object} [p.headers]      附加 GitHub 请求头（私有仓的 Authorization）。
+ *                                  后端持有 token 后整条链路透传：
+ *                                  release 查询 / 产物下载 / 查更新 / commit sha 一个都不能漏，
+ *                                  漏哪一处就表现为「装上了但永远查不到更新」。
+ *                                  本层不读环境变量、不落盘、不回显凭据。
  * @param {object} [p.dataStore]    createPluginDataStore 的实例，读写 KV 用
  * @param {string[]} [p.reservedIds] 与内置插件冲突的 id
  */
@@ -122,6 +127,7 @@ export function createPluginMarket(p) {
   const dataRoot = o.dataRoot;
   const staticPlugins = Array.isArray(o.staticPlugins) ? o.staticPlugins : [];
   const fetchFn = o.fetch || globalThis.fetch;
+  const ghOptsHeaders = o.headers && typeof o.headers === 'object' ? o.headers : null;
   const reservedIds = o.reservedIds || [];
   /* 用户数据目录必须复用 DATA_DIR_NAME：另写一份 'plugin-data' 会让
      data-store 写 A、uninstall 删 B，表现为"卸载保留了数据"却永远读不回。 */
@@ -160,7 +166,7 @@ export function createPluginMarket(p) {
     /** 只报告不下载（D6）。台账没记录 = 查不到，正是契约①要防的失效。 */
     async checkUpdates() {
       const st = readLedgerState();
-      const out = await ledgerCheckUpdates(st.ledger, { fetch: fetchFn });
+      const out = await ledgerCheckUpdates(st.ledger, { fetch: fetchFn, headers: ghOptsHeaders });
       const why = ledgerFault(st);
       return { ...out, errors: [...(why ? [why] : []), ...(out.errors || [])] };
     },
@@ -191,7 +197,7 @@ export function createPluginMarket(p) {
       const repo = { owner: parsed.owner, repo: parsed.repo };
       const ref = opts.ref || parsed.ref || null;
 
-      const rel = await fetchRelease(repo, { fetch: fetchFn, ref });
+      const rel = await fetchRelease(repo, { fetch: fetchFn, ref, headers: ghOptsHeaders });
       if (!rel.ok) return { ok: false, stage: 'release', error: rel.error };
       const version = String(rel.release.tag_name || rel.release.name || '').replace(/^v/i, '');
       const assets = (Array.isArray(rel.release.assets) ? rel.release.assets : [])
@@ -214,7 +220,7 @@ export function createPluginMarket(p) {
       }
       if (!asset) return { ok: false, stage: 'asset', error: 'release 里没有可用的规范命名产物' };
 
-      const dl = await downloadAsset(asset, { fetch: fetchFn });
+      const dl = await downloadAsset(asset, { fetch: fetchFn, headers: ghOptsHeaders });
       if (!dl.ok) return { ok: false, stage: 'download', error: dl.error };
 
       /* 下载完先校验产物完整性，再交给解包器。
@@ -253,7 +259,7 @@ export function createPluginMarket(p) {
       for (const s of unpacked.skipped) warnings.push(`解包跳过条目 ${s.name}: ${s.reason}`);
       let sha = null;
       if (ref || version) {
-        const s = await fetchRefSha(repo, ref || `v${version}`, { fetch: fetchFn });
+        const s = await fetchRefSha(repo, ref || `v${version}`, { fetch: fetchFn, headers: ghOptsHeaders });
         if (s.ok) sha = s.sha;
         else warnings.push(`commit sha 未取到（${s.error}），更新指纹比对会退化`);
       }
