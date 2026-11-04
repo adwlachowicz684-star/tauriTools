@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import {
   parseRepoInput, compareVersion, assetNameFor, pickAsset,
   fetchRelease, resolveUpdate, downloadAsset, ASSET_PREFIX, ASSET_SUFFIX,
-  verifyAssetDigest, isUploadedAsset,
+  verifyAssetDigest, isUploadedAsset, ghHeaders,
 } from './js/plugin-store-client.js';
 
 let pass = 0, fail = 0, skip = 0, note = 0;
@@ -117,7 +117,14 @@ console.log('\n--- 4. 取 release ---');
 
   const r404 = await fetchRelease({ owner: 'o', repo: 'r' }, { fetch: fakeFetch({ '*': { status: 404 } }) });
   t('404 → ok=false 且不抛', r404.ok === false, String(r404.error));
-  t('404 的原因为「找不到 release」', String(r404.error).includes('找不到 release'), String(r404.error));
+  /* 旧断言写的是「404 的原因为『找不到 release』」——它在给错误文案背书。
+     GitHub 对无权访问的私有仓同样返回 404（隐藏仓库存在性），
+     只报「找不到 release」会把用户引到「插件没发版」。
+     现在要求主因是 404 + 三种可能并列，且不再以「找不到 release」作结论。 */
+  t('404 → 并列点出未发版与私有仓未授权，不以「找不到 release」作结论',
+    /私有/.test(String(r404.error)) && /授权/.test(String(r404.error))
+    && /未发版/.test(String(r404.error))
+    && !/找不到 release/.test(String(r404.error)), String(r404.error));
 
   const r500 = await fetchRelease({ owner: 'o', repo: 'r' }, { fetch: fakeFetch({ '*': { status: 500 } }) });
   t('500 → ok=false 且不抛', r500.ok === false, String(r500.error));
@@ -270,6 +277,112 @@ console.log('\n--- 8. 真实响应形态 + 产物完整性 ---');
   const forged = `sha256:${'a'.repeat(64)}`;
   t('元断言：合法格式但错的值确实被拒（digest 判据没恒真）',
     verifyAssetDigest(payload, { digest: forged }).ok === false);
+}
+
+/* ============================================================
+   9. 私有仓授权（12 仓全部 private 后暴露的真缺口）
+   ------------------------------------------------------------
+   实测：不带凭据 GET 私有仓 releases → 403。此前链路连"传凭据"的
+   入口都没有，而所有测试用假 fetch、真实探针跑的是公开仓，从不暴露。
+   403 若只报「GitHub 返回 403」，排查方向会被引到「这个插件没发版」。
+   ============================================================ */
+console.log('\n--- 9. 私有仓授权与 403 诊断 ---');
+{
+  const AUTH = { Authorization: 'Bearer OFFLINE_TEST' };
+  const base = ghHeaders();
+  t('基础头带 API Accept 与 User-Agent',
+    base.Accept === 'application/vnd.github+json' && base['User-Agent'] === 'nexus-panel');
+  t('元断言：不注入凭据时请求头里没有 Authorization（判据不能恒真）',
+    !('Authorization' in base));
+  const withAuth = ghHeaders({ headers: AUTH });
+  t('注入的 Authorization 出现在请求头里', withAuth.Authorization === AUTH.Authorization);
+  const oct = ghHeaders({ headers: AUTH, octet: true });
+  t('下载产物用 octet-stream 且仍带凭据',
+    oct.Accept === 'application/octet-stream' && oct.Authorization === AUTH.Authorization);
+  t('大小写不敏感去重，不会同时留下两个 Accept',
+    Object.keys(ghHeaders({ headers: { accept: 'application/json' } }))
+      .filter((k) => k.toLowerCase() === 'accept').length === 1);
+  t('空/非法附加头不污染基础头',
+    ghHeaders({ headers: null }).Accept === 'application/vnd.github+json'
+    && !('Authorization' in ghHeaders({ headers: { Authorization: 123 } })));
+
+  /* 记录 options 的假 fetch：钉住「请求真的带上了头」，不是只看函数返回值 */
+  const seen = [];
+  const recFetch = async (url, opts) => {
+    seen.push({ url, headers: (opts && opts.headers) || null });
+    if (/\/releases\//.test(url)) return { status: 200, json: async () => ({ tag_name: 'v1.0.0', assets: [] }) };
+    return { status: 200, json: async () => ({}),
+      arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  const rel = await fetchRelease({ owner: 'o', repo: 'r' }, { fetch: recFetch, headers: AUTH });
+  t('前置：带凭据能取到 release（本节不是空跑）', rel.ok === true, rel.error || '');
+  t('fetchRelease 真的把 Authorization 发给了 GitHub',
+    seen.length === 1 && seen[0].headers && seen[0].headers.Authorization === AUTH.Authorization);
+  t('fetchRelease 的 Accept 是 API 形态',
+    seen[0].headers.Accept === 'application/vnd.github+json');
+
+  const seen2 = [];
+  const recFetch2 = async (url, opts) => {
+    seen2.push({ url, headers: (opts && opts.headers) || null });
+    return { status: 200, arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  const dl = await downloadAsset({ name: 'x.tar.gz', browser_download_url: 'https://dl/x.tar.gz' },
+    { fetch: recFetch2, headers: AUTH });
+  t('前置：带凭据下载成功', dl.ok === true, dl.error || '');
+  t('downloadAsset 真的把 Authorization 发给了下载链接',
+    seen2.length === 1 && seen2[0].headers && seen2[0].headers.Authorization === AUTH.Authorization);
+  t('downloadAsset 的 Accept 是 octet-stream',
+    seen2[0].headers.Accept === 'application/octet-stream');
+
+  /* 私有仓的 browser_download_url 是浏览器会话 URL，能带 Bearer token 的是
+     API asset 端点。url 必须做域名限制，否则伪造 asset 就能把请求指走。 */
+  const apiUrl = 'https://api.github.com/repos/o/r/releases/assets/42';
+  const seen3 = [];
+  const recFetch3 = async (url, opts) => {
+    seen3.push({ url, headers: (opts && opts.headers) || null });
+    return { status: 200, arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  const both = { name: 'x.tar.gz', url: apiUrl, browser_download_url: 'https://dl/x.tar.gz' };
+  await downloadAsset(both, { fetch: recFetch3, headers: AUTH });
+  t('私有仓优先走 API asset 端点（不是浏览器会话 URL）', seen3[0].url === apiUrl, seen3[0].url);
+  await downloadAsset({ ...both, url: 'https://evil.example/x' },
+    { fetch: recFetch3, headers: AUTH });
+  t('伪造域名的 url 被忽略，回退 browser_download_url',
+    seen3[1].url === 'https://dl/x.tar.gz', seen3[1].url);
+  await downloadAsset({ name: 'x.tar.gz', browser_download_url: 'https://dl/x.tar.gz' },
+    { fetch: recFetch3, headers: AUTH });
+  t('没有 url 时仍走 browser_download_url（公开仓/老夹具不受影响）',
+    seen3[2].url === 'https://dl/x.tar.gz', seen3[2].url);
+  t('API 端点那一路同样带凭据',
+    !!(seen3[0].headers && seen3[0].headers.Authorization === AUTH.Authorization));
+
+  /* 对照：不注入凭据时确实没有 Authorization —— 防「记录的头恒等于测试常量」 */
+  let noAuthHeaders = null;
+  await fetchRelease({ owner: 'o', repo: 'r' }, {
+    fetch: async (url, opts) => { noAuthHeaders = opts && opts.headers; return { status: 200, json: async () => ({}) }; },
+  });
+  t('元断言：不注入凭据时确实没有 Authorization（对照组成立）',
+    noAuthHeaders && !('Authorization' in noAuthHeaders));
+
+  const r403 = await fetchRelease({ owner: 'o', repo: 'r' },
+    { fetch: fakeFetch({ '*': { status: 403 } }) });
+  t('403 → 明确指向私有仓/授权，而不是「找不到 release」',
+    r403.ok === false && /私有/.test(r403.error) && /授权/.test(r403.error)
+    && !/找不到 release/.test(r403.error), r403.error);
+  const rateFetch = async () => ({ status: 403,
+    headers: { get: (k) => (k === 'x-ratelimit-remaining' ? '0' : null) },
+    json: async () => ({}) });
+  const r403rate = await fetchRelease({ owner: 'o', repo: 'r' }, { fetch: rateFetch });
+  t('403 但没带凭据：仍指向私有仓/授权，不误报成限额',
+    /私有/.test(r403rate.error) && !/限额/.test(r403rate.error), r403rate.error);
+  const r403rateAuthed = await fetchRelease({ owner: 'o', repo: 'r' },
+    { fetch: rateFetch, headers: AUTH });
+  t('带凭据且额度确实为 0 → 才报限额',
+    /限额/.test(r403rateAuthed.error) && !/私有/.test(r403rateAuthed.error), r403rateAuthed.error);
+  /* 其它状态码口径不能被 403 分支带偏 */
+  const r500 = await fetchRelease({ owner: 'o', repo: 'r' },
+    { fetch: fakeFetch({ '*': { status: 500 } }) });
+  t('500 仍是泛化状态错误（403 分支没吞掉它）', /GitHub 返回 500/.test(r500.error), r500.error);
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项，跳过 ${skip} 项，告知 ${note} 条`);
