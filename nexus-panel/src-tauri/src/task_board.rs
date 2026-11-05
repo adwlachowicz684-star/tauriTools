@@ -2278,13 +2278,37 @@ fn validate_title(v: &str) -> Result<String, String> {
     Ok(t)
 }
 
+/*
+  ⛔ 可选**标量枚举/身份**字段的空串 = 「没给」，不是「清空」，更不是非法值。
+  修前 create 与 patch 各自 `str_field(...)`：统一 trim 之后空串变成 Some("")，
+  unwrap_or_else 不触发 → 四个消费点一起出问题：
+
+    create {"priority":""} → "非法优先级 "（AI 以为是默认值，反复改值重试）
+    create {"status":""}   → "新建任务只允许 status=todo（收到 ）"
+    patch  {"priority":""} → 校验段报错；若只修校验段，下面 for 循环
+                              又会把 "" 写进 tasks.json（同一字段两个消费点）
+    patch  {"reporter":""} → for 循环把已有 reporter 清成 ""
+    patch  {"status":""}   → "非法状态 "
+
+  而前端 normalizeTask 读盘是 `|| 'P2' / 'todo' / 'manual'` 兜底：
+  AI 写进去的空串界面会显示成默认值，tasks.json 里却是 "" —— 两条线索不一致。
+  HTTP 列表过滤的空值、add_event 的 note/action、register_agent 的 name/role
+  早都按「空串=没给」处理，这三个字段是同一族的漏网。
+
+  ⛔ detail / summary 的空串**不在这里**：那两个字段允许清空，空串是合法值；
+  estimate 的空串也合法（check_shapes 特意放行，estimate_of 归 0 = 没估）。
+  title 是必填，空串由 validate_title 明确报错，不能当「没给」。
+
+  判据只存在这一份，create / patch 的所有消费点共用，不再逐处补 filter。
+*/
+fn opt_str(body: &Value, key: &str) -> Option<String> {
+    str_field(body, key).filter(|v| !v.is_empty())
+}
+
 fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     let title = validate_title(&str_field(body, "title").unwrap_or_default())?;
     /* 文本字段一律 trim：AI 手写 "  P4  " 不该因为多了空格就建不了任务 */
-    let priority = str_field(body, "priority")
-        .unwrap_or_else(|| "P2".to_string())
-        .trim()
-        .to_string();
+    let priority = opt_str(body, "priority").unwrap_or_else(|| "P2".to_string());
     if !PRIORITIES.contains(&priority.as_str()) {
         return Err(format!("非法优先级 {}（合法值: {}）", priority, PRIORITIES.join("/")));
     }
@@ -2299,7 +2323,7 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
         .first()
         .cloned()
         .unwrap_or_else(|| "todo".to_string());
-    if let Some(s) = str_field(body, "status") {
+    if let Some(s) = opt_str(body, "status") {
         if s != initial {
             return Err(format!(
                 "新建任务只允许 status={}（收到 {}）；填的是定义表里的 id，不是显示名，可选值看响应 defs.statusDefs / initial；后续流转走 PATCH",
@@ -2430,8 +2454,8 @@ fn patch_task(
           同一份数据两条路说法不一致，而前端 normalizeTask 会把乱写的
           静默归到 P2，用户看到的是"改了又变回去"。
         */
-        if let Some(v) = str_field(body, "priority") {
-            if !PRIORITIES.contains(&v.trim()) {
+        if let Some(v) = opt_str(body, "priority") {
+            if !PRIORITIES.contains(&v.as_str()) {
                 return Err(format!("非法优先级 {}（合法值: {}）", v, PRIORITIES.join("/")));
             }
         }
@@ -2455,6 +2479,13 @@ fn patch_task(
         for key in ["title", "detail", "summary", "priority", "reporter"] {
             if let Some(v) = str_field(body, key) {
                 let next = v.trim();
+                /* ⛔ 与 opt_str 同一份判据：这两个是**枚举/身份**字段，
+                   空串 = 没给。只修校验段不够 —— 校验跳过后这里照样会
+                   把 "" 写进文件，前端读盘又兜成 P2 / manual，两条线索打架。
+                   detail / summary 不在此列：它们允许清空。 */
+                if next.is_empty() && (key == "priority" || key == "reporter") {
+                    continue;
+                }
                 if obj.get(key).and_then(|x| x.as_str()) != Some(next) {
                     obj.insert(key.to_string(), json!(next));
                     changed = true;
@@ -2529,7 +2560,7 @@ fn patch_task(
                 push_history(obj, &by, "estimate", &format!("{} -> {}", fmt_est(cur), fmt_est(next)));
             }
         }
-        if let Some(status) = str_field(body, "status") {
+        if let Some(status) = opt_str(body, "status") {
             // 认这份数据自己配的状态（没配过就是默认那七个）
             if !allowed.iter().any(|x| x == &status) {
                 return Err(format!(
