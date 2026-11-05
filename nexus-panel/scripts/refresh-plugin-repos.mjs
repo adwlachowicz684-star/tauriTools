@@ -44,6 +44,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { IDS, sharedMirrorFiles, repoNameFor, ROOT, repoStatePath } from './build-plugin-repos.mjs';
+import { loadPluginRepoState, savePluginRepoState } from './plugin-repo-state.mjs';
 
 const TOKEN = fs.readFileSync('/data/user_persistent_data/tools/.git_token', 'utf8').trim();
 const OWNER = 'adwlachowicz684-star';
@@ -95,17 +96,17 @@ async function gh(method, p, body, tries = 5) {
 /* contents API 的 path：斜杠要保留，只编码各段（中文文件名等） */
 const cpath = rel => rel.split('/').map(encodeURIComponent).join('/');
 
-function loadState() {
-  try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return {}; }
-}
-function saveState(s) {
-  const tmp = STATE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n');
-  fs.renameSync(tmp, STATE);
+/* 状态损坏时必须停下：以空对象为底刷新成功后会写回状态，把其余 11 个仓的
+ * owned / scope / refreshedAt 历史一起抹掉，而输出全程是 ✅。 */
+const loaded = loadPluginRepoState(STATE);
+if (!loaded.ok) {
+  console.error(`⛔ ${loaded.reason}`);
+  console.error('⛔ 状态文件损坏，拒绝增量刷新；请人工修复状态文件后再跑');
+  process.exit(1);
 }
 
 let rejected = 0, netFail = 0, refreshed = 0, already = 0;
-let state = loadState();
+let state = loaded.state;
 
 /* 共享镜像只取一次：12 仓用的是同一份主仓权威字节。
  * 空集合必须直接拒 —— 否则「0 文件、全部一致」会是一次完美的假绿。 */
@@ -191,7 +192,7 @@ for (const id of IDS_TODO) {
       scope: 'shared-only',
       refreshedFiles: changed,
     };
-    saveState(state);
+    savePluginRepoState(STATE, state);
     refreshed++;
     console.log(`     ✅ 复验通过（共享 ${expected.size} 文件对齐 / blob 总数 ${remote.size} 不变）`
       + `，状态 commit → ${head2.object.sha.slice(0, 8)}`);

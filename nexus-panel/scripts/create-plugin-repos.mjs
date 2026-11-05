@@ -22,14 +22,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDS, skeletonFiles, sha, ROOT, repoNameFor } from './build-plugin-repos.mjs';
+import { IDS, skeletonFiles, sha, ROOT, repoNameFor, repoStatePath } from './build-plugin-repos.mjs';
+import {
+  loadPluginRepoState, savePluginRepoState, resetPluginRepoState,
+} from './plugin-repo-state.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN = fs.readFileSync('/data/user_persistent_data/tools/.git_token', 'utf8').trim();
 const OWNER = 'adwlachowicz684-star';
 // 与上一轮 nexus-plugin-* 的状态文件分开：key 换了，混用会把「新仓还没建」
 // 误判成「旧仓已完成」，也会让 --reset-state 误删旧记录。
-const STATE = path.resolve(ROOT, '.git', 'plugin-repos-v2-state.json');
+// ⛔ 路径必须与核验 / 刷新同源：ROOT 是 nexus-panel/，git 根在它的上一层。
+// 写死在这里会指向一个根本不存在的目录，读到的永远是空状态（12 仓全被判成
+// 别人的仓），而 saveState 的 mkdir 还会凭空造出一个假目录；verify 那边
+// 校准了真状态也完全不影响这个文件。逐级向上找真实 .git。
+const STATE = repoStatePath();
 const DRY = process.argv.includes('--dry-run');
 const arg = (k, def) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : def; };
 const ONLY = arg('--only', null);
@@ -97,16 +104,8 @@ async function gh(method, url, body, tries = 5) {
   throw new Error(`重试耗尽: ${method} ${url}`);
 }
 
-function loadState() {
-  try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); }
-  catch { return {}; }
-}
-function saveState(s) {                       // 原子写：tmp + rename，防 502 写坏半份 JSON
-  fs.mkdirSync(path.dirname(STATE), { recursive: true });
-  const tmp = STATE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n');
-  fs.renameSync(tmp, STATE);
-}
+/* 状态读写一律走共享模块：文件不存在才是首次运行；文件损坏必须 fail-closed，
+ * 不能当成空状态（那会把 12 个我方仓库全判成别人的仓，或让后续写回抹掉历史）。 */
 
 async function blob(repo, buf) {
   const r = await gh('POST', `/repos/${OWNER}/${repo}/git/blobs`,
@@ -160,7 +159,7 @@ async function pushRepo(id, state) {
       console.log(`  创建 ${repo} ✅`);
       owned = true;
       state[repo] = { owned: true, done: false };
-      saveState(state);                    // 立刻落 owned，中断重跑才知道这是我们的仓库
+      savePluginRepoState(STATE, state);                    // 立刻落 owned，中断重跑才知道这是我们的仓库
     }
   } else {
     const head = await gh('GET', `/repos/${OWNER}/${repo}/git/ref/heads/main`);
@@ -177,7 +176,7 @@ async function pushRepo(id, state) {
         + `${state[repo].commit.slice(0, 8)} 不一致，拒绝覆盖（可能有人推过）`);
     }
     // 空仓库没有任何内容可覆盖，可安全接管（兼容上一轮只建了仓没推成的情形）
-    if (isEmpty) { owned = true; state[repo] = { owned: true, done: false }; saveState(state); }
+    if (isEmpty) { owned = true; state[repo] = { owned: true, done: false }; savePluginRepoState(STATE, state); }
   }
   if (DRY) return { repo, files: entries.length, dry: true };
 
@@ -249,7 +248,7 @@ function gitBlobSha(b) {
 
 // ---------- 主流程 ----------
 (async () => {
-  if (process.argv.includes('--reset-state') && fs.existsSync(STATE)) fs.unlinkSync(STATE);
+  if (process.argv.includes('--reset-state')) resetPluginRepoState(STATE);
   const me = await gh('GET', '/user');
   console.log(`身份：${me.login} | 计划 ${IDS_TODO.length} 个仓库 | ${DRY ? 'DRY-RUN（不写远端）' : '真实执行'}`);
 
@@ -257,7 +256,13 @@ function gitBlobSha(b) {
   const probe = await fetch(API + '/user', { headers: { Authorization: 'Bearer ' + TOKEN, 'User-Agent': 'nexus-panel' } });
   console.log(`  scopes: ${probe.headers.get('x-oauth-scopes') || '(fine-grained token / 无 scopes 头)'}`);
 
-  const state = loadState();
+  const loadedState = loadPluginRepoState(STATE);
+  if (!loadedState.ok) {
+    console.error(`⛔ ${loadedState.reason}`);
+    console.error('⛔ 状态文件损坏，拒绝整仓重推；请人工修复状态文件后再跑');
+    process.exit(1);
+  }
+  const state = loadedState.state;
   let ok = 0, skipped = 0, failed = [];
   for (const id of IDS_TODO) {
     const repo = repoNameFor(id);
@@ -270,7 +275,7 @@ function gitBlobSha(b) {
       const r = await pushRepo(id, state);
       if (!DRY) {
         state[repo] = { owned: true, done: true, commit: r.commit, files: r.files, at: new Date().toISOString() };
-        saveState(state);                    // 每仓完成即落状态 → 断点续跑
+        savePluginRepoState(STATE, state);                    // 每仓完成即落状态 → 断点续跑
         console.log(`  ${id}: ✅ ${r.files} 文件 / commit ${r.commit.slice(0, 8)} / 远端逐文件核验通过`);
       }
       ok++;

@@ -141,7 +141,19 @@ t('⑥b 核验验插件入口存在', vf.includes('`plugins/${id}/index.html`'))
 t('⑥c 核验验元数据齐全', vf.includes('META_FILES'));
 t('⑥d 核验仍验 private 与 manifest.repo',
   vf.includes('不是私有仓库') && vf.includes('manifest.repo='));
-t('⑥e 核验保留 --fix-state 的漂移前置', vf.includes('drift === 0'));
+/* 收敛后这句判据不再盯 verify 里的字面量（实现搬到共享纯函数了，
+   盯字面量会「实现改对了、测试却变红」）。改盯接线 + 前置所在处，
+   并配一条改恒真的元断言，防止判据被改宽。 */
+const sharedStateSrc = stripCommentsJs(read('scripts/plugin-repo-state.mjs'));
+t('⑥e 核验把 --fix-state 的漂移前置委托给共享纯函数',
+  vf.includes('stateDriftReport(') && vf.includes('drift, netFail'));
+t('⑥e2 共享纯函数保留漂移/网络/仓数三项前置',
+  sharedStateSrc.includes('drift === 0') && sharedStateSrc.includes('netFail === 0')
+  && sharedStateSrc.includes('heads.size === expectedCount'));
+const hasAllPre = (s) => s.includes('drift === 0') && s.includes('netFail === 0')
+  && s.includes('heads.size === expectedCount');
+t('⑥e3 元断言：漂移前置改成恒真时同一判据会红',
+  hasAllPre(sharedStateSrc) && !hasAllPre(sharedStateSrc.replace('drift === 0', '0 === 0')));
 t('⑥f 元断言：不含 sharedMirrorFiles 的文本不合规', !usesSharedOnly('const x = 1;'));
 
 /* ---------- ⑦ 骨架在退场态必须抛错 ---------- */

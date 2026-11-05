@@ -50,10 +50,14 @@ t('状态路径没有落到 nexus-panel 下一层那个不存在的目录',
 /* ------------------------------------------------------------------ *
  * 2. 两个运维脚本共用同一份路径
  * ------------------------------------------------------------------ */
-for (const f of ['scripts/verify-plugin-repos.mjs', 'scripts/refresh-plugin-repos.mjs']) {
+/* 三条通道都要查：上一轮只收敛了核验与刷新，整仓初始化脚本仍写死在
+   项目内那个不存在的 .git 目录，校准与重置都落不到它读的文件。 */
+for (const f of ['scripts/verify-plugin-repos.mjs', 'scripts/refresh-plugin-repos.mjs',
+                 'scripts/create-plugin-repos.mjs']) {
   const s = codeLines(f);
   t(`${f}: 用共享的状态路径函数`, /\brepoStatePath\(\)/.test(s));
-  t(`${f}: 不再自己拼仓库内状态路径`, !/join\(ROOT,\s*'\.git'/.test(s));
+  t(`${f}: 不再自己拼仓库内状态路径`,
+    !/join\(ROOT,\s*'\.git'/.test(s) && !/path\.resolve\(ROOT,\s*'\.git'/.test(s));
 }
 const verifySrc = codeLines('scripts/verify-plugin-repos.mjs');
 t('核验探针真的逐字段比对独立仓清单',

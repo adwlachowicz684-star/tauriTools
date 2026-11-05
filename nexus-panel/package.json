@@ -175,6 +175,7 @@
     "test:orphan-guard": "node orphan-modules-guard-test.mjs",
     "test:retired-guard-debt": "node retired-guard-debt-test.mjs",
     "test:retired-source-guard": "node retired-source-guard-test.mjs",
+    "test:plugin-repo-state": "node plugin-repo-state-test.mjs",
     "test:cargo-retirement": "node cargo-retirement-guard-test.mjs"
   },
   "dependencies": {

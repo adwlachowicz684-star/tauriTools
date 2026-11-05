@@ -42,6 +42,9 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { IDS, sharedMirrorFiles, repoNameFor, ROOT, repoStatePath } from './build-plugin-repos.mjs';
 import { wantFields, fieldDiffs } from './plugin-manifest-fields.mjs';
+import {
+  loadPluginRepoState, savePluginRepoState, stateDriftReport,
+} from './plugin-repo-state.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN_PATH = '/data/user_persistent_data/tools/.git_token';
@@ -138,28 +141,29 @@ for (const id of IDS_TODO) {
  * ------------------------------------------------------------------ *
  * 状态落后时 create-plugin-repos.mjs 的防覆盖会把「我自己后来推的 README
  * 修正」当成「别人推过」而拒绝任何刷新。不修，下一轮改动就推不进去。 */
-let state = {};
-try { state = JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { /* 无状态文件：只报告 */ }
-for (const [repo, head] of heads) {
-  const want = state[repo] && state[repo].commit;
-  if (want !== head) {
-    console.log(`  ⚠️  ${repo}: 状态 commit ${String(want).slice(0, 8)} != HEAD ${head.slice(0, 8)}`);
-    stateDrift++;
-  }
-}
-if (stateDrift) {
-  const canFix = FIX_STATE && drift === 0 && netFail === 0 && heads.size === IDS_TODO.length;
-  if (canFix) {
+const loaded = loadPluginRepoState(STATE);
+const state = loaded.state;
+const rep = stateDriftReport({
+  state, loadError: loaded.ok ? '' : loaded.reason,
+  heads, fix: FIX_STATE, drift, netFail, expectedCount: IDS_TODO.length,
+});
+for (const line of rep.lines) console.log(line);
+stateDrift = rep.stateDrift;
+if (rep.fatal) {
+  /* 损坏不是「状态落后」：--fix-state 拿空对象重写会把损坏洗白成合法状态，
+   * 12 仓的 owned / scope / refreshedAt 历史一并丢失，输出还报 ✅。 */
+  console.log('  ⛔ 状态文件损坏，核验不通过；请人工修复状态文件，不要跑 --fix-state');
+  drift++;
+} else if (stateDrift) {
+  if (rep.canFix) {
     for (const [repo, head] of heads) {
       const old = state[repo] && state[repo].commit;
       state[repo] = { ...(state[repo] || {}), owned: true, done: true, commit: head };
       console.log(`  🔧 ${repo}: 状态 ${String(old).slice(0, 8)} → ${head.slice(0, 8)}`);
     }
-    /* 原子写：502 中断写到一半会留下非法 JSON，下次 loadState() 直接当空状态，
-     * 12 个仓全被判成「别人的仓」而拒绝覆盖（本项目已栽过两次）。 */
-    const tmp = STATE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n');
-    fs.renameSync(tmp, STATE);
+    /* 原子写：临时文件 + rename，防 502 留下半份内容。父目录必须是真实
+     * git 目录，共享模块不会替我们造一个出来。 */
+    savePluginRepoState(STATE, state);
     console.log('  ✅ 状态已校准（原子写）');
     stateDrift = 0;
   } else if (FIX_STATE) {
