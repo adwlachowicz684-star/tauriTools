@@ -44,7 +44,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { repoFieldFor } from './plugin-repo-map.mjs';
 
@@ -66,9 +66,12 @@ function derive(p) {
     name: p.name,
     /* 默认起始版本：拆仓库后由各仓库自己 bump（脚本保留已有值） */
     version: '0.1.0',
-    /* registry 的 entry 是 './plugins/<id>/index.html' 这种相对项目根的路径，
-     * manifest 的 entry 必须是**相对插件目录** —— 装进来后目录位置会变。 */
-    entry: relative(join(PLUGINS, p.id), join(ROOT, p.entry)).split('\\').join('/'),
+    /* registry 的 entry 退场后指向主仓产物 './runtime-plugins/<id>/index.html'；
+     * manifest 的 entry 是**相对插件目录**的包内入口，固定 index.html。
+     * 取文件名派生：既不会越界，也对退场前 './plugins/<id>/index.html'
+     * 得到同一个值 —— 主仓供给源换了，插件包内布局没换。
+     * 独立算法在 scripts/plugin-manifest-fields.mjs，两边口径必须一致。 */
+    entry: basename(p.entry),
     kind: p.kind || 'app',
     icon: p.icon || '◻',
     description: p.description || '',

@@ -27,6 +27,12 @@
  *   · 无构建（原生）→ *.js  同页挂载，零依赖直接跑
  *   · Vite（React）  → *.html + main.tsx 沙箱挂载，走 React 组件
  * 两条技术栈下看到的插件功能一致，只是实现不同。
+ *
+ * 12 个 iframe 插件（标 runtime: true）的源码已迁到独立仓，主仓只留
+ * runtime-plugins/<id>/ 构建产物。它们的 entry 统一指向产物目录 ——
+ * prod 态由 resolveFrameSrc 拼同源相对路径，dev 态由 vite.config.ts 的
+ * serveRuntimePlugins 原样直出；module 插件仍走 plugins/<id>/ 源码。
+ * 三态加载同一份文件，不再有「entry 指向已删源码」的死路径。
  */
 
 const noBuild = globalThis.__NEXUS_NO_BUILD__ === true;
@@ -60,7 +66,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/agent-flow/index.html',
+    entry: './runtime-plugins/agent-flow/index.html',
     // React + TSX，需要 Vite；无构建模式下自动隐藏
     requiresBuild: true,
     description: '工作流编排画布（跟随面板主题）',
@@ -81,7 +87,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/task-board/index.html',
+    entry: './runtime-plugins/task-board/index.html',
     requiresBuild: true,
     builtin: true,
     version: '1.0.0',
@@ -95,7 +101,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/demo-react/index.html',
+    entry: './runtime-plugins/demo-react/index.html',
     version: '1.0.0',
     /*
      * 本插件**跟随面板主题**：入口 HTML 读 nexus:preload-base / preload-bg
@@ -116,7 +122,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/demo-light/index.html',
+    entry: './runtime-plugins/demo-light/index.html',
     version: '1.0.0',
     description: '第三方面板风格的数据页，配色走外壳主题变量',
   },
@@ -149,7 +155,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/demo-iframe/index.html',
+    entry: './runtime-plugins/demo-iframe/index.html',
     version: '1.0.0',
     description: '不依赖构建工具的 iframe 插件',
   },
@@ -161,7 +167,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/project-group/index.html',
+    entry: './runtime-plugins/project-group/index.html',
     // React + TSX，需要 Vite；无构建模式下自动隐藏
     requiresBuild: true,
     description: '项目 / 项目组双栏管理：agent 链接分配、内容浏览、连锁指令、内置图标与备份',
@@ -174,7 +180,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/mindmap/index.html',
+    entry: './runtime-plugins/mindmap/index.html',
     version: '1.0.0',
     description: 'kityminder 内核：多画布 / 主题 / 布局 / 附件 / XMind 互导，内容实时缓存',
   },
@@ -189,7 +195,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/dupview/index.html',
+    entry: './runtime-plugins/dupview/index.html',
     version: '1.0.0',
     /*
      * 配色：插件自带米色（--dv-* 变量），**不读外壳推来的主题变量**。
@@ -226,7 +232,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/color-picker/index.html',
+    entry: './runtime-plugins/color-picker/index.html',
     version: '2.0.0',
     // React + TSX（与 project-group 内联色盘共用同一份组件），需要 Vite
     requiresBuild: true,
@@ -242,7 +248,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/icon-picker/index.html',
+    entry: './runtime-plugins/icon-picker/index.html',
     version: '1.0.0',
     description: '内置 122 个预设图标的浏览与选择',
   },
@@ -256,7 +262,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/md-editor/index.html',
+    entry: './runtime-plugins/md-editor/index.html',
     version: '1.0.0',
     description: '左编辑右预览的 md 编辑器，返回编辑后的文本',
   },
@@ -396,7 +402,7 @@ export const plugins = [
     // 运行时加载：本插件由 scripts/build-plugins.mjs 独立构建到
     // runtime-plugins/<id>/，生产态经 asset 协议加载，改前端不重编主程序。
     runtime: true,
-    entry: './plugins/demo-service/index.html',
+    entry: './runtime-plugins/demo-service/index.html',
     version: '1.0.0',
     description: '示例服务插件：不进侧边栏，由其它插件通过 ctx.services.call 调用',
   },

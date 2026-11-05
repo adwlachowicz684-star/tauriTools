@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { resolve } from 'node:path';
+import { resolve, sep, extname } from 'node:path';
 import * as fsSync from 'node:fs';
 
 // 共享配置：端口、入口、CSP 等都定义在 config/nexus.config.mjs，
@@ -112,8 +112,60 @@ function copyPlainPlugins(): Plugin {
   };
 }
 
+/**
+ * dev 态原样直出 runtime-plugins/<id>/ 产物。
+ *
+ * 12 个 iframe 插件源码迁到独立仓后，主仓只剩构建产物。Vite dev server
+ * 会把任意 .html 当入口做转换：实测 agent-flow / mindmap 稳定 500，
+ * 其余虽 200 但被注入 @vite/client；而 registry 旧 entry 指向的
+ * /plugins/<id>/index.html 不存在时，Vite 的 SPA fallback 会返回主外壳
+ * 200（`<title>Nexus Panel</title>`）—— iframe 里套一整个主面板，
+ * 不报 404、不报握手超时，比「404」更难查。
+ *
+ * 这个中间件让 dev 与 prod 走同一份产物：同源相对路径、内容原样，
+ * 不经过 Vite 的 HTML 转换。只作用于 serve；build 态由 copy-runtime 负责。
+ */
+function serveRuntimePlugins(): Plugin {
+  return {
+    name: 'nexus-serve-runtime-plugins',
+    apply: 'serve',
+    configureServer(server) {
+      // 在 Vite 内部中间件之前注册（configureServer 主体，非返回的 post hook）
+      server.middlewares.use((req, res, next) => {
+        const raw = (req.url || '').split('?')[0];
+        const prefix = '/runtime-plugins/';
+        if (!raw.startsWith(prefix)) return next();
+        const root = resolve(PATHS.root, 'runtime-plugins');
+        const file = resolve(root, raw.slice(prefix.length));
+        // 路径穿越保护：解析后必须仍在产物目录内
+        if (file !== root && !file.startsWith(root + sep)) {
+          res.statusCode = 403;
+          res.end('forbidden');
+          return;
+        }
+        if (!fsSync.existsSync(file) || !fsSync.statSync(file).isFile()) return next();
+        const types = {
+          '.html': 'text/html; charset=utf-8',
+          '.js': 'text/javascript; charset=utf-8',
+          '.mjs': 'text/javascript; charset=utf-8',
+          '.css': 'text/css; charset=utf-8',
+          '.json': 'application/json; charset=utf-8',
+          '.svg': 'image/svg+xml',
+          '.ico': 'image/x-icon',
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.woff2': 'font/woff2',
+          '.map': 'application/json; charset=utf-8',
+        };
+        res.setHeader('Content-Type', types[extname(file).toLowerCase()] || 'application/octet-stream');
+        fsSync.createReadStream(file).pipe(res);
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), renameShellEntry(), copyPlainPlugins()],
+  plugins: [react(), serveRuntimePlugins(), renameShellEntry(), copyPlainPlugins()],
   clearScreen: false,
   server: {
     port: DEV_SERVER.port,

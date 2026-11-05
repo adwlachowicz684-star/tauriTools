@@ -34,17 +34,19 @@ export function repoNameForId(id) {
  * @param {string} root  nexus-panel 项目根（registry.entry 相对它）
  */
 export function wantFields(p, root) {
-  const plugins = path.join(root, 'plugins');
   return {
     id: p.id,
     name: p.name,
     kind: p.kind || 'app',
     icon: p.icon || '◻',
     description: p.description || '',
-    /* registry.entry 是相对项目根的 './plugins/<id>/index.html'；
-       manifest.entry 必须相对插件目录 —— 装进来后目录位置会变。 */
-    entry: path.relative(path.join(plugins, p.id), path.join(root, p.entry))
-      .split(path.sep).join('/'),
+    /* registry.entry 退场后指向主仓产物 './runtime-plugins/<id>/index.html'。
+       manifest.entry 必须相对插件目录 —— 装进来后目录位置会变，且包内入口
+       固定是 index.html。取文件名作独立派生：path.relative 在 registry 换到
+       产物目录后会算出 '../../runtime-plugins/...' 这种越界路径。
+       这个写法对退场前 './plugins/<id>/index.html' 同样得到 index.html，
+       主仓供给源换了，插件包内布局没换。 */
+    entry: path.basename(p.entry),
     repo: `${OWNER}/${repoNameForId(p.id)}`,
   };
 }

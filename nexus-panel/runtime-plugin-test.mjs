@@ -70,7 +70,7 @@ t('mountIframeView 用 resolveFrameSrc 赋 src',
 t('不再有裸 resolveEntry 赋 src（只允许出现在函数定义/诊断里）',
   !/iframe\.src = resolveEntry\(/.test(host));
 t('有三态判定 frameSrcMode', /function frameSrcMode\(\)/.test(host));
-t('dev 态直指 dev server（/plugins/<id>/index.html）',
+t('有三态判定的 dev 分支（env.DEV；entry 已改指产物，不再直指源码）',
   /env && env\.DEV/.test(host));
 t('prod 态才走同源 runtime 路径（非 prod 退回 resolveEntry）', /mode !== 'prod'/.test(host));
 t('resourceDir 探测：全局 __TAURI__.path 优先',

@@ -10,8 +10,11 @@
  *   ② 主仓 package.json 里 136 条 test:* 仍指向已删的 plugins/<id>/ 路径，
  *      而 12 个独立仓的 package.json 只有 1 条 build:plugin —— 测试既没留在
  *      主仓、也没跟插件走。
- *   ③ registry.js 的 entry 仍指向 ./plugins/<id>/index.html；生产态因
- *      runtime:true 走 runtimeFrameUrl 不受影响，但 dev / 无构建态会 404。
+ *   ③ registry.js 的 entry 指向 ./plugins/<id>/index.html（已退场）；生产态
+ *      因 runtime:true 走 runtimeFrameUrl 不受影响，但 dev 态下 Vite 的 SPA
+ *      fallback 返回主外壳 200 —— iframe 里套整个主面板，不报 404。
+ *      第 38 轮已把 12 个 entry 改指 ./runtime-plugins/<id>/index.html，
+ *      并由 vite.config.ts 的 dev 中间件原样直出（⑥ 节守卫钉住）。
  *
  * 守卫把「退场态」变成一等公民：源码缺席是合法态，但产物必须齐备、
  * 接线必须真的生效、死 script 必须恰好是台账里那批（销一条要同步销账、
@@ -27,6 +30,7 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CAMEL, repoNameFor } from './scripts/plugin-repo-map.mjs';
 import { retiredSupplyState, retiredExitCode } from './scripts/retired-supply-state.mjs';
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const R = (...p) => resolve(HERE, ...p);
@@ -220,6 +224,67 @@ for (const id of IDS) {
     rows.every((r) => r.disposition === 'retired' && r.keptAt
       && r.reason && r.reason.length > 20 && r.evidence
       && r.evidence.afterFillOk === 127 && r.evidence.targetPresentInRepo === true));
+}
+
+/* ---------- ⑥ dev 态供给链（第 38 轮） ----------
+ * 退场后 registry 的 12 个 entry 曾指向已删的 ./plugins/<id>/index.html。
+ * 实测：dev 态下 Vite SPA fallback 返回主外壳 200（iframe 里套整个主面板，
+ * 不报 404）；直接把 entry 改指产物也不行 —— Vite 会把产物 HTML 当入口
+ * 转换，agent-flow / mindmap 稳定 500。现在由 vite.config.ts 的
+ * serveRuntimePlugins 原样直出。这一节钉住「entry + 产物 + 中间件」三者。
+ */
+{
+  const reg = read('plugins/registry.js');
+  const vcfg = read('vite.config.ts');
+
+  /** 从 registry 抽 runtime 插件的单值 entry（剥注释、按块；三元不参与） */
+  const runtimeEntryMap = (text) => {
+    const out = {};
+    for (const b of stripCommentsJs(text).split(/\n  \{\n/)) {
+      const id = /\bid:\s*'([^']+)'/.exec(b)?.[1];
+      if (!id || !/\bruntime:\s*true\b/.test(b)) continue;
+      const e = /\bentry:\s*'([^']+)'/.exec(b)?.[1];
+      if (e) out[id] = e;
+    }
+    return out;
+  };
+  const expected = Object.fromEntries(
+    IDS.map((id) => [id, `./runtime-plugins/${id}/index.html`]));
+  const got = runtimeEntryMap(reg);
+
+  t('⑥a 12 个 runtime entry 集合与取值都指向产物目录',
+    eq(Object.keys(got).sort(), IDS) && IDS.every((id) => got[id] === expected[id]),
+    Object.entries(got).filter(([id, e]) => e !== expected[id])
+      .map(([id, e]) => `${id}=${e}`).join(' | '));
+  t('⑥b 不再残留 ./plugins/<id>/index.html 形式的 entry',
+    !/entry:\s*'\.\/plugins\/[^']*\/index\.html'/.test(stripCommentsJs(reg)));
+  t('⑥c 每个 entry 指向的产物文件存在且非空',
+    IDS.every((id) => {
+      const p = R('runtime-plugins', id, 'index.html');
+      return existsSync(p) && statSync(p).size > 0;
+    }));
+  t('⑥d vite.config.ts 注册了 serveRuntimePlugins 且 apply: serve',
+    /plugins:\s*\[[^\]]*serveRuntimePlugins\(\)/.test(vcfg)
+      && /name:\s*'nexus-serve-runtime-plugins'/.test(vcfg)
+      && /apply:\s*'serve'/.test(vcfg));
+  t('⑥e dev 中间件按前缀判定、原样直出、带路径穿越 403',
+    /raw\.startsWith\(prefix\)/.test(vcfg)
+      && /createReadStream\(file\)\.pipe\(res\)/.test(vcfg)
+      && /res\.statusCode = 403/.test(vcfg)
+      && /file\.startsWith\(root \+ sep\)/.test(vcfg));
+
+  /* 元断言：判据自身不能恒真 / 恒假 */
+  t('⑥f 空文本不得返回完整 entry 集合', Object.keys(runtimeEntryMap('')).length === 0);
+  t('⑥g 抹掉 runtime:true 后判据返回空集',
+    Object.keys(runtimeEntryMap(reg.replace(/\bruntime:\s*true\b/g, 'runtime: false'))).length === 0);
+  const back = reg.replace("entry: './runtime-plugins/agent-flow/index.html'",
+    "entry: './plugins/agent-flow/index.html'");
+  t('⑥h 注入旧死路径 → ⑥a/⑥b 判据会红',
+    runtimeEntryMap(back)['agent-flow'] !== expected['agent-flow']
+      && /entry:\s*'\.\/plugins\/[^']*\/index\.html'/.test(back));
+  const noMw = vcfg.replace('serveRuntimePlugins(), ', '');
+  t('⑥i 摘掉中间件注册 → ⑥d 判据会红',
+    !/plugins:\s*\[[^\]]*serveRuntimePlugins\(\)/.test(noMw));
 }
 
 console.log(`通过 ${pass} 项，失败 ${fail} 项`);

@@ -2058,8 +2058,10 @@ const RUNTIME_PLUGINS_DIR = 'runtime-plugins';
 
 /**
  * 当前 iframe 入口的解析模式：
- *   'dev'   —— vite dev server：直指 /plugins/<id>/index.html，源码转换、
- *             HMR 照旧，零额外构建；
+ *   'dev'   —— vite dev server：12 个 runtime 插件源码已迁到独立仓，
+ *             registry 的 entry 统一指向 /runtime-plugins/<id>/index.html；
+ *             vite.config.ts 的 serveRuntimePlugins 把产物原样直出，
+ *             dev 与 prod 加载同一份文件（不再有源码侧 HMR）；
  *   'prod'  —— vite build 产物（dist）：runtime 插件走 asset 协议，
  *             从 $RESOURCE/runtime-plugins/<id>/index.html 加载；
  *   'plain' —— 无构建模式（原生 ESM 直出）：保持原相对路径行为。
@@ -2154,8 +2156,10 @@ export function runtimeFrameUrl({ id, vars, base }) {
  * nexus-bg / nexus-base 参数是为了首帧底色（插件侧 query 优先、
  * localStorage 兜底）。
  *
- * 非 runtime 插件（registry 未标 runtime）或非 prod 态时退回 resolveEntry，
- * 让加载失败以可读的形式暴露（404 / 握手超时带诊断）。
+ * 非 runtime 插件（registry 未标 runtime）或非 prod 态时退回 resolveEntry。
+ * 退场前 dev 态落 /plugins/<id>/index.html，Vite 的 SPA fallback 会返回
+ * 主外壳 200（iframe 里套整个主面板，不报 404，比 404 更难查）；现在
+ * entry 已指向产物，由 dev 中间件直出，三态加载同一份文件。
  */
 export async function resolveFrameSrc(manifest) {
   const mode = frameSrcMode();
