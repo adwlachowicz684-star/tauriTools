@@ -26,6 +26,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
+import { createHash, webcrypto } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import vm from 'node:vm';
 
@@ -93,6 +94,10 @@ async function run() {
      但**不会**自带 Buffer / process / require / __dirname。 */
   const sandbox = {
     TextDecoder, TextEncoder, Blob, Response, DecompressionStream, URL, console,
+    /* Web 标准全局：浏览器里 globalThis.crypto 就是它。注入宿主 webcrypto
+       只为在 vm realm 里真算 SHA-256；realm 内构造的 Uint8Array 是跨 realm
+       视图，能不能被 subtle.digest 接受由 ③e 真跑判定，不靠推断。 */
+    crypto: webcrypto,
   };
   const context = vm.createContext(sandbox);
 
@@ -105,6 +110,9 @@ async function run() {
   t('①c realm 里没有 require',
     vm.runInContext('typeof require', context) === 'undefined',
     vm.runInContext('typeof require', context));
+  t('①e realm 提供 WebCrypto（真算 sha256 的前提，环境不是摆设）',
+    vm.runInContext('typeof globalThis.crypto?.subtle?.digest', context) === 'function',
+    vm.runInContext('typeof globalThis.crypto?.subtle?.digest', context));
 
   /* 元断言：环境确实会拒绝 Node 专有全局 —— 否则①②是空集合判据恒真 */
   const probe = new vm.SourceTextModule(
@@ -125,6 +133,16 @@ async function run() {
   t('②a 解包器在隔离 realm 里加载成功', typeof api.unpackTarGz === 'function');
   t('②b 纯函数 parseTar 也在', typeof api.parseTar === 'function');
 
+  /* ②c–②e：第 44 轮销账的 store-client 也真加载一次。静态扫「没有 node:
+     import」不等于能加载 —— 依赖闭包拖进来的 node: 会被 linker 直接抛错。 */
+  const sc = await loadModule(context, 'js/plugin-store-client.js');
+  await sc.evaluate();
+  const scApi = sc.namespace;
+  t('②c store-client 在隔离 realm 里加载成功', typeof scApi.verifyAssetDigest === 'function');
+  t('②d downloadAsset 也在', typeof scApi.downloadAsset === 'function');
+  t('②e realm 内函数真可执行（ghHeaders 注入凭据）',
+    scApi.ghHeaders({ headers: { Authorization: 'Bearer x' } }).Authorization === 'Bearer x');
+
   const manifest = JSON.stringify({ id: 'demo', name: '示例', version: '1.0.0', entry: 'index.html' });
   const tar = makeTar([{ name: 'demo-1.0.0/nexus.plugin.json', content: manifest }]);
   const gz = new Uint8Array(gzipSync(tar));
@@ -137,6 +155,24 @@ async function run() {
   let text = '';
   try { text = new TextDecoder('utf-8').decode(r.entries[0].content); } catch (e) { text = `decode 失败: ${e}`; }
   t('③d 内容逐字节还原（不靠 Buffer.toString）', text === manifest, text.slice(0, 80));
+
+  /* ③e–③i：在隔离 realm 里**真算一次** sha256 完整性校验。
+     期望摘要由宿主 realm 的 createHash 独立算出（只当输入），
+     字节数组由 realm 内构造 —— 跨 realm 视图喂给 WebCrypto 能不能成立，
+     这里真跑，不静态推断。 */
+  const bytes = vm.runInContext('new Uint8Array([104, 101, 108, 108, 111])', context);
+  const sha = `sha256:${createHash('sha256').update('hello').digest('hex')}`;
+  const dg = await scApi.verifyAssetDigest(bytes, { digest: sha });
+  t('③e 隔离 realm 里真算 sha256 校验通过', dg.ok === true && dg.checked === true, String(dg.reason));
+  const dgBad = await scApi.verifyAssetDigest(bytes, { digest: `sha256:${'0'.repeat(64)}` });
+  t('③f 坏 digest 仍被拒（digest 判据没恒真）', dgBad.ok === false && dgBad.checked === true, String(dgBad.reason));
+  const dgNone = await scApi.verifyAssetDigest(bytes, { name: 'old.tar.gz' });
+  t('③g 无 digest 放行但 checked=false', dgNone.ok === true && dgNone.checked === false, String(dgNone.reason));
+  const dgWeird = await scApi.verifyAssetDigest(bytes, { digest: 'md5:abc' });
+  t('③h 格式不可识别拒绝放行', dgWeird.ok === false && dgWeird.checked === true, String(dgWeird.reason));
+  const dgStr = await scApi.verifyAssetDigest('a string', { digest: sha });
+  t('③i 非字节序列拒绝（isBytes 没被换成恒真）',
+    dgStr.ok === false && /不是字节序列/.test(String(dgStr.reason)), String(dgStr.reason));
 
   /* ④ 判据没被"换成恒真"：坏输入仍然拒绝 */
   const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0]);
@@ -160,6 +196,10 @@ async function run() {
   t('⑤b 依赖源码无 node: import', !/['"]node:/.test(dep));
   t('⑤c 解包器不再 import plugin-installer.js（静态链已断）',
     !/from\s*['"]\.\/plugin-installer\.js['"]/.test(src));
+  const scSrc = readFileSync(join(ROOT, 'js/plugin-store-client.js'), 'utf8');
+  t('⑤d store-client 源码无 node: import', !/['"]node:/.test(scSrc));
+  t('⑤e store-client 源码不再用 Buffer 全局（注释里也不写使用形态）',
+    !/\bBuffer\s*[.[]/.test(scSrc));
 
   if (fails.length) for (const f of fails) console.log('  ✗ ' + f);
   console.log(`通过 ${pass} 项，失败 ${fails.length} 项`);
@@ -196,5 +236,11 @@ if (process.argv.includes(INNER_FLAG) || vm.SourceTextModule) {
   if (!/通过 \d+ 项，失败 \d+ 项/.test(childOut)) {
     console.log(`通过 0 项，失败 1 项 — 隔离 realm 子进程没有汇总行（status=${r.status}）`);
     process.exitCode = 1;
+  } else {
+    /* 子进程报红时 exit=1，但自重启父进程原先不传播它 ——
+       「有汇总行、失败 N>0、退出码却是 0」正是 sweep 判可疑的形状。
+       单跑也必须让 CI 看得见红，不能只靠体检单兜。 */
+    const m = /通过 \d+ 项，失败 (\d+) 项/.exec(childOut);
+    if (m && Number(m[1]) > 0) process.exitCode = 1;
   }
 }

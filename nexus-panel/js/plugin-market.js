@@ -20,8 +20,11 @@
  *    · **静态 import 链**：自己零 node: 的模块会被被依赖方的 node: 拖死。
  *    只扫 import 行的守卫看不见这两类，已一并升级。
  *
- * ⛔ 剩余 installer / ledger / installed-plugin-scan / store-client 四个模块
- *    仍带同步 node:fs 或 node:crypto，逐文件 unblock 记在
+ * ✅ 第 44 轮：store-client 已销账（node:crypto → WebCrypto、Buffer → Uint8Array，
+ *    verifyAssetDigest 变 async，本文件与联网探针已随之 await）。
+ *
+ * ⛔ 剩余 installer / ledger / installed-plugin-scan 三个模块
+ *    仍带同步 node:fs，逐文件 unblock 记在
  *    scripts/market-runtime-debt.json；判定见 scripts/scan-market-runtime.mjs
  *    与 market-runtime-gap-test.mjs / webview-runtime-test.mjs。
  *    在那之前"300+ 项测试全绿但产品里没有装插件能力"仍是结构性的，
@@ -256,7 +259,7 @@ export function createPluginMarket(p) {
          校验放在解包之前：坏字节流若直接进 unpackTarGz，用户看到的是
          一句「gzip 解压失败 / tar 头校验和不匹配」，指向一个不存在的问题，
          真因其实是这一趟下载没下全。 */
-      const dv = verifyAssetDigest(dl.buffer, asset);
+      const dv = await verifyAssetDigest(dl.buffer, asset);
       if (!dv.ok) return { ok: false, stage: 'digest', error: dv.reason };
       if (!dv.checked) digestWarnings.push('该 release 产物没有 digest，跳过完整性校验（老 release 常见）');
 

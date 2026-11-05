@@ -124,9 +124,9 @@ if (QUICK) {
     /* digest 校验对真实字节流：拿不到服务端 digest 时至少验证"自洽" */
     const { createHash } = await import('node:crypto');
     const selfDigest = `sha256:${createHash('sha256').update(dl.buffer).digest('hex')}`;
-    const v = verifyAssetDigest(dl.buffer, { digest: selfDigest });
+    const v = await verifyAssetDigest(dl.buffer, { digest: selfDigest });
     check('verifyAssetDigest 对真实字节流自洽', v.ok === true && v.checked === true);
-    const vBad = verifyAssetDigest(dl.buffer, { digest: `sha256:${'0'.repeat(64)}` });
+    const vBad = await verifyAssetDigest(dl.buffer, { digest: `sha256:${'0'.repeat(64)}` });
     check('verifyAssetDigest 对坏 digest 会拒', vBad.ok === false);
   }
 }

@@ -157,8 +157,8 @@ t('①a 扫描器闭包与 BFS 一致',
 t('①b 闭包恰好 10 个模块且都在 js/ 下',
   closure.length === 10 && closure.every((f) => f.startsWith('js/') && existsSync(join(ROOT, f))),
   `closure=${closure.length}`);
-t('①c 独立反推 node: 集合恰为 4 个（销掉 market/tarball 后）',
-  expected.length === 4, `expected=${expected.length}: ${expected.join(',')}`);
+t('①c 独立反推 node: 集合恰为 3 个（销掉 market/tarball/store-client 后）',
+  expected.length === 3, `expected=${expected.length}: ${expected.join(',')}`);
 t('①d 入口自身已零 node: import（销账后不许悄悄加回来）',
   !all[MARKET_ENTRY], `entry=${JSON.stringify(all[MARKET_ENTRY] || null)}`);
 t('①e 解包器已零 node: import',
@@ -183,8 +183,8 @@ if (debt) {
       !!row && String(row.why || '').length > 20 && String(row.unblock || '').length > 20);
   }
   const resolved = (debt.resolved || []).map((x) => x.file).sort();
-  t('②d 已销账恰为 2 个且都带 how / evidence',
-    JSON.stringify(resolved) === JSON.stringify(['js/plugin-market.js', 'js/plugin-tarball.js'])
+  t('②d 已销账恰为 3 个且都带 how / evidence',
+    JSON.stringify(resolved) === JSON.stringify(['js/plugin-market.js', 'js/plugin-store-client.js', 'js/plugin-tarball.js'])
       && (debt.resolved || []).every((x) => String(x.how || '').length > 30 && String(x.evidence || '').length > 10),
     `resolved=${resolved.join(',')}`);
 }
@@ -206,6 +206,19 @@ if (debt) {
   t('③d 扫描器 nodeGlobals 与独立反推一致',
     JSON.stringify(Object.keys(scan.nodeGlobals).sort()) === JSON.stringify(expectedGlobals),
     `scan=${Object.keys(scan.nodeGlobals).sort().join(',')}`);
+  /* ③a′：globals 销空后，空集合比较是「[] === [] 恒真」的形状。
+     补独立静态判据：store-client 源码确实零 Buffer 命中，且判据本身
+     仍能识别真 Buffer 用法 —— 否则「销账」可能只是把判据改坏了。 */
+  const scRaw = readFileSync(join(ROOT, 'js/plugin-store-client.js'), 'utf8');
+  /* 不另写剥注释正则：那会被 inline-strip-audit 记成新的一份内联实现，
+     本轮就是这么多出 2 条欠账的。改用守卫自己已有的 readStripped。 */
+  t('③a′ 销空后 store-client 源码确实零 Buffer 静态命中（防空集合假绿）',
+    independentGlobalScan('js/plugin-store-client.js').length === 0
+      && !/\bBuffer\s*[.[]/.test(readStripped('js/plugin-store-client.js')));
+  GLOBAL_RE.lastIndex = 0;
+  t('③a″ 全局判据仍能识别真实 Buffer 用法（没被改成恒空）',
+    GLOBAL_RE.test(stripIndependent('const b = Buffer.from(ab);')));
+  GLOBAL_RE.lastIndex = 0;
 }
 
 /* ---------------- ④ 盲区②：静态 import 链 ---------------- */
@@ -238,13 +251,17 @@ t('⑤d 注释不再声称「这些模块都 import node:fs」（销账后不许
   !/运行位置是 Node 侧 \/ IPC 桥/.test(entrySrc));
 
 /* ---------------- ⑥ safe / blocked 集合守恒 ---------------- */
-t('⑥a webview 可加载集合恰为 6 个',
-  scan.safe.length === 6 && scan.safe.every((f) => !expected.includes(f)),
+t('⑥a webview 可加载集合恰为 7 个',
+  scan.safe.length === 7 && scan.safe.every((f) => !expected.includes(f)),
   `safe=${scan.safe.join(',')}`);
-t('⑥b blocked 集合恰为 4 个且不含入口',
-  scan.blocked.length === 4
+t('⑥b blocked 集合恰为 3 个且不含入口',
+  scan.blocked.length === 3
     && JSON.stringify(scan.blocked) === JSON.stringify(expected.filter((f) => f !== MARKET_ENTRY)),
   `blocked=${scan.blocked.join(',')}`);
+t('⑥c store-client 已进 safe 且不在 blocked（销账不是只改台账）',
+  scan.safe.includes('js/plugin-store-client.js')
+    && !scan.blocked.includes('js/plugin-store-client.js'),
+  `safe=${scan.safe.join(',')} blocked=${scan.blocked.join(',')}`);
 
 /* ---------------- ⑦ 元断言：判据本身不假绿 ---------------- */
 const nodeSamples = [

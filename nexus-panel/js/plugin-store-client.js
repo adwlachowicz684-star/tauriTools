@@ -19,11 +19,14 @@
  * 网络可注入（opts.fetch）是刻意的：
  * 单元测试不能依赖 GitHub 活着，也不该真的发出请求。
  *
- * ⚠️ 本模块属**宿主 Node 侧逻辑层**（与 plugin-installer 同侧，后者要 fs）。
- *    webview 里跑不了 node:crypto；接线走后端 IPC 时不要把它塞进前端 bundle。
+ * ✅ 第 44 轮：本模块已可进 webview ——
+ *    · node:crypto 换 WebCrypto subtle.digest（异步）；
+ *    · Buffer 全局换 Uint8Array + archive-magic 的 isBytes 鸭子判定；
+ *    · verifyAssetDigest 变 async，调用方（plugin-market.js / 联网探针）已 await。
+ * ⚠️ 凭据仍由调用方在运行时注入，token 不进前端 bundle 这条不变。
  */
 
-import { createHash } from 'node:crypto';
+import { isBytes } from './archive-magic.js';
 
 /* ------------------------------------------------------------------ *
  * 常量
@@ -46,8 +49,8 @@ export const API_BASE = 'https://api.github.com';
  *   于是这条链路从来没暴露过「凭证根本传不进去」这件事。
  *
  *   ⚠️ 凭据由**调用方注入**（opts.headers），本模块不读环境变量、不存 token。
- *   这些模块属于宿主 Node 侧逻辑层，将来接线走后端 IPC：
- *   token 只在后端持有，绝不能进 webview bundle。
+ *   本模块已能在 webview 里运行，但**不假定自己跑在 Node 侧**：
+ *   token 由调用方运行时注入，绝不写进源码或前端 bundle。
  *
  * @param {object} [opts]
  * @param {object} [opts.headers] 附加请求头（通常 Authorization: Bearer …）
@@ -306,7 +309,7 @@ export function resolveUpdate(installedVersion, latest, id) {
  *
  * @param {object} asset pickAsset 的结果（用 browser_download_url）
  * @param {object} [opts] { fetch }
- * @returns {Promise<{ok:boolean, buffer:Buffer|null, error:string|null, bytes:number}>}
+ * @returns {Promise<{ok:boolean, buffer:Uint8Array|null, error:string|null, bytes:number}>}
  *
  * 优先走 GitHub API 给的 `asset.url`（私有仓可用 Bearer token 访问），
  * 没有才回退 `browser_download_url`（公开仓 / 老夹具）。
@@ -336,7 +339,9 @@ export async function downloadAsset(asset, opts = {}) {
     const res = await f(url, { headers: ghHeaders({ ...opts, octet: true }) });
     if (!res || res.status >= 400) return { ok: false, buffer: null, error: `下载失败 ${res && res.status}`, bytes: 0 };
     const ab = await res.arrayBuffer();
-    const buf = Buffer.from(ab);
+    /* Web 标准形态：不依赖 Buffer 全局。下游解包/校验都按 isBytes 鸭子判定，
+       Uint8Array 与 Buffer 等价；这里刻意不调用 Buffer 的构造方法。 */
+    const buf = new Uint8Array(ab);
     return { ok: true, buffer: buf, error: null, bytes: buf.length };
   } catch (err) {
     return { ok: false, buffer: null, error: String(err && err.message), bytes: 0 };
@@ -357,7 +362,11 @@ export async function downloadAsset(asset, opts = {}) {
  *   gzip 魔数可能还在，解包器却会报「坏包」，用户看到的是一句
  *   莫名其妙的解析错误，而不是「下载不完整，重试一次」。
  *
- * @returns {{ok:boolean, checked:boolean, reason:string}}
+ * @returns {Promise<{ok:boolean, checked:boolean, reason:string}>}
+ *
+ * ⚠️ WebCrypto 的 subtle.digest 是异步的，本函数返回 Promise。
+ *    调用方必须 await：忘记 await 拿到的是 Promise，取 .ok 是 undefined，
+ *    上层会按失败处理而不是静默放行 —— 这是刻意的失败方向。
  *
  * 三条口径（别改反）：
  *   · digest 字段**完全没有** → checked:false, ok:true。老 release /
@@ -368,7 +377,7 @@ export async function downloadAsset(asset, opts = {}) {
  *   · checked 单独返回，是为了让上层和测试能看见「这次到底验没验」。
  *     只有一个 ok 的话，判据整条失效时依旧全绿 —— 本项目反复栽的形状。
  */
-export function verifyAssetDigest(buf, asset) {
+export async function verifyAssetDigest(buf, asset) {
   const raw = asset && asset.digest;
   if (raw === undefined || raw === null || raw === '') {
     return { ok: true, checked: false, reason: '产物没有 digest（老 release 常见），跳过完整性校验' };
@@ -377,10 +386,23 @@ export function verifyAssetDigest(buf, asset) {
     return { ok: false, checked: true,
       reason: `digest 格式不可识别，拒绝放行: ${String(raw).slice(0, 80)}` };
   }
-  if (!Buffer.isBuffer(buf)) {
-    return { ok: false, checked: true, reason: '下载内容不是 Buffer，无法校验 digest' };
+  if (!isBytes(buf)) {
+    return { ok: false, checked: true, reason: '下载内容不是字节序列，无法校验 digest' };
   }
-  const actual = `sha256:${createHash('sha256').update(buf).digest('hex')}`;
+  /* 逐元素复制成 realm 内的 Uint8Array：既不依赖 buf.buffer（鸭子判定的输入
+     未必是 TypedArray），也不会把 Buffer 共享内存池整块算进摘要。 */
+  const view = Uint8Array.from(buf);
+  let hex = '';
+  try {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', view);
+    for (const b of new Uint8Array(digest)) hex += b.toString(16).padStart(2, '0');
+  } catch (err) {
+    /* 环境没有 WebCrypto 时拒绝放行，不退化成「跳过校验」——
+       跳过会让带 digest 的坏包照样装进去。 */
+    return { ok: false, checked: true,
+      reason: `sha256 计算失败（环境可能没有 WebCrypto）: ${String(err && err.message)}` };
+  }
+  const actual = `sha256:${hex}`;
   if (actual !== raw.toLowerCase()) {
     return { ok: false, checked: true,
       reason: `产物 sha256 不匹配（期望 ${raw.slice(7, 19)}… 实际 ${actual.slice(7, 19)}…），可能下载不完整或被替换` };

@@ -253,30 +253,30 @@ console.log('\n--- 8. 真实响应形态 + 产物完整性 ---');
     Buffer.from('真实插件产物字节流'), Buffer.from([0, 1, 2]),
   ]);
   const sha = `sha256:${createHash('sha256').update(payload).digest('hex')}`;
-  const good = verifyAssetDigest(payload, { digest: sha });
+  const good = await verifyAssetDigest(payload, { digest: sha });
   t('digest 匹配 → ok 且 checked=true', good.ok === true && good.checked === true);
-  t('digest 大写也能通过', verifyAssetDigest(payload, { digest: sha.toUpperCase() }).ok === true);
+  t('digest 大写也能通过', (await verifyAssetDigest(payload, { digest: sha.toUpperCase() })).ok === true);
 
-  const bad = verifyAssetDigest(payload, { digest: `sha256:${'0'.repeat(64)}` });
+  const bad = await verifyAssetDigest(payload, { digest: `sha256:${'0'.repeat(64)}` });
   t('digest 不匹配 → 拒绝且 checked=true', bad.ok === false && bad.checked === true);
   t('不匹配时说得出是完整性问题', /不匹配|不完整/.test(bad.reason), bad.reason.slice(0, 40));
 
-  const none = verifyAssetDigest(payload, { name: 'old.tar.gz' });
+  const none = await verifyAssetDigest(payload, { name: 'old.tar.gz' });
   t('完全没有 digest → 放行但 checked=false（老 release 装得上）',
     none.ok === true && none.checked === false);
 
   for (const weird of ['md5:abc', 'sha256:short', 'sha256:' + 'z'.repeat(64), 12345, {}]) {
-    const w = verifyAssetDigest(payload, { digest: weird });
+    const w = await verifyAssetDigest(payload, { digest: weird });
     t(`格式不可识别不放行: ${String(weird).slice(0, 18)}`, w.ok === false && w.checked === true);
   }
-  t('非 Buffer 内容 → 拒绝', verifyAssetDigest('a string', { digest: sha }).ok === false);
+  t('非字节序列内容 → 拒绝', (await verifyAssetDigest('a string', { digest: sha })).ok === false);
 
   /* 元断言：确认上面的"匹配"判据不是恒真。
      把 digest 换成一个合法格式但错的值，必须仍被拒 —— 否则第 8 节
      全绿只说明判据写成了 return true。 */
   const forged = `sha256:${'a'.repeat(64)}`;
   t('元断言：合法格式但错的值确实被拒（digest 判据没恒真）',
-    verifyAssetDigest(payload, { digest: forged }).ok === false);
+    (await verifyAssetDigest(payload, { digest: forged })).ok === false);
 }
 
 /* ============================================================
