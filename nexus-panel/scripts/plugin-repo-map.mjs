@@ -55,9 +55,11 @@ export const CAMEL = {
  *     nexus.plugin.json 推到这个仓库，覆盖 Node CLI 的真实实现；
  *   · 守卫按 registry 的 12 个 iframe 插件钉住「CAMEL 恰为 12 条」，
  *     多一条会让 12 份 manifest 的交叉校验一起红；
- *   · 给它发 manifest 反而制造假绿：宿主按 repo 去查 release 必然扑空，
- *     界面只显示「这个插件没有可安装版本」。
- * 所以只登记仓库名，不发 manifest / 不发 release 产物，也不进 IDS。
+ *   · 主仓 12 份 manifest 由 gen-plugin-manifest.mjs 从 registry 派生，
+ *     给它硬塞一份会破坏「12 个 iframe」的交叉校验。
+ * 它现在**已经是可安装 iframe 插件**：manifest 与 release 产物都在插件仓自己
+ * （nexus.plugin.json / nexus-plugin-github-manager-<ver>.tar.gz），
+ * 由插件市场按 full_name 安装。主仓这里只登记仓库名，不进 IDS。
  */
 export const EXTERNAL_PLUGINS = {
   'github-manager': 'githubManager',
