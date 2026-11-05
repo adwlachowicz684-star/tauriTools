@@ -304,39 +304,6 @@ export function createPluginMarket(p) {
       const rec = recordUninstall(stLedger.ledger, id);   // 契约②
       const wr = saveLedger(rec.ledger);
       if (!wr.ok) {
-        return { ok: false, stage: 'ledger', id,
-          error: `安装已落盘但台账写入失败: ${wr.error}（旧版本可能已被替换，请人工核对）`,
-          warnings };
-      }
-      warnings.push(...rec.warnings);
-      return { ok: true, id, version: mf.manifest.version, replaced: r.replaced,
-        dir: r.dir, sha, warnings, errors: [] };
-    },
-
-    /**
-     * 卸载。默认保留用户数据（D3）；显式 removeUserData 才删。
-     * 去留结论只来自 policy，且 source 取台账里的记录，不靠 id 前缀猜。
-     */
-    async uninstall(id, opts = {}) {
-      const stLedger = readLedgerState();
-      const fault = ledgerFault(stLedger);
-      if (fault) return { ok: false, id, stage: 'ledger', error: fault, removed: [], kept: [] };
-      const plan = uninstallPlan({ root, id, userDataRoot });
-      if (!plan.ok) return { ok: false, id, error: plan.reason, removed: [], kept: [] };
-      if (!plan.exists) return { ok: false, id, error: '插件未安装', removed: [], kept: [] };
-
-      const entry = getEntry(stLedger.ledger, id);
-      const source = normalizeSource(entry && entry.source);
-      const purge = shouldPurgeDataOnUninstall({
-        id, source, removeUserData: opts.removeUserData === true,
-      });
-
-      const r = uninstallPlugin({ root, id, userDataRoot, removeUserData: purge });
-      if (!r.ok) return { ok: false, id, error: r.errors.join('; '), removed: r.removed, kept: r.kept };
-
-      const rec = recordUninstall(stLedger.ledger, id);   // 契约②
-      const wr = saveLedger(rec.ledger);
-      if (!wr.ok) {
         return { ok: false, id, stage: 'ledger',
           error: `卸载已完成但台账写入失败: ${wr.error}`,
           removed: r.removed, kept: r.kept };
