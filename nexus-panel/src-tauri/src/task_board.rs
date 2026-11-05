@@ -741,7 +741,7 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
                 Err(e) => (api_status(&e), err_json(&e), None),
             }
         },
-        ("POST", ["api", "tasks"]) => match parse_body(&req.body) {
+        ("POST", ["api", "tasks"]) => match parse_write_body(&req.body, TB_CREATE) {
             Ok(body) => match create_task(dir, &body) {
                 Ok(t) => ok_json(json!({"ok": true, "task": t})),
                 Err(e) => (api_status(&e), err_json(&e), None),
@@ -750,7 +750,7 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
         },
         ("PATCH", ["api", "tasks", id]) => {
             let id = norm_id(id);
-            match parse_body(&req.body) {
+            match parse_write_body(&req.body, TB_UPDATE) {
             Ok(body) => match patch_task(dir, &id, &body, notify_status) {
                 Ok((t, entered_notify)) => {
                     /*
@@ -808,7 +808,7 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
         },
         ("POST", ["api", "tasks", id, "events"]) => {
             let id = norm_id(id);
-            match parse_body(&req.body) {
+            match parse_write_body(&req.body, TB_EVENT) {
             Ok(body) => match add_event(dir, &id, &body) {
                 Ok(t) => (200, json!({"ok": true, "task": t}).to_string(), None),
                 Err(e) => (api_status(&e), err_json(&e), None),
@@ -816,7 +816,7 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             Err(e) => (400, err_json(&e), None),
             }
         },
-        ("POST", ["api", "agents"]) => match parse_body(&req.body) {
+        ("POST", ["api", "agents"]) => match parse_write_body(&req.body, TB_AGENT) {
             Ok(body) => match register_agent(dir, &body) {
                 Ok(agents) => (200, json!({"ok": true, "agents": agents}).to_string(), None),
                 Err(e) => (api_status(&e), err_json(&e), None),
@@ -1009,6 +1009,10 @@ pub fn mcp_tools() -> Vec<Value> {
                 */
                 "assignee": { "type": ["string", "array"], "items": { "type": "string" }, "description": "认领人名字或名字数组（该列可多选）；留空=未认领，交给其他窗口后续认领。先调 tb_list_tasks 看 defs.assigneeDefs 里已有哪些" },
                 "reporter": { "type": "string", "description": "报告人窗口 ID，缺省 manual" },
+                /* ⛔ 实现里 str_field(body,"status") 读了这一项，schema 却一直没列 ——
+                   与「create 漏 assignee / reporter / deps」同族：严格客户端按
+                   additionalProperties=false 校验时连传都不让传。写明只能填 initial。 */
+                "status":   { "type": "string", "description": "初始状态 id。**只允许填 defs.initial**，其它值会被拒绝；不填即用 initial。后续流转走 tb_update_task / PATCH" },
                 "deps":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，指向不存在任务的 id 会保留（界面会标「前置不存在」）。缺省=[]" },
             }),
             vec!["title"],
@@ -1101,7 +1105,7 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
        改名把语义钉死：这个函数只用于 id。 */
     let id_of = |k: &str| args.get(k).and_then(|v| v.as_str()).map(norm_id);
     /* 双保险：mcp_dispatch 已校验，这里再兜一次（内置单测/直接调用也指对路） */
-    if let Err(e) = check_required(name, args) {
+    if let Err(e) = check_write_args(name, args) {
         return json!({ "content": [{ "type": "text", "text": err_json(&e) }],
                        "isError": true });
     }
@@ -1234,7 +1238,7 @@ fn mcp_dispatch(req: &Value, dir: &PathBuf, notify_status: &str) -> Option<Value
                 Some(_) => return Some(json!({"jsonrpc":"2.0","id":id,
                     "error":{"code":-32602,"message":"Invalid params: name 必须是字符串"}})),
             };
-            if let Err(e) = check_required(name, &args) {
+            if let Err(e) = check_write_args(name, &args) {
                 return Some(json!({"jsonrpc":"2.0","id":id,
                     "error":{"code":-32602,"message":format!("Invalid params: {}", e)}}));
             }
@@ -2659,7 +2663,11 @@ fn register_agent(dir: &PathBuf, body: &Value) -> Result<Value, String> {
       而下次用 "a" 注册又会当成另一个 agent（同一个实体被拆成两个）。
       与前端 normalizeTask 的文本字段判据一致：一律先 trim。
     */
-    let id = str_field(body, "id").unwrap_or_default().trim().to_string();
+    /* ⛔ 原来只 trim：MCP 的 id 参数与 check_required 都走 norm_id（解码+trim），
+       AI 传 "agent%20A" 时校验认为有效、这里却存成字面量 "agent%20A"，
+       界面显示带 %20 的窗口名，下次用 "agent A" 注册又拆成两个。 */
+    let id_raw = str_field(body, "id").unwrap_or_default();
+    let id = norm_id(&id_raw);
     if id.is_empty() {
         return Err("id 不能为空".to_string());
     }
@@ -2775,6 +2783,122 @@ fn check_required(name: &str, args: &Value) -> Result<(), String> {
     Ok(())
 }
 
+
+/*
+  ⛔ 上一轮只给 **MCP 通道**加了必填参数校验（check_required），
+  HTTP 的 4 个写分支仍只 parse_body —— 同样的坏输入，两条通道两种结果：
+
+    POST /api/tasks {"title":123}  → str_field 返回 None → 「title 不能为空」
+    MCP  tb_create_task {"title":123} → -32602「必填参数 title 必须是字符串」
+
+  而且**可选字段**形状错了两侧都静默吞：
+    {"note":123} → patch 当作没传 → 「没有可应用的变更」（AI 反复重试）
+    {"tags":[1,2]} → 非字符串元素被悄悄丢掉 → 标签少了一半
+    {"type":42}    → 整列静默变空
+    {"estimate":{"v":2}} → num_of 返回 None → 0（AI 以为设了 2）
+
+  与「必填参数静默空串」「arguments 形状错了却报参数的错」是同一族。
+  修法仍是「一份定义、两条通道共用」：check_write_args = required + shapes，
+  mcp_dispatch / mcp_call_tool / HTTP 四个写分支都调它，不再各写一份。
+
+  ⛔ 新函数必须留在 mcp_tools **之后**：上一轮把 required_of 放前面，
+  里面的 "tb_create_task" 抢了 rsSeg('"tb_create_task"', 1200) 的首次命中，
+  一次性让 16 条守卫恒红。
+*/
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape { Str, StrOrArr, NumOrStr, Ignore }
+fn shape_label(sh: Shape) -> &'static str {
+    match sh {
+        Shape::Str => "字符串",
+        Shape::StrOrArr => "字符串或字符串数组",
+        Shape::NumOrStr => "数字或数字字符串",
+        Shape::Ignore => "任意",
+    }
+}
+/* 工具名全集：与 mcp_tools 的 vec![] 一一对应（守卫动态比对，防止加工具漏校验） */
+/* ⛔ HTTP 分支不许直接写 "tb_create_task" 这类字面量：它在 route 里比
+   mcp_tools 更靠前，会抢走 rsSeg('"tb_create_task"', 1200) 的首次命中，
+   一次性让 9 条守卫恒红。常量定义在工具表之后，首次出现仍归工具表。 */
+const TB_CREATE: &str = "tb_create_task";
+const TB_UPDATE: &str = "tb_update_task";
+const TB_EVENT: &str = "tb_add_event";
+const TB_AGENT: &str = "tb_register_agent";
+const KNOWN_TOOLS: &[&str] = &[
+    "tb_list_tasks", "tb_create_task", "tb_get_task", "tb_update_task",
+    "tb_add_event", "tb_register_agent", "tb_delete_task",
+];
+const FILTER_FIELDS: &[&str] = &["status", "priority", "tag", "type", "group", "assignee", "q"];
+const WRITE_ARR_FIELDS: &[&str] = &["type", "group", "assignee", "tags", "deps"];
+const WRITE_STR_FIELDS: &[&str] = &[
+    "id", "title", "detail", "summary", "reporter", "by", "note", "action",
+    "name", "role", "status", "priority",
+];
+fn field_shape(tool: &str, key: &str) -> Shape {
+    if !KNOWN_TOOLS.contains(&tool) { return Shape::Ignore; }  /* 未知工具交给 _ arm 报「未知工具」 */
+    if tool == "tb_list_tasks" {
+        return if FILTER_FIELDS.contains(&key) { Shape::StrOrArr } else { Shape::Ignore };
+    }
+    if tool == "tb_get_task" || tool == "tb_delete_task" {
+        return if key == "id" { Shape::Str } else { Shape::Ignore };
+    }
+    if tool == "tb_add_event" {
+        return if ["id", "by", "action", "note"].contains(&key) { Shape::Str } else { Shape::Ignore };
+    }
+    if tool == "tb_register_agent" {
+        return if ["id", "name", "role"].contains(&key) { Shape::Str } else { Shape::Ignore };
+    }
+    /* create / update 共用同一张写字段表 */
+    if WRITE_ARR_FIELDS.contains(&key) { return Shape::StrOrArr; }
+    if key == "estimate" { return Shape::NumOrStr; }
+    if WRITE_STR_FIELDS.contains(&key) { return Shape::Str; }
+    Shape::Ignore   /* 未知字段忽略：AI 可能多带 */
+}
+
+fn check_shapes(tool: &str, args: &Value) -> Result<(), String> {
+    let obj = args.as_object().ok_or("arguments 必须是 JSON 对象")?;
+    for (k, v) in obj {
+        let sh = field_shape(tool, k);
+        let ok = match sh {
+            Shape::Ignore => true,
+            Shape::Str => v.is_string(),
+            Shape::StrOrArr => match v {
+                Value::String(_) => true,
+                Value::Array(a) => a.iter().all(|x| x.is_string()),
+                _ => false,
+            },
+            Shape::NumOrStr => match v {
+                Value::Number(_) => true,
+                /* 空串视为清空（estimate_of → 0），非法字符串要指路而不是静默变 0 */
+                Value::String(x) => {
+                    let t = x.trim();
+                    t.is_empty() || t.parse::<f64>().map(|n| n.is_finite()).unwrap_or(false)
+                }
+                _ => false,
+            },
+        };
+        if !ok {
+            return Err(format!(
+                "参数 {} 形状不对（工具 {} 期望 {}，收到 {}）", k, tool, shape_label(sh), v
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_write_args(tool: &str, args: &Value) -> Result<(), String> {
+    check_required(tool, args)?;
+    check_shapes(tool, args)
+}
+
+/* HTTP 四个写分支共用：解析 + 必填 + 形状，一次做完 */
+fn parse_write_body(body: &str, tool: &str) -> Result<Value, String> {
+    let v = parse_body(body)?;
+    if !v.is_object() {
+        return Err("请求体必须是 JSON 对象".to_string());
+    }
+    check_write_args(tool, &v)?;
+    Ok(v)
+}
 
 #[cfg(test)]
 mod tests {
