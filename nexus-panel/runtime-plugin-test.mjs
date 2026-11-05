@@ -14,6 +14,14 @@
  * 链条上任何一环断了，症状都是「侧边栏点了插件名，主区域空白 +
  * 10s 握手超时」—— 完全看不出是哪一环。所以每一环都要有钉子。
  *
+ * 第 38/39 轮更正（三态同文件）：12 个 iframe 插件源码已迁出主仓，
+ * 现在 prod / dev / plain 三态加载的是**同一份** runtime-plugins/ 产物：
+ *   prod   → dist/ 内同源相对路径（runtimeFrameUrl）
+ *   dev    → vite.config.ts 的 serveRuntimePlugins() 中间件原样直出
+ *   plain  → 相对 location 解析（Node / 无构建态）
+ * registry 的 entry 已改指产物；源码目录退场后 build-plugins.mjs 走
+ * retired 态（源码缺席时 exit 1，不假装「构建 0 个也算成功」）。
+ *
  * 分两层（与 handshake-test 同一思路）：
  *   1. 源码层：各环节的接线与标记完整（registry / host.js / 构建脚本 /
  *      tauri 配置 / CSP / 插件 HTML）；
@@ -21,9 +29,23 @@
  *      getResourceDir 的双来源探测、runtimeFrameUrl 纯函数拼接。
  *      （prod 分支依赖 vite 编译期替换的 import.meta.env，Node 下不可达，
  *       所以它的逻辑被抽成纯函数 runtimeFrameUrl 单独覆盖 —— 见 host.js。）
+ *
+ * ⚠️ 零依赖 stub（第 39 轮）：原第 6 节用 jsdom 造最小浏览器环境。sweep-tests.mjs
+ *   文件头专门记过这个坑 —— 环境反复把 jsdom 的依赖树（cssstyle / parse5 /
+ *   tough-cookie / ws）裁掉时，require('jsdom') 要么 MODULE_NOT_FOUND 崩在
+ *   import 之前（**无汇总行**），要么静默挂起，体检单只看到「崩在半路 /
+ *   挂起」，排查方向被引到测试本身，真因在依赖。第 6 节实际只需要 window /
+ *   document / localStorage 几个全局，用 `scripts/host-globals-stub.mjs`
+ *   手写即可，不必拖整棵 jsdom 依赖树。
+ *
+ * ⚠️ 上一轮记「没有 npm script、不在体检单」是错的：`test:runtime-plugins`
+ *   一直在 package.json，node 直跑 .mjs 也匹配 sweep 的 filter1，它一直被
+ *   收录。真实形态是「崩得没有汇总行」，且第 5 节口径停在退场前（写死 9 个
+ *   id 一律读 plugins/<id>/index.html），6 条红从未被打出来过。两处一起修。
+ *
+ * 运行：node runtime-plugin-test.mjs（npm run test:runtime-plugins）
  */
-import { JSDOM } from 'jsdom';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -94,7 +116,7 @@ t('resolveFrameSrc 的 prod 分支直接拼相对路径',
 /* ============ 3. 源码层：构建脚本 ============ */
 console.log('\n=== 3. 构建：build-plugins.mjs 独立构建 ===');
 const bp = src('scripts/build-plugins.mjs');
-t('扫 plugins/<id>/index.html 自动纳入（新增插件零配置）',
+t('扫 plugins/<id>/index.html 自动纳入（源码态：新增插件零配置）',
   /scanIframePlugins/.test(bp) && /existsSync\(resolve\(dir, d\.name, 'index\.html'\)\)/.test(bp));
 t('configFile:false（不递归读到仓库根的 vite.config.ts）',
   /configFile:\s*false/.test(bp));
@@ -131,6 +153,11 @@ t('vite.config.ts 不再收 iframe 插件入口', (() => {
 })());
 t('主构建仍拷 registry.js（运行时动态加载）',
   /copyInto\(PATHS\.registry/.test(src('vite.config.ts')));
+/* 退场态：源码目录缺席时不能「构建 0 个插件却 exit 0」。三态判据与 52 项
+   retired-supply 守卫是权威口径，这里只钉住脚本确实有 retired 分支与
+   --verify 入口（防止有人把整段改成静默 return，而本节其余判据仍全绿）。 */
+t('源码退场态有 retired 分支（不假装构建成功）',
+  /retired/.test(bp) && /--verify/.test(bp));
 
 /* ============ 4. 源码层：打包与 CSP ============ */
 console.log('\n=== 4. 打包：resources 收录 + CSP 放行 ===');
@@ -148,84 +175,128 @@ for (const f of ['index.html', 'index.react.html']) {
     /frame-src 'self' asset: http:\/\/asset\.localhost/.test(src(f)));
 }
 
-/* ============ 5. 源码层：插件 HTML 防闪 query ============ */
-console.log('\n=== 5. 插件 HTML：preload 读 URL query 铺底色 ===');
-const PRELOAD_PLUGINS = [
-  'agent-flow', 'color-picker', 'demo-react', 'demo-service', 'home',
-  'project-group', 'settings', 'store', 'task-board',
-];
-for (const id of PRELOAD_PLUGINS) {
-  const p = join(HERE, 'plugins', id, 'index.html');
-  t(`${id}/index.html preload 读 nexus-bg query`, (() => {
-    if (!existsSync(p)) return false;
-    return /_q\.get\('nexus-bg'\)/.test(readFileSync(p, 'utf8'));
-  })());
+/* ============ 5. 源码/产物层：插件 HTML 防闪 query ============ */
+console.log('\n=== 5. 插件 HTML：preload 读 URL query 铺底色（按供给源分流） ===');
+/**
+ * 退场态更正（第 39 轮）：原判据写死 9 个 id，一律读 plugins/<id>/index.html。
+ * 12 个 iframe 插件源码迁出主仓后该路径已不存在 → 6 红 + 1 条聚合红；
+ * 而彼时守卫因 jsdom 依赖半残崩在 import 之前，这些红**从未被打出来过**。
+ *
+ * 现在按 registry 的 runtime:true 分流供给路径，不写死名单：
+ *   runtime → runtime-plugins/<id>/index.html（产物，必须存在）
+ *   module  → plugins/<id>/index.html（源码，多数没有 index.html，属正常）
+ * 判据语义：只要用了 localStorage 兜底，就必须同时读 query。新增插件自动纳入。
+ */
+const preloadOk = (html) => !/nexus:preload-bg/.test(html) || /_q\.get\('nexus-bg'\)/.test(html);
+t('⑤元 判据能抓到「只留兜底、删掉 query」的坏样本',
+  !preloadOk("localStorage.getItem('nexus:preload-bg')"),
+  '恒真会让整节假绿');
+t('⑤元 判据放过「两者都没有」的插件（多数插件不做首帧底色）',
+  preloadOk('<html></html>'));
+
+const SUPPLY = blocks.map(({ id, blk }) => {
+  const runtime = /runtime:\s*true/.test(blk);
+  return { id, runtime, rel: runtime ? `runtime-plugins/${id}/index.html` : `plugins/${id}/index.html` };
+});
+t('供给源解析出全部 registry 条目', SUPPLY.length === blocks.length && blocks.length >= 20);
+/* 补充：plugins/ 下仍持有 index.html 的外壳目录（如 store）不一定有 registry
+   条目。按目录实扫纳入，否则「写死名单 → registry 分流」这次改造会静默少守
+   一个插件，而本节其余断言照样全绿 —— 正是本项目反复踩的假绿形状。 */
+const onDiskModuleHtml = readdirSync(join(HERE, 'plugins'), { withFileTypes: true })
+  .filter((d) => d.isDirectory() && existsSync(join(HERE, 'plugins', d.name, 'index.html')))
+  .map((d) => d.name);
+for (const id of onDiskModuleHtml) {
+  if (!SUPPLY.some((s) => s.id === id)) SUPPLY.push({ id, runtime: false, rel: `plugins/${id}/index.html` });
 }
-t('所有 preload 插件仍保留 localStorage 兜底',
-  PRELOAD_PLUGINS.every((id) => {
-    const p = join(HERE, 'plugins', id, 'index.html');
-    return existsSync(p) && /localStorage\.getItem\('nexus:preload-bg'\)/.test(readFileSync(p, 'utf8'));
-  }));
+t('plugins/ 下所有含 index.html 的目录都纳入供给检查',
+  onDiskModuleHtml.length > 0 && onDiskModuleHtml.every((id) => SUPPLY.some((s) => s.id === id)),
+  onDiskModuleHtml.join(','));
+
+const preloadRows = [];
+for (const { id, runtime, rel } of SUPPLY) {
+  const p = join(HERE, rel);
+  const has = existsSync(p);
+  if (runtime) t(`${id}（runtime）产物 HTML 存在`, has, rel);
+  if (!has) continue;
+  const html = readFileSync(p, 'utf8');
+  if (/nexus:preload-bg/.test(html)) preloadRows.push({ id, rel, html });
+}
+/* every 对空集合恒真：没有这条规模断言，把 preloadRows 清空即可让本节全绿 */
+t('至少 6 个插件带 preload 兜底（防空集合假绿）',
+  preloadRows.length >= 6, `实得 ${preloadRows.length}`);
+for (const { id, rel, html } of preloadRows) {
+  t(`${id} 用了兜底就必须同时读 nexus-bg query`, preloadOk(html), rel);
+}
 
 /* ============ 6. 行为层：runtimeFrameUrl 纯函数 ============ */
-console.log('\n=== 6. 行为层：runtimeFrameUrl 拼接 ===');
+console.log('\n=== 6. 行为层：runtimeFrameUrl 拼接（零依赖 stub） ===');
 {
-  /* 最小浏览器全局：host.js 顶层代码会碰 window/document/localStorage。
-     与 handshake-test 同一套最小环境。 */
-  const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-    url: 'http://localhost/index.html',
-    pretendToBeVisual: true,
-  });
-  const { window: w } = dom;
-  globalThis.window = w;
-  globalThis.document = w.document;
-  globalThis.localStorage = w.localStorage;
-  globalThis.location = w.location;
-  Object.defineProperty(globalThis, 'navigator', { value: w.navigator, configurable: true, writable: true });
-  globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
-  globalThis.requestAnimationFrame = (f) => setTimeout(f, 0);
+  let mod = null;
+  let w = null;
+  try {
+    /* 连 stub 也动态加载：静态 import 一旦失败就崩在守卫最前面、无汇总行，
+       而「stub 文件被误删 / 损坏」与「jsdom 依赖被裁」是同一类环境事故。 */
+    const stub = await import('./scripts/host-globals-stub.mjs');
+    w = stub.installHostGlobals();
+    mod = await import('./js/host.js');
+    t('行为层：host.js 在零依赖 stub 下可 import 且导出齐全',
+      typeof mod.runtimeFrameUrl === 'function'
+      && typeof mod.resolveFrameSrc === 'function'
+      && typeof mod.getResourceDir === 'function');
+  } catch (e) {
+    /* 崩了必须显式报红并保留汇总行：体检单只看到「崩在半路 / 无汇总行」
+       时，排查方向会被引到测试本身，而真因可能在 stub 或 host.js 顶层。 */
+    t('行为层：host.js 在零依赖 stub 下可 import（崩了要显式报红）', false, String(e && e.message));
+  }
+  if (mod) {
+    const host = mod;
+    try {
 
-  const host = await import('./js/host.js');
+      /* 同源相对路径拼接：不再过 convertFileSrc（asset 协议三坑，见 host.js
+         runtimeFrameUrl 注释），产物就是 dist/ 下的相对 URL。 */
+      const url = host.runtimeFrameUrl({
+        id: 'task-board',
+        vars: { '--bg': '#101318' },
+        base: 'dark',
+      });
+      t('拼出同源相对路径 runtime-plugins/<id>/index.html',
+        url.startsWith('runtime-plugins/task-board/index.html'), url);
+      t('不带 asset.localhost / 盘符（那三条坑的温床；query 的 %23 是合法编码）',
+        !url.includes('asset.localhost') && !url.includes('E:'), url);
+      t('带 nexus-bg 参数', /[?&]nexus-bg=%23101318/.test(url), url);
+      t('带 nexus-base 参数', /[?&]nexus-base=dark/.test(url), url);
 
-  /* 同源相对路径拼接：不再过 convertFileSrc（asset 协议三坑，见 host.js
-     runtimeFrameUrl 注释），产物就是 dist/ 下的相对 URL。 */
-  const url = host.runtimeFrameUrl({
-    id: 'task-board',
-    vars: { '--bg': '#101318' },
-    base: 'dark',
-  });
-  t('拼出同源相对路径 runtime-plugins/<id>/index.html',
-    url.startsWith('runtime-plugins/task-board/index.html'), url);
-  t('不带 asset.localhost / 盘符（那三条坑的温床；query 的 %23 是合法编码）',
-    !url.includes('asset.localhost') && !url.includes('E:'), url);
-  t('带 nexus-bg 参数', /[?&]nexus-bg=%23101318/.test(url), url);
-  t('带 nexus-base 参数', /[?&]nexus-base=dark/.test(url), url);
+      const noTheme = host.runtimeFrameUrl({ id: 'home', vars: {}, base: null });
+      t('无主题信息时不带 query（不拼裸 ?）', !noTheme.includes('?'), noTheme);
 
-  const noTheme = host.runtimeFrameUrl({ id: 'home', vars: {}, base: null });
-  t('无主题信息时不带 query（不拼裸 ?）', !noTheme.includes('?'), noTheme);
+      /* resolveFrameSrc 在 Node 下 import.meta.env 不存在 → plain 分支：
+         必须退回 resolveEntry（相对 location 解析），而不是抛错。 */
+      const plain = await host.resolveFrameSrc({ id: 'task-board', runtime: true, entry: './plugins/task-board/index.html' });
+      t('plain 分支（Node/无构建）退回相对路径解析',
+        plain === 'http://localhost/plugins/task-board/index.html', plain);
+      const nonRuntime = await host.resolveFrameSrc({ id: 'demo-module', entry: './plugins/demo-module/module.js' });
+      t('非 runtime 插件不受影响（走原 resolveEntry）',
+        nonRuntime === 'http://localhost/plugins/demo-module/module.js', nonRuntime);
 
-  /* resolveFrameSrc 在 Node 下 import.meta.env 不存在 → plain 分支：
-     必须退回 resolveEntry（相对 location 解析），而不是抛错。 */
-  const plain = await host.resolveFrameSrc({ id: 'task-board', runtime: true, entry: './plugins/task-board/index.html' });
-  t('plain 分支（Node/无构建）退回相对路径解析',
-    plain === 'http://localhost/plugins/task-board/index.html', plain);
-  const nonRuntime = await host.resolveFrameSrc({ id: 'demo-module', entry: './plugins/demo-module/module.js' });
-  t('非 runtime 插件不受影响（走原 resolveEntry）',
-    nonRuntime === 'http://localhost/plugins/demo-module/module.js', nonRuntime);
+      /* getResourceDir：无 __TAURI__ 时返回 null 且不抛。
+         注意用带 query 的 URL 重新 import，绕开模块级 _resourceDir 缓存
+         （第一次探测的结果会被缓存，第二次 import 同一 URL 拿不到新实例）。 */
+      delete w.__TAURI__;
+      const fresh1 = await import('./js/host.js?rt=1');
+      const rd1 = await fresh1.getResourceDir();
+      t('getResourceDir：无 Tauri 环境时返回 null 不抛', rd1 === null, String(rd1));
 
-  /* getResourceDir：无 __TAURI__ 时返回 null 且不抛。
-     注意用带 query 的 URL 重新 import，绕开模块级 _resourceDir 缓存
-     （第一次探测的结果会被缓存，第二次 import 同一 URL 拿不到新实例）。 */
-  delete w.__TAURI__;
-  const fresh1 = await import('./js/host.js?rt=1');
-  const rd1 = await fresh1.getResourceDir();
-  t('getResourceDir：无 Tauri 环境时返回 null 不抛', rd1 === null, String(rd1));
-
-  w.__TAURI__ = { path: { resourceDir: async () => 'E:\\app\\res' } };
-  const fresh2 = await import('./js/host.js?rt=2');
-  const rd2 = await fresh2.getResourceDir();
-  t('getResourceDir：优先用全局 __TAURI__.path.resourceDir',
-    rd2 === 'E:\\app\\res', String(rd2));
+      w.__TAURI__ = { path: { resourceDir: async () => 'E:\\app\\res' } };
+      const fresh2 = await import('./js/host.js?rt=2');
+      const rd2 = await fresh2.getResourceDir();
+      t('getResourceDir：优先用全局 __TAURI__.path.resourceDir',
+        rd2 === 'E:\\app\\res', String(rd2));
+    } catch (e) {
+      /* 行为层断言抛异常也要显式报红并保留汇总行：只保护 import 的话，
+         host.js 改了 API / stub 少个全局，仍会崩在半路、无汇总行。 */
+      t('行为层：断言执行期间不得抛异常（崩了要显式报红）', false, String(e && e.message));
+    }
+  }
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
@@ -236,6 +307,7 @@ if (fail) {
   2. host.js 的 src 赋值被改回 resolveEntry —— 第 2 节
   3. 改了构建脚本却没同步 package.json / vite.config —— 第 3 节
   4. 手改了 CSP 没过 config:sync —— 第 4 节
-  5. 插件 index.html 的 preload 脚本被覆盖回纯 localStorage —— 第 5 节`);
+  5. 带 preload 兜底的 HTML 被覆盖回纯 localStorage，或供给 HTML 缺失 —— 第 5 节
+  6. host.js 顶层碰了 stub 没覆盖的 API（补 stub，别拖回 jsdom）—— 第 6 节`);
 }
 process.exit(fail ? 1 : 0);
