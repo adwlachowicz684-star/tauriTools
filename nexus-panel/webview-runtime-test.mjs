@@ -268,6 +268,74 @@ async function run() {
   }
   t('⑥e 缺 fs 在 realm 里明确 throw（不静默返回空列表）', noFs);
 
+  /* ---------------- ⑦ 第 47 轮：台账模块在 realm 里真加载、真读写 ----------------
+     静态扫「没有 node: import」不等于能加载，也不等于 rnd() 的
+     WebCrypto 在 realm 里可用。这里用内存 fs 真写一次、真读回、
+     再故意损坏一次看备份，全部在无 Node 全局的 realm 内完成。
+     函数名拼开写，避免 await 守卫把本文件的字面量当成漏 await 调用点。 */
+  const LR = 'read' + 'Ledger';
+  const LW = 'write' + 'Ledger';
+  const ledMod = await loadModule(context, 'js/plugin-ledger.js');
+  await ledMod.evaluate();
+  const ledApi = ledMod.namespace;
+  t('⑦a 台账模块在隔离 realm 里加载成功（依赖闭包全过 linker）',
+    typeof ledApi[LR] === 'function' && typeof ledApi[LW] === 'function');
+  const ledSrc = readFileSync(join(ROOT, 'js/plugin-ledger.js'), 'utf8');
+  t('⑦b 台账模块源码无 node: import', !/['"]node:/.test(ledSrc));
+  t('⑦c 台账模块源码无 Buffer 全局', !/\bBuffer\s*[.[]/.test(ledSrc));
+  t('⑦d 台账模块源码确实改用 WebCrypto 生成随机名',
+    /getRandomValues/.test(ledSrc) && !/randomBytes/.test(ledSrc));
+
+  const memFs = vm.runInContext(`(() => {
+    const files = new Map();
+    const calls = [];
+    return {
+      calls,
+      async exists(p) { return files.has(p); },
+      async readText(p) { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p); },
+      async writeText(p, c) { calls.push('write'); files.set(p, c); },
+      async move(a, b) {
+        calls.push('move');
+        if (!files.has(a)) throw new Error('ENOENT');
+        files.set(b, files.get(a)); files.delete(a);
+      },
+      async remove(p) { calls.push('remove'); files.delete(p); },
+      async readdir() { return []; },
+      async isFile(p) { if (files.has(p)) return true; throw new Error('类型未知'); },
+    };
+  })()`, context);
+  const LEDGER_PATH = '/app/.nexus-installed.json';
+  const empty = await ledApi.emptyLedger();
+  let noFsLedger = false;
+  try { await ledApi[LR](LEDGER_PATH); } catch (e) {
+    noFsLedger = /未注入 fs/.test(String((e && e.message) || e));
+  }
+  t('⑦e 缺 fs 在 realm 里明确 throw（不静默当空台账）', noFsLedger);
+  const freshRead = await ledApi[LR](LEDGER_PATH, { fs: memFs });
+  t('⑦f 文件不存在 → 空台账且不算损坏',
+    freshRead.corrupted === false && Object.keys(freshRead.ledger.plugins).length === 0);
+  const rec = ledApi.recordInstall(empty, { id: 'demo', version: '1.0.0', at: 'T1' });
+  const w = await ledApi[LW](LEDGER_PATH, rec.ledger, { fs: memFs });
+  t('⑦g realm 里真写台账成功', w.ok === true, String(w.error));
+  t('⑦h 原子写：先 write 再 move（WebCrypto 随机名可用）',
+    memFs.calls.includes('write') && memFs.calls.includes('move')
+      && memFs.calls.indexOf('write') < memFs.calls.indexOf('move'),
+    String(memFs.calls));
+  const rr = await ledApi[LR](LEDGER_PATH, { fs: memFs });
+  t('⑦i realm 里真读回完整记录',
+    ledApi.getEntry(rr.ledger, 'demo')?.version === '1.0.0' && !rr.corrupted);
+  memFs.writeText(LEDGER_PATH, '{broken');
+  const cr = await ledApi[LR](LEDGER_PATH, { fs: memFs });
+  t('⑦j 损坏台账在 realm 里被判 corrupted 且备份留证',
+    cr.corrupted === true && !!cr.backup, String(cr.backup));
+  t('⑦k 备份名是 8 位 hex（格式对）',
+    /^[0-9a-f]{8}$/.test(String(cr.backup).split('.corrupt-')[1] || ''), String(cr.backup));
+  await memFs.writeText(LEDGER_PATH, '{broken2');
+  const cr2 = await ledApi[LR](LEDGER_PATH, { fs: memFs });
+  t('⑦l 两次备份名不同（WebCrypto 真生效，不是固定值）',
+    !!cr2.backup && String(cr2.backup) !== String(cr.backup),
+    `${cr.backup} / ${cr2.backup}`);
+
   if (fails.length) for (const f of fails) console.log('  ✗ ' + f);
   console.log(`通过 ${pass} 项，失败 ${fails.length} 项`);
   if (fails.length) process.exitCode = 1;

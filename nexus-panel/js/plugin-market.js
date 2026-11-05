@@ -27,8 +27,9 @@
  *    list() 随之变 async，所有调用点必须 await；漏一个就是拿 Promise 当
  *    结果对象，表现为「一个插件都没出现」且不报错，已纳入 await 守卫监控。
  *
- * ⛔ 剩余 installer / ledger 两个模块
- *    仍带同步 node:fs，逐文件 unblock 记在
+ * ⛔ 第 47 轮：ledger 已销账（注入式异步 fs + WebCrypto 随机名），
+ *    readLedgerState / saveLedger 随之变 async，三个调用点必须 await。
+ *    剩余 installer 一个模块仍带同步 node:fs，逐文件 unblock 记在
  *    scripts/market-runtime-debt.json；判定见 scripts/scan-market-runtime.mjs
  *    与 market-runtime-gap-test.mjs / webview-runtime-test.mjs。
  *    在那之前"300+ 项测试全绿但产品里没有装插件能力"仍是结构性的，
@@ -170,6 +171,9 @@ export function createPluginMarket(p) {
   /* list() 要扫目录，fs 必须由调用方注入：生产是 createFs(invoke)，
      Node 测试是 createNodeFs()。缺了不静默返回空列表（见扫描模块 requireFs）。 */
   const scanFs = o.fs || null;
+  /* 台账读写与目录扫描共用同一份注入 fs：两处各接一份会在
+     「只接了扫描、没接台账」时表现为装完查不到更新且不报错。 */
+  const ledgerFs = o.fs || null;
   /* 用户数据目录必须复用 DATA_DIR_NAME：另写一份 'plugin-data' 会让
      data-store 写 A、uninstall 删 B，表现为"卸载保留了数据"却永远读不回。 */
   const userDataRoot = dataRoot ? joinSegments(dataRoot, DATA_DIR_NAME) : null;
@@ -186,7 +190,9 @@ export function createPluginMarket(p) {
    * 就是把那几条真的删掉。所以只要 readLedger 报了任何异常，一律
    * **不写回**，明确让人去核对。这与快照/清单那条"读不全就不写"同判据。
    */
-  const readLedgerState = () => readLedger(ledgerFile);
+  /* 显式 return 一个 Promise：await 守卫按语句判 await，箭头函数直接
+     返回调用结果时会被当成漏 await 报红（第 46 轮 ⑥ 节同款形状）。 */
+  const readLedgerState = () => { return readLedger(ledgerFile, { fs: ledgerFs }); };
   const ledgerFault = (st) => (st.corrupted || st.errors.length
     ? `台账不可安全写入（${st.errors.join('; ') || '文件已损坏'}）`
       + `${st.backup ? `，原文件已备份到 ${st.backup}` : ''}`
@@ -194,7 +200,7 @@ export function createPluginMarket(p) {
     : null);
   /* 不再 throw：任何阶段的失败都要按文件头契约返回 {ok:false, stage, error}，
      否则调用方按 `if (!r.ok)` 写就会撞上一个穿透的异常，界面上只剩"点了没反应"。 */
-  const saveLedger = (l) => writeLedger(ledgerFile, l);
+  const saveLedger = (l) => { return writeLedger(ledgerFile, l, { fs: ledgerFs }); };
 
   return {
     paths: { installedDir: root, ledgerFile, dataRoot, userDataRoot },
@@ -207,7 +213,11 @@ export function createPluginMarket(p) {
 
     /** 只报告不下载（D6）。台账没记录 = 查不到，正是契约①要防的失效。 */
     async checkUpdates() {
-      const st = readLedgerState();
+      let st;
+      try { st = await readLedgerState(); }
+      catch (e) {
+        return { results: [], errors: [`台账读取失败: ${String((e && e.message) || e)}`] };
+      }
       const out = await ledgerCheckUpdates(st.ledger, { fetch: fetchFn, headers: ghOptsHeaders });
       const why = ledgerFault(st);
       return { ...out, errors: [...(why ? [why] : []), ...(out.errors || [])] };
@@ -230,7 +240,11 @@ export function createPluginMarket(p) {
     async install(input, opts = {}) {
       /* 写前预检：损坏/有跳过条目的台账一律不拿来做合并，也不再重读一次
          （重读会撞上"原文件已被改名备份 → 看起来是干净空台账"而放行）。 */
-      const stLedger = readLedgerState();
+      let stLedger;
+      try { stLedger = await readLedgerState(); }
+      catch (e) {
+        return { ok: false, stage: 'ledger', error: `台账读取失败: ${String((e && e.message) || e)}` };
+      }
       const fault = ledgerFault(stLedger);
       if (fault) return { ok: false, stage: 'ledger', error: fault };
       const digestWarnings = [];
@@ -311,7 +325,7 @@ export function createPluginMarket(p) {
       if (rec.errors.length) {
         return { ok: false, stage: 'ledger', error: `安装已落盘但台账记录失败: ${rec.errors.join('; ')}`, id };
       }
-      const wr = saveLedger(rec.ledger);
+      const wr = await saveLedger(rec.ledger);
       if (!wr.ok) {
         return { ok: false, stage: 'ledger', id,
           error: `安装已落盘但台账写入失败: ${wr.error}（旧版本可能已被替换，请人工核对）`,
@@ -327,7 +341,11 @@ export function createPluginMarket(p) {
      * 去留结论只来自 policy，且 source 取台账里的记录，不靠 id 前缀猜。
      */
     async uninstall(id, opts = {}) {
-      const stLedger = readLedgerState();
+      let stLedger;
+      try { stLedger = await readLedgerState(); }
+      catch (e) {
+        return { ok: false, id, stage: 'ledger', error: `台账读取失败: ${String((e && e.message) || e)}`, removed: [], kept: [] };
+      }
       const fault = ledgerFault(stLedger);
       if (fault) return { ok: false, id, stage: 'ledger', error: fault, removed: [], kept: [] };
       const plan = uninstallPlan({ root, id, userDataRoot });
@@ -344,7 +362,7 @@ export function createPluginMarket(p) {
       if (!r.ok) return { ok: false, id, error: r.errors.join('; '), removed: r.removed, kept: r.kept };
 
       const rec = recordUninstall(stLedger.ledger, id);   // 契约②
-      const wr = saveLedger(rec.ledger);
+      const wr = await saveLedger(rec.ledger);
       if (!wr.ok) {
         return { ok: false, id, stage: 'ledger',
           error: `卸载已完成但台账写入失败: ${wr.error}`,

@@ -157,8 +157,8 @@ t('①a 扫描器闭包与 BFS 一致',
 t('①b 闭包恰好 10 个模块且都在 js/ 下',
   closure.length === 10 && closure.every((f) => f.startsWith('js/') && existsSync(join(ROOT, f))),
   `closure=${closure.length}`);
-t('①c 独立反推 node: 集合恰为 2 个（第 46 轮再销掉 installed-plugin-scan）',
-  expected.length === 2, `expected=${expected.length}: ${expected.join(',')}`);
+t('①c 独立反推 node: 集合恰为 1 个（第 47 轮再销掉 plugin-ledger）',
+  expected.length === 1, `expected=${expected.length}: ${expected.join(',')}`);
 t('①d 入口自身已零 node: import（销账后不许悄悄加回来）',
   !all[MARKET_ENTRY], `entry=${JSON.stringify(all[MARKET_ENTRY] || null)}`);
 t('①e 解包器已零 node: import',
@@ -183,8 +183,8 @@ if (debt) {
       !!row && String(row.why || '').length > 20 && String(row.unblock || '').length > 20);
   }
   const resolved = (debt.resolved || []).map((x) => x.file).sort();
-  t('②d 已销账恰为 4 个且都带 how / evidence',
-    JSON.stringify(resolved) === JSON.stringify(['js/installed-plugin-scan.js', 'js/plugin-market.js', 'js/plugin-store-client.js', 'js/plugin-tarball.js'])
+  t('②d 已销账恰为 5 个且都带 how / evidence',
+    JSON.stringify(resolved) === JSON.stringify(['js/installed-plugin-scan.js', 'js/plugin-ledger.js', 'js/plugin-market.js', 'js/plugin-store-client.js', 'js/plugin-tarball.js'])
       && (debt.resolved || []).every((x) => String(x.how || '').length > 30 && String(x.evidence || '').length > 10),
     `resolved=${resolved.join(',')}`);
 }
@@ -251,11 +251,11 @@ t('⑤d 注释不再声称「这些模块都 import node:fs」（销账后不许
   !/运行位置是 Node 侧 \/ IPC 桥/.test(entrySrc));
 
 /* ---------------- ⑥ safe / blocked 集合守恒 ---------------- */
-t('⑥a webview 可加载集合恰为 8 个',
-  scan.safe.length === 8 && scan.safe.every((f) => !expected.includes(f)),
+t('⑥a webview 可加载集合恰为 9 个',
+  scan.safe.length === 9 && scan.safe.every((f) => !expected.includes(f)),
   `safe=${scan.safe.join(',')}`);
-t('⑥b blocked 集合恰为 2 个且不含入口',
-  scan.blocked.length === 2
+t('⑥b blocked 集合恰为 1 个且不含入口',
+  scan.blocked.length === 1
     && JSON.stringify(scan.blocked) === JSON.stringify(expected.filter((f) => f !== MARKET_ENTRY)),
   `blocked=${scan.blocked.join(',')}`);
 t('⑥c store-client 已进 safe 且不在 blocked（销账不是只改台账）',
@@ -265,6 +265,11 @@ t('⑥c store-client 已进 safe 且不在 blocked（销账不是只改台账）
 t('⑥d installed-plugin-scan 已进 safe 且不在 blocked（销账不是只改台账）',
   scan.safe.includes('js/installed-plugin-scan.js')
     && !scan.blocked.includes('js/installed-plugin-scan.js'),
+  `safe=${scan.safe.join(',')} blocked=${scan.blocked.join(',')}`);
+
+t('⑥e plugin-ledger 已进 safe 且不在 blocked（销账不是只改台账）',
+  scan.safe.includes('js/plugin-ledger.js')
+    && !scan.blocked.includes('js/plugin-ledger.js'),
   `safe=${scan.safe.join(',')} blocked=${scan.blocked.join(',')}`);
 
 /* ---------------- ⑦ 元断言：判据本身不假绿 ---------------- */

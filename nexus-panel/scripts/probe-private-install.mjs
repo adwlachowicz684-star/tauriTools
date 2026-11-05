@@ -51,6 +51,7 @@ const VER = '0.1.0';
 const TAG = `v${VER}`;
 const ASSET_NAME = assetNameFor(ID, VER);
 const API = 'https://api.github.com';
+const LEDGER_FS = createNodeFs();
 const UPLOAD = 'https://uploads.github.com';
 const NO_PUBLISH = process.argv.includes('--no-publish');
 const CLEANUP = process.argv.includes('--cleanup');
@@ -322,7 +323,7 @@ t('取到 40 位 commit sha（更新指纹没退化）', /^[0-9a-f]{40}$/i.test(
 t('入口文件真的落盘', existsSync(join(installedDir, ID, 'index.html')));
 t('资源目录随包带上', existsSync(join(installedDir, ID, 'assets')));
 t('台账记下了 repo（契约①）',
-  !!readLedger(ledgerFile).ledger.plugins?.[ID]?.repo);
+  !!(await readLedger(ledgerFile, { fs: LEDGER_FS })).ledger.plugins?.[ID]?.repo);
 const listed = await market.list();
 t('扫描发现能看到它',
   Array.isArray(listed?.plugins) && listed.plugins.some((p) => p.id === ID),
@@ -342,7 +343,7 @@ t('卸载成功', un.ok === true, un.error || '');
 t('卸载默认不删用户数据', un.purgeUserData === false);
 t('插件代码目录已删除', !existsSync(join(installedDir, ID)));
 t('用户数据仍在（D3）', (await market.readData(ID, 'theme')) === 'dark');
-t('台账条目已移除（契约②）', !readLedger(ledgerFile).ledger.plugins?.[ID]);
+t('台账条目已移除（契约②）', !(await readLedger(ledgerFile, { fs: LEDGER_FS })).ledger.plugins?.[ID]);
 
 const re = await market.install(`${OWNER}/${REPO}`);
 t('重装成功（独立更新不依赖主程序重构建）', re.ok === true, `${re.stage || ''} ${re.error || ''}`);

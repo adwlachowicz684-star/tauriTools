@@ -147,13 +147,13 @@ function makeFetch(cfg) {
     return { status: 404 };
   };
 }
-function makeMarket(cfg) {
+function makeMarket(cfg, fsOverride = null) {
   const base = fresh('m');
   const installedDir = join(base, 'installed');
   const ledgerFile = join(base, 'ledger', LEDGER_FILE);
   const dataRoot = join(base, 'appdata');
   mkdirSync(dirname(ledgerFile), { recursive: true });
-  const scanFs = createNodeFs();
+  const scanFs = fsOverride || createNodeFs();
   const dataStore = createPluginDataStore({
     fs: scanFs, dataRoot, legacyStorage: null,
   });
@@ -431,7 +431,7 @@ console.log('\n--- 7. 台账损坏 / 写入失败 ---');
   writeFileSync(ledgerFile, broken);
 
   /* 钉住缺陷本身，不钉实现：底层确实把坏文件当空台账、并改名备份 */
-  const st = readLedger(ledgerFile);
+  const st = await readLedger(ledgerFile, { fs: createNodeFs() });
   t('底层 readLedger 报 corrupted 且返回空台账（缺陷存在的证据）',
     st.corrupted === true && Object.keys(st.ledger.plugins).length === 0,
     `corrupted=${st.corrupted} plugins=${Object.keys(st.ledger.plugins).length}`);
@@ -465,13 +465,19 @@ console.log('\n--- 7. 台账损坏 / 写入失败 ---');
   t('checkUpdates 只读不崩，且把台账异常如实带出来（不吞）',
     Array.isArray(up.results) && up.errors.length > 0, JSON.stringify(up.errors).slice(0, 160));
 
-  /* B. 写入失败：删掉台账目录，让原子写的临时文件落不下去 */
-  const ctx2 = makeMarket(cfg);
-  const ok2 = await ctx2.market.install('owner/demo-repo');
-  t('前置：B 场景首次安装成功', ok2.ok === true, `${ok2.stage || ''} ${ok2.error || ''}`);
-  rmSync(dirname(ctx2.ledgerFile), { recursive: true, force: true });
+  /* B. 写入失败。第 47 轮：注入式 fs 的 writeText 会自动补父目录
+     （后端 create_dir_all 同语义），「删掉台账目录制造写入失败」这个旧
+     夹具已经失效 —— 照旧写会红，且指向一个根本不存在的问题。
+     改成注入一个写必失败的 fs，测的是「编排层把失败转成结构化返回」。 */
+  const badFs = { ...createNodeFs(), async writeText() { throw new Error('模拟落盘失败'); } };
+  const ctx2 = makeMarket(cfg, badFs);
   t('底层 writeLedger 确实会失败（本节不是空跑）',
-    writeLedger(ctx2.ledgerFile, { plugins: {} }).ok === false);
+    (await writeLedger(ctx2.ledgerFile, { plugins: {} }, { fs: badFs })).ok === false);
+  const ok2 = await ctx2.market.install('owner/demo-repo');
+  t('前置：B 场景安装因台账写入失败被拒（插件代码已落盘）',
+    ok2.ok === false && ok2.stage === 'ledger'
+      && existsSync(join(ctx2.installedDir, 'demo', 'index.html')),
+    `${ok2.stage || ''} ${ok2.error || ''}`);
   let ri2 = null, thrown2 = null;
   try { ri2 = await ctx2.market.install('owner/demo-repo'); }
   catch (e) { thrown2 = String((e && e.message) || e); }
@@ -481,9 +487,8 @@ console.log('\n--- 7. 台账损坏 / 写入失败 ---');
   t('写失败理由点名台账写入失败与人工核对',
     /台账写入失败/.test(ri2?.error || '') && /人工核对|旧版本/.test(ri2?.error || ''), ri2?.error);
 
-  const ctx3 = makeMarket(cfg);
-  await ctx3.market.install('owner/demo-repo');
-  rmSync(dirname(ctx3.ledgerFile), { recursive: true, force: true });
+  const ctx3 = makeMarket(cfg, badFs);
+  await ctx3.market.install('owner/demo-repo');   // 落盘成功、台账写失败
   let ru3 = null, thrown3 = null;
   try { ru3 = await ctx3.market.uninstall('demo'); }
   catch (e) { thrown3 = String((e && e.message) || e); }

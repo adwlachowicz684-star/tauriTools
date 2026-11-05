@@ -42,6 +42,7 @@ const cleanup = [];
 function fresh(tag) { const d = mkdtempSync(join(tmpdir(), `nx-ledger-${tag}-`)); cleanup.push(d); return d; }
 
 const SHA = 'a'.repeat(40);
+const NFS = createNodeFs();
 const SHA2 = 'b'.repeat(40);
 
 /** 假 fetch：按 url 返回预设响应 */
@@ -147,13 +148,13 @@ console.log('\n--- 4. 读台账 ---');
   const f = join(d, LEDGER_FILE);
 
   /* 4.1 不存在 = 正常态，不是错误 */
-  const r1 = readLedger(join(d, 'no-such-file.json'));
+  const r1 = await readLedger(join(d, 'no-such-file.json'), { fs: NFS });
   t('文件不存在：不算错误（还没装过，正常态）', r1.errors.length === 0 && r1.corrupted === false);
   t('文件不存在：返回空台账', Object.keys(r1.ledger.plugins).length === 0);
 
   /* 4.2 截断的 JSON：必须备份 + 标记 corrupted，不能静默当空 */
   writeFileSync(f, '{"version":1,"plugins":{"demo":');
-  const r2 = readLedger(f);
+  const r2 = await readLedger(f, { fs: NFS });
   t('截断的 JSON 被判为损坏', r2.corrupted === true);
   t('损坏时原文件被备份留证', r2.backup && existsSync(r2.backup), String(r2.backup));
   t('损坏时原文件已移走（不会被下次直接覆盖）', !existsSync(f));
@@ -162,7 +163,7 @@ console.log('\n--- 4. 读台账 ---');
   /* 4.3 结构不对（没有 plugins） */
   const f3 = join(d, 's3.json');
   writeFileSync(f3, '{"version":1}');
-  const r3 = readLedger(f3);
+  const r3 = await readLedger(f3, { fs: NFS });
   t('缺少 plugins 对象被判为损坏', r3.corrupted === true);
 
   /* 4.4 坏条目跳过，但**好条目必须还在**（混入正常样本） */
@@ -174,16 +175,16 @@ console.log('\n--- 4. 读台账 ---');
       demo: { id: 'demo', version: '1.0.0', repo: { owner: 'o', repo: 'r' } },
     },
   }));
-  const r4 = readLedger(f4);
+  const r4 = await readLedger(f4, { fs: NFS });
   t('坏条目被跳过并记原因', r4.errors.some((e) => e.includes('bad')));
   t('好条目仍然读得到（坏条目不拖垮整批）', getEntry(r4.ledger, 'demo') !== null);
   t('好条目的 repo 完整', getEntry(r4.ledger, 'demo').repo.repo === 'r');
 
   /* 4.5 往返 */
   const f5 = join(d, 's5.json');
-  const w = writeLedger(f5, r4.ledger);
+  const w = await writeLedger(f5, r4.ledger, { fs: NFS });
   t('写台账成功', w.ok === true, String(w.error));
-  const r5 = readLedger(f5);
+  const r5 = await readLedger(f5, { fs: NFS });
   t('写入后可读回（往返一致）', getEntry(r5.ledger, 'demo') !== null && !r5.corrupted);
   /* 残留检查要能**自证不是空跑**：
    * 先手工放一个假残留，确认这个检查真能看见它；
@@ -204,11 +205,11 @@ console.log('\n--- 5. 写入原子性 ---');
   const d = fresh('atomic');
   const f = join(d, LEDGER_FILE);
   writeFileSync(f, JSON.stringify({ version: LEDGER_VERSION, plugins: { demo: { id: 'demo', version: '1.0.0' } } }));
-  const r = readLedger(f);
-  const w = writeLedger(f, r.ledger);
+  const r = await readLedger(f, { fs: NFS });
+  const w = await writeLedger(f, r.ledger, { fs: NFS });
   t('覆盖写入成功', w.ok === true);
   t('覆盖后内容完整（不是半截）', JSON.parse(readFileSync(f, 'utf8')).plugins.demo.version === '1.0.0');
-  t('路径非法时报错而非抛异常', writeLedger(null, {}).ok === false);
+  t('路径非法时报错而非抛异常', (await writeLedger(null, {}, { fs: NFS })).ok === false);
 }
 
 /* ============================================================
@@ -371,7 +372,8 @@ console.log('\n--- 10. 台账与扫描器共存 ---');
   writeFileSync(join(d, 'demo', MANIFEST_FILE), JSON.stringify({ id: 'demo', name: 'D', version: '1.0.0', entry: 'index.html', kind: 'app' }));
   writeFileSync(join(d, 'demo', 'index.html'), '<html></html>');
   /* 再放台账文件（就在同一层） */
-  writeLedger(join(d, LEDGER_FILE), emptyLedger());
+  await writeLedger(join(d, LEDGER_FILE), emptyLedger(), { fs: NFS });
+  t('元：台账文件确实落盘（不是空跑）', existsSync(join(d, LEDGER_FILE)));
 
   const s = await scanInstalledPlugins(d, { fs: createNodeFs() });
   t('台账文件不被当成插件目录', s.found === 1, `found=${s.found}`);
@@ -393,12 +395,66 @@ console.log('\n--- 11. 元断言（判据本身要站得住）---');
   const d = fresh('meta');
   const f = join(d, LEDGER_FILE);
   writeFileSync(f, '{broken');
-  const r = readLedger(f);
+  const r = await readLedger(f, { fs: NFS });
   t('元：损坏样本确实被判损坏（否则 corrupted 判据空转）', r.corrupted === true);
   t('元：损坏时备份确实生成了', r.backup !== null);
 
   const fp = assetFingerprint({ id: 1, size: 1, updated_at: 't' });
   t('元：指纹判据确实区分得开重传', fp !== assetFingerprint({ id: 1, size: 1, updated_at: 't2' }));
+}
+
+/* ============================================================
+   9. 注入式异步 fs（第 47 轮）
+   ============================================================ */
+console.log('\n--- 9. 注入式异步 fs ---');
+{
+  /* 缺 fs 必须明确 throw，不能返回空台账 —— 否则「没接文件能力」
+     会被上层当成「还没装过插件」，下一次安装把已有记录整体覆盖。 */
+  let threw = false;
+  try { await readLedger(join(fresh('nofs'), LEDGER_FILE)); }
+  catch (e) { threw = /未注入 fs/.test(String((e && e.message) || e)); }
+  t('缺 fs 读台账明确 throw', threw);
+  let threw2 = false;
+  try { await writeLedger(join(fresh('nofs2'), LEDGER_FILE), emptyLedger()); }
+  catch (e) { threw2 = /未注入 fs/.test(String((e && e.message) || e)); }
+  t('缺 fs 写台账明确 throw', threw2);
+
+  /* 原子写必须是 writeText(tmp) → move(tmp, file)，不能退化成直接覆盖：
+     写一半被杀会把旧台账也一起毁掉。 */
+  const d = fresh('inject');
+  const f = join(d, LEDGER_FILE);
+  const calls = [];
+  const traced = Object.fromEntries(Object.entries(NFS).map(
+    ([k, fn]) => [k, async (...a) => { calls.push(k); return fn(...a); }],
+  ));
+  const L = recordInstall(emptyLedger(), { id: 'demo', version: '1.0.0', at: 'T1' }).ledger;
+  const w = await writeLedger(f, L, { fs: traced });
+  t('注入式写成功', w.ok === true, String(w.error));
+  t('原子写：先 writeText 再 move',
+    calls.includes('writeText') && calls.includes('move')
+      && calls.indexOf('writeText') < calls.indexOf('move'), calls.join(','));
+  const r = await readLedger(f, { fs: traced });
+  t('注入式读回完整记录', getEntry(r.ledger, 'demo')?.version === '1.0.0' && !r.corrupted);
+  t('注入式读确实用了 exists + readText', calls.includes('exists') && calls.includes('readText'));
+
+  /* 损坏台账的备份也必须走注入 fs 的 move；临时后缀由 WebCrypto 生成，
+     固定名会让并发写互相覆盖。 */
+  writeFileSync(f, '{broken');
+  const before = readdirSync(d).filter((n) => n.includes('.corrupt-')).length;
+  const c = await readLedger(f, { fs: traced });
+  t('损坏仍判 corrupted 且备份留证', c.corrupted === true && !!c.backup && existsSync(c.backup));
+  t('备份走注入 fs 的 move', calls.filter((x) => x === 'move').length >= 2, calls.join(','));
+  t('临时后缀是 8 位 hex（格式对）',
+    /^[0-9a-f]{8}$/.test(String(c.backup).split('.corrupt-')[1] || ''), String(c.backup));
+  t('备份数量自增（不是空跑）',
+    readdirSync(d).filter((n) => n.includes('.corrupt-')).length === before + 1);
+  /* 只判「8 位 hex」对固定值 deadbeef 也会绿 —— 必须再证两次不同，
+     否则 rnd() 换成常量时这条判据是假绿。 */
+  writeFileSync(f, '{broken again');
+  const c2 = await readLedger(f, { fs: traced });
+  t('两次备份后缀不同（WebCrypto 真生效，不是固定名）',
+    !!c2.backup && String(c2.backup) !== String(c.backup),
+    `${c.backup} / ${c2.backup}`);
 }
 
 /* ------------------------------------------------------------------ */

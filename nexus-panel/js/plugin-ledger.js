@@ -39,15 +39,31 @@
  * 所以解析失败时：**先把坏文件备份留证，再返回空台账并置 corrupted 标记**。
  */
 
-import { readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+/* 第 47 轮：三个 Node 内建依赖全部撤掉。
+   readLedger / writeLedger 改注入式异步 fs（webview 用 createFs(invoke)，
+   Node 测试用 scripts/node-fs-adapter.mjs），临时文件名改 WebCrypto。
+   ⛔ fs 必须由调用方注入：缺了明确 throw，不返回空台账 ——
+      「没接文件能力」伪装成「还没装过插件」，下一次安装就会把
+      已有记录整体覆盖掉，用户看不到任何报错。 */
 import { API_BASE, parseRepoInput, compareVersion, pickAsset, fetchRelease, ghHeaders } from './plugin-store-client.js';
 
 /** 台账文件名（点开头：扫描器只认子目录，不会把它当插件） */
 export const LEDGER_FILE = '.nexus-installed.json';
 /** 台账结构版本 —— 将来改结构时用它判断能不能读 */
 export const LEDGER_VERSION = 1;
+
+/** 临时文件随机后缀 —— WebCrypto，不引 node:crypto。
+    webview 与 Node 20 都有 globalThis.crypto；缺了明确 throw，
+    绝不退化成固定名（固定名会让并发写互相覆盖）。 */
+function rnd() {
+  const c = globalThis.crypto;
+  if (!c || typeof c.getRandomValues !== 'function') {
+    throw new Error('plugin-ledger: 缺少 WebCrypto.getRandomValues，无法生成临时文件名');
+  }
+  const b = new Uint8Array(4);
+  c.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+}
 
 /* ------------------------------------------------------------------ *
  * 1. 指纹
@@ -160,25 +176,27 @@ export function normalizeEntry(e) {
  *   · 解析失败   —— 备份原文件后返回空台账（不静默丢弃，见文件头）
  *   · 读得出     —— 校验结构，逐条归一化，坏条目跳过但记下来
  */
-export function readLedger(file) {
+export async function readLedger(file, opts = {}) {
   const errors = [];
   if (!file || typeof file !== 'string') return { ledger: emptyLedger(), corrupted: false, backup: null, errors: ['未指定台账路径'] };
-  if (!existsSync(file)) return { ledger: emptyLedger(), corrupted: false, backup: null, errors: [] };
+  const fs = opts && opts.fs;
+  if (!fs) throw new Error('plugin-ledger: 未注入 fs（readLedger 需要异步文件能力）');
+  if (!await fs.exists(file)) return { ledger: emptyLedger(), corrupted: false, backup: null, errors: [] };
 
   let raw;
   try {
-    raw = JSON.parse(readFileSync(file, 'utf8'));
+    raw = JSON.parse(await fs.readText(file));
   } catch (e) {
-    const backup = `${file}.corrupt-${randomBytes(4).toString('hex')}`;
-    try { renameSync(file, backup); } catch { /* 备份失败也要继续，不能卡住启动 */ }
+    const backup = `${file}.corrupt-${rnd()}`;
+    try { await fs.move(file, backup); } catch { /* 备份失败也要继续，不能卡住启动 */ }
     errors.push(`台账解析失败（原文件已备份）: ${String((e && e.message) || e)}`);
     return { ledger: emptyLedger(), corrupted: true, backup, errors };
   }
 
   const out = emptyLedger();
   if (!raw || typeof raw !== 'object' || !raw.plugins || typeof raw.plugins !== 'object') {
-    const backup = `${file}.corrupt-${randomBytes(4).toString('hex')}`;
-    try { renameSync(file, backup); } catch { /* 同上 */ }
+    const backup = `${file}.corrupt-${rnd()}`;
+    try { await fs.move(file, backup); } catch { /* 同上 */ }
     errors.push('台账结构不对（缺少 plugins 对象，原文件已备份）');
     return { ledger: out, corrupted: true, backup, errors };
   }
@@ -200,16 +218,18 @@ export function readLedger(file) {
  * 下次读到的是截断的 JSON —— 那正是上面 readLedger 要兜的情况。
  * 用 rename 保证「要么整份在，要么整份不在」。
  */
-export function writeLedger(file, ledger) {
+export async function writeLedger(file, ledger, opts = {}) {
   if (!file || typeof file !== 'string') return { ok: false, error: '未指定台账路径' };
+  const fs = opts && opts.fs;
+  if (!fs) throw new Error('plugin-ledger: 未注入 fs（writeLedger 需要异步文件能力）');
   const data = ledger && typeof ledger === 'object' ? ledger : emptyLedger();
-  const tmp = `${file}.tmp-${randomBytes(4).toString('hex')}`;
+  const tmp = `${file}.tmp-${rnd()}`;
   try {
-    writeFileSync(tmp, JSON.stringify(Object.assign({ version: LEDGER_VERSION }, data), null, 2));
-    renameSync(tmp, file);
+    await fs.writeText(tmp, JSON.stringify(Object.assign({ version: LEDGER_VERSION }, data), null, 2));
+    await fs.move(tmp, file);
     return { ok: true, error: null };
   } catch (e) {
-    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* 清理失败不影响报错 */ }
+    try { await fs.remove(tmp); } catch { /* 清理失败不影响报错 */ }
     return { ok: false, error: String((e && e.message) || e) };
   }
 }

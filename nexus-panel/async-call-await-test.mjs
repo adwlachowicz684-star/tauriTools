@@ -54,6 +54,9 @@ t('① async 名单非空且含两次 async 化的两个函数（空集合不许
 t('①′ 第 46 轮新 async 化的两个扫描导出也在名单里',
   names.has('scanInstalledPlugins') && names.has('pluginsWithInstalled'),
   `names=${[...names].join(',')}`);
+t('①″ 第 47 轮新 async 化的两个台账导出也在名单里',
+  names.has('readLedger') && names.has('writeLedger'),
+  `names=${[...names].join(',')}`);
 
 /* ---------------- ② 行为层：真跑一次，钉住确实返回 Promise ----------------
    通过变量调用，避免在守卫自身源码文本里制造一个「故意不 await」的命中。 */
@@ -210,6 +213,49 @@ const inst = mk.createPluginMarket({
 const lp = inst[LNAME]();
 t('⑥d list() 真身返回 Promise（不是靠文本猜 async）', typeof lp?.then === 'function');
 await lp.catch(() => {});
+
+/* ---------------- ⑦ 市场实例内部台账包装函数（第 47 轮） ----------------
+   readLedgerState / saveLedger 不是 export async function，① 的动态名单
+   收不到；破坏验证 D 向实测：摘掉 install 里的 await 后 ⑤ 仍 22/0 全绿，
+   只有端到端测试崩了且没有汇总行。这里补一层静态盯调用点 + 样本元断言。 */
+const WRAPPERS = ['read' + 'LedgerState', 'save' + 'Ledger'];
+function wrapperMisses(text) {
+  const src = stripCommentsFlatJs(text);
+  const lines = src.split('\n');
+  const out = [];
+  lines.forEach((line, i) => {
+    for (const n of WRAPPERS) {
+      const re = new RegExp('\\b' + n + '\\s*\\(', 'g');
+      let m;
+      while ((m = re.exec(line)) !== null) {
+        if (new RegExp('const\\s+' + n + '\\s*=').test(line)) continue;  // 定义行不算
+        const stmt = ((lines[i - 1] || '') + ' ' + line.slice(0, m.index)).split(';').pop();
+        if (/\bawait\b/.test(stmt) || /\breturn\b/.test(stmt) || /\.then\s*\(/.test(line)) continue;
+        out.push({ line: i + 1, text: line.trim().slice(0, 140) });
+      }
+    }
+  });
+  return out;
+}
+const W1 = WRAPPERS[0];
+const sample7 = {
+  bad: 'const s = ' + W1 + '();',
+  good: 'const s = await ' + W1 + '();',
+  def: 'const ' + W1 + ' = () => { return 1; };',
+};
+t('⑦a 样本：漏 await 的包装函数调用必须被检出', wrapperMisses(sample7.bad).length === 1,
+  `miss=${wrapperMisses(sample7.bad).length}`);
+t('⑦b 样本：正常 await 不误报', wrapperMisses(sample7.good).length === 0);
+t('⑦c 样本：定义行不计入', wrapperMisses(sample7.def).length === 0);
+const wrapHits = [];
+for (const p of files) {
+  for (const m of wrapperMisses(readFileSync(p, 'utf8'))) {
+    wrapHits.push(`${relative(ROOT, p).replace(/\\/g, '/')}:${m.line} ${m.text}`);
+  }
+}
+t('⑦d 全仓台账包装函数调用点漏 await 为 0', wrapHits.length === 0,
+  wrapHits.slice(0, 4).join(' | ') || `扫描 ${files.length} 个文件`);
+
 
 console.log(`\n通过 ${pass} 项，失败 ${fails.length} 项`);
 if (fails.length) {
