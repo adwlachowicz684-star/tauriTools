@@ -1100,6 +1100,11 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
        复用，会把正文里的 %20 静默解成空格。四个调用点全是 id，
        改名把语义钉死：这个函数只用于 id。 */
     let id_of = |k: &str| args.get(k).and_then(|v| v.as_str()).map(norm_id);
+    /* 双保险：mcp_dispatch 已校验，这里再兜一次（内置单测/直接调用也指对路） */
+    if let Err(e) = check_required(name, args) {
+        return json!({ "content": [{ "type": "text", "text": err_json(&e) }],
+                       "isError": true });
+    }
     let result: Result<Value, String> = match name {
         "tb_list_tasks" => (|| -> Result<Value, String> {
             let store = load_tasks(dir)?;
@@ -1220,7 +1225,19 @@ fn mcp_dispatch(req: &Value, dir: &PathBuf, notify_status: &str) -> Option<Value
                 return Some(json!({"jsonrpc":"2.0","id":id,
                     "error":{"code":-32602,"message":"Invalid params: arguments 必须是对象"}}));
             }
-            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            /* ⛔ 原来 `unwrap_or("")`：缺 name / name 是数字都变成空串，
+               _ arm 报「未知工具: 」—— 真正错的是参数，不是工具名。 */
+            let name = match params.get("name") {
+                Some(Value::String(v)) => v.as_str(),
+                None => return Some(json!({"jsonrpc":"2.0","id":id,
+                    "error":{"code":-32602,"message":"Invalid params: 缺少必填参数 name（tools/call 要指定工具名）"}})),
+                Some(_) => return Some(json!({"jsonrpc":"2.0","id":id,
+                    "error":{"code":-32602,"message":"Invalid params: name 必须是字符串"}})),
+            };
+            if let Err(e) = check_required(name, &args) {
+                return Some(json!({"jsonrpc":"2.0","id":id,
+                    "error":{"code":-32602,"message":format!("Invalid params: {}", e)}}));
+            }
             Ok(mcp_call_tool(name, &args, dir, notify_status))
         }
         other => Err(json!({ "code": -32601, "message": format!("未知方法: {other}") })),
@@ -2234,7 +2251,7 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     if let Some(s) = str_field(body, "status") {
         if s != initial {
             return Err(format!(
-                "新建任务只允许 status={}（收到 {}）；后续流转走 PATCH",
+                "新建任务只允许 status={}（收到 {}）；填的是定义表里的 id，不是显示名，可选值看响应 defs.statusDefs / initial；后续流转走 PATCH",
                 initial, s
             ));
         }
@@ -2712,6 +2729,52 @@ fn write_response(stream: &mut TcpStream, code: u16, body: &str) {
 
 /* ================================================================== */
 /* 单测：流转图与前端 core.mjs 的 can_transition 用例一一对应（防双端漂移） */
+
+/*
+  ⛔ 必填参数缺失 / 形状不对时，原来一路静默变成空串流到业务层：
+    · params.name 缺失 → "" → 「未知工具: 」
+    · tb_get_task / tb_update_task / tb_add_event / tb_delete_task 缺 id
+      → "" → 「任务  不存在」（AI 会以为任务被删了，去查 id 值反复重试）
+    · tb_create_task 传 {"title": 123} → str_field 返回 None
+      → 「title 不能为空」（真正错的是类型，不是没填）
+  与「流转失败文案把人往任务不存在上引」「只传备注时报错不指路」
+  是同一族：静默空串 + 报错指错方向。
+
+  修法仍是「改定义、不动调用点」：必填清单只有这一份，
+  mcp_tools 的 inputSchema.required 由守卫动态比对，防止加工具时只改一处。
+*/
+fn required_of(name: &str) -> &'static [&'static str] {
+    match name {
+        "tb_create_task" => &["title"],
+        "tb_get_task" | "tb_update_task" | "tb_add_event" | "tb_delete_task"
+        | "tb_register_agent" => &["id"],
+        _ => &[],
+    }
+}
+
+fn check_required(name: &str, args: &Value) -> Result<(), String> {
+    for &k in required_of(name) {
+        match args.get(k) {
+            None | Some(Value::Null) => {
+                return Err(format!("缺少必填参数 {}（工具 {} 需要它）", k, name));
+            }
+            Some(Value::String(v)) => {
+                /* id 要走 norm_id：AI 手写 "%20" 解码后是空白，也算没给 */
+                let blank = if k == "id" { norm_id(v).is_empty() } else { v.trim().is_empty() };
+                if blank {
+                    return Err(format!("必填参数 {} 不能为空（工具 {}）", k, name));
+                }
+            }
+            Some(other) => {
+                return Err(format!(
+                    "必填参数 {} 必须是字符串，收到 {}（工具 {}）", k, other, name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod tests {
