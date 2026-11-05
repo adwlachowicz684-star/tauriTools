@@ -1,0 +1,53 @@
+# 插件独立仓库 · 跨端契约校验工作流模板
+#
+# 适用条件（不是所有插件仓都装）：
+#   只有同时持有 `plugins/<id>/api.ts` 与 `plugins/<id>/types.ts` 的仓才用本模板。
+#   校验器 cross-end-check.mjs 会 readSource(api.ts) 读不到即 fail-closed 报
+#   「契约源缺失」；缺 api.ts 的仓装上去只会得到一条必然红，不是真缺陷。
+#   2026-11-05 实测 12 仓：仅 nexusPanel_plugin_projectGroup 同时具备两者。
+#
+# 为什么放在插件仓而不是主仓：
+#   插件源码退场后，TS 侧契约（api.ts / types.ts）随源码迁到独立仓，
+#   主仓只剩 Rust 侧声明。主仓的 `test:crossend-contract`（无 --ts-root）
+#   因此 fail-closed 报红 —— 那是职责归属提示，不是能力缺失。
+#   真正的两端比对必须在持有 TS 契约的这一侧跑。
+#
+# 依赖：主仓 adwlachowicz684-star/tauriTools 是公开仓，CI 里可匿名 shallow clone，
+#   不需要 token；也不把私有仓凭据带进 workflow。
+#
+# 用法：复制到插件仓 `.github/workflows/contract.yml`，把 TS_DIR 改成该仓
+#   持有 api.ts/types.ts 的目录。改动后由主仓 crossend-ci-guard-test.mjs
+#   与 scripts/probe-crossend-ci.mjs 核验模板一致性与 run 结论。
+
+name: 跨端契约校验
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出插件仓（TS 侧契约在本仓）
+        uses: actions/checkout@v4
+
+      - name: 取主仓 Rust 声明与校验器
+        run: |
+          git clone --depth 1 https://github.com/adwlachowicz684-star/tauriTools.git /tmp/hostrepo
+          test -f /tmp/hostrepo/nexus-panel/cross-end-check.mjs
+          test -f /tmp/hostrepo/nexus-panel/src-tauri/src/main.rs
+          test -d /tmp/hostrepo/nexus-panel/src-tauri/src/fpx
+
+      - name: 跑跨端契约校验（--strict：有任何漂移即 exit 1）
+        env:
+          TS_DIR: plugins/project-group
+        run: |
+          test -f "$GITHUB_WORKSPACE/$TS_DIR/api.ts"
+          test -f "$GITHUB_WORKSPACE/$TS_DIR/types.ts"
+          node /tmp/hostrepo/nexus-panel/cross-end-check.mjs \
+            --root=/tmp/hostrepo/nexus-panel \
+            --ts-root="$GITHUB_WORKSPACE/$TS_DIR" \
+            --strict

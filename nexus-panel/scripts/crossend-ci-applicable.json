@@ -1,0 +1,16 @@
+{
+  "note": "跨端契约校验的适用仓 = 同时持有 api.ts 与 types.ts 的仓。校验器 readSource(api.ts) 读不到即 fail-closed 报红，缺 api.ts 的仓装 workflow 只会得到一条必然红，不是真缺陷。台账是欠账台账，不是豁免：多一个适用仓 / 修好一个都要同步销账。",
+  "rows": [
+    {
+      "repo": "nexusPanel_plugin_projectGroup",
+      "tsDir": "plugins/project-group",
+      "workflow": ".github/workflows/contract.yml",
+      "why": "12 仓逐仓 tree 实测：仅本仓同时持有 plugins/project-group/api.ts 与 plugins/project-group/types.ts；主仓 cross-end-check.mjs 的 TS 侧契约源就是这两个文件，退场后已迁入本仓。",
+      "unblock": "由 scripts/probe-crossend-ci.mjs 核验：本仓 workflow 内容与主仓模板逐字节一致、最近一次 run 结论为 success 且 head_sha 等于仓当前 HEAD；主仓 test:crossend-contract 的 fail-closed 红项保留作职责归属提示，不擅自删 script 消红。",
+      "evidence": {
+        "firstRun": "2026-11-05T03:46:39Z run #1 conclusion=success head=ff65c19d",
+        "checker": "主仓公开仓匿名 shallow clone，--root 指主仓 Rust 源，--ts-root 指本仓 TS 契约，--strict"
+      }
+    }
+  ]
+}

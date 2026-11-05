@@ -1,0 +1,28 @@
+{
+  "scannedAt": "2026-11-05",
+  "source": "GitHub git/trees/main?recursive=1，逐仓取 tree（truncated=false），只记录以 /api.ts 或 /types.ts 结尾的路径",
+  "why": "离线守卫不能联网，但也不能只拿台账验台账。此快照是联网探针的实测产物，守卫用独立算法从它反推适用仓集合；刷新须显式跑 scripts/probe-crossend-ci.mjs --refresh-scan。",
+  "repos": {
+    "nexusPanel_plugin_agentFlow": {
+      "api": [],
+      "types": ["plugins/agent-flow/nodes/types.ts", "plugins/agent-flow/types.ts"]
+    },
+    "nexusPanel_plugin_taskBoard": {
+      "api": [],
+      "types": ["plugins/task-board/types.ts"]
+    },
+    "nexusPanel_plugin_projectGroup": {
+      "api": ["plugins/project-group/api.ts"],
+      "types": ["plugins/project-group/types.ts"]
+    },
+    "nexusPanel_plugin_mindmap": { "api": [], "types": [] },
+    "nexusPanel_plugin_dupview": { "api": [], "types": [] },
+    "nexusPanel_plugin_colorPicker": { "api": [], "types": [] },
+    "nexusPanel_plugin_iconPicker": { "api": [], "types": [] },
+    "nexusPanel_plugin_mdEditor": { "api": [], "types": [] },
+    "nexusPanel_plugin_demoIframe": { "api": [], "types": [] },
+    "nexusPanel_plugin_demoLight": { "api": [], "types": [] },
+    "nexusPanel_plugin_demoReact": { "api": [], "types": [] },
+    "nexusPanel_plugin_demoService": { "api": [], "types": [] }
+  }
+}

@@ -41,6 +41,7 @@
     "test:deps-scan": "node scripts/scan-deps.mjs --check",
     "test:crossend-contract": "node cross-end-check.mjs --strict",
     "test:crossend-fault": "node crossend-fault-injection-test.mjs",
+    "test:crossend-ci-guard": "node crossend-ci-guard-test.mjs",
     "test:dead-class": "node dead-class-test.mjs",
     "test:dead-module": "node dead-module-test.mjs",
     "test:deps": "node deps-manifest-test.mjs",
