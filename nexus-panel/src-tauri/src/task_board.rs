@@ -984,7 +984,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "assignee": { "type": ["string", "array"], "description": "按认领人过滤（该列可多选，任务上数组里的任一值命中即算；参数本身也能传数组=多人 OR）；传 \"__none__\" 查未认领" },
                 "type":     { "type": ["string", "array"], "description": "按任务类型 id 过滤（任务上可多选，任一命中即算；参数也能传数组=多类型 OR）；传 \"__none__\" 查未分类。可选值看响应 defs.typeDefs" },
                 "group":    { "type": ["string", "array"], "description": "按分组名过滤（任务上可多选，任一命中即算；参数也能传数组=多分组 OR）；传 \"__none__\" 查未分组。可选值看响应 defs.groupDefs" },
-                "q":        { "type": "string", "description": "关键词，匹配 id/标题/详情/说明，以及状态/优先级/分组/认领人/类型/标签的原始值与定义表显示名（多值列逐个匹配；自定义流程的状态按流程里配的名字，默认流程按状态 id）" },
+                "q":        { "type": ["string", "array"], "description": "关键词，匹配 id/标题/详情/说明，以及状态/优先级/分组/认领人/类型/标签的原始值与定义表显示名（多值列逐个匹配；自定义流程的状态按流程里配的名字，默认流程按状态 id）。字符串或字符串数组都认；多个关键词 OR（任一命中即可），与其余过滤参数判据一致" },
             }),
             vec![],
         ),
@@ -1620,7 +1620,10 @@ fn patch_vals(
     let stored: Value = if was_array {
         Value::Array(next.iter().map(|x| Value::String(x.clone())).collect())
     } else if next.is_empty() {
-        Value::Null
+        /* ⛔ 原来写 Value::Null：create_task 的 enum_value 写 ""、前端写盘写 ""，
+           只有 PATCH 写 null。AI 读 tasks.json 看到 null，按读到的形状回写
+           又要绕一圈 —— 同一字段三种形状表示同一件「空」。 */
+        json!("")
     } else {
         json!(next[0])
     };
@@ -1653,7 +1656,8 @@ fn patch_vals_set(
         return false;
     }
     let stored: Value = if next.is_empty() {
-        Value::Null
+        /* 数组形状清空就写空数组，保持「形状跟随输入」 */
+        Value::Array(Vec::new())
     } else {
         Value::Array(next.iter().cloned().map(Value::String).collect())
     };
@@ -1879,7 +1883,7 @@ struct TaskFilter {
     assignee: Vec<String>,
     typ: Vec<String>,
     group: Vec<String>,
-    q: Option<String>,
+    q: Vec<String>,
 }
 
 impl TaskFilter {
@@ -1908,7 +1912,10 @@ impl TaskFilter {
             assignee: vals("assignee"),
             typ: vals("type"),
             group: vals("group"),
-            q: vals("q").into_iter().next().map(|x| x.to_lowercase()),
+            /* ⛔ 原来 .into_iter().next() 只取第一个，而其它 6 个参数都是 OR 全用；
+               HTTP 的 q 更是 `= Some(...)` 重复键只留最后一个。
+               同一个 struct 里两种判据，且都被静默丢弃 —— 与「过滤参数只认单值」同族。 */
+            q: vals("q").into_iter().map(|x| x.to_lowercase()).collect(),
         }
     }
 
@@ -1930,7 +1937,7 @@ impl TaskFilter {
                 "assignee" => f.assignee.push(val),
                 "type" => f.typ.push(val),
                 "group" => f.group.push(val),
-                "q" => f.q = Some(val.to_lowercase()),
+                "q" => f.q.push(val.to_lowercase()),
                 _ => {} /* 未知参数忽略，不报错：AI 可能多带 */
             }
         }
@@ -1978,8 +1985,10 @@ impl TaskFilter {
             }
             if !ok { return false; }
         }
-        if let Some(q) = &self.q {
-            if !search_hay(t, store).contains(q.as_str()) { return false; }
+        if !self.q.is_empty() {
+            /* 多个关键词 = OR，与其它 6 个过滤参数同一判据 */
+            let hay = search_hay(t, store);
+            if !self.q.iter().any(|q| hay.contains(q.as_str())) { return false; }
         }
         true
     }
@@ -2626,6 +2635,15 @@ fn register_agent(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     if id.is_empty() {
         return Err("id 不能为空".to_string());
     }
+    /*
+      ⛔ 原来 `str_field` 返回 Some("") 也照样 insert：AI 传 {"name":""} 或
+      {"role":""} 就把已有身份静默清空。而前端 normalizeStore 会兜成 id/'dev'
+      —— 界面显示「a（dev）」，tasks.json 里却是 ""，两条线索不一致；
+      下次注册还会把一个实体拆成两份（id 相同、名字不同）。
+      缺失与空串都视为「不修改」，新建时回退到 id / 'dev'。
+    */
+    let name_in = str_field(body, "name").filter(|v| !v.is_empty());
+    let role_in = str_field(body, "role").filter(|v| !v.is_empty());
     let mut store = load_tasks(dir)?;
     {
         let agents = store["agents"].as_array_mut().ok_or("agents 不是数组")?;
@@ -2634,19 +2652,19 @@ fn register_agent(dir: &PathBuf, body: &Value) -> Result<Value, String> {
             .find(|a| a.get("id").and_then(|v| v.as_str()) == Some(id.as_str()))
         {
             if let Some(obj) = a.as_object_mut() {
-                if let Some(name) = str_field(body, "name") {
-                    obj.insert("name".to_string(), json!(name.trim()));
+                if let Some(name) = &name_in {
+                    obj.insert("name".to_string(), json!(name.as_str()));
                 }
-                if let Some(role) = str_field(body, "role") {
-                    obj.insert("role".to_string(), json!(role.trim()));
+                if let Some(role) = &role_in {
+                    obj.insert("role".to_string(), json!(role.as_str()));
                 }
                 obj.insert("lastSeen".to_string(), json!(now_ms()));
             }
         } else {
             agents.push(json!({
                 "id": id,
-                "name": str_field(body, "name").unwrap_or_else(|| id.clone()).trim().to_string(),
-                "role": str_field(body, "role").unwrap_or_else(|| "dev".to_string()).trim().to_string(),
+                "name": name_in.clone().unwrap_or_else(|| id.clone()),
+                "role": role_in.clone().unwrap_or_else(|| "dev".to_string()),
                 "lastSeen": now_ms(),
             }));
         }
