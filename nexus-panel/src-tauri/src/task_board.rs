@@ -980,7 +980,7 @@ pub fn mcp_tools() -> Vec<Value> {
             json!({
                 "status":   { "type": ["string", "array"], "description": "按状态过滤，缺省=全部；传数组=多个状态 OR 命中。⛔ 不写 enum：用户可能自定义过流程，写死那 7 个会让严格校验 schema 的 MCP 客户端在本地就拒掉自定义状态；实际生效的状态看响应里的 defs.statuses" },
                 "priority": { "type": ["string", "array"], "enum": PRIORITIES, "description": "按优先级过滤；传数组=多档 OR 命中" },
-                "tag":      { "type": ["string", "array"], "description": "按标签过滤；传数组=任一命中" },
+                "tag":      { "type": ["string", "array"], "description": "按标签过滤；传数组=任一命中；传 \"__none__\" 查无标签（与 assignee/type/group 同一判据）" },
                 "assignee": { "type": ["string", "array"], "description": "按认领人过滤（该列可多选，任务上数组里的任一值命中即算；参数本身也能传数组=多人 OR）；传 \"__none__\" 查未认领" },
                 "type":     { "type": ["string", "array"], "description": "按任务类型 id 过滤（任务上可多选，任一命中即算；参数也能传数组=多类型 OR）；传 \"__none__\" 查未分类。可选值看响应 defs.typeDefs" },
                 "group":    { "type": ["string", "array"], "description": "按分组名过滤（任务上可多选，任一命中即算；参数也能传数组=多分组 OR）；传 \"__none__\" 查未分组。可选值看响应 defs.groupDefs" },
@@ -1952,21 +1952,21 @@ impl TaskFilter {
             let cur = t.get(field).and_then(|v| v.as_str()).unwrap_or("");
             if !wants.iter().any(|w| w.as_str() == cur) { return false; }
         }
-        if !self.tag.is_empty() {
-            let cur = vals_of(t, "tags");
-            if !self.tag.iter().any(|w| cur.iter().any(|x| x.as_str() == w.as_str())) {
-                return false;
-            }
-        }
         /*
-          assignee / type / group：多值列，任一命中；__none__ 查空值。
-          哨兵值（__none__ / __nogroup__ …）不算真实值 —— 任务上若残留
-          内部标记，筛 __none__ 时仍应算"未认领/未分组/未分类"。
+          四个 enum 列（含标签）**共用同一份判据**：任一命中；__none__ 查空值；
+          哨兵值不算真实值。
+
+          ⛔ 标签列原来单独一块：只跟真实值比，传 __none__ 永远 0 条，
+          而界面筛选面板里标签列明明有「无标签」可筛 —— AI 通道筛不了。
+          更隐蔽的是任务上残留 __notag__ 时它被当成真实标签，
+          三列早已用 is_sentinel 排除、标签没有 —— **上一轮刚抽的共用判据，
+          这个消费点没跟上**。合并进循环，四列自动同判据。
         */
         for (field, wants) in [
             ("assignee", &self.assignee),
             ("type", &self.typ),
             ("group", &self.group),
+            ("tags", &self.tag),
         ] {
             if wants.is_empty() { continue; }
             let cur = vals_of(t, field);
@@ -2244,7 +2244,15 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     let id = format!("tb-{:04}", next_id);
     store["nextId"] = json!(next_id.saturating_add(1));
 
-    let reporter = str_field(body, "reporter").unwrap_or_else(|| "manual".to_string());
+    /*
+      ⛔ str_field 统一 trim 后空串是 Some("")，unwrap_or_else 不触发 →
+      文件里 reporter=""；而前端 normalizeTask 是 `str(...) || 'manual'`
+      —— 界面显示「manual」，tasks.json 里是空串，两条线索不一致。
+      与上一轮 register_agent 的空串覆盖是同一族：空串应视为「没给」。
+    */
+    let reporter = str_field(body, "reporter")
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "manual".to_string());
     let mut task = Map::new();
     task.insert("id".to_string(), json!(id));
     task.insert("title".to_string(), json!(title));
@@ -2597,7 +2605,10 @@ fn add_event(dir: &PathBuf, id: &str, body: &Value) -> Result<Value, String> {
       显式给了非 "note" 的 action（如 action:"deploy"）仍然算一次有意义的事件。
     */
     let note = str_field(body, "note").unwrap_or_default();
-    let action_given = str_field(body, "action");
+    let action_given = str_field(body, "action").filter(|v| !v.is_empty());
+    /* ⛔ 原来 Some("") 会原样写进历史：{"action":"","note":"进展"}。
+       AI 读原始 tasks.json 看到一条没有动作的记录，而界面优先显示 note
+       看不出来 —— 静默脏数据。空串归一到默认的 "note"。 */
     let action = action_given.clone().unwrap_or_else(|| "note".to_string());
     if note.is_empty() && (action_given.is_none() || action.is_empty() || action == "note") {
         return Err("事件内容为空（请提供 note 或非 note 的 action）".to_string());
@@ -2678,6 +2689,7 @@ fn register_agent(dir: &PathBuf, body: &Value) -> Result<Value, String> {
 fn write_response(stream: &mut TcpStream, code: u16, body: &str) {
     let reason = match code {
         200 => "OK",
+        202 => "Accepted",
         204 => "No Content",
         400 => "Bad Request",
         401 => "Unauthorized",
