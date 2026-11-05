@@ -153,7 +153,11 @@ function makeMarket(cfg, fsOverride = null) {
   const ledgerFile = join(base, 'ledger', LEDGER_FILE);
   const dataRoot = join(base, 'appdata');
   mkdirSync(dirname(ledgerFile), { recursive: true });
-  const scanFs = fsOverride || createNodeFs();
+  /* 第 48 轮：允许 fsOverride 接收 (base)=>fs 工厂。B 节的「台账写失败」
+     夹具要按目录区分，否则 installer 也用这份 fs，安装会在 stage=install
+     就被拒，测的早就不是台账写失败了。 */
+  const scanFs = typeof fsOverride === 'function' ? fsOverride(base)
+    : (fsOverride || createNodeFs());
   const dataStore = createPluginDataStore({
     fs: scanFs, dataRoot, legacyStorage: null,
   });
@@ -164,7 +168,7 @@ function makeMarket(cfg, fsOverride = null) {
     headers: cfg.headers || null,
     reservedIds: ['settings', 'home'],
   });
-  return { market, installedDir, ledgerFile, dataRoot, dataStore, base };
+  return { market, installedDir, ledgerFile, dataRoot, dataStore, base, fs: scanFs };
 }
 
 /* ==========================================================================
@@ -469,10 +473,17 @@ console.log('\n--- 7. 台账损坏 / 写入失败 ---');
      （后端 create_dir_all 同语义），「删掉台账目录制造写入失败」这个旧
      夹具已经失效 —— 照旧写会红，且指向一个根本不存在的问题。
      改成注入一个写必失败的 fs，测的是「编排层把失败转成结构化返回」。 */
-  const badFs = { ...createNodeFs(), async writeText() { throw new Error('模拟落盘失败'); } };
-  const ctx2 = makeMarket(cfg, badFs);
+  const badFsFor = (base) => {
+    const real = createNodeFs();
+    const ledgerDir = join(base, 'ledger');
+    return { ...real, async writeText(p, c) {
+      if (String(p).startsWith(ledgerDir)) throw new Error('模拟落盘失败');
+      return real.writeText(p, c);
+    } };
+  };
+  const ctx2 = makeMarket(cfg, badFsFor);
   t('底层 writeLedger 确实会失败（本节不是空跑）',
-    (await writeLedger(ctx2.ledgerFile, { plugins: {} }, { fs: badFs })).ok === false);
+    (await writeLedger(ctx2.ledgerFile, { plugins: {} }, { fs: ctx2.fs })).ok === false);
   const ok2 = await ctx2.market.install('owner/demo-repo');
   t('前置：B 场景安装因台账写入失败被拒（插件代码已落盘）',
     ok2.ok === false && ok2.stage === 'ledger'
@@ -487,7 +498,7 @@ console.log('\n--- 7. 台账损坏 / 写入失败 ---');
   t('写失败理由点名台账写入失败与人工核对',
     /台账写入失败/.test(ri2?.error || '') && /人工核对|旧版本/.test(ri2?.error || ''), ri2?.error);
 
-  const ctx3 = makeMarket(cfg, badFs);
+  const ctx3 = makeMarket(cfg, badFsFor);
   await ctx3.market.install('owner/demo-repo');   // 落盘成功、台账写失败
   let ru3 = null, thrown3 = null;
   try { ru3 = await ctx3.market.uninstall('demo'); }

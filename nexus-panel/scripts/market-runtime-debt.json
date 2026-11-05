@@ -1,71 +1,49 @@
 {
-  "note": "编排层跑不进 webview 的逐文件欠账。entries 必须与「独立反推的 node: import 集合」完全一致：修好一个 → 要求销账；新增一个 → 必须报红。第 43 轮起另有 blindSpots 两类，只扫 import 行看不见它们。第 44 轮销掉 store-client：node:crypto → WebCrypto、Buffer → Uint8Array/isBytes；globals 集合已空，空集合假绿由 gap 守卫 ③a′ 与 webview-runtime-test 真跑兜住。第 45 轮补齐 createFs.isFile() 作为改造前置。第 47 轮销掉 plugin-ledger（node:fs/path/crypto → 注入式异步 fs + WebCrypto，readLedger/writeLedger 变 async，编排层三处调用点补 await）。第 46 轮销掉 installed-plugin-scan：node:fs/node:path → 注入式异步 fs + 复用 joinSegments，entries 由 3 条降为 2 条；改造同时把两个 async 导出纳入 async-call-await-test 的监控名单。",
-  "entries": [
-    {
-      "file": "js/plugin-installer.js",
-      "node": [
-        "crypto",
-        "fs",
-        "path"
-      ],
-      "why": "同步 node:fs 全量 API（mkdirSync/writeFileSync/rmSync/renameSync/existsSync/statSync/readFileSync/readdirSync）是落盘主路径，webview 无此模块，且 invoke 是异步的——同步语义无法直接替换。",
-      "unblock": "把 installPlugin 改 async、fs 调用改为注入式异步 fs（createFs(invoke) 提供 readText/writeText/exists/move/remove）；randomBytes 换 crypto.getRandomValues；path 操作复用 data-store 的 joinSegments。"
-    }
-  ],
+  "note": "编排层跑不进 webview 的逐文件欠账。entries 必须与「独立反推的 node: import 集合」完全一致：修好一个 → 要求销账；新增一个 → 必须报红。第 43 轮起另有 blindSpots 两类，只扫 import 行看不见它们。第 44 轮销掉 store-client（WebCrypto + Uint8Array/isBytes），globals 集合销空。第 45 轮补 createFs.isFile() 作为改造前置。第 46 轮销掉 installed-plugin-scan。第 47 轮销掉 plugin-ledger。第 48 轮销掉最后一个模块 plugin-installer：node:fs / node:path / node:crypto 全数移除，五个导出改 async 并接受注入式 fs，随机名走 WebCrypto；入口闭包 10 个模块 safe 10 / blocked 0 / staticChain 0。⛔ 集合销空后「台账 == 实测」是 []==[] 恒真，market-runtime-gap-test.mjs 第 ⑧ 节用集合守恒、源码标记与判据样本三条独立判据兜住，webview-runtime-test.mjs 第 ⑧ 节在无 Node 全局的 realm 里真装、真校验、真卸载。🔴 能加载 ≠ 已被调用：产品里仍没有一处实例化编排层，装/卸/查更新能力依旧不存在，那是接线（UI + invoke 注入），不是运行时阻塞。",
+  "phase": 48,
+  "status": "all-resolved",
+  "entries": [],
   "resolved": [
     {
       "file": "js/plugin-market.js",
-      "was": [
-        "path"
-      ],
-      "how": "删掉 import { join } from 'node:path'，改用 js/plugin-data-store.js 导出的 joinSegments（同一份实现，不另写一套）；unpackTarGz 变 async 后调用处已 await，readManifestFromEntries 也改成 TextDecoder 解码，不再依赖 Buffer.toString('utf8')。",
+      "was": ["path"],
+      "how": "删掉 import { join } from 'node:path'，改用 js/plugin-data-store.js 导出的 joinSegments（同一份实现，不另写一套）；unpackTarGz 变 async 后调用处已 await，readManifestFromEntries 也改成 TextDecoder 解码，不再依赖 Buffer.toString('utf8')。第 48 轮再把 installPlugin / uninstallPlan / uninstallPlugin 三处补 await 并透传同一份注入 fs。",
       "evidence": "plugin-market-test.mjs 93/0；market-runtime-gap-test.mjs 与 webview-runtime-test.mjs"
     },
     {
       "file": "js/plugin-tarball.js",
-      "was": [
-        "zlib"
-      ],
+      "was": ["zlib"],
       "how": "gunzipSync → DecompressionStream('gzip')（Web 标准，异步流，unpackTarGz 因此变 Promise）；Buffer.isBuffer / buf.toString('utf8',a,b) / Buffer.from → Uint8Array + TextDecoder + 手写 ascii 解码；USTAR 控制流与判据一条没改。sniffArchive 抽到零依赖的 js/archive-magic.js，切断「为一个纯函数 import 整个 installer」的静态链。",
       "evidence": "plugin-market-test.mjs 第 1 节真 tarball 全绿；webview-runtime-test.mjs 在无 Buffer / 无 process / 无 require 的 vm context 里真解包成功"
     },
     {
       "file": "js/plugin-store-client.js",
-      "was": [
-        "crypto"
-      ],
+      "was": ["crypto"],
       "how": "删 import { createHash } from 'node:crypto'，改 WebCrypto subtle.digest('SHA-256') + 手写 hex；downloadAsset 的 Buffer.from(ab) 换 new Uint8Array(ab)，verifyAssetDigest 的 Buffer.isBuffer 换 archive-magic 的 isBytes 鸭子判定。verifyAssetDigest 变 async，plugin-market.js 与 probe-github-real.mjs 已 await，离线测试第 8 节 7 处调用同步改为 await。凭据注入口径不变。",
-      "evidence": "plugin-store-client-test.mjs 101/0；plugin-market-test.mjs 93/0；webview-runtime-test.mjs 在无 Buffer/process/require 的 vm realm 里真加载 store-client 并真算 sha256 校验通过；market-runtime-gap-test.mjs"
+      "evidence": "plugin-store-client-test.mjs 101/0；plugin-market-test.mjs 93/0；webview-runtime-test.mjs 在隔离 realm 里真加载并真算 sha256 校验通过"
     },
     {
       "file": "js/installed-plugin-scan.js",
-      "was": [
-        "fs",
-        "path"
-      ],
-      "how": "删掉 node:fs 与 node:path 两个顶层 import；opts.fs 注入异步文件能力（生产用 createFs(invoke)，Node 测试用 scripts/node-fs-adapter.mjs 的 createNodeFs()），路径拼接复用 data-store 的 joinSegments。scanInstalledPlugins/pluginsWithInstalled 改 async，四个测试/探针的全部调用点补 await 与 fs；readdirSync(withFileTypes).isDirectory() 的目录过滤改为逐项 isFile() 判定，第 45 轮补的 statSync(entryPath).isFile() 主判据一比一保留（新增「entry 指向目录」真用例）。缺 fs 明确 throw，不静默返回空列表。",
-      "evidence": "installed-plugin-scan-test.mjs 新增第 7 节（缺 fs / entry 是目录 / 四类 fs 调用计数 / readdir 失败）；async-call-await-test.mjs 把该文件纳入 CONTRACT_FILES 后全仓 0 漏 await；webview-runtime-test.mjs 在隔离 realm 里真加载并真扫一次；market-runtime-gap-test.mjs safe 8 / blocked 2"
+      "was": ["fs", "path"],
+      "how": "删掉 node:fs 与 node:path 两个顶层 import；opts.fs 注入异步文件能力，路径拼接复用 data-store 的 joinSegments。scanInstalledPlugins/pluginsWithInstalled 改 async，四个测试/探针的全部调用点补 await 与 fs；readdirSync(withFileTypes).isDirectory() 的目录过滤改为逐项 isFile() 判定，statSync(entryPath).isFile() 主判据一比一保留。缺 fs 明确 throw。",
+      "evidence": "installed-plugin-scan-test.mjs 第 7 节；async-call-await-test.mjs 全仓 0 漏 await；webview-runtime-test.mjs 在隔离 realm 里真加载并真扫一次"
     },
     {
       "file": "js/plugin-ledger.js",
-      "was": [
-        "crypto",
-        "fs",
-        "path"
-      ],
-      "how": "删掉 node:fs / node:path / node:crypto 三个顶层 import；readLedger / writeLedger 改为 async 并接受 opts.fs（webview 用 createFs(invoke)，Node 测试用 createNodeFs()），existsSync/readFileSync/renameSync/writeFileSync/rmSync 逐项换成 exists/readText/move/writeText/remove；损坏备份与原子写的 tmp→file 都走注入 fs 的 move。随机后缀由 randomBytes 换成 globalThis.crypto.getRandomValues，缺 WebCrypto 明确 throw。缺 fs 明确 throw，不返回空台账。",
-      "evidence": "plugin-ledger-test.mjs 新增第 9 节（缺 fs throw / 注入式读写调用计数 / 备份 hex 后缀）；plugin-market-test.mjs 93/0；webview-runtime-test.mjs ⑦a–⑦k 在无 Buffer/process/require 的隔离 realm 里真写、真读、真损坏备份；market-runtime-gap-test.mjs blocked 1 / safe 9"
+      "was": ["crypto", "fs", "path"],
+      "how": "删掉 node:fs / node:path / node:crypto 三个顶层 import；readLedger / writeLedger 改为 async 并接受 opts.fs，existsSync/readFileSync/renameSync/writeFileSync/rmSync 逐项换成 exists/readText/move/writeText/remove；损坏备份与原子写的 tmp→file 都走注入 fs 的 move。随机后缀由 randomBytes 换成 globalThis.crypto.getRandomValues，缺 WebCrypto 明确 throw。",
+      "evidence": "plugin-ledger-test.mjs 第 9 节；plugin-market-test.mjs 93/0；webview-runtime-test.mjs ⑦a–⑦l 在隔离 realm 里真写、真读、真损坏备份"
+    },
+    {
+      "file": "js/plugin-installer.js",
+      "was": ["crypto", "fs", "path"],
+      "how": "删掉 node:fs / node:path / node:crypto 三个顶层 import。五个导出（extractEntries / verifyPluginDir / installPlugin / uninstallPlan / uninstallPlugin）全部改 async 并接受注入式 fs（requireFs 校验八个必需方法，缺一个明确 throw）；mkdirSync/writeFileSync/rmSync/renameSync/existsSync/statSync/readFileSync/readdirSync 逐项换成 mkdir/writeText/remove/move/exists/isFile/readText/readdir。resolve/basename/dirname 换成文件内纯 JS 实现（不做 cwd 解析），join 复用 data-store 的 joinSegments，safeJoin 的前缀判定与越界语义一比一保留。randomBytes → WebCrypto getRandomValues。entry 的 Uint8Array 内容走 fatal UTF-8 解码，二进制明确拒绝（fs_op 的 write 只能写文本，二进制资源必须内联 data URI）。uninstallPlan 在注入 fs 无 size() 时返回 bytes:null + bytesKnown:false，不拿 0 冒充。",
+      "evidence": "plugin-installer-test.mjs 101/0（新增第 10 节：缺 fs throw、spy 调用计数、二进制 fail-closed、bytesKnown、isFile 主判据、WebCrypto 随机名）；plugin-data-policy-test.mjs 43/0；plugin-market-test.mjs 93/0；async-call-await-test.mjs 纳入 CONTRACT_FILES；webview-runtime-test.mjs ⑧a–⑧j 在隔离 realm 里真装、真校验、真卸载"
     }
   ],
   "blindSpots": {
-    "note": "第 43 轮实测更正：台账原先只扫 import node:*，漏了两类同样致命的阻塞。第 44 轮：globals 已销空（唯一命中 store-client 的 Buffer 已换），空集合比较恒真，故 gap 守卫补 ③a′ 独立静态判据，并靠 webview-runtime-test 的隔离 realm 真跑兜底。第 47 轮：entries 降到 1 条，staticChain 仍剩入口 1 条 —— 入口零 node:，但仍静态 import installer 这个 blocked 模块；ledger 已销账，不再拖链。",
+    "note": "第 43 轮实测更正：台账原先只扫 import node:*，漏了两类同样致命的阻塞（Node 专有全局、静态 import 链）。第 44 轮 globals 销空。第 48 轮 installer 销账后 staticChain 亦销空：入口自身零 node:，且它静态 import 的 installer 也已零 node:，闭包 10 个模块整体可加载。两个空集合的「[] == [] 恒真」由 gap 守卫 ⑧ 节与 webview-runtime-test 的隔离 realm 真跑兜住。",
     "globals": [],
-    "staticChain": [
-      {
-        "file": "js/plugin-market.js",
-        "why": "入口自身已零 node: import，但它仍静态 import 了 installer 这个 blocked 模块。静态 ESM 会把整条链一起加载，入口照样进不了 webview bundle —— 扫「谁写了 import node:」只会把入口判成 safe，得出假的可加载结论。",
-        "unblock": "把 entries 里剩下的 1 个模块（installer）改造成注入式异步，集合自然销空；销空前不要用「入口零 node:」当可加载依据。"
-      }
-    ]
+    "staticChain": []
   }
 }

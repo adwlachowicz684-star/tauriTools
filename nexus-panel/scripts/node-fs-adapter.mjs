@@ -54,6 +54,13 @@ export function createNodeFs() {
       return statSync(p).isFile();
     },
 
+    /** 字节数。createFs(invoke) 刻意不提供（后端 stat 只有中文展示文本），
+        注入 fs 没有它时 uninstallPlan 返回 bytes:null + bytesKnown:false，
+        绝不静默用 0 冒充「不占空间」。 */
+    async size(p) {
+      return statSync(p).size;
+    },
+
     async writeText(p, content) {
       mkdirSync(dirname(p), { recursive: true });
       writeFileSync(p, content, 'utf8');

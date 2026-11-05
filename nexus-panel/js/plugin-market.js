@@ -27,13 +27,19 @@
  *    list() 随之变 async，所有调用点必须 await；漏一个就是拿 Promise 当
  *    结果对象，表现为「一个插件都没出现」且不报错，已纳入 await 守卫监控。
  *
- * ⛔ 第 47 轮：ledger 已销账（注入式异步 fs + WebCrypto 随机名），
+ * ✅ 第 47 轮：ledger 已销账（注入式异步 fs + WebCrypto 随机名），
  *    readLedgerState / saveLedger 随之变 async，三个调用点必须 await。
- *    剩余 installer 一个模块仍带同步 node:fs，逐文件 unblock 记在
- *    scripts/market-runtime-debt.json；判定见 scripts/scan-market-runtime.mjs
- *    与 market-runtime-gap-test.mjs / webview-runtime-test.mjs。
- *    在那之前"300+ 项测试全绿但产品里没有装插件能力"仍是结构性的，
- *    不是待办排期问题。
+ *
+ * ✅ 第 48 轮：**最后一个 node: 模块 installer 也已销账**，
+ *    闭包 10 个模块全部可加载（safe 10 / blocked 0 / staticChain 0），
+ *    逐文件 how 记在 scripts/market-runtime-debt.json 的 resolved。
+ *    installer 的五个导出变 async 且必须注入 fs，本层三处调用点已
+ *    await 并透传同一份 o.fs；漏一个就是拿 Promise 当结果对象，
+ *    表现为「装了但什么都没发生」，由 async-call-await-test 盯住。
+ *
+ * 🔴 但「能加载」≠「已被调用」：产品里仍没有任何一处实例化本层，
+ *    装 / 卸 / 查更新能力依旧不存在。那是接线（UI + invoke 注入），
+ *    不是运行时阻塞 —— 两者别再混成一句"接线方案待定"。
  *
  * 为什么需要这一层（清单第 11 节反复点名的"逻辑层全是孤儿"）
  * ------------------------------------------------------------
@@ -174,6 +180,9 @@ export function createPluginMarket(p) {
   /* 台账读写与目录扫描共用同一份注入 fs：两处各接一份会在
      「只接了扫描、没接台账」时表现为装完查不到更新且不报错。 */
   const ledgerFs = o.fs || null;
+  /* 落盘/校验/卸载与扫描、台账共用同一份注入 fs：三处各接一份时，
+     「只接了扫描、没接落盘」会表现为装完插件目录里什么都没有且不报错。 */
+  const installerFs = o.fs || null;
   /* 用户数据目录必须复用 DATA_DIR_NAME：另写一份 'plugin-data' 会让
      data-store 写 A、uninstall 删 B，表现为"卸载保留了数据"却永远读不回。 */
   const userDataRoot = dataRoot ? joinSegments(dataRoot, DATA_DIR_NAME) : null;
@@ -305,7 +314,7 @@ export function createPluginMarket(p) {
         return { ok: false, stage: 'identity', error: `指定的 id(${opts.id}) 与包内 manifest.id(${id}) 不一致` };
       }
 
-      const r = installPlugin({ root, id, entries: unpacked.entries, reservedIds });
+      const r = await installPlugin({ root, id, entries: unpacked.entries, reservedIds, fs: installerFs });
       if (!r.ok) return { ok: false, stage: 'install', error: r.errors.join('; '),
         warnings: r.warnings };
 
@@ -348,7 +357,7 @@ export function createPluginMarket(p) {
       }
       const fault = ledgerFault(stLedger);
       if (fault) return { ok: false, id, stage: 'ledger', error: fault, removed: [], kept: [] };
-      const plan = uninstallPlan({ root, id, userDataRoot });
+      const plan = await uninstallPlan({ root, id, userDataRoot, fs: installerFs });
       if (!plan.ok) return { ok: false, id, error: plan.reason, removed: [], kept: [] };
       if (!plan.exists) return { ok: false, id, error: '插件未安装', removed: [], kept: [] };
 
@@ -358,7 +367,7 @@ export function createPluginMarket(p) {
         id, source, removeUserData: opts.removeUserData === true,
       });
 
-      const r = uninstallPlugin({ root, id, userDataRoot, removeUserData: purge });
+      const r = await uninstallPlugin({ root, id, userDataRoot, removeUserData: purge, fs: installerFs });
       if (!r.ok) return { ok: false, id, error: r.errors.join('; '), removed: r.removed, kept: r.kept };
 
       const rec = recordUninstall(stLedger.ledger, id);   // 契约②

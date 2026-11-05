@@ -40,6 +40,9 @@ const CONTRACT_FILES = [
   'js/plugin-market.js',
   'js/plugin-ledger.js',
   'js/installed-plugin-scan.js',
+  /* 第 48 轮：installer 五个导出全部 async 化，调用点漏 await 时
+     拿到的是 Promise 而非结果对象，表现为「装了但什么都没发生」。 */
+  'js/plugin-installer.js',
 ];
 function asyncExports(rel) {
   const src = stripCommentsFlatJs(readFileSync(join(ROOT, rel), 'utf8'));
@@ -56,6 +59,10 @@ t('①′ 第 46 轮新 async 化的两个扫描导出也在名单里',
   `names=${[...names].join(',')}`);
 t('①″ 第 47 轮新 async 化的两个台账导出也在名单里',
   names.has('readLedger') && names.has('writeLedger'),
+  `names=${[...names].join(',')}`);
+t('①‴ 第 48 轮新 async 化的五个落盘导出都在名单里（空名单不许假绿）',
+  ['extractEntries', 'verifyPluginDir', 'installPlugin', 'uninstallPlan', 'uninstallPlugin']
+    .every((n) => names.has(n)),
   `names=${[...names].join(',')}`);
 
 /* ---------------- ② 行为层：真跑一次，钉住确实返回 Promise ----------------

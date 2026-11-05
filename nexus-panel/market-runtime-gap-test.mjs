@@ -157,8 +157,8 @@ t('①a 扫描器闭包与 BFS 一致',
 t('①b 闭包恰好 10 个模块且都在 js/ 下',
   closure.length === 10 && closure.every((f) => f.startsWith('js/') && existsSync(join(ROOT, f))),
   `closure=${closure.length}`);
-t('①c 独立反推 node: 集合恰为 1 个（第 47 轮再销掉 plugin-ledger）',
-  expected.length === 1, `expected=${expected.length}: ${expected.join(',')}`);
+t('①c 独立反推 node: 集合已销空（第 48 轮销掉 plugin-installer）',
+  expected.length === 0, `expected=${expected.length}: ${expected.join(',')}`);
 t('①d 入口自身已零 node: import（销账后不许悄悄加回来）',
   !all[MARKET_ENTRY], `entry=${JSON.stringify(all[MARKET_ENTRY] || null)}`);
 t('①e 解包器已零 node: import',
@@ -183,10 +183,28 @@ if (debt) {
       !!row && String(row.why || '').length > 20 && String(row.unblock || '').length > 20);
   }
   const resolved = (debt.resolved || []).map((x) => x.file).sort();
-  t('②d 已销账恰为 5 个且都带 how / evidence',
-    JSON.stringify(resolved) === JSON.stringify(['js/installed-plugin-scan.js', 'js/plugin-ledger.js', 'js/plugin-market.js', 'js/plugin-store-client.js', 'js/plugin-tarball.js'])
+  t('②d 已销账恰为 6 个且都带 how / evidence',
+    JSON.stringify(resolved) === JSON.stringify([
+      'js/installed-plugin-scan.js', 'js/plugin-installer.js', 'js/plugin-ledger.js',
+      'js/plugin-market.js', 'js/plugin-store-client.js', 'js/plugin-tarball.js',
+    ])
       && (debt.resolved || []).every((x) => String(x.how || '').length > 30 && String(x.evidence || '').length > 10),
     `resolved=${resolved.join(',')}`);
+  /* ②a 销空后变成 []===[] 恒真。补两条：台账状态与 installer 的销账记录，
+     以及判据本身仍能识别一个真 node: 样本（否则「销账」可能只是判据坏了）。 */
+  t('②a′ 台账 status=all-resolved 且 installer 有独立销账记录',
+    debt.status === 'all-resolved' && debt.phase === 48
+      && (debt.resolved || []).some((x) => x.file === 'js/plugin-installer.js'
+        && /注入式/.test(String(x.how)) && /WebCrypto/.test(String(x.how))),
+    `status=${debt.status} phase=${debt.phase}`);
+  NODE_RE.lastIndex = 0;
+  const nodeProbe = 'import { readFileSync } from ' + "'node:fs'" + ';';
+  const probeHits = [];
+  let pm;
+  while ((pm = NODE_RE.exec(stripIndependent(nodeProbe))) !== null) probeHits.push(pm[1]);
+  NODE_RE.lastIndex = 0;
+  t('②a″ 销空后判据仍能识别真 node:fs 样本（防空集合假绿）',
+    JSON.stringify(probeHits) === JSON.stringify(['fs']), `got=${probeHits.join(',')}`);
 }
 
 /* ---------------- ③ 盲区①：Node 专有全局 ---------------- */
@@ -237,6 +255,13 @@ if (debt) {
     t(`④d ${f} 带 why / unblock`,
       !!row && String(row.why || '').length > 20 && String(row.unblock || '').length > 20);
   }
+  /* ④a 销空后同样是 []===[]。补：installer 源码确实零 node:，
+     且入口仍静态 import 它 —— 链「通了」不是把 import 删掉换来的。 */
+  const instSrcStatic = readStripped('js/plugin-installer.js');
+  t('④e 销空后 installer 源码确实零 node: import',
+    !/['"]node:/.test(instSrcStatic));
+  t('④f 入口仍静态 import installer（销账不是删掉整条依赖）',
+    /\.\/plugin-installer\.js/.test(readStripped(MARKET_ENTRY)));
 }
 
 /* ---------------- ⑤ 注释更正必须落地 ---------------- */
@@ -245,18 +270,17 @@ t('⑤a 编排层注释写明运行位置目标是 webview',
   /运行位置目标：webview/.test(entrySrc));
 t('⑤b 编排层注释写明「不是缺一个 IPC 命令」',
   /不是缺一个\s*IPC\s*命令/.test(entrySrc));
-t('⑤c 编排层注释列出剩余阻塞模块，不再只写「接线待定」',
-  /仍带同步 node:fs/.test(entrySrc) && /blindSpots/.test(entrySrc));
+t('⑤c 编排层注释写明闭包已全部可加载，且区分「能加载」与「已被调用」',
+  /闭包 10 个模块全部可加载/.test(entrySrc) && /能加载.*≠.*已被调用|能加载.*已被调用/s.test(entrySrc));
 t('⑤d 注释不再声称「这些模块都 import node:fs」（销账后不许留旧结论）',
   !/运行位置是 Node 侧 \/ IPC 桥/.test(entrySrc));
 
 /* ---------------- ⑥ safe / blocked 集合守恒 ---------------- */
-t('⑥a webview 可加载集合恰为 9 个',
-  scan.safe.length === 9 && scan.safe.every((f) => !expected.includes(f)),
+t('⑥a webview 可加载集合恰为 10 个（闭包全量）',
+  scan.safe.length === 10 && scan.safe.every((f) => !expected.includes(f)),
   `safe=${scan.safe.join(',')}`);
-t('⑥b blocked 集合恰为 1 个且不含入口',
-  scan.blocked.length === 1
-    && JSON.stringify(scan.blocked) === JSON.stringify(expected.filter((f) => f !== MARKET_ENTRY)),
+t('⑥b blocked 集合已销空且不含入口',
+  scan.blocked.length === 0 && !scan.blocked.includes(MARKET_ENTRY),
   `blocked=${scan.blocked.join(',')}`);
 t('⑥c store-client 已进 safe 且不在 blocked（销账不是只改台账）',
   scan.safe.includes('js/plugin-store-client.js')
@@ -271,6 +295,13 @@ t('⑥e plugin-ledger 已进 safe 且不在 blocked（销账不是只改台账�
   scan.safe.includes('js/plugin-ledger.js')
     && !scan.blocked.includes('js/plugin-ledger.js'),
   `safe=${scan.safe.join(',')} blocked=${scan.blocked.join(',')}`);
+t('⑥f plugin-installer 已进 safe 且不在 blocked（第 48 轮销的不是台账字符串）',
+  scan.safe.includes('js/plugin-installer.js')
+    && !scan.blocked.includes('js/plugin-installer.js'),
+  `safe=${scan.safe.join(',')} blocked=${scan.blocked.join(',')}`);
+t('⑥g 静态链污染集合已销空（入口不再被任何 blocked 依赖拖死）',
+  scan.chainBlocked.length === 0 && expectedChain.length === 0,
+  `chain=${scan.chainBlocked.join(',')}`);
 
 /* ---------------- ⑦ 元断言：判据本身不假绿 ---------------- */
 const nodeSamples = [
@@ -313,6 +344,36 @@ t('⑦k node 判据不是恒真/恒假',
   nodeSamples.some((s) => s.want.length === 0) && nodeSamples.some((s) => s.want.length > 0));
 t('⑦l 全局判据不是恒真/恒假',
   globalSamples.some((s) => s.want.length === 0) && globalSamples.some((s) => s.want.length > 0));
+
+/* ---------------- ⑧ 销账态：空集合不许假绿 ----------------
+   第 47 轮之前 expected 至少有 1 条，「台账 == 实测」是实打实的比较；
+   销空后它退化成 []===[] 恒真。这一节用四条与台账无关的判据兜住：
+   闭包规模守恒、扫描范围非空、源码标记仍在、async 导出仍在。
+   ⛔ 纯静态守卫仍挡不住「把本节某条主断言整行删掉」，
+      这层和第 30/31/37/47 轮同形，靠每轮破坏验证兜。 */
+const allMods = allJsModules();
+const instRaw = readFileSync(join(ROOT, 'js/plugin-installer.js'), 'utf8');
+const instStripped = readStripped('js/plugin-installer.js');
+t('⑧a 闭包 10 / safe 10 / blocked 0 / 静态链 0 四者同时成立',
+  scan.closure.length === 10 && scan.safe.length === 10
+  && scan.blocked.length === 0 && scan.chainBlocked.length === 0,
+  `closure=${scan.closure.length} safe=${scan.safe.length} blocked=${scan.blocked.length} chain=${scan.chainBlocked.length}`);
+t('⑧b 扫描范围非空（expected 为空不是因为根本没扫到文件）',
+  allMods.length >= 10 && allMods.includes('js/plugin-installer.js'),
+  `allJsModules=${allMods.length}`);
+t('⑧c installer 源码零 node: import / 零 Node 专有全局（独立扫描）',
+  independentNodeScan('js/plugin-installer.js').length === 0
+  && independentGlobalScan('js/plugin-installer.js').length === 0
+  && !/['"]node:/.test(instStripped));
+t('⑧d installer 功能没被删光换销账（注入式 fs / WebCrypto / bytesKnown 三处标记都在）',
+  /function requireFs\(/.test(instRaw) && /getRandomValues/.test(instRaw)
+  && /bytesKnown/.test(instRaw) && /await fs\.move\(/.test(instRaw));
+t('⑧e 五个导出确实都还是 async（漏一个就是拿 Promise 当结果对象）',
+  (instRaw.match(/export\s+async\s+function\s+\w+\s*\(/g) || []).length === 5
+  && ['extractEntries', 'verifyPluginDir', 'installPlugin', 'uninstallPlan', 'uninstallPlugin']
+    .every((n) => new RegExp('export\\s+async\\s+function\\s+' + n + '\\s*\\(').test(instRaw)));
+t('⑧f 台账 note 写明「能加载 ≠ 已被调用」（不把接线问题冒充已解决）',
+  /能加载\s*≠\s*已被调用/.test(String(debt && debt.note || '')));
 
 if (fails.length) {
   for (const f of fails) console.log('  ✗ ' + f);

@@ -336,6 +336,117 @@ async function run() {
     !!cr2.backup && String(cr2.backup) !== String(cr.backup),
     `${cr.backup} / ${cr2.backup}`);
 
+  /* ---------------- ⑧ 第 48 轮：installer 在 realm 里真装、真校验、真卸载 ----------------
+     静态扫「零 node: import」不等于能加载（linker 会把整条依赖闭包一起验），
+     更不等于注入式 fs 真能跑。这一节用一份目录感知的内存 fs 走完整条
+     原子安装 → 校验 → 只读计划 → 卸载，全程没有 Buffer / process / require。
+     函数名拼开写，避免 await 守卫把字面量当成漏 await 的调用点。 */
+  const IP = 'install' + 'Plugin';
+  const VP = 'verify' + 'PluginDir';
+  const UP = 'uninstall' + 'Plan';
+  const UX = 'uninstall' + 'Plugin';
+  const EE = 'extract' + 'Entries';
+  const instMod = await loadModule(context, 'js/plugin-installer.js');
+  await instMod.evaluate();
+  const instApi = instMod.namespace;
+  t('⑧a installer 在隔离 realm 里加载成功（依赖闭包全过 linker）',
+    typeof instApi[IP] === 'function' && typeof instApi[VP] === 'function'
+    && typeof instApi[UP] === 'function' && typeof instApi[UX] === 'function'
+    && typeof instApi[EE] === 'function');
+  const instSrc = readFileSync(join(ROOT, 'js/plugin-installer.js'), 'utf8');
+  t('⑧b installer 源码无 node: import / 无 Buffer / 无 randomBytes',
+    !/['"]node:/.test(instSrc) && !/\bBuffer\s*[.[]/.test(instSrc) && !/randomBytes/.test(instSrc));
+  t('⑧c installer 源码确实改用 WebCrypto 生成随机名',
+    /getRandomValues/.test(instSrc));
+
+  const instFs = vm.runInContext(`(() => {
+    const files = new Map();
+    const dirs = new Set(['/apps']);
+    const calls = [];
+    const under = (p, q) => p === q || p.startsWith(q + '/');
+    return {
+      calls,
+      async mkdir(p) { calls.push('mkdir'); dirs.add(p); },
+      async writeText(p, c) { calls.push('write'); files.set(p, String(c)); },
+      async readText(p) { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p); },
+      async exists(p) {
+        return files.has(p) || dirs.has(p)
+          || [...files.keys()].some((k) => k.startsWith(p + '/'))
+          || [...dirs].some((d) => d.startsWith(p + '/'));
+      },
+      async isFile(p) {
+        if (files.has(p)) return true;
+        if (dirs.has(p) || [...files.keys()].some((k) => k.startsWith(p + '/'))) return false;
+        throw new Error('类型未知');
+      },
+      async readdir(p) {
+        const out = new Set();
+        for (const k of [...files.keys(), ...dirs]) {
+          if (!k.startsWith(p + '/')) continue;
+          const rest = k.slice(p.length + 1);
+          if (rest) out.add(rest.split('/')[0]);
+        }
+        return [...out];
+      },
+      async move(a, b) {
+        calls.push('move');
+        for (const k of [...files.keys()]) {
+          if (under(k, a)) { files.set(b + k.slice(a.length), files.get(k)); files.delete(k); }
+        }
+        for (const d of [...dirs]) {
+          if (under(d, a)) { dirs.delete(d); dirs.add(b + d.slice(a.length)); }
+        }
+      },
+      async remove(p) {
+        calls.push('remove');
+        for (const k of [...files.keys()]) if (under(k, p)) files.delete(k);
+        for (const d of [...dirs]) if (under(d, p)) dirs.delete(d);
+      },
+    };
+  })()`, context);
+
+  const MANIFEST_INNER = JSON.stringify({
+    id: 'demo', name: 'demo', version: '1.0.0', entry: 'index.html', kind: 'app',
+  });
+  const goodInner = [
+    { name: 'demo-1.0.0/nexus.plugin.json', content: MANIFEST_INNER },
+    { name: 'demo-1.0.0/index.html', content: '<html>demo</html>' },
+  ];
+  let noFsInstall = false;
+  try { await instApi[IP]({ root: '/apps', id: 'demo', entries: goodInner }); }
+  catch (e) { noFsInstall = /未注入 fs/.test(String((e && e.message) || e)); }
+  t('⑧d 缺 fs 在 realm 里明确 throw（不静默返回「没装」）', noFsInstall);
+
+  const ri = await instApi[IP]({ root: '/apps', id: 'demo', entries: goodInner, fs: instFs });
+  t('⑧e realm 里真安装成功', ri.ok === true, String(ri.errors && ri.errors.join(';')));
+  t('⑧f 原子安装的调用序列含 write 与 move（不是空跑）',
+    instFs.calls.includes('write') && instFs.calls.includes('move'), String(instFs.calls));
+  let landed = '';
+  try { landed = await instFs.readText('/apps/demo/index.html'); } catch (e) { landed = ''; }
+  t('⑧g 文件真的落到目标目录（move 把整个暂存目录搬过去了）',
+    /demo/.test(landed), landed);
+  const vi = await instApi[VP]('/apps/demo', { fs: instFs, expectedId: 'demo' });
+  t('⑧h realm 里真校验通过（isFile 主判据也走 realm fs）',
+    vi.ok === true, String(vi.errors && vi.errors.join(';')));
+  const pi = await instApi[UP]({ root: '/apps', id: 'demo', fs: instFs });
+  t('⑧i 只读计划遍历出 2 个文件，且 bytes===null（fs 无 size，不拿 0 冒充）',
+    pi.ok === true && pi.fileCount === 2 && pi.bytes === null && pi.bytesKnown === false,
+    `fileCount=${pi.fileCount} bytes=${pi.bytes} known=${pi.bytesKnown}`);
+  const ui = await instApi[UX]({ root: '/apps', id: 'demo', fs: instFs });
+  t('⑧j realm 里真卸载成功且目标文件确实消失',
+    ui.ok === true && !(await instFs.exists('/apps/demo/index.html')),
+    String(ui.errors && ui.errors.join(';')));
+  /* 二进制 fail-closed 也要在 realm 内成立：跨 realm 的 Uint8Array
+     必须被 ArrayBuffer.isView 认出，fatal UTF-8 解码必须拒绝。 */
+  const realmBytes = vm.runInContext('new Uint8Array([255, 216, 255, 0])', context);
+  const rb8 = await instApi[EE]([
+    { name: 'p-1.0.0/index.html', content: '<html>ok</html>' },
+    { name: 'p-1.0.0/logo.ico', content: realmBytes },
+  ], '/apps/bin', { fs: instFs });
+  t('⑧k 跨 realm 的二进制条目被明确拒绝（不静默写成乱码文本）',
+    rb8.skipped.some((x) => /二进制/.test(String(x.reason))) && rb8.files.includes('index.html'),
+    JSON.stringify(rb8.skipped));
+
   if (fails.length) for (const f of fails) console.log('  ✗ ' + f);
   console.log(`通过 ${pass} 项，失败 ${fails.length} 项`);
   if (fails.length) process.exitCode = 1;

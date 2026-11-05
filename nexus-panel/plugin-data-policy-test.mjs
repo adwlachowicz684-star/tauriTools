@@ -32,6 +32,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stripCommentsJs } from './test-scan-utils.mjs';
+import { createNodeFs } from './scripts/node-fs-adapter.mjs';
 import {
   shouldPurgeDataOnUninstall, normalizeSource, SOURCE_CUSTOM, SOURCE_MARKET,
 } from './js/plugin-data-policy.js';
@@ -244,7 +245,9 @@ console.log('\n--- 7. installer 侧接线 ---');
   const userRoot = join(tmpRoot, 'userdata');
 
   const { uninstallPlugin } = await import('./js/plugin-installer.js');
-  const run = (params) => {
+  /* 第 48 轮：installer 改注入式异步 fs，行为层样本必须真 await。 */
+  const fs = createNodeFs();
+  const run = async (params) => {
     /* 每次重建"已安装"的样子：代码目录 + 用户数据目录都在 */
     mkdirSync(join(codeRoot, 'plug-x'), { recursive: true });
     writeFileSync(join(codeRoot, 'plug-x', 'index.js'), 'export default {};');
@@ -253,8 +256,8 @@ console.log('\n--- 7. installer 侧接线 ---');
     mkdirSync(join(userRoot, 'plug-x'), { recursive: true });
     writeFileSync(join(userRoot, 'plug-x', 'keep.txt'), 'v');
 
-    const r = uninstallPlugin({
-      root: codeRoot,
+    const r = await uninstallPlugin({
+      root: codeRoot, fs,
       id: 'plug-x',
       userDataRoot: userRoot,
       ...params,
@@ -265,24 +268,24 @@ console.log('\n--- 7. installer 侧接线 ---');
   /* 前置自检：卸载本身是成功的，否则"数据还在"可能只是因为整体失败
      —— 那样样本 3（要求保留）会假绿、样本 1/2 会假红，三个都不可信。 */
   {
-    const { r } = run({ source: 'market' });
+    const { r } = await run({ source: 'market' });
     t('前置：uninstallPlugin 本身成功（否则后面三项都不可信）', r.ok === true,
       JSON.stringify(r.errors || []));
   }
 
   /* 样本 1：只由 purgeData 别名决定 —— 不认别名就会保留 */
   {
-    const { left } = run({ purgeData: true });
+    const { left } = await run({ purgeData: true });
     t('行为：purgeData=true → 用户数据真被删（别名被认）', left === false);
   }
   /* 样本 2：只由 source=custom 决定 —— 不看来源就会保留 */
   {
-    const { left } = run({ source: 'custom' });
+    const { left } = await run({ source: 'custom' });
     t('行为：custom 来源 → 用户数据真被删（与 host.js 同结论）', left === false);
   }
   /* 样本 3：市场来源 + 无显式要求 → 保留（D3） */
   {
-    const { left } = run({ source: 'market' });
+    const { left } = await run({ source: 'market' });
     t('行为：市场来源且未要求 → 用户数据保留（D3 不被绕过）', left === true);
   }
   rmSync(tmpRoot, { recursive: true, force: true });

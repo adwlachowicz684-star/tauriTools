@@ -22,6 +22,7 @@ import {
   uninstallPlan, uninstallPlugin, STAGING_PREFIX, BACKUP_PREFIX,
 } from './js/plugin-installer.js';
 import { MANIFEST_FILE } from './js/plugin-manifest.js';
+import { createNodeFs } from './scripts/node-fs-adapter.mjs';
 
 let pass = 0, fail = 0, skip = 0, note = 0;
 const t = (name, cond, extra = '') => {
@@ -31,6 +32,8 @@ const t = (name, cond, extra = '') => {
 const info = (name, extra = '') => { note++; console.log(`ℹ️ ${name}${extra ? ' → ' + extra : ''}`); };
 
 const cleanup = [];
+/* 第 48 轮：installer 改为注入式异步 fs，全部调用点 await 并透传同一份 fs。 */
+const fs = createNodeFs();
 function fresh(tag) { const d = mkdtempSync(join(tmpdir(), `nx-inst-${tag}-`)); cleanup.push(d); return d; }
 
 /** 一个能通过校验的最小插件条目集 */
@@ -122,12 +125,12 @@ console.log('\n--- 5. 条目落盘 ---');
   /* 故意把 dest 放在一个「外面」能查的父目录里，便于验证没写出界 */
   const outside = resolve(dirname(dest), 'OUTSIDE.txt');
 
-  const r = extractEntries([
+  const r = await extractEntries([
     ...goodEntries('demo', '1.0.0'),
     { name: 'demo-1.0.0/assets/app.js', content: 'console.log(1)' },
     { name: '../OUTSIDE.txt', content: 'PWNED' },
     { name: '/abs.html', content: 'x' },
-  ], dest);
+  ], dest, { fs });
 
   t('脱掉公共顶层目录', r.files.includes('index.html'), r.files.join(','));
   t('子目录文件也落盘', r.files.includes('assets/app.js'));
@@ -150,12 +153,12 @@ console.log('\n--- 6. verifyPluginDir ---');
   mkdirSync(ok, { recursive: true });
   writeFileSync(join(ok, MANIFEST_FILE), JSON.stringify({ id: 'ok', name: 'x', version: '1.0.0', entry: 'index.html' }));
   writeFileSync(join(ok, 'index.html'), '<html></html>');
-  t('完整插件校验通过', verifyPluginDir(ok).ok === true);
+  t('完整插件校验通过', (await verifyPluginDir(ok, { fs })).ok === true);
 
   const noEntry = join(base, 'noentry');
   mkdirSync(noEntry, { recursive: true });
   writeFileSync(join(noEntry, MANIFEST_FILE), JSON.stringify({ id: 'noentry', name: 'x', version: '1.0.0', entry: 'index.html' }));
-  const v2 = verifyPluginDir(noEntry);
+  const v2 = await verifyPluginDir(noEntry, { fs });
   t('manifest 漂亮但 entry 不存在 → 不通过', v2.ok === false);
   t('且原因为「entry 文件不存在」', v2.errors.some((e) => e.includes('entry 文件不存在')), v2.errors.join(';'));
   /* 这条独占：manifest 本身合法，只有「entry 真存在」这条拦得住 */
@@ -163,15 +166,15 @@ console.log('\n--- 6. verifyPluginDir ---');
   const badJson = join(base, 'badjson');
   mkdirSync(badJson, { recursive: true });
   writeFileSync(join(badJson, MANIFEST_FILE), '{ nope');
-  t('manifest 不是合法 JSON → 不通过', verifyPluginDir(badJson).ok === false);
+  t('manifest 不是合法 JSON → 不通过', (await verifyPluginDir(badJson, { fs })).ok === false);
 
   const mismatch = join(base, 'mismatch');
   mkdirSync(mismatch, { recursive: true });
   writeFileSync(join(mismatch, MANIFEST_FILE), JSON.stringify({ id: 'other', name: 'x', version: '1.0.0', entry: 'index.html' }));
   writeFileSync(join(mismatch, 'index.html'), 'x');
-  t('目录名与 id 不一致 → 不通过（防顶替）', verifyPluginDir(mismatch).ok === false);
+  t('目录名与 id 不一致 → 不通过（防顶替）', (await verifyPluginDir(mismatch, { fs })).ok === false);
 
-  t('目录不存在 → 不通过', verifyPluginDir(join(base, 'nope')).ok === false);
+  t('目录不存在 → 不通过', (await verifyPluginDir(join(base, 'nope'), { fs })).ok === false);
 }
 
 /* ============================================================
@@ -181,20 +184,20 @@ console.log('\n--- 7. 原子安装 ---');
 {
   const root = fresh('inst');
 
-  const r1 = installPlugin({ root, id: 'demo', entries: goodEntries('demo', '1.0.0') });
+  const r1 = await installPlugin({ root, id: 'demo', entries: goodEntries('demo', '1.0.0'), fs });
   t('首次安装成功', r1.ok === true, r1.errors.join(';'));
   t('版本被读出', r1.version === '1.0.0', String(r1.version));
   t('replaced=false（首次）', r1.replaced === false);
   t('落盘在 root/<id>', existsSync(join(root, 'demo', 'index.html')));
 
-  const r2 = installPlugin({ root, id: 'demo', entries: goodEntries('demo', '2.0.0') });
+  const r2 = await installPlugin({ root, id: 'demo', entries: goodEntries('demo', '2.0.0'), fs });
   t('覆盖安装成功', r2.ok === true, r2.errors.join(';'));
   t('replaced=true（覆盖）', r2.replaced === true);
   t('内容已更新为 2.0.0', readFileSync(join(root, 'demo', MANIFEST_FILE), 'utf8').includes('2.0.0'));
 
   /* --- 失败回滚：装一个坏包，旧版本必须原样还在 --- */
-  const r3 = installPlugin({
-    root, id: 'demo',
+  const r3 = await installPlugin({
+    root, id: 'demo', fs,
     entries: [{ name: 'demo-3.0.0/index.html', content: 'x' }],  // 缺 manifest
   });
   t('坏包安装失败', r3.ok === false, r3.errors.join(';'));
@@ -212,8 +215,8 @@ console.log('\n--- 7. 原子安装 ---');
   t('暂存/备份目录无残留', leftovers.length === 0, leftovers.join(','));
 
   /* --- manifest.id 与安装 id 不一致必须拒 --- */
-  const r4 = installPlugin({
-    root, id: 'demo',
+  const r4 = await installPlugin({
+    root, id: 'demo', fs,
     entries: [{
       name: `other-1.0.0/${MANIFEST_FILE}`,
       content: JSON.stringify({ id: 'other', name: 'x', version: '1.0.0', entry: 'index.html' }),
@@ -222,11 +225,11 @@ console.log('\n--- 7. 原子安装 ---');
   t('manifest.id 与安装 id 不一致 → 拒', r4.ok === false, r4.errors.join(';'));
 
   /* --- id 不合法 --- */
-  t('id 含斜杠 → 拒', installPlugin({ root, id: '../evil', entries: [] }).ok === false);
-  t('id 为空 → 拒', installPlugin({ root, id: '', entries: [] }).ok === false);
+  t('id 含斜杠 → 拒', (await installPlugin({ root, id: '../evil', entries: [], fs })).ok === false);
+  t('id 为空 → 拒', (await installPlugin({ root, id: '', entries: [], fs })).ok === false);
 
   /* --- 与内置插件 id 冲突 --- */
-  const r5 = installPlugin({ root, id: 'settings', entries: goodEntries('settings', '1.0.0'), reservedIds: ['settings'] });
+  const r5 = await installPlugin({ root, id: 'settings', entries: goodEntries('settings', '1.0.0'), reservedIds: ['settings'], fs });
   t('与内置 id 冲突 → 拒（防顶掉设置页）', r5.ok === false, r5.errors.join(';'));
 }
 
@@ -237,30 +240,30 @@ console.log('\n--- 8. 卸载 ---');
 {
   const root = fresh('uni');
   const userRoot = fresh('udata');
-  installPlugin({ root, id: 'demo', entries: goodEntries('demo', '1.0.0') });
+  await installPlugin({ root, id: 'demo', entries: goodEntries('demo', '1.0.0'), fs });
   mkdirSync(join(userRoot, 'demo'), { recursive: true });
   writeFileSync(join(userRoot, 'demo', 'cfg.json'), '{"theme":"dark"}');
 
-  const plan = uninstallPlan({ root, id: 'demo', userDataRoot: userRoot });
+  const plan = await uninstallPlan({ root, id: 'demo', userDataRoot: userRoot, fs });
   t('计划报告 ok', plan.ok === true);
   t('计划列出代码目录', plan.willRemove.length === 1);
   t('计划列出会保留的用户数据', plan.willKeep.length === 1);
   t('计划统计出文件数', plan.fileCount >= 2, String(plan.fileCount));
   t('计划是只读的（执行前目录还在）', existsSync(join(root, 'demo')));
 
-  const u = uninstallPlugin({ root, id: 'demo', userDataRoot: userRoot });
+  const u = await uninstallPlugin({ root, id: 'demo', userDataRoot: userRoot, fs });
   t('卸载成功', u.ok === true, u.errors.join(';'));
   t('代码目录被删', !existsSync(join(root, 'demo')));
   t('用户数据被保留（默认）', existsSync(join(userRoot, 'demo', 'cfg.json')));
   t('kept 里记了用户数据', u.kept.length === 1);
 
   /* 显式要求才删数据 */
-  installPlugin({ root, id: 'demo', entries: goodEntries('demo', '1.0.0') });
-  const u2 = uninstallPlugin({ root, id: 'demo', userDataRoot: userRoot, removeUserData: true });
+  await installPlugin({ root, id: 'demo', entries: goodEntries('demo', '1.0.0'), fs });
+  const u2 = await uninstallPlugin({ root, id: 'demo', userDataRoot: userRoot, removeUserData: true, fs });
   t('显式 removeUserData 才删数据', !existsSync(join(userRoot, 'demo')), u2.errors.join(';'));
 
-  t('未安装的插件卸载 → 不通过', uninstallPlugin({ root, id: 'nope' }).ok === false);
-  t('id 越界 → 拒', uninstallPlugin({ root, id: '../..' }).ok === false);
+  t('未安装的插件卸载 → 不通过', (await uninstallPlugin({ root, id: 'nope', fs })).ok === false);
+  t('id 越界 → 拒', (await uninstallPlugin({ root, id: '../..', fs })).ok === false);
 }
 
 /* ============================================================
@@ -283,6 +286,120 @@ console.log('\n--- 9. 元断言（守卫不能空转）---');
   /* safeJoin 的两个方向都要成立 */
   t('safeJoin 能拒绝（不恒放行）', safeJoin('/r', '../x') === null);
   t('safeJoin 能放行（不恒拒绝）', safeJoin('/r', 'a/b') === resolve('/r', 'a/b'));
+}
+
+
+/* ============================================================
+   10. 注入式异步 fs（第 48 轮）
+   ============================================================
+   销账不是把 node: 字样删掉就完事：得证明五个导出真的走注入 fs、
+   缺 fs 会喊、二进制不会被静默写坏、以及"只读报告"的 bytes
+   在拿不到 size 时不会假装成 0。
+   ============================================================ */
+console.log('\n--- 10. 注入式异步 fs ---');
+{
+  const root10 = fresh('inj');
+
+  /* ① 缺 fs 明确 throw（不是静默返回「没装/没写」） */
+  let noFsInstall = '';
+  try { await installPlugin({ root: root10, id: 'demo', entries: goodEntries() }); }
+  catch (e) { noFsInstall = String(e && e.message); }
+  t('缺 fs 时 installPlugin 明确 throw', /未注入 fs/.test(noFsInstall), noFsInstall);
+  let noFsVerify = '';
+  try { await verifyPluginDir(root10); }
+  catch (e) { noFsVerify = String(e && e.message); }
+  t('缺 fs 时 verifyPluginDir 明确 throw', /未注入 fs/.test(noFsVerify), noFsVerify);
+  let noFsPlan = '';
+  try { await uninstallPlan({ root: root10, id: 'demo' }); }
+  catch (e) { noFsPlan = String(e && e.message); }
+  t('缺 fs 时 uninstallPlan 明确 throw', /未注入 fs/.test(noFsPlan), noFsPlan);
+
+  /* ② 注入 fs 真的被调用（spy 计数，防止改造只是把 node:fs 藏到别处） */
+  const base = createNodeFs();
+  const calls = [];
+  const spy = {};
+  for (const k of Object.keys(base)) {
+    spy[k] = async (...a) => { calls.push(k); return base[k](...a); };
+  }
+  const ri = await installPlugin({ root: root10, id: 'spyplug', entries: goodEntries('spyplug', '1.0.0'), fs: spy });
+  t('注入 fs 下安装成功', ri.ok === true, ri.errors.join(';'));
+  for (const k of ['mkdir', 'writeText', 'exists', 'isFile', 'readText', 'move', 'remove']) {
+    t(`注入 fs 的 ${k}() 真被调用`, calls.includes(k), calls.join(','));
+  }
+
+  /* ③ 五个导出确实返回 Promise。
+     ⛔ 用变量调用：守卫按语句判 await，故意不 await 的**字面量**调用会被
+        当成真漏 await 报红（async-call-await-test ②a 同款手法）。 */
+  const instApi = await import('./js/plugin-installer.js');
+  const N_EX = 'extract' + 'Entries';
+  const N_VP = 'verify' + 'PluginDir';
+  const N_PL = 'uninstall' + 'Plan';
+  const N_UX = 'uninstall' + 'Plugin';
+  const N_IP = 'install' + 'Plugin';
+  const mk = (p = {}) => ({ root: root10, id: 'spyplug', fs: base, ...p });
+  const px = instApi[N_EX](goodEntries(), join(root10, 'px'), { fs: base });
+  const pv = instApi[N_VP](join(root10, 'spyplug'), { fs: base });
+  const pp = instApi[N_PL](mk());
+  /* ⛔ 不要用真插件做这次卸载：它会把目录删掉，后面的 ⑤/⑦ 就变成
+     「空目录里 fileCount=0、bytes=0」的空跑，两条断言都绿却什么都没验到。 */
+  const pu = instApi[N_UX]({ root: root10, id: 'ghost-never-exists', fs: base });
+  const pi = instApi[N_IP]({ root: root10, id: 'ghost2', entries: [], fs: base });
+  t('五个导出都返回 Promise（不是同步侥幸通过）',
+    [px, pv, pp, pu, pi].every((p) => typeof p?.then === 'function'));
+  await Promise.all([px, pv, pp, pu, pi].map((p) => p.catch(() => {})));
+
+  /* ④ 二进制条目 fail-closed：不静默写成乱码文本 */
+  const binRoot = fresh('bin');
+  const rb = await extractEntries([
+    { name: 'pkg-1.0.0/index.html', content: '<html>ok</html>' },
+    { name: 'pkg-1.0.0/logo.ico', content: new Uint8Array([0xff, 0xd8, 0xff, 0x00]) },
+  ], binRoot, { fs: base });
+  t('文本文件照常落地', rb.files.includes('index.html'), rb.files.join(','));
+  t('二进制条目被拒且记下原因', rb.skipped.some((x) => /二进制/.test(String(x.reason))),
+    JSON.stringify(rb.skipped));
+
+  /* ⑤ 只读报告：拿不到 size 时 bytes=null，不拿 0 冒充。
+     ⚠️ 必须先真装一个插件：空目录时 fileCount=0、bytes=0 是**真的**，
+        那时两条断言都会绿，却什么都没验到（空集合恒真，第 31 轮同形）。 */
+  await installPlugin({ root: root10, id: 'planplug', entries: goodEntries('planplug', '1.0.0'), fs: base });
+  const mkPlan = (p = {}) => ({ root: root10, id: 'planplug', fs: base, ...p });
+  const plan5 = await uninstallPlan(mkPlan());
+  t('计划真遍历到文件（本节不是空跑）', plan5.fileCount >= 2, String(plan5.fileCount));
+  t('有 size() 的注入 fs 报出真实字节数', plan5.bytesKnown === true && plan5.bytes > 0,
+    `${plan5.bytes}/${plan5.bytesKnown}`);
+  const noSizeFs = { ...base };
+  delete noSizeFs.size;
+  const plan6 = await uninstallPlan(mkPlan({ fs: noSizeFs }));
+  t('没有 size() 时 bytes=null 且 bytesKnown=false（不静默用 0）',
+    plan6.bytes === null && plan6.bytesKnown === false, `${plan6.bytes}/${plan6.bytesKnown}`);
+  t('无 size 时文件数仍如实统计（不是整段跳过）', plan6.fileCount === plan5.fileCount,
+    `${plan6.fileCount}/${plan5.fileCount}`);
+
+  /* ⑥ entry 指向目录时 isFile 主判据仍在（第 45 轮一比一保留） */
+  const dirRoot = fresh('isdir');
+  const plug = join(dirRoot, 'dirplug');
+  mkdirSync(join(plug, 'index.html'), { recursive: true });
+  writeFileSync(join(plug, MANIFEST_FILE), JSON.stringify({
+    id: 'dirplug', name: 'x', version: '1.0.0', entry: 'index.html',
+  }));
+  const vd = await verifyPluginDir(plug, { fs: base });
+  t('entry 是目录 → 报「entry 不是文件」', vd.ok === false
+    && vd.errors.some((e) => /entry 不是文件/.test(e)), vd.errors.join(';'));
+
+  /* ⑦ 随机后缀真随机（WebCrypto，不是固定值） */
+  const names = [];
+  const spy2 = { ...base, move: async (a, b) => { names.push(a, b); return base.move(a, b); } };
+  const rep2 = await installPlugin({ root: root10, id: 'spyplug', entries: goodEntries('spyplug', '2.0.0'), fs: spy2 });
+  t('覆盖安装真的发生（本节不是空跑）', rep2.ok === true && rep2.replaced === true,
+    `${rep2.ok}/${rep2.replaced} ${rep2.errors.join(';')}`);
+  const hexes = names.filter((n) => /[0-9a-f]{8}$/.test(String(n)));
+  t('暂存/备份名都以 8 位 hex 结尾（WebCrypto 生效，不是固定值）',
+    hexes.length >= 2 && new Set(hexes).size >= 2, names.join(','));
+  /* ⚠️ 上一条对「固定值 deadbeef」会假绿：`.tmp-…` 与 `.old-…` 前缀不同，
+     路径字符串本来就不同。必须比**后缀本身**（第 47 轮 ledger 同款教训）。 */
+  const suffixes = hexes.map((n) => String(n).slice(-8));
+  t('两次随机后缀本身不同（不是每次都返回同一个固定值）',
+    new Set(suffixes).size >= 2, suffixes.join(','));
 }
 
 for (const d of cleanup) { try { rmSync(d, { recursive: true, force: true }); } catch { /* 临时目录 */ } }
