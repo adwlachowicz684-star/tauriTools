@@ -1,0 +1,16 @@
+{
+  "note": "退场后的 cargo/打包链欠账。白名单＝欠账台账：修好一条必须同步销账并更新守卫期望状态；新增一条必须红。此台账由 cargo-retirement-guard-test.mjs 第 ④ 节盯着，不许静默当成无事发生。",
+  "rows": [
+    {
+      "id": "pdfium-dll-absent",
+      "why": "12 个 iframe 插件源码退场时 plugins/dupview/pdfium.dll 一并消失，主仓与各私有仓均无该二进制；tauri.conf.json 原 bundle.resources 指向它导致 tauri_build::build() 校验失败、cargo check 100% 挂。移除该条目只解除了构建阻断，生产包不再随包分发 dll，PDF 逐页预览在无系统 pdfium 的机器上会退化为『扫描没反应』。",
+      "unblock": "把本机 src-tauri/target/{debug,release}/pdfium.dll 拷到 src-tauri/resources/pdfium.dll，在 bundle.resources 加回 \"resources/pdfium.dll\": \"pdfium.dll\"（相对 src-tauri/，不要写回 ../plugins/），销空本台账并更新守卫第 ④ 节期望状态，然后跑一次真实 cargo check。",
+      "evidence": {
+        "observed": "resource path `..\\plugins\\dupview\\pdfium.dll` doesn't exist (tauri_build build script)",
+        "fixed": "bundle.resources 仅保留 ../runtime-plugins/；pdf.rs 开发态候选改指 src-tauri/resources/",
+        "guard": "cargo-retirement-guard-test.mjs",
+        "rustCompileVerified": false
+      }
+    }
+  ]
+}

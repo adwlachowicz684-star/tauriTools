@@ -172,7 +172,8 @@
     "test:retired-supply": "node retired-supply-test.mjs",
     "test:coverage-guard": "node test-coverage-guard-test.mjs",
     "test:orphan-guard": "node orphan-modules-guard-test.mjs",
-    "test:retired-guard-debt": "node retired-guard-debt-test.mjs"
+    "test:retired-guard-debt": "node retired-guard-debt-test.mjs",
+    "test:cargo-retirement": "node cargo-retirement-guard-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",

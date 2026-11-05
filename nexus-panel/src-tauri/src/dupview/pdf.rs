@@ -12,9 +12,15 @@
 //! 【dll 在哪】
 //! 按"越具体越优先"找，与插件脚本的定位思路一致：
 //!   1. DUPVIEW_PDFIUM 环境变量（排查/覆盖用）
-//!   2. 资源目录（生产构建，bundle.resources 打进安装包）
-//!   3. 插件目录（开发态，用编译期 CARGO_MANIFEST_DIR 定位，不依赖 cwd）
+//!   2. exe 同目录（生产构建的资源解开后就在旁边；渲染在扫描线程里，
+//!      拿不到 AppHandle 去解析资源目录，所以用 exe 父目录近似）
+//!   3. src-tauri/resources/（开发态放一份即可，不随插件仓库迁出）
 //!   4. 系统库路径（Pdfium::default 的行为）
+//! ⚠️ plugins/dupview/ 不再是 dll 的来源：12 个 iframe 插件源码退场后
+//!    那份 dll 已随目录一起消失，而 tauri.conf.json 的 bundle.resources
+//!    若仍指向它，tauri_build::build() 会因资源路径不存在直接失败 ——
+//!    cargo check / tauri build 100% 挂，且前端守卫一个都不会喊。
+//!    恢复办法见 src-tauri/resources/README.md。
 //! 找不到时**如实报错并把试过的路径列出来** —— 这类问题在 UI 上
 //! 表现为"扫描没反应"，没有路径列表就只能猜。
 
@@ -64,8 +70,12 @@ fn find_library() -> Option<PathBuf> {
             cands.push(dir.join("pdfium.dll"));
         }
     }
+    /* 开发态候选：源码退场后插件目录不再随主仓分发，dll 改放在
+       src-tauri/resources/（与 CARGO_MANIFEST_DIR 同级，不依赖 cwd，
+       也不会被 plugins/ 退役带走）。目录不存在时这条自然落空，
+       由 exe 同目录 / 环境变量 / 系统库路径继续兜底。 */
     cands.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins/dupview/pdfium.dll"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/pdfium.dll"),
     );
     cands.into_iter().find(|p| p.is_file())
 }

@@ -52,7 +52,6 @@
     "targets": "all",
     "createUpdaterArtifacts": true,
     "resources": {
-      "../plugins/dupview/pdfium.dll": "pdfium.dll",
       "../runtime-plugins/": "runtime-plugins/"
     },
     "icon": [
