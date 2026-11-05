@@ -31,7 +31,7 @@
  * ⚠️ 可达性判据的固有边界（破坏验证「注入 2」实测）：
  *    给 host.js 加一条 `import './plugin-market.js'`，BFS 会沿闭包把
  *    **全部 9 个市场模块一起点亮**（实际仅剩 3 条 testOnly），①b 一次点名
- *    8 条要求销账。这是对的：接线是把整组接进来，不是逐个接。
+ *    整组要求销账。这是对的：接线是把整组接进来，不是逐个接。
  *    但它也意味着「只接了 install、没接 uninstall」时守卫仍认为整组已接线。
  *    销账时须逐条确认能力真的可用；本守卫判断的是「整组有没有连到宿主」，
  *    不是「每个能力各自有没有被调用」。
@@ -55,7 +55,7 @@ const t = (name, ok, extra = '') => {
   else { fail++; console.log(`  ❌ ${name}${extra ? ' — ' + extra : ''}`); }
 };
 
-/* ---------------- 台账：11 条（9 个待接线 + 2 个测试专用工具） --------------
+/* ---------------- 台账：10 条（7 个待接线 + 3 个测试专用工具） --------------
  * kind 不是装饰：② 会独立核对「生产引用只能来自台账内部」，
  * 把一条 wiring-pending 改成 test-tool 骗不过去。
  */
@@ -105,9 +105,27 @@ const KNOWN = {
   },
   'js/plugin-market.js': {
     kind: 'wiring-pending',
-    why: '宿主侧编排层（安装/发现/查更新/卸载/数据读写），端到端 70 项全绿，'
+    why: '宿主侧编排层（安装/发现/查更新/卸载/数据读写），端到端 93 项全绿，'
        + '但全仓零生产引用 —— 「产品里还不存在装插件这个能力」的唯一根因。',
     unblock: 'store 面板 / IPC 命令接入它即销账；接线落点等阶段 0 加载侧实测结论。',
+  },
+  /* 2026-11-05 第 43 轮：切断 tarball → installer 静态链后，这两条从
+     prodReach 掉回 testOnly。之前它们**不是真的已接线**，只是被
+     plugin-tarball.js「为一个 sniffArchive 而 import installer」顺带
+    拉进生产可达集合 —— 正是 market-runtime-debt.json 里记的盲区②。
+    所以这不是退步，是假象被纠正；按「新增只被测试引用的模块要红、
+    想清楚再落地」的原则在这里登记，而不是把链加回去。 */
+  'js/plugin-installer.js': {
+    kind: 'wiring-pending',
+    why: '安装/卸载执行器（80 项全绿）。它的生产入边只剩 plugin-market.js（同在台账内），'
+       + '运维侧发布脚本也只经市场链路间接用到；产品运行时没有调用它。',
+    unblock: '编排层整体进入 webview 后自然变成生产可达并销账；届时要连同 node:fs 异步化一起验。',
+  },
+  'js/plugin-manifest.js': {
+    kind: 'wiring-pending',
+    why: 'manifest 校验与 id 规则（34 项全绿），被 installer / scan / data-store / market 引用，'
+       + '但引用方整组都还是市场孤儿；此前被 installer 链顺带点亮成生产可达。',
+    unblock: '同 installer：编排层接线后销账。',
   },
 };
 const knownKeys = Object.keys(KNOWN);
@@ -155,8 +173,8 @@ const malformed = knownKeys.filter((k) => {
     || typeof it.why !== 'string' || it.why.length < 20
     || typeof it.unblock !== 'string' || it.unblock.length < 20;
 });
-t('④ 8 条台账均有真实文件 / 合法 kind / why / unblock',
-  knownKeys.length === 8 && malformed.length === 0, malformed.join(' ; '));
+t('④ 台账 10 条均有真实文件 / 合法 kind / why / unblock（销账时要同步改这个数）',
+  knownKeys.length === 10 && malformed.length === 0, malformed.join(' ; '));
 
 /* ---------------- ⑤ 元断言：判据不能是摆设 ----------------
  * 本项目反复栽的形状：判据恒真/恒假时主断言照样全绿。

@@ -58,17 +58,12 @@ export const BACKUP_PREFIX = '.old-';
  * 1. 归档识别
  * ------------------------------------------------------------------ */
 
-/**
- * 嗅探归档类型（只看魔数，不看扩展名 —— 扩展名是对方给的，不可信）
- * @param {Buffer|Uint8Array} buf
- * @returns {'gzip'|'zip'|null}
- */
-export function sniffArchive(buf) {
-  if (!buf || buf.length < 2) return null;
-  if (buf[0] === 0x1f && buf[1] === 0x8b) return 'gzip';
-  if (buf[0] === 0x50 && buf[1] === 0x4b) return 'zip';
-  return null;
-}
+/* 魔数嗅探已抽到 js/archive-magic.js（零依赖、webview 可加载）。
+   ⛔ 不要把它搬回来：plugin-tarball.js 原先只为这一个纯函数 import 本文件，
+      结果把本文件顶层的 node:fs/path/crypto 整条链拖进 webview bundle ——
+      自己没写 node: 的模块照样加载不了。
+   re-export 是为了保持「从 installer 取 sniffArchive」的既有导入点不变。 */
+export { sniffArchive } from './archive-magic.js';
 
 /* ------------------------------------------------------------------ *
  * 2. 条目名归一化与越界判定（安全关键）

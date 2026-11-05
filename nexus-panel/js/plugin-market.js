@@ -3,7 +3,29 @@
  * ============================================================================
  *
  * 定位：把阶段 1–4 做的六个逻辑模块串成**一条能验收的生命周期链路**。
- * 运行位置是 Node 侧 / IPC 桥（这些模块都 import node:fs，webview 跑不了）。
+ * 运行位置目标：webview（产品运行时只有它，不存在「Node 侧 / IPC 桥」）。
+ *
+ * ⚠️ 运行时归属实测更正（清单第 41 节）：Tauri 的 invoke 只能调 Rust 命令，
+ *    Rust 里跑不了 JS 编排层。所以"等接线方案定了把它接进产品"从一开始
+ *    就不成立：**不是缺一个 IPC 命令**，是逻辑层带着 Node 专有依赖。
+ *
+ * ✅ 第 43 轮进度：**本文件与 plugin-tarball.js 已销账**。
+ *    · 本文件的 node:path 换成 data-store 的 joinSegments（同一份实现）；
+ *    · tarball 的 node:zlib 换 DecompressionStream、Buffer 全局换 Uint8Array，
+ *      并切断「为一个纯函数 import 整个 installer」的静态链；
+ *      代价是 unpackTarGz 变 async，本文件已随之 await。
+ *
+ * 🔴 同轮查出台账原先漏掉的两类盲区（见 market-runtime-debt.json 的 blindSpots）：
+ *    · **Buffer 全局**：不写 import node: 也照样跑不进 webview；
+ *    · **静态 import 链**：自己零 node: 的模块会被被依赖方的 node: 拖死。
+ *    只扫 import 行的守卫看不见这两类，已一并升级。
+ *
+ * ⛔ 剩余 installer / ledger / installed-plugin-scan / store-client 四个模块
+ *    仍带同步 node:fs 或 node:crypto，逐文件 unblock 记在
+ *    scripts/market-runtime-debt.json；判定见 scripts/scan-market-runtime.mjs
+ *    与 market-runtime-gap-test.mjs / webview-runtime-test.mjs。
+ *    在那之前"300+ 项测试全绿但产品里没有装插件能力"仍是结构性的，
+ *    不是待办排期问题。
  *
  * 为什么需要这一层（清单第 11 节反复点名的"逻辑层全是孤儿"）
  * ------------------------------------------------------------
@@ -37,7 +59,6 @@
  * 拿仓库名或产物名当 id 就是"把写法当意图"。
  */
 
-import { join } from 'node:path';
 import {
   parseRepoInput, fetchRelease, downloadAsset, pickAsset,
   assetNameFor, ASSET_PREFIX, ASSET_SUFFIX,
@@ -53,7 +74,7 @@ import {
   MANIFEST_FILE, isValidPluginId, INSTALLED_PLUGINS_DIR,
 } from './plugin-manifest.js';
 import { shouldPurgeDataOnUninstall, normalizeSource } from './plugin-data-policy.js';
-import { DATA_DIR_NAME } from './plugin-data-store.js';
+import { DATA_DIR_NAME, joinSegments } from './plugin-data-store.js';
 import { unpackTarGz } from './plugin-tarball.js';
 
 /**
@@ -96,7 +117,15 @@ function readManifestFromEntries(entries) {
       error: hits.length === 0 ? '包里没有 nexus.plugin.json' : '包里有多份 nexus.plugin.json，拒绝猜测用哪一份' };
   }
   try {
-    return { ok: true, manifest: JSON.parse(hits[0].content.toString('utf8')), error: null };
+    /* entry.content 现在可能是 Uint8Array（webview 解包器不给 Buffer），
+       也可能是字符串（测试里手工构造的 entries）。
+       ⛔ 不能用 content.toString('utf8')：那是 Buffer 专有语义，
+          Uint8Array 调它会得到 "123,34,..."，JSON.parse 必然失败，
+          界面只报「包内 nexus.plugin.json 不是合法 JSON」——
+          指向一个根本不存在的问题。 */
+    const c = hits[0].content;
+    const text = typeof c === 'string' ? c : new TextDecoder('utf-8').decode(c);
+    return { ok: true, manifest: JSON.parse(text), error: null };
   } catch {
     return { ok: false, manifest: null, error: '包内 nexus.plugin.json 不是合法 JSON' };
   }
@@ -131,7 +160,7 @@ export function createPluginMarket(p) {
   const reservedIds = o.reservedIds || [];
   /* 用户数据目录必须复用 DATA_DIR_NAME：另写一份 'plugin-data' 会让
      data-store 写 A、uninstall 删 B，表现为"卸载保留了数据"却永远读不回。 */
-  const userDataRoot = dataRoot ? join(dataRoot, DATA_DIR_NAME) : null;
+  const userDataRoot = dataRoot ? joinSegments(dataRoot, DATA_DIR_NAME) : null;
 
   if (!ledgerFile) throw new Error('plugin-market: 缺少 ledgerFile');
 
@@ -231,7 +260,7 @@ export function createPluginMarket(p) {
       if (!dv.ok) return { ok: false, stage: 'digest', error: dv.reason };
       if (!dv.checked) digestWarnings.push('该 release 产物没有 digest，跳过完整性校验（老 release 常见）');
 
-      const unpacked = unpackTarGz(dl.buffer);
+      const unpacked = await unpackTarGz(dl.buffer);
       if (!unpacked.ok) return { ok: false, stage: 'unpack', error: unpacked.error };
 
       const mf = readManifestFromEntries(unpacked.entries);

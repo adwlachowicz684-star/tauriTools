@@ -69,7 +69,7 @@ export const STORE_FILE = 'store.json';
 export const STORE_VERSION = 1;
 
 /** 拼接路径段。只做拼接/去重复分隔符，**不**承担任何安全校验。 */
-function joinSegments(base, ...parts) {
+export function joinSegments(base, ...parts) {
   let s = String(base || '').replace(/\\/g, '/').replace(/\/+$/, '');
   for (const p of parts) {
     s += '/' + String(p).replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');

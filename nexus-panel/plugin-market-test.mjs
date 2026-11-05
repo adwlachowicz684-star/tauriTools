@@ -182,18 +182,18 @@ console.log('\n--- 1. .tar.gz → entries ---');
     { name: '../../OUTSIDE.txt', content: 'PWNED' },
     { name: 'demo-1.0.0/assets/', dir: true },
   ]));
-  const r = unpackTarGz(buf);
+  const r = await unpackTarGz(buf);
   t('真 tarball 解包成功', r.ok === true, r.error || '');
   t('条目数正确', r.entries.length === 5, String(r.entries.length));
   t('manifest 条目在', r.entries.some((e) => e.name.endsWith(MANIFEST_FILE)));
   t('目录条目标了 dir', r.entries.some((e) => e.dir === true && e.name.endsWith('assets/')));
   t('文件内容逐字节还原',
-    r.entries.some((e) => e.name.endsWith('app.js') && e.content.toString() === 'console.log(1)'));
+    r.entries.some((e) => e.name.endsWith('app.js') && new TextDecoder().decode(e.content) === 'console.log(1)'));
   t('⛔ 越界条目原样保留（由 installer 拦，不在这里静默丢）',
     r.entries.some((e) => e.name === '../../OUTSIDE.txt'));
-  t('非 gzip 拒绝', unpackTarGz(Buffer.from('<html>not a tar</html>')).ok === false);
+  t('非 gzip 拒绝', (await unpackTarGz(Buffer.from('<html>not a tar</html>'))).ok === false);
   t('zip 魔数明确拒绝、不降级',
-    /zip/.test(unpackTarGz(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0])).error || ''));
+    /zip/.test((await unpackTarGz(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0]))).error || ''));
   const bad = Buffer.from(makeTar(pluginEntries('demo')));
   bad[0] = bad[0] ^ 0xff;   // 破坏第一个头的校验和
   t('校验和不匹配 → 拒绝解析坏包', parseTar(bad).ok === false);

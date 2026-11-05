@@ -169,6 +169,8 @@
     "test:repo-mirror-sync": "node repo-mirror-sync-test.mjs",
     "test:plugin-coupling": "node cross-plugin-coupling-test.mjs",
     "test:plugin-market": "node plugin-market-test.mjs",
+    "test:market-runtime-gap": "node market-runtime-gap-test.mjs",
+    "test:webview-runtime": "node webview-runtime-test.mjs",
     "test:plugin-market-shape": "node plugin-market-shape-test.mjs",
     "test:retired-supply": "node retired-supply-test.mjs",
     "test:coverage-guard": "node test-coverage-guard-test.mjs",
