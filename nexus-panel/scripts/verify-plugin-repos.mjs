@@ -40,17 +40,19 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { IDS, sharedMirrorFiles, repoNameFor, ROOT } from './build-plugin-repos.mjs';
+import { IDS, sharedMirrorFiles, repoNameFor, ROOT, repoStatePath } from './build-plugin-repos.mjs';
+import { wantFields, fieldDiffs } from './plugin-manifest-fields.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TOKEN_PATH = '/data/user_persistent_data/tools/.git_token';
 const OWNER = 'adwlachowicz684-star';
 const API = 'https://api.github.com';
+const registry = await import('../plugins/registry.js');
 const arg = (k, def) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : def; };
 const ONLY = arg('--only', null);
 const IDS_TODO = ONLY ? ONLY.split(',').filter(x => IDS.includes(x)) : IDS;
 const FIX_STATE = process.argv.includes('--fix-state');
-const STATE = path.join(ROOT, '.git', 'plugin-repos-v2-state.json');
+const STATE = repoStatePath();
 
 const token = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
 const gitBlobSha = b => crypto.createHash('sha1')
@@ -108,13 +110,21 @@ for (const id of IDS_TODO) {
       heads.set(repo, head.object.sha);
     }
     checkedFiles += expected.length;
-    // ③ manifest 的 repo 字段必须指向本仓，不能留着旧名
+    /* ③ 独立仓 manifest 与主仓 registry 逐字段交叉一致。
+     * 主仓 12 份清单已随源码迁出，本地生成器的校验对象不存在了，职责随对象
+     * 一起搬到插件仓。只验 repo 一个字段不够：name / icon / entry / kind /
+     * description 漂了，两边各自都合法、界面却不一致，且不报错。
+     * 期望值由独立算法给出，不 import 生成器（避免自己验自己）。 */
     const c = await gh(`/repos/${OWNER}/${repo}/contents/nexus.plugin.json`);
     const mf = JSON.parse(Buffer.from(c.content, 'base64').toString('utf8'));
-    if (mf.repo !== `${OWNER}/${repo}`) {
-      console.log(`  ❌ ${repo}: manifest.repo=${mf.repo}（应为 ${OWNER}/${repo}）`);
+    const p = registry.plugins.find((x) => x.id === id);
+    const bad = p ? fieldDiffs(mf, wantFields(p, ROOT)) : ['registry 里没有该插件 id'];
+    const repoBad = mf.repo !== `${OWNER}/${repo}`;
+    if (bad.length || repoBad) {
+      console.log(`  ❌ ${repo}: 清单漂移 ${bad.length} 项${bad.length ? '（' + bad.join('; ') + '）' : ''}`);
+      if (!bad.length && repoBad) console.log(`  ❌ ${repo}: manifest.repo=${mf.repo}（应为 ${OWNER}/${repo}）`);
       drift++;
-      /* ② 记过也要撤回：只有三类检查全过的仓才允许 --fix-state 把 HEAD
+      /* 记过也要撤回：只有检查全过的仓才允许 --fix-state 把 HEAD
        * 当合法基线，否则漂移会被洗白成新基线。 */
       heads.delete(repo);
     }

@@ -96,6 +96,29 @@ export function sharedMirrorFiles() {
   return out;
 }
 
+/**
+ * 断点续跑状态文件的唯一路径：核验与刷新两条通道共用。
+ *
+ * ⛔ 不能写死在项目根的下一层。ROOT 是 nexus-panel/，而 git 仓库根在它
+ * 的上一层。实测 --fix-state 会先把 12 条校准行全部打印出来，再在写
+ * 临时文件时撞 ENOENT —— 输出看着像成功，状态一个字节都没落盘，下一轮
+ * 刷新照样被防覆盖拦住。逐级向上找真实的 .git，找不到就明确抛错，
+ * 绝不静默回退到不存在的目录。
+ */
+export function repoStatePath() {
+  let d = ROOT;
+  for (;;) {
+    const git = path.join(d, '.git');
+    if (fs.existsSync(git) && fs.statSync(git).isDirectory()) {
+      return path.join(git, 'plugin-repos-v2-state.json');
+    }
+    const parent = path.dirname(d);
+    if (parent === d) break;
+    d = parent;
+  }
+  throw new Error('找不到 git 仓库根（.git 目录），拒绝把断点续跑状态写到不存在的路径');
+}
+
 /** 单个插件仓库的完整文件清单 { relPath: Buffer } */
 export function skeletonFiles(id) {
   const files = {};

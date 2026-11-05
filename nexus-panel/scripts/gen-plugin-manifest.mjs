@@ -32,6 +32,15 @@
  * 可安装插件一律 iframe（决策 D4）：module 形态靠 import.meta.glob
  * 在**编译期**收进产物，装进来也不会被发现。给 module 插件发 manifest
  * 等于发一张"能装"的空头支票。
+ *
+ * ⚠️ 退场态：12 份清单已迁入独立私有仓
+ * ------------------------------------------------------------
+ * 主仓 plugins/<id>/ 下已无源码与清单，本地 --check 在干净主仓上必然报
+ * 「缺少 manifest」——那是对象迁走了，不是缺陷，也不该靠放宽判据消红。
+ * 交叉一致的取证改由 scripts/verify-plugin-repos.mjs 联网读 12 仓清单
+ * 逐字段比对，期望值由 scripts/plugin-manifest-fields.mjs **独立**算出
+ * （不 import 本文件，避免拿生成器的输出验生成器自己）。
+ * 本脚本保留给「新建独立仓时生成清单」用，不再登记 npm script。
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';

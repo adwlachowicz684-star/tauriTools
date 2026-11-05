@@ -43,12 +43,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { IDS, sharedMirrorFiles, repoNameFor, ROOT } from './build-plugin-repos.mjs';
+import { IDS, sharedMirrorFiles, repoNameFor, ROOT, repoStatePath } from './build-plugin-repos.mjs';
 
 const TOKEN = fs.readFileSync('/data/user_persistent_data/tools/.git_token', 'utf8').trim();
 const OWNER = 'adwlachowicz684-star';
 const API = 'https://api.github.com';
-const STATE = path.join(ROOT, '.git', 'plugin-repos-v2-state.json');
+const STATE = repoStatePath();
 const arg = (k, def) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : def; };
 const ONLY = arg('--only', null);
 const DRY = process.argv.includes('--dry-run');
