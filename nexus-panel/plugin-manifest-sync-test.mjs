@@ -26,13 +26,14 @@
  * 因此第 5、6 节用构造样本反证：故意制造不一致，判据必须喊。
  */
 
-import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, copyFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, copyFileSync, mkdtempSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateManifest, MANIFEST_FILE } from './js/plugin-manifest.js';
 import { scanInstalledPlugins } from './js/installed-plugin-scan.js';
+import { IDS, isRetired, sourceResidue, makeFixture } from './scripts/retired-guard-baseline.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGINS = join(HERE, 'plugins');
@@ -54,66 +55,56 @@ const modules = registry.plugins.filter((p) => p.type !== 'iframe');
 t('前提：iframe 插件数为 12（集合变了本节就失去意义）', iframe.length === 12, `实为 ${iframe.length}`);
 
 /* ------------------------------------------------------------------ *
- * 2. 每个 iframe 插件都有 manifest，且能通过校验
- * ------------------------------------------------------------------ */
-const parsed = new Map();
+ * 2. 退场态：manifest 的权威已迁到 12 个独立仓
+ * ------------------------------------------------------------------
+ * 旧形态下这里逐份读 plugins/<id>/nexus.plugin.json、与 registry 交叉比对。
+ * 源码迁出后那 12 份文件整体消失，旧判据变成 26 条永久红 —— 留着等于
+ * 「防线还在、但永远不会响」。各仓里的 manifest 由联网探针
+ * scripts/verify-plugin-repos.mjs 逐文件核对（不进 CI，网络故障单独判）。
+ *
+ * 主仓侧真正要钉的是「registry 与唯一映射表没有各走各的」：
+ * id 集合漂了，探针查的仓、产物目录、registry entry 会同时错位，
+ * 而没有任何一处报错。
+ */
+t('退场态：主仓 12 个插件源码目录均已迁出', isRetired(HERE),
+  sourceResidue(HERE).join(', '));
+const sortedIframe = iframe.map((p) => p.id).sort();
+t('映射表 12 个 id 与 registry iframe 集合一致',
+  JSON.stringify(IDS) === JSON.stringify(sortedIframe),
+  `映射表=${IDS.join(',')} registry=${sortedIframe.join(',')}`);
 for (const p of iframe) {
-  const dir = join(PLUGINS, p.id);
-  const file = join(dir, MANIFEST_FILE);
-  if (!existsSync(file)) {
-    t(`${p.id}: 有 manifest`, false, '文件不存在');
-    continue;
-  }
-  let raw;
-  try {
-    raw = JSON.parse(readFileSync(file, 'utf8'));
-  } catch (e) {
-    t(`${p.id}: manifest 可解析`, false, String(e.message || e));
-    continue;
-  }
-  /* dirName 传目录名 —— 目录名必须等于 id，防顶替 */
-  const r = validateManifest(raw, { dirName: p.id });
-  t(`${p.id}: manifest 通过校验`, r.ok, r.errors.join('; '));
-  if (r.ok) parsed.set(p.id, { raw, m: r.manifest });
-}
-t('12 份 manifest 全部解析成功', parsed.size === 12, `实为 ${parsed.size}`);
-
-/* ------------------------------------------------------------------ *
- * 3. 与 registry 交叉一致（本守卫的核心）
- * ------------------------------------------------------------------ */
-for (const p of iframe) {
-  const got = parsed.get(p.id);
-  if (!got) continue;
-  const { m } = got;
-  t(`${p.id}: id 与 registry 一致`, m.id === p.id, `${m.id} != ${p.id}`);
-  t(`${p.id}: name 与 registry 一致`, m.name === p.name, `manifest=${m.name} registry=${p.name}`);
-  t(`${p.id}: icon 与 registry 一致`, m.icon === (p.icon || '◻'), `manifest=${m.icon} registry=${p.icon}`);
-  t(`${p.id}: kind 与 registry 一致`, m.kind === (p.kind || 'app'), `manifest=${m.kind} registry=${p.kind || 'app'}`);
-  /* registry 的 entry 是相对项目根，manifest 的必须相对插件目录 */
-  const wantEntry = p.entry.replace(/^\.\//, '').split('/').slice(2).join('/');
-  t(`${p.id}: entry 与 registry 同源`, m.entry === wantEntry, `manifest=${m.entry} 期望=${wantEntry}`);
-  t(`${p.id}: entry 文件真实存在`, existsSync(join(PLUGINS, p.id, m.entry)), m.entry);
+  t(`${p.id}: 运行时产物入口存在`,
+    existsSync(join(HERE, 'runtime-plugins', p.id, 'index.html')),
+    '产物缺失 → 装了也打不开，且不报错');
 }
 
 /* ------------------------------------------------------------------ *
- * 4. 扫描器能在真实目录上把它们全找出来（端到端接线）
+ * 3. 扫描器仍需可用（判据不能因为退场就空跑）
  * ------------------------------------------------------------------ */
 const scan = scanInstalledPlugins(PLUGINS, { reservedIds: [] });
-const foundIds = new Set(scan.manifests.map((m) => m.id));
-for (const p of iframe) {
-  t(`扫描能发现 ${p.id}`, foundIds.has(p.id), '未在 manifests 中');
+t('主仓空插件目录扫出 0 份 manifest', scan.manifests.length === 0, `实为 ${scan.manifests.length}`);
+t('主仓空插件目录无目录级错误', scan.errors.length === 0, scan.errors.join('; '));
+{
+  const fx = makeFixture();
+  try {
+    const s2 = scanInstalledPlugins(join(fx.root, 'plugins'), { reservedIds: [] });
+    t('元断言H：扫描器在 fixture 上仍能发现 manifest（判据没失效）',
+      s2.manifests.length >= 1 && s2.manifests.some((m) => m.id === fx.a),
+      `实得 ${s2.manifests.length} 份`);
+  } finally { fx.cleanup(); }
 }
-t('扫描发现的 manifest 数恰为 12', scan.manifests.length === 12, `实为 ${scan.manifests.length}`);
-t('扫描无目录级错误', scan.errors.length === 0, scan.errors.join('; '));
 
-/* module 插件一律不发 manifest：发了就是"能装"的空头支票（D4） */
-const skippedIds = new Set(scan.skipped.map((s) => s.id));
-for (const p of modules) {
-  t(`module 插件 ${p.id} 不应有 manifest`, skippedIds.has(p.id), '但它被扫描器当成有效插件了');
-}
-t('被跳过的都是"缺 manifest"（不是解析失败/entry 缺失等真问题）',
-  scan.skipped.every((s) => s.reason.includes('缺少')),
-  scan.skipped.filter((s) => !s.reason.includes('缺少')).map((s) => `${s.id}:${s.reason}`).join(' | '));
+/* 防双份权威：主仓现存插件目录里不许再冒出 manifest。
+   旧断言「skipped 都是缺 manifest」在空集合上 every 恒真 —— 那是假绿，
+   不是防线。 */
+const leftovers = readdirSync(PLUGINS, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && existsSync(join(PLUGINS, e.name, MANIFEST_FILE)))
+  .map((e) => e.name);
+t('主仓现存插件目录里没有残留 manifest（防双份权威）',
+  leftovers.length === 0, leftovers.join(', '));
+t('主仓现存目录数不为 0（读取本身没失效）',
+  readdirSync(PLUGINS, { withFileTypes: true }).filter((e) => e.isDirectory()).length > 0,
+  '一个目录都没读到 → 上面那条会假绿');
 
 /* ------------------------------------------------------------------ *
  * 5. 元断言：一致性判据不能恒真

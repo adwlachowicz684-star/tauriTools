@@ -13,7 +13,7 @@
  *   · 所以断言的是"输出里含预期类别关键字"，而不是"只要不全绿就算通过"
  */
 
-import { readFileSync, writeFileSync, statSync, utimesSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, utimesSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,22 +31,35 @@ const t = (name, cond, extra = '') => {
 
 /* 【本测试会真的改源码，所以必须自带"残留清理"】
    注入是在**真实源文件**上做的：model.rs 里插一个假字段、types.ts 里
-   插一个假字段。inject() 有 try/finally 兜着，但**进程被 SIGKILL
+   插一个假字段、main.rs 的 invoke_handler 里插一个不存在的命令。
+   inject() 有 try/finally 兜着，但**进程被 SIGKILL
    （外部 timeout / 手工 Ctrl-C 后再 kill）时 finally 根本不会执行**，
    注入就永久留在工作区里。
 
    后果比"跑一次红"严重得多：残留的 `pub brand_new_field_for_test: bool`
    没有 #[serde(default)]，会被当成**必填字段**推上去 —— 所有现存
-   config.json 反序列化直接失败，等于把用户配置全打坏。而且它看起来
-   就是一行普通字段，推上去没人会发现。
+   config.json 反序列化直接失败；残留的 `fpx::fpx_no_such_cmd` 则会让
+   Rust 直接编译失败。两者看起来都只是源码里一行普通内容，推上去没人会发现。
+
+   2026-11-05 实测事故：全量复查超时 kill 后，main.rs 里留下 **2 个**
+   fpx_no_such_cmd，而旧版自清清单只认 model.rs / types.ts 两个整行标记，
+   清不到它 —— 注释里"上一次被 kill 也能自愈"当时是假的。
+   ⚠️ 子串型注入不能按行删：invoke_handler 那一整行还有十几个正常命令，
+   删整行比残留更严重。改成按子串删除（幂等，重复几次都清得掉）。
 
    所以两道保险：
      1）开跑前先清残留（下面这段）—— 上一次被 kill 也能自愈；
-     2）注册异常与信号钩子，尽最大努力 restoreAll()。 */
+     2）注册异常与信号钩子，尽最大努力 restoreAll()。
+   已知边界：删除型注入（把 fpx_bootstrap 摘掉）无法靠"补回"自愈，
+   只能靠推送前与主仓远端逐文件 sha 比对兜底 —— 本次事故正是那样发现的。 */
 const INJECT_MARKERS = [
   ['src-tauri/src/fpx/model.rs', 'pub brand_new_field_for_test: bool,'],
   ['plugins/project-group/types.ts', 'brandNewFieldForTest: boolean;'],
 ];
+const INJECT_SNIPPETS = [
+  ['src-tauri/src/main.rs', 'fpx::fpx_no_such_cmd, '],
+];
+const stripSnippets = (s, snippet) => s.split(snippet).join('');
 {
   let cleaned = 0;
   for (const [rel, marker] of INJECT_MARKERS) {
@@ -58,10 +71,29 @@ const INJECT_MARKERS = [
     writeFileSync(abs, kept);
     cleaned++;
   }
+  for (const [rel, snippet] of INJECT_SNIPPETS) {
+    const abs = P(rel);
+    let s;
+    try { s = readFileSync(abs, 'utf8'); } catch { continue; }
+    const next = stripSnippets(s, snippet);
+    if (next === s) continue;
+    writeFileSync(abs, next);
+    cleaned++;
+  }
   if (cleaned) {
     console.log(`⚠️  开跑前清掉 ${cleaned} 处上次中断留下的注入残留`
       + '（进程被 kill 时 try/finally 不会执行）');
   }
+}
+/* 元断言：清理判据必须真的清得掉「重复两次」的子串残留，且不误删同行
+   的正常命令；干净文本不受影响。否则清没清掉全凭肉眼 —— 判据失效却不报。 */
+{
+  const sample = 'fpx::fpx_bootstrap, fpx::fpx_no_such_cmd, fpx::fpx_no_such_cmd, fpx::fpx_save_config,';
+  const clean = 'fpx::fpx_bootstrap, fpx::fpx_save_config,';
+  t('⑤ 元断言：重复两次的注入残留被清掉，同行正常命令保留',
+    stripSnippets(sample, 'fpx::fpx_no_such_cmd, ') === clean);
+  t('⑤ 元断言：干净文本不受清理影响（不误删）',
+    stripSnippets(clean, 'fpx::fpx_no_such_cmd, ') === clean);
 }
 
 const backups = new Map();
@@ -107,6 +139,16 @@ function runCheck() {
 
 /** 注入 → 跑 → 断言 → 恢复 */
 function inject(name, path, mutate, expect) {
+  /* 退场态：被注入的 TS 侧（api.ts / types.ts）已随插件迁到 12 个独立仓，
+     主仓不再持有这些文件。旧版在 backup() 里直接 readFileSync → ENOENT
+     崩溃、无汇总行，体检单只看到「命令跑失败」，看不到哪条判据没跑。
+     这里显式报红并 return：喊得出来，也不假装绿 —— 独立仓目前只有
+     build:plugin 一条 script，跨端契约守卫尚未随源码迁过去，是真欠账。 */
+  if (!existsSync(P(path))) {
+    t(name + '（目标已退场）', false,
+      `${path} 不存在：跨端契约校验对象已迁出主仓，需在对应独立仓补该守卫`);
+    return;
+  }
   backup(path);
   let ok = false, got = '';
   try {

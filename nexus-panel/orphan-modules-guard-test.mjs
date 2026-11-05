@@ -77,30 +77,20 @@ const KNOWN = {
     why: '阶段 1 的目录扫描器，29 项测试全绿，但宿主启动时没人调它 —— 装了插件也不会出现在侧边栏。',
     unblock: '阶段 0 结论出来后接入宿主启动扫描（或 IPC 命令），从台账删除本条。',
   },
-  'js/plugin-manifest.js': {
-    kind: 'wiring-pending',
-    why: '阶段 1 的 manifest 纯函数，34 项测试全绿；当前只被台账内其他模块与生成器引用。',
-    unblock: '随扫描器一并接线；接线后本条与其余 8 条一起销账。',
-  },
-  'js/plugin-installer.js': {
-    kind: 'wiring-pending',
-    why: '阶段 2 的下载/校验/原子安装，80 项测试全绿；没有任何生产入口调用 install。',
-    unblock: 'store 面板的安装按钮 / IPC 命令接入 plugin-market.install 后销账。',
-  },
-  'js/plugin-store-client.js': {
-    kind: 'wiring-pending',
-    why: '阶段 2/3 的 GitHub Release 客户端，含 digest 校验；80 项测试全绿，仅被市场闭包调用。',
-    unblock: '随编排层接线；注意它依赖网络，接线后要把「网络失败」与「逻辑错」分开报。',
-  },
+  /* 2026-11-05 销账 3 条：publish-plugin-releases.mjs / verify-source-retirement.mjs
+     已从运维侧接入 manifest / installer / store-client / tarball，BFS 把它们
+     点亮成「生产可达」。这是**运维侧接线**，不等于 UI 已能装插件 ——
+     编排层 plugin-market.js 仍在台账里，那才是产品能力的唯一根因。 */
   'js/plugin-ledger.js': {
     kind: 'wiring-pending',
     why: '阶段 3 的安装台账与更新检测，83 项测试全绿；台账文件没人写也就没人读。',
     unblock: '装成功后的 saveLedger 已由 market 编排层串好，随编排层接线销账。',
   },
-  'js/plugin-tarball.js': {
-    kind: 'wiring-pending',
-    why: '补上安装链路唯一断点的 tarball 解包器（node:zlib + USTAR），仅被 plugin-market 调用。',
-    unblock: '随编排层接线；不要在这里做路径过滤（越界条目必须交给 installer 拦）。',
+  'js/media-info.js': {
+    kind: 'test-tool',
+    why: '媒体信息解析工具，当前仅被 media-probe-silence-test.mjs 引用；'
+       + '宿主运行时不加载它，属测试专用模块而非待接线的在制品。',
+    unblock: '若将来运行时真的接入，它会变成生产可达并从台账销账；否则迁到测试目录。',
   },
   'js/plugin-fs-bridge.js': {
     kind: 'wiring-pending',
@@ -165,8 +155,8 @@ const malformed = knownKeys.filter((k) => {
     || typeof it.why !== 'string' || it.why.length < 20
     || typeof it.unblock !== 'string' || it.unblock.length < 20;
 });
-t('④ 11 条台账均有真实文件 / 合法 kind / why / unblock',
-  knownKeys.length === 11 && malformed.length === 0, malformed.join(' ; '));
+t('④ 8 条台账均有真实文件 / 合法 kind / why / unblock',
+  knownKeys.length === 8 && malformed.length === 0, malformed.join(' ; '));
 
 /* ---------------- ⑤ 元断言：判据不能是摆设 ----------------
  * 本项目反复栽的形状：判据恒真/恒假时主断言照样全绿。

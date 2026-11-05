@@ -14,9 +14,12 @@
  *   ② 每个 script 指向的测试文件都必须真实存在（否则 npm run 直接崩）
  */
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { join, basename, dirname } from 'node:path';
+import { join, basename, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripCommentsJs } from './test-scan-utils.mjs';
+import {
+  collectTestFiles, collectRunners, makeFixture, isRetired,
+} from './scripts/retired-guard-baseline.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 let pass = 0; let fail = 0;
@@ -39,24 +42,10 @@ const t = (name, ok, info) => {
  * 这比"某个测试红了没人管"更隐蔽：整批测试根本不在视野里，
  * 报告却是绿的。所以下面另有一条断言专门守"判据没漏扫"。
  */
-const SKIP_DIR = new Set(['node_modules', '.git', 'dist', 'runtime-plugins', 'build', 'target', '.vite']);
-const tests = [];
-const tsOnDisk = [];
-(function walk(dir) {
-  let ents = [];
-  try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of ents) {
-    if (e.isDirectory()) {
-      if (SKIP_DIR.has(e.name)) continue;
-      walk(join(dir, e.name));
-    } else if (/^.*-test\.mjs$/.test(e.name)) {
-      tests.push(join(dir, e.name));
-    } else if (/\.test\.tsx?$/.test(e.name)) {
-      tests.push(join(dir, e.name));
-      tsOnDisk.push(join(dir, e.name));
-    }
-  }
-})(HERE);
+/* 收集判据搬到 scripts/retired-guard-baseline.mjs：主判据与「退场态下
+ * 判据仍认得 .test.ts」的元断言必须共用同一份实现。另写一份验判据的
+ * 判据，主判据被清空时那份照样绿。 */
+const { tests, tsOnDisk } = collectTestFiles(HERE);
 
 /*
  * 排除 testkit / 夹具：它们名字里带 test 但不是测试，
@@ -131,24 +120,9 @@ for (const f of scriptOnly) {
  * 所以覆盖成立要同时满足两条：目录下有运行器 **且** 它被 script 点名。
  */
 const RUNNER_NAMES = ['run-tests.sh'];
-const runnersFound = [];
-/*
- * 独立扫一遍全仓库，不要靠 coveredByRunner 的**副作用**去收集：
- * 那边只在"文件名没被点名"时才走到，万一哪天所有文件都被写进 script，
- * runnersFound 会是空的，①c 就变成永远通过的假绿。
- */
-(function walkRunners(dir) {
-  let ents = [];
-  try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of ents) {
-    if (e.isDirectory()) {
-      if (SKIP_DIR.has(e.name)) continue;
-      walkRunners(join(dir, e.name));
-    } else if (RUNNER_NAMES.includes(e.name)) {
-      runnersFound.push(join(dir, e.name).replace(HERE, ''));
-    }
-  }
-})(HERE);
+/* 独立扫一遍全仓库，不要靠 coveredByRunner 的副作用去收集。
+   退场态下主仓 0 个运行器属合法，但 ①c 会用 fixture 证明判据仍能认出它。 */
+const runnersFound = collectRunners(HERE);
 
 function coveredByRunner(f) {
   let d = dirname(f);
@@ -198,16 +172,20 @@ t('每个测试文件都被某个 npm script 引用（否则等于没写）',
  * 而不是"报错"。所以另开一条，拿磁盘上真实存在的 .test.ts 对账。
  */
 const missedTs = tsOnDisk.filter((f) => real.includes(f) === false);
-t('收集判据覆盖 .test.ts（漏扫会让整批测试悄悄消失、报告却仍是绿的）',
-  missedTs.length === 0 && tsOnDisk.length > 0,
-  /*
-   * 措辞要能一眼看出"是漏扫"而不是"本来就少"：
-   * 收集判据退回只认 .mjs 时 tsOnDisk 会变成 0，
-   * 若写成"0 个全部在视野内"，读着像通过 —— 而这一条其实是红的。
-   */
-  tsOnDisk.length === 0
-    ? '一个 .test.ts 都没收集到 —— 判据漏扫了'
-    : (missedTs.length ? `漏了 ${missedTs.length} 个` : `磁盘上 ${tsOnDisk.length} 个 .test.ts 全部在视野内`));
+{
+  /* 退场态：133 个 .test.ts 随 agent-flow 源码迁到独立仓，主仓 0 个属合法。
+     但「tsOnDisk.length > 0」这条不能顺手删 —— 判据漏扫时同样是 0，
+     报告照样绿。所以改拿合成树证明：同一份收集实现仍认得 .test.ts。 */
+  const fx = makeFixture();
+  try {
+    const fxTs = collectTestFiles(fx.root).tsOnDisk;
+    t('收集判据覆盖 .test.ts（退场态主仓 0 个属合法，但判据不能失效）',
+      isRetired(HERE) && missedTs.length === 0 && fxTs.length === 1,
+      fxTs.length === 0
+        ? 'fixture 里一个 .test.ts 都没收到 —— 收集判据坏了'
+        : `主仓 ${tsOnDisk.length} 个（已迁出），fixture 认出 ${fxTs.length} 个`);
+  } finally { fx.cleanup(); }
+}
 
 /* ---- ①c 目录级运行器自己必须被 npm script 点名 ---- */
 /*
@@ -218,9 +196,24 @@ t('收集判据覆盖 .test.ts（漏扫会让整批测试悄悄消失、报告�
  * 它们不红、不报错、也不出现在任何报告里，只是安静地不跑。
  */
 const uncited = runnersFound.filter((r) => !scriptText.includes(basename(r)));
-t('目录级运行器（run-tests.sh）被 npm script 点名（否则它跑的整批测试都没人跑）',
-  runnersFound.length > 0 && uncited.length === 0,
-  runnersFound.length === 0 ? '没发现目录级运行器' : (uncited.join(' | ') || `${runnersFound.join(' | ')} 已注册`));
+{
+  /* 退场态：run-tests.sh 与它跑的 133 个 .test.ts 一起迁到独立仓。
+     主仓 0 个运行器属合法，但「见到 run-tests.sh 就算有主」与
+     「干脆把 runnersFound.length > 0 删掉」都会造成假绿 —— 后者更隐蔽。
+     所以用同一份 collectRunners 在合成树上验判据仍认得它。 */
+  const fx = makeFixture();
+  try {
+    const fxRunners = collectRunners(fx.root);
+    const ok = isRetired(HERE)
+      ? (runnersFound.length === 0 && uncited.length === 0 && fxRunners.length === 1)
+      : (runnersFound.length > 0 && uncited.length === 0);
+    t('目录级运行器（run-tests.sh）被 npm script 点名（否则它跑的整批测试都没人跑）',
+      ok,
+      fxRunners.length === 0
+        ? 'fixture 里连运行器都收不到 —— 收集判据坏了'
+        : `主仓 ${runnersFound.length} 个（已迁出），fixture 认出 ${fxRunners.length} 个`);
+  } finally { fx.cleanup(); }
+}
 
 /* ---- ② script 指向的文件必须存在 ---- */
 const missing = [];
@@ -317,15 +310,29 @@ for (const f of real) {
 }
 const kits = [...new Set(kitFiles)].filter((k) => existsSync(k));
 const badKits = kits.filter((k) => !/fail\s*\?\s*1\s*:\s*0/.test(readFileSync(k, 'utf8')));
+/* 退场态：testkit.mjs 随 project-group 源码迁到独立仓，主仓解析出的路径
+   确实不存在。「kits.length > 0」不能顺手删 —— 路径基准写错时 kits 同样是 0，
+   删了等于把防线一起撤掉。改判「引用确实落在已迁出的插件目录下」，
+   并用 fixture 证明同一套路径解析仍能命中真实框架。 */
+const kitRetiredPaths = [...new Set(kitFiles)].filter(
+  (k) => !existsSync(k) && k.startsWith(join(HERE, 'plugins') + sep));
+const kitsChecked = kits.length > 0 || (isRetired(HERE) && kitRetiredPaths.length > 0);
 t('共享测试框架自身会按失败数退出（一处放行不能拖垮几十个测试）',
-  /*
-   * kits.length > 0 这条不能省：省了它，路径基准写错时集合为空、
-   * 断言恒真，报出来还是"核对 0 个框架"这种看着像过的措辞。
-   */
-  kitFiles.length > 0 && kits.length > 0 && badKits.length === 0,
-  kits.length === 0
+  kitFiles.length > 0 && kitsChecked && badKits.length === 0,
+  kits.length === 0 && kitRetiredPaths.length === 0
     ? `一个框架都没核对到（收集到 ${kitFiles.length} 条 testkit 引用，但拼出的路径都不存在 —— 相对路径要以导入方目录为基准）`
-    : (badKits.map((k) => k.replace(HERE, '')).join(' | ') || `核对 ${kits.length} 个框架`));
+    : (badKits.map((k) => k.replace(HERE, '')).join(' | ') || `核对 ${kits.length} 个框架，${kitRetiredPaths.length} 个已迁出`));
+{
+  const fx = makeFixture();
+  try {
+    const fxTest = collectTestFiles(fx.root).tests.find((f) => f.endsWith('y-test.mjs'));
+    const m = fxTest ? readFileSync(fxTest, 'utf8').match(/from\s+['"]([^'"]*testkit[^'"]*)['"]/) : null;
+    const fxKit = m ? join(dirname(fxTest), m[1]) : '';
+    t('③b 元断言：路径基准以导入方目录为准，fixture 上仍能解析到框架',
+      !!m && existsSync(fxKit) && /fail\s*\?\s*1\s*:\s*0/.test(readFileSync(fxKit, 'utf8')),
+      fxKit);
+  } finally { fx.cleanup(); }
+}
 
 /* ---- ③c 元守卫：③b 的判据不能只判"空集合" ---- */
 /*
@@ -363,12 +370,22 @@ const selfSrc = stripCommentsJs(readFileSync(fileURLToPath(import.meta.url), 'ut
  * 只查片段会命中下面两条说明文字里的同样字样（见上），那是假绿。
  * 代价是判据重排会误报红 —— 误报红看得见、假绿看不见，两害取其轻。
  */
-const NEED_JUDGE = /kitFiles\.length\s*>\s*0\s*&&\s*kits\.length\s*>\s*0\s*&&\s*badKits\.length\s*===\s*0/;
+/* 退场态口径后判据换成 kitsChecked（内含 kits.length > 0 这一支），
+   锚点必须跟着换，否则 ③c 会永久报红；但「至少核对到 1 个框架」这层
+   语义不能丢，所以再加 NEED_CHECKED 钉住 kitsChecked 的定义。 */
+const NEED_JUDGE = /kitFiles\.length\s*>\s*0\s*&&\s*kitsChecked\s*&&\s*badKits\.length\s*===\s*0/;
+const NEED_CHECKED = /kitsChecked\s*=\s*kits\.length\s*>\s*0\s*\|\|\s*\(\s*isRetired/;
 t('③b 必须要求"至少核对到 1 个框架"（只判空集合 = 防线放水）',
-  NEED_JUDGE.test(selfSrc),
-  NEED_JUDGE.test(selfSrc)
-    ? '判据含 kits.length > 0'
-    : '判据里没有 kits.length > 0 —— 空集合会让 ③b 恒真');
+  NEED_JUDGE.test(selfSrc) && NEED_CHECKED.test(selfSrc),
+  NEED_JUDGE.test(selfSrc) && NEED_CHECKED.test(selfSrc)
+    ? '判据含 kitsChecked，且其定义含 kits.length > 0'
+    : '判据或 kitsChecked 定义被改坏 —— 空集合会让 ③b 恒真');
+/* 样本拼接构造：整条字面量写进源码会被本守卫自己扫到（字符串不受
+   剥注释保护），那会让锚点恒真 —— 比恒假更难发现。 */
+const JUDGE_SAMPLE = 'kitFiles.length > 0 && ' + 'kitsChecked && badKits.length === 0';
+t('③c1 新锚点能区分真判据与被删掉 kitsChecked 的版本',
+  NEED_JUDGE.test(JUDGE_SAMPLE)
+  && !NEED_JUDGE.test('kitFiles.length > 0 && badKits.length === 0'));
 
 /* ---- ③d 恒真断言：判据永远为真 = 防线被悄悄撤掉 ---- */
 /*

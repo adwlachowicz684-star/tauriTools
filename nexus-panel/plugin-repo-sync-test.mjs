@@ -30,6 +30,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isRetired, sourceResidue } from './scripts/retired-guard-baseline.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGINS = join(HERE, 'plugins');
@@ -65,10 +66,13 @@ function repoIssue(got, id) {
   return null;
 }
 
-function manifestRepo(id) {
-  const f = join(PLUGINS, id, 'nexus.plugin.json');
-  if (!existsSync(f)) return null;
-  try { return JSON.parse(readFileSync(f, 'utf8')).repo; } catch { return null; }
+/**
+ * 退场态口径：主仓 12 份 manifest 已迁出，repo 字段的权威回到
+ * 唯一映射源 repoFieldFor()（各仓里的那份由 verify-plugin-repos 联网核对）。
+ * 仍用 repoIssue 的同一份判据，只是取证对象换了 —— 判据一行没动。
+ */
+function authoritativeRepo(id) {
+  try { return map.repoFieldFor(id); } catch { return null; }
 }
 
 /* ------------------------------------------------------------------ *
@@ -100,37 +104,41 @@ for (const id of iframeKeys) {
 }
 
 /* ------------------------------------------------------------------ *
- * 3. 主仓 12 份 manifest.repo（本守卫核心）
- * ------------------------------------------------------------------ */
+ * 3. 12 个 repo 值指向本仓（本守卫核心，取证改走映射源）
+ * ------------------------------------------------------------------
+ * 写错的后果仍是「宿主查 release 404 → 用户以为插件没发版」，不报错。
+ */
 for (const p of iframe) {
-  const got = manifestRepo(p.id);
+  const got = authoritativeRepo(p.id);
   const issue = repoIssue(got, p.id);
-  t(`${p.id}: manifest.repo 指向本仓`, issue === null, issue || '');
+  t(`${p.id}: repo 指向本仓`, issue === null, issue || '');
 }
 
 /* ------------------------------------------------------------------ *
- * 4. 生成器 / 骨架：不得出现第二个会说谎的 repo 源
- * ------------------------------------------------------------------ */
-/* 抽样 3 个（大仓 516 文件 / 小仓 79 文件 / 含连字符 id）；全量由
- * verify-plugin-repos.mjs 逐文件比对远端 tree 覆盖，CI 不必重复读 1872 文件。 */
+ * 4. 骨架生成器在退场态必须 fail-closed（不能静默空跑）
+ * ------------------------------------------------------------------
+ * 源码已迁出，skeletonFiles(id) 应当明确抛错并说明「重建需留档 + 环境变量」。
+ * 若它改成静默返回空骨架，12 仓的刷新/核验会在不知不觉中把空内容推上去，
+ * 而 CI 只看到 exit 0 —— 与 tauri.conf 失效资源那次是同一形状。
+ *
+ * 抽样 3 个（大仓 516 文件 / 小仓 79 文件 / 含连字符 id）。
+ */
+t('前提：当前确为退场态（源码缺席）', isRetired(HERE), sourceResidue(HERE).join(', '));
 for (const id of ['agent-flow', 'dupview', 'demo-iframe']) {
-  /* skeletonFiles 对主仓 repo 写错是 fail-closed 抛错。守卫若跟着崩，
-   * 输出就是「无汇总行 + 退出码 1」—— 比「红几条并点名」难查得多，
-   * 看着还像环境坏了。转成一条点名断言（守卫崩了不等于守卫喊了）。 */
-  let f;
+  let threw = false;
+  let msg = '';
   try {
-    f = skeletonFiles(id);
+    skeletonFiles(id);
   } catch (e) {
-    t(`骨架 ${id}: 能生成（主仓 repo 必须已派生正确）`, false,
-      String(e.message || e).slice(0, 180));
-    continue;
+    threw = true;
+    msg = String(e.message || e);
   }
-  const skel = JSON.parse(f['nexus.plugin.json'].toString('utf8'));
-  t(`骨架 ${id}: manifest.repo 与主仓一致`, skel.repo === manifestRepo(id),
-    `骨架=${skel.repo} 主仓=${manifestRepo(id)}`);
-  t(`骨架 ${id}: repo 来自主仓而非另拼`, skel.repo === expectRepo(id),
-    skel.repo);
-  t(`骨架 ${id}: ref 仍由版本派生`, skel.ref === `v${skel.version}`, String(skel.ref));
+  t(`骨架 ${id}: 源码退场时明确拒绝生成（不是静默空跑）`, threw,
+    threw ? '' : '返回了骨架 → 刷新通道可能推空内容');
+  t(`骨架 ${id}: 拒绝信息说明原因与恢复路径`,
+    threw && /退场/.test(msg) && /NEXUS_PLUGIN_SRC/.test(msg), msg.slice(0, 180));
+  t(`骨架 ${id}: 该 id 的源码目录确实不存在`,
+    !existsSync(join(PLUGINS, id, 'index.html')), '目录还在 → 前提变了，本口径需重定');
 }
 
 /* ------------------------------------------------------------------ *
@@ -146,7 +154,7 @@ for (const id of ['agent-flow', 'dupview', 'demo-iframe']) {
   t('产物前缀与仓库前缀不同（红线）', !!assetPrefix && assetPrefix !== map.REPO_PREFIX,
     `产物=${assetPrefix} 仓库=${map.REPO_PREFIX}`);
   t('manifest.repo 里没有产物前缀',
-    iframe.every((p) => !String(manifestRepo(p.id)).includes(assetPrefix)),
+    iframe.every((p) => !String(authoritativeRepo(p.id)).includes(assetPrefix)),
     '有人把仓库名改成了产物名');
 }
 
@@ -168,7 +176,7 @@ for (const id of ['agent-flow', 'dupview', 'demo-iframe']) {
 
   /* G：把第 3 节的判据换成恒真，并注入一条坏数据 —— 必须仍能看出差别。
    * 若没人真的调 repoIssue，本节与第 3 节会一起假绿。 */
-  const pairs = iframe.map((p) => [p.id, manifestRepo(p.id)]);
+  const pairs = iframe.map((p) => [p.id, authoritativeRepo(p.id)]);
   const realIssues = pairs.filter(([id, got]) => repoIssue(got, id) !== null).length;
   const injected = [['agent-flow', 'wrong/repo'], ...pairs.slice(1)];
   const realOnInjected = injected.filter(([id, got]) => repoIssue(got, id) !== null).length;

@@ -37,6 +37,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { collectTestFiles } from './scripts/retired-guard-baseline.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
@@ -70,15 +71,13 @@ const leakedWith = (scripts, rx) => Object.entries(scripts)
  * 白名单不是豁免，是欠账。修好一条 → 实际漏网少一条 → 主断言红，逼你销账；
  * 新漏一条 → 实际多一条 → 同样红。两条方向都喊得出声。
  */
-const KNOWN = [
-  {
-    key: 'test:af',
-    why: '目录级 runner：bash 命令不含 .mjs/.cjs/.ts，被 sweep filter1 排除；'
-       + '背后 133 个 .test.ts 从没进过体检单',
-    unblock: '让 run-tests.sh 输出可被 parseSummary 识别的稳定汇总行，'
-           + '再把 sweep 的 entries 扩展到目录级 runner（或把它并入某个 test: 脚本的汇总）',
-  },
-];
+/**
+ * 台账已销账：136 条指向已退场插件目录的死 script 从 package.json 移除，
+ * `test:af` 连同 run-tests.sh、133 个 .test.ts 一起迁到独立仓。
+ * sweep filter1 现在收齐全部 `test:` 脚本，漏网集合为空 —— ② 绿是**真绿**，
+ * 不是「把台账清空换来的绿」：④ 会钉住销账前提，⑤ 的元断言仍逐向验判据。
+ */
+const KNOWN = [];
 
 const realLeaked = leakedWith(pkg.scripts, re);
 const knownKeys = KNOWN.map((x) => x.key).sort();
@@ -98,19 +97,17 @@ for (const item of KNOWN) {
     && typeof item.unblock === 'string' && item.unblock.length > 20);
 }
 
-/* ---------------- ④ 欠账背后确实有东西（不是记个名字就算完） ----------------
- * ⚠️ 这条只证明「runner 在、测试文件在」，**不证明它们跑通了**。
- *    run-tests.sh 是否真跑出 2874 项，得靠它自己的汇总行 + 单独验收，
- *    本守卫不替它背书。
+/* ---------------- ④ 销账前提确实成立（不是把 runner 删了蒙混过关） --------
+ * 退场态下 runner 与 .test.ts 都不在主仓，这里改钉三件事：
+ * script 真的删了、源码目录真的迁出了、主仓真的不再残留 .test.ts。
+ * 任何一条不成立，都说明「台账清空」不是销账而是把证据抹掉了。
  */
-const AF_TESTS_DIR = join(ROOT, 'plugins', 'agent-flow', 'tests');
-const AF_RUNNER = join(ROOT, 'plugins', 'agent-flow', 'scripts', 'run-tests.sh');
-const tsTestCount = existsSync(AF_TESTS_DIR)
-  ? readdirSync(AF_TESTS_DIR).filter((f) => f.endsWith('.test.ts')).length
-  : 0;
-t('④ 欠账对应的目录级 runner 真实存在', existsSync(AF_RUNNER));
-t('④ 欠账背后确有 >100 个 .test.ts（不是空壳条目）', tsTestCount > 100,
-  `实得 ${tsTestCount}`);
+t('④ 销账前提：test:af 已从主仓 scripts 移除', !Object.hasOwn(pkg.scripts, 'test:af'));
+t('④ 销账前提：agent-flow 源码目录确已迁出（不是把 runner 删了）',
+  !existsSync(join(ROOT, 'plugins', 'agent-flow', 'index.html')));
+const tsLeft = collectTestFiles(ROOT).tsOnDisk.length;
+t('④ 销账前提：主仓不再残留 .test.ts（整批随源码迁出）', tsLeft === 0,
+  `实得 ${tsLeft}`);
 
 /* ---------------- ⑤ 元断言：判据不能是摆设 ----------------
  * 本项目反复栽的形状：判据恒真/恒假时主断言照样全绿，只有配对样本喊得出声。
@@ -133,8 +130,10 @@ t('⑤ 元断言 D：非 test: 前缀的脚本不进漏网集合（别把 build 
   !leakedWith(SAMPLE, /(?!)()/).includes('build'));
 t('⑤ 元断言 E：同一判据对「新增一条漏网」返回 false（不是恒真）',
   coverageOk({ ...pkg.scripts, 'test:__probe_leak': 'bash x.sh' }, re, knownKeys) === false);
-t('⑤ 元断言 F：同一判据对「台账清空」返回 false（不是恒假）',
-  coverageOk(pkg.scripts, re, []) === false);
+/* 台账本身已经为空，再拿「台账清空」当坏样本就没有区分力了
+   （空 vs 空 → true）。改成注入一条真漏网：空台账下判据必须喊。 */
+t('⑤ 元断言 F：台账为空时注入一条漏网，判据返回 false（不是恒真）',
+  coverageOk({ ...pkg.scripts, 'test:__probe_leak2': 'bash y.sh' }, re, []) === false);
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

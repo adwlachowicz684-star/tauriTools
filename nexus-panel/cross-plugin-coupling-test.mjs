@@ -41,6 +41,9 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { scanCrossPlugin, keyOf, classifyHit, RUNTIME_RISK_KINDS } from './scripts/scan-coupling.mjs';
 import { SUMMARY } from './test-scan-utils.mjs';
+import {
+  scanRuntimeCrossPaths, makeFixture, runtimeEntries, isRetired, sourceResidue,
+} from './scripts/retired-guard-baseline.mjs';
 
 const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
@@ -69,31 +72,19 @@ function t(name, ok, detail) {
  *   · dynamic-string / other              → 运行时真去请求该路径，独立安装才 404
  * ⛔ 台账里的 kind 由 ②b 与扫描器独立算出的结果比对，改台账骗不过去。
  */
+/**
+ * 退场态台账：12 个 iframe 插件源码已迁到 12 个独立仓，主仓不再持有
+ * `plugins/project-group/` 这类目录，那 6 条命中随之整体消失。
+ * 留着它们只会让 ①b 永久报红（「防线还在但永远不会响」），
+ * 而 ④b 的运行时红线才是真正要守的东西。
+ *
+ * ⛔ 清空不等于撤防：①a 仍盯主仓现存文件里新冒出的跨插件引用，
+ *    ④b 改扫**运行时产物**（见第 ⑤ 节），元断言 A–G 用合成树证明
+ *    扫描器本身没坏。各仓源码里的耦合由各仓自己的 CI 负责。
+ */
 const KNOWN = {
-  'plugins/project-group/components/dialogCards.tsx:5->color-picker': {
-    blocking: true, kind: 'static-import',
-    why: '内嵌色盘组件直接引 color-picker 的 React 组件。构建期已内联进产物，'
-       + '独立安装后运行时不依赖另一个插件。',
-    unblock: '拆仓库时把共享源码作为 SDK 包/构建期依赖分发；不需要运行时解耦。',
-  },
-  'plugins/project-group/components/dialogCards.tsx:15->color-picker': {
-    blocking: true, kind: 'static-import',
-    why: '色盘样式只在 color-picker/style.css 里；本插件是另一个 iframe 文档，'
-       + '只加载自己的 style.css，不显式引则色盘渲染成一坨没布局的裸文字。'
-       + '实测产物 CSS 已含 249 个 fpx-* 类 —— 构建期内联生效。',
-    unblock: '同上，随共享源码分发；不能删这行（删了构建产物里就没色盘样式）。',
-  },
-  'plugins/project-group/style.css:2->color-picker': {
-    blocking: true, kind: 'css-import',
-    why: 'CSS @import 跨插件引色盘样式（此前只按 import 语句查过，漏了这条路径）。',
-    unblock: '同上。',
-  },
-  'plugins/project-group/utils/color.ts:18->color-picker': {
-    blocking: true, kind: 're-export',
-    why: '颜色工具的唯一实现在 color-picker/color.ts，这里只做转发。'
-       + '源码注释明确禁止在此再写一份实现（历史上有过抄本漂移的教训）。',
-    unblock: '拆仓库后两边都从同一份共享源码 import —— 绝不能改成各写一份。',
-  },
+  /* 这两条不是 iframe 插件，没迁出去，仍在主仓。它们是 module 外壳，
+     编译期随主程序构建、不进市场，因此不阻断独立安装。 */
   'plugins/md-render/module.js:41->md': {
     blocking: false, kind: 'static-import',
     why: 'md / md-render 都是 module 插件（编译期随主程序构建），不进市场，不受拆分影响。',
@@ -162,66 +153,38 @@ const inconsistent = hits.filter((h) => h.runtimeRisk !== RUNTIME_RISK_KINDS.has
 t('④c runtimeRisk 与 kind 自洽', inconsistent.length === 0,
   inconsistent.map((h) => keyOf(h)).join('; '));
 
-/* ⑤ 共享资源一致性 —— 已销账那条的**后续风险**必须有人盯着
+/* ⑤ 运行时产物红线 —— 销账之后真正要盯的地方
  *
- * 背景：icon-picker 原先跨插件引 project-group/preseticons/。
- * 为了能独立安装，改成自带一份（122 个 .ico）。于是同一个逻辑资源
- * 有了**两份物理拷贝** —— 这正是"解耦"的代价。
+ * 背景：icon-picker 原先跨插件引 project-group/preseticons/，改成自带
+ * 122 个 .ico 后，旧守卫在这里逐字节比两份拷贝。源码迁出后两份都在
+ * 12 个私有仓里，主仓各 0 个 —— 旧断言变成永久红，而它守的
+ * 「解耦后漂移」已由各仓自己的 CI 接管。
  *
- * ⛔ 两份拷贝的失效形状：改了 A 份忘了 B 份 → 同一个图标名在两个界面
- *    显示不同的图，或者一边 404。不报错、不崩溃，只表现为"图标不对"。
- *    与 utils/color.ts 历史上抄本漂移是同一形状（那份注释明确禁止再犯）。
+ * 主仓侧剩下唯一会造成「装了 A 没装 B → 功能区一片空白」的地方，是
+ * **runtime-plugins/ 里的构建产物**：静态 import 已被 Vite 内联，
+ * 产物里若还留着 `../<别的插件>/` 的动态字符串，独立安装即 404。
  *
- * 所以"销账"不是终点：销掉跨插件引用之后，这里必须接管防漂移。
+ * ⛔ files > 0 这条不能省：路径写错时扫到 0 个文件，hits 空集合
+ *    会让整条红线恒绿，报告看着还是「干净」。
  */
-const SHARED_RESOURCES = [
-  { a: 'plugins/project-group/preseticons', b: 'plugins/icon-picker/preseticons', what: '内置预设图标库' },
-];
-
-function listFiles(dir) {
-  const out = [];
-  const walk = (d, rel) => {
-    let ents;
-    try { ents = readdirSync(join(d, rel)); } catch { return; }
-    for (const e of ents) {
-      const p = join(d, rel, e);
-      let st;
-      try { st = statSync(p); } catch { continue; }
-      if (st.isDirectory()) walk(d, join(rel, e));
-      else out.push({ rel: join(rel, e), size: st.size });
-    }
-  };
-  walk(dir, '');
-  return out.sort((x, y) => (x.rel < y.rel ? -1 : 1));
-}
-
-for (const { a, b, what } of SHARED_RESOURCES) {
-  const da = resolve(ROOT, a);
-  const db = resolve(ROOT, b);
-  t(`⑤ ${what}：两份拷贝都存在`, isDir(da) && isDir(db), `${a} / ${b}`);
-  if (!isDir(da) || !isDir(db)) continue;
-
-  const fa = listFiles(da);
-  const fb = listFiles(db);
-  t(`⑤ ${what}：文件数量一致`, fa.length === fb.length && fa.length > 0,
-    `${a}=${fa.length} ${b}=${fb.length}`);
-
-  const na = fa.map((f) => f.rel);
-  const nb = fb.map((f) => f.rel);
-  const onlyA = na.filter((x) => !nb.includes(x));
-  const onlyB = nb.filter((x) => !na.includes(x));
-  t(`⑤ ${what}：文件清单一致`, onlyA.length === 0 && onlyB.length === 0,
-    `仅A有 ${onlyA.slice(0, 3).join(',')}；仅B有 ${onlyB.slice(0, 3).join(',')}`);
-
-  /* 逐字节比对：只比同名文件，避免清单不一致时刷屏 */
-  const diff = [];
-  for (const f of fa) {
-    if (!nb.includes(f.rel)) continue;
-    const ha = createHash('md5').update(readFileSync(join(da, f.rel))).digest('hex');
-    const hb = createHash('md5').update(readFileSync(join(db, f.rel))).digest('hex');
-    if (ha !== hb) diff.push(f.rel);
-  }
-  t(`⑤ ${what}：逐字节内容一致`, diff.length === 0, `不一致 ${diff.length} 个：${diff.slice(0, 3).join(',')}`);
+const rp = scanRuntimeCrossPaths(ROOT);
+t('⑤ 确实扫到了产物文件（files>0，空集合会让下面那条假绿）',
+  rp.files > 0, `实扫 ${rp.files} 个文件`);
+t('⑤ 运行时产物里没有跨插件动态路径（独立安装不会 404）',
+  rp.hits.length === 0,
+  rp.hits.slice(0, 5).map((h) => `${h.file.replace(ROOT, '')} → ${h.raw}`).join('; '));
+const ren = runtimeEntries(ROOT);
+t('⑤ 12 个运行时产物入口齐备', ren.missing.length === 0, ren.missing.join(', '));
+t('⑤ 主仓 12 个插件源码目录均已迁出（防双份权威）',
+  isRetired(ROOT), sourceResidue(ROOT).join(', '));
+{
+  const fx = makeFixture();
+  try {
+    const r2 = scanRuntimeCrossPaths(fx.root);
+    t('元断言 H：判据在 fixture 上能命中跨插件路径（不是恒空）',
+      r2.hits.length >= 1 && r2.files > 0,
+      `files=${r2.files} hits=${r2.hits.length}`);
+  } finally { fx.cleanup(); }
 }
 
 /* ---- 元断言：证明扫描器真的在扫，而不是恒空 ---- */

@@ -21,12 +21,13 @@
  *
  * 用法：node inline-strip-audit-test.mjs（cwd 无关）
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { scanInlineStrip, classifyInlineStrip } from './scripts/scan-inline-strip.mjs';
 import { stripCommentsFlatJs } from './test-scan-utils.mjs';
+import { isRetired, sourceResidue } from './scripts/retired-guard-baseline.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = HERE;
@@ -43,47 +44,13 @@ const t = (name, ok, extra = '') => {
  * 欠账台账：每条都要能回答「为什么还不能换成公共设施」「怎么才能换」
  * kinds 与实际扫描结果必须逐项一致，否则说明形态变了、结论要重下。
  * ------------------------------------------------------------------ */
+/**
+ * 退场态口径：12 个 iframe 插件连同它们的测试一起迁到 12 个独立仓，
+ * 主仓 `plugins/<id>/` 下不再有文件。原台账 10 条里 8 条、DONE 7 条里
+ * 6 条随之消失 —— 留着只会永久报红。它们不是「修好了」，是**换了宿主**，
+ * 由各仓自己的 CI 继续盯；主仓只钉仍在本地的 2 条。
+ */
 const LEDGER = {
-  'plugins/mindmap/mm-export-name-test.mjs': {
-    kinds: ['flat', 'line-colon'],
-    why: '行注释判据是 (^|[^:])，与公共 (^|\\s) 不同：a//b 会被吞掉后半截',
-    unblock: '实测被扫内容里无此形态后，改为 stripCommentsFlatJs 并逐项比对断言结果',
-  },
-  'plugins/mindmap/mm-shrink-name-test.mjs': {
-    kinds: ['flat', 'line-colon'],
-    why: '同 mm-export-name，(^|[^:]) 判据语义不同',
-    unblock: '同上，两个文件一起改、一起验证',
-  },
-  'plugins/task-board/task-board-test.mjs': {
-    kinds: ['flat', 'line-colon'],
-    why: '第 2711 行 src.replace 用 (^|[^:]) 行注释判据，与公共 (^|\\s) 不同：a//b 会被吞掉后半截',
-    unblock: '实测被扫内容里无此形态后，改为 stripCommentsFlatJs 并逐项比对断言结果',
-  },
-  'plugins/project-group/saveguard-test.mjs': {
-    kinds: ['flat', 'line-safe'],
-    why: 'strip 定义本身等价于 stripCommentsFlatJs，但第 4 节还有一处 strip(lm).replace(/\\/\\/[^\\n]*/g, \'\') 的裸行注释二次剥离',
-    unblock: '先确认 useLayoutMemory.ts 里无 URL，再一并换成 stripCommentsFlatJs；两处一起换、一起逐项比对',
-  },
-  'plugins/project-group/config-corrupt-notice-test.mjs': {
-    kinds: ['flat', 'line-bare'],
-    why: '裸行注释正则会吞 https:// 与 file://，公共判据 (^|\\s) 不会',
-    unblock: '核实被扫文件无 URL 后换 stripCommentsFlatJs，并保留逐项结果比对',
-  },
-  'plugins/project-group/mcp-addcard-guard-test.mjs': {
-    kinds: ['flat', 'line-bare'],
-    why: '块注释 + 逐行 split 剥行注释的混合写法，不是同一个函数',
-    unblock: '先确认逐行写法是否等价于 stripCommentsFlatJs，再合并',
-  },
-  'plugins/project-group/mcp-string-args-test.mjs': {
-    kinds: ['flat', 'line-bare'],
-    why: '裸行注释正则，语义与公共判据不同',
-    unblock: '同 config-corrupt-notice',
-  },
-  'plugins/project-group/mcp-typed-args-test.mjs': {
-    kinds: ['flat', 'line-bare'],
-    why: '裸行注释正则，语义与公共判据不同',
-    unblock: '同 config-corrupt-notice',
-  },
   'scripts/scan-commands.mjs': {
     kinds: ['flat', 'line-bare', 'space'],
     why: '同一份文件里同时用了空串版与留空格版两种块注释剥离，需分别确认适用场景',
@@ -96,16 +63,30 @@ const LEDGER = {
   },
 };
 
-/* 已销账：换成公共设施的文件。必须真的 import，且不再有内联实现。 */
+/* 已销账：换成公共设施、且仍在主仓的文件。必须真的 import，且不再有内联实现。 */
 const DONE = {
   'native-assets-test.mjs': './test-scan-utils.mjs',
-  'plugins/project-group/backup-interval-test.mjs': '../../test-scan-utils.mjs',
-  'plugins/project-group/mcp-enum-args-test.mjs': '../../test-scan-utils.mjs',
-  'plugins/project-group/shell-icon-notify-test.mjs': '../../test-scan-utils.mjs',
-  'plugins/project-group/stack-reveal-once-test.mjs': '../../test-scan-utils.mjs',
-  'plugins/project-group/watch-scope-test.mjs': '../../test-scan-utils.mjs',
-  'plugins/project-group/watch-toggle-test.mjs': '../../test-scan-utils.mjs',
 };
+
+/* 随插件源码迁出的 14 份文件。用途不是"记个名字"，是防止有人靠
+   **直接删文件**把 ①a 销账：销账必须伴随「整个插件目录确实迁出」，
+   而不是把守卫看不顺眼的文件抹掉。 */
+const MOVED = [
+  'plugins/mindmap/mm-export-name-test.mjs',
+  'plugins/mindmap/mm-shrink-name-test.mjs',
+  'plugins/task-board/task-board-test.mjs',
+  'plugins/project-group/saveguard-test.mjs',
+  'plugins/project-group/config-corrupt-notice-test.mjs',
+  'plugins/project-group/mcp-addcard-guard-test.mjs',
+  'plugins/project-group/mcp-string-args-test.mjs',
+  'plugins/project-group/mcp-typed-args-test.mjs',
+  'plugins/project-group/backup-interval-test.mjs',
+  'plugins/project-group/mcp-enum-args-test.mjs',
+  'plugins/project-group/shell-icon-notify-test.mjs',
+  'plugins/project-group/stack-reveal-once-test.mjs',
+  'plugins/project-group/watch-scope-test.mjs',
+  'plugins/project-group/watch-toggle-test.mjs',
+];
 
 /* ------------------------------------------------------------------ */
 console.log('\n=== 1. 实际内联集合恰为台账 ===');
@@ -128,6 +109,16 @@ for (const [f, e] of Object.entries(LEDGER)) {
     `实际=${actualMap.get(f)} 台账=${e.kinds.join(',')}`);
   t(`①d ${f} 有 why 与 unblock`, !!e.why && !!e.unblock);
 }
+
+/* ①e / ①f：销账只能靠「整个插件源码迁出」，不能靠删文件。
+   空台账上的 every 恒真，所以另要一条「集合规模正常」把判据钉住。 */
+t('①e 迁出台账恰为 14 条（少一条 = 有人顺手删了断言对象）',
+  MOVED.length === 14, `实为 ${MOVED.length}`);
+t('①f 14 份文件确实不在主仓（是迁出，不是被删后蒙混过关）',
+  MOVED.every((f) => !existsSync(resolve(ROOT, f))),
+  MOVED.filter((f) => existsSync(resolve(ROOT, f))).join(', '));
+t('①g 主仓 12 个插件源码目录均已迁出（防双份权威）',
+  isRetired(ROOT), sourceResidue(ROOT).join(', '));
 
 console.log('\n=== 2. 已销账文件确实接上了公共设施（防假销账）===');
 for (const [f, util] of Object.entries(DONE)) {
