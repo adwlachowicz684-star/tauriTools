@@ -1,5 +1,5 @@
 {
-  "note": "编排层跑不进 webview 的逐文件欠账。entries 必须与「独立反推的 node: import 集合」完全一致：修好一个 → 要求销账；新增一个 → 必须报红。第 43 轮起另有 blindSpots 两类，只扫 import 行看不见它们。第 44 轮销掉 store-client：node:crypto → WebCrypto、Buffer → Uint8Array/isBytes；globals 集合已空，空集合假绿由 gap 守卫 ③a′ 与webview-runtime-test 真跑兜住。",
+  "note": "编排层跑不进 webview 的逐文件欠账。entries 必须与「独立反推的 node: import 集合」完全一致：修好一个 → 要求销账；新增一个 → 必须报红。第 43 轮起另有 blindSpots 两类，只扫 import 行看不见它们。第 44 轮销掉 store-client：node:crypto → WebCrypto、Buffer → Uint8Array/isBytes；globals 集合已空，空集合假绿由 gap 守卫 ③a′ 与webview-runtime-test 真跑兜住。第 45 轮补齐扫描模块改造的前置能力：createFs 新增 isFile()，把「entry 是不是文件」这条主判据从同步 statSync 映射到异步桥接，避免改造时静默放宽。entries 仍是 3 条，未销账。",
   "entries": [
     {
       "file": "js/plugin-installer.js",
@@ -28,7 +28,7 @@
         "path"
       ],
       "why": "启动扫描目录靠 readdirSync/statSync，同步语义；扫描失败时曾拖垮整个列表，改成异步后 try/catch 边界必须保留。",
-      "unblock": "scanInstalledPlugins 改 async + 注入式 fs；保留单插件 try/catch 兜底，且主判据与兜底文案仍要刻意不同。"
+      "unblock": "scanInstalledPlugins 改 async + 注入式 fs；保留单插件 try/catch 兜底，且主判据与兜底文案仍要刻意不同。第 45 轮已补齐前置：createFs(invoke) 新增 isFile()（只取 stat 回执的「类型」一行，取值常量与 af_flow.rs 写死文案互钉，缺行/未知取值一律 throw），statSync(entryPath).isFile() 可一比一替换，不必删判据；readdir 不区分文件/目录，目录过滤改用 exists + isFile 逐项确认。"
     }
   ],
   "resolved": [

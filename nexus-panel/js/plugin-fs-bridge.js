@@ -55,13 +55,22 @@
  *    抛错至少会让 Promise 链断在这里。
  *
  * ------------------------------------------------------------
- * 刻意不提供的能力
+ * 刻意只提供 `stat` 的一个判据，不提供全字段
  * ------------------------------------------------------------
- * `stat`：后端把结构化信息塞进一段展示文本
+ * 后端把结构化信息塞进一段展示文本
  *   （`类型: 文件\n大小: 123 字节\n修改时间(Unix 秒): …\n只读: …`）。
- * 解析它要靠中文标签与换行切分，改一次文案就断 —— **脆**。
- * 需要"存不存在"用 `exists()`（后端返回稳定的 "true"/"false"）；
- * 需要大小就 `readText` 后自己算，或将来后端补一个结构化命令。
+ * 把整段当协议解析要靠中文标签与换行切分，改一次文案就断 —— **脆**。
+ *
+ * 但「是不是文件」这条判据不能没有：`installed-plugin-scan.js` 用它挡住
+ * 「manifest 说 entry 是文件、实际是个目录」——装完打开白屏且只转圈。
+ * 删掉它会**静默放宽**判据，界面上一个插件都不出现却不报错，
+ * 正是本项目反复栽的那一类。
+ *
+ * 所以下面只暴露 `isFile()`：只取「类型」一行，字面量用导出的常量
+ * 与后端 af_flow.rs 的写死文案互钉（与 EMPTY_DIR_TEXT 同一手法），
+ * 取值不是「文件/目录」两种之一时 **throw**，绝不静默返回 false。
+ * 需要大小 / 修改时间仍不提供，将来后端补结构化命令再说；
+ * 需要存不存在用 `exists()`（后端返回稳定的 "true"/"false"）。
  */
 
 /**
@@ -103,6 +112,13 @@ export async function fsOp(invoke, req) {
  * 后端真改了，那条断言会红，而不是我们对着旧文案解析出错误结果。
  */
 export const EMPTY_DIR_TEXT = '（空目录）';
+
+/** fs_op "stat" 回执里「类型」一行的前缀与两种取值（见 af_flow.rs 的 stat 分支）。
+ * 导出理由同 EMPTY_DIR_TEXT：测试要断言「JS 侧解析的文案 == Rust 侧写死的文案」，
+ * 后端改一次文案，那条断言会红，而不是我们解析出错误结果。 */
+export const STAT_TYPE_PREFIX = '类型: ';
+export const STAT_KIND_FILE = '文件';
+export const STAT_KIND_DIR = '目录';
 
 /**
  * 造一个文件能力对象。
@@ -170,6 +186,29 @@ export function createFs(invoke) {
 
     async copy(src, dst, opts = {}) {
       return call({ op: 'copy', path: src, target: dst, dryRun: opts.dryRun });
+    },
+
+    /**
+     * 是不是文件（而不是目录）。只解析 stat 回执里的「类型」一行。
+     *
+     * 拿不到类型行、或取值不是「文件 / 目录」之一，一律 throw：
+     * 静默返回 false 会把「后端文案变了」表现成「entry 不是文件」，
+     * 于是所有插件被跳过且不报错 —— 判据失效却不喊，比没有判据更糟。
+     */
+    async isFile(path) {
+      const text = await call({ op: 'stat', path });
+      const line = String(text)
+        .split('\n')
+        .map((s) => s.trim())
+        .find((s) => s.startsWith(STAT_TYPE_PREFIX));
+      if (!line) {
+        throw new Error(`fs_op stat 回执缺少类型行（后端文案变了？）: ${text}`);
+      }
+      const kind = line.slice(STAT_TYPE_PREFIX.length).trim();
+      if (kind !== STAT_KIND_FILE && kind !== STAT_KIND_DIR) {
+        throw new Error(`fs_op stat 类型取值未知（后端文案变了？）: ${kind}`);
+      }
+      return kind === STAT_KIND_FILE;
     },
 
     /**

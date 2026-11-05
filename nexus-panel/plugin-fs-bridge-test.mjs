@@ -12,7 +12,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createFs, fsOp, resolveDataDir, EMPTY_DIR_TEXT } from './js/plugin-fs-bridge.js';
+import {
+  createFs, fsOp, resolveDataDir,
+  EMPTY_DIR_TEXT, STAT_TYPE_PREFIX, STAT_KIND_FILE, STAT_KIND_DIR,
+} from './js/plugin-fs-bridge.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -252,6 +255,66 @@ console.log('— plugin-fs-bridge —');
       readFileSync(join(HERE, 'js/plugin-fs-bridge.js'), 'utf8'),
     ),
   );
+}
+
+/* ── 第 10 节：isFile —— 扫描模块销账的前置能力 ──────────
+ * installed-plugin-scan.js 的 statSync(entryPath).isFile() 是主判据之一。
+ * 改成注入式异步 fs 时，这条判据若被静默丢掉，界面表现为「一个插件
+ * 都不出现」却不报错。本节钉住：能力存在、只取一行、文案与后端互钉、
+ * 失效时抛错而不是返回 false。 */
+
+{
+  const FILE_RECEIPT = `${STAT_TYPE_PREFIX}${STAT_KIND_FILE}\n大小: 123 字节\n修改时间(Unix 秒): 1\n只读: false`;
+  const DIR_RECEIPT = `${STAT_TYPE_PREFIX}${STAT_KIND_DIR}\n大小: 0 字节\n修改时间(Unix 秒): 1\n只读: false`;
+
+  {
+    const { invoke, calls } = mockInvoke({ stat: { ok: true, text: FILE_RECEIPT } });
+    const v = await createFs(invoke).isFile('/d/plugins/a/index.html');
+    t('isFile 对文件回执返回 true', v === true);
+    t('isFile 发 op=stat', calls[0].args.op === 'stat');
+    t('isFile 传了 path', calls[0].args.path === '/d/plugins/a/index.html');
+  }
+  {
+    const { invoke } = mockInvoke({ stat: { ok: true, text: DIR_RECEIPT } });
+    t('isFile 对目录回执返回 false', (await createFs(invoke).isFile('/d/plugins/a')) === false);
+  }
+  {
+    const { invoke } = mockInvoke({ stat: { ok: true, text: '大小: 1 字节\n只读: false' } });
+    let threw = false;
+    try { await createFs(invoke).isFile('/d/x'); } catch { threw = true; }
+    t('缺类型行时抛错，不静默返回 false', threw);
+  }
+  {
+    const { invoke } = mockInvoke({ stat: { ok: true, text: `${STAT_TYPE_PREFIX}未知类型\n大小: 1 字节` } });
+    let threw = false;
+    try { await createFs(invoke).isFile('/d/x'); } catch { threw = true; }
+    t('类型取值未知时抛错', threw);
+  }
+  {
+    const { invoke } = mockInvoke({ stat: new Error('后端拒绝') });
+    let threw = false;
+    try { await createFs(invoke).isFile('/d/x'); } catch { threw = true; }
+    t('后端失败时抛错（不吞成 false）', threw);
+  }
+
+  // 后端文案互钉：JS 侧解析的字面量必须与 Rust 侧写死的一致
+  const rs = readFileSync(join(HERE, 'src-tauri/src/af_flow.rs'), 'utf8');
+  t('后端 stat 分支写死了「类型: {}」行', /"类型: \{\}\\n大小:/.test(rs));
+  // 只认 stat 分支那一行 kind 的取值。「全文件里出现过这个字样」会被别处的
+  // 同形字面量喂饱：改掉 stat 分支的 "文件" 后整文件仍有 "文件"，判据照样绿。
+  const kindLine = rs.split('\n').find((l) => l.includes('let kind =') && l.includes('meta.is_dir()'));
+  t('后端 stat 分支的 kind 行找得到（不是全文件扫字样）', typeof kindLine === 'string');
+  const kinds = kindLine ? [...kindLine.matchAll(/"([^"]+)"/g)].map((m) => m[1]) : [];
+  t('kind 行取值恰为「目录」「文件」且与 JS 常量一致',
+    kinds.length === 2 && kinds.includes(STAT_KIND_DIR) && kinds.includes(STAT_KIND_FILE));
+  t('JS 前缀常量与后端字面量一致', rs.includes(`"${STAT_TYPE_PREFIX}`) && STAT_TYPE_PREFIX === '类型: ');
+  t('后端确实有 stat 分支', /"stat" =>/.test(rs));
+
+  // 反向自检：判据不能退化成恒真 / 恒假兜底
+  const src = readFileSync(join(HERE, 'js/plugin-fs-bridge.js'), 'utf8');
+  t('isFile 含「缺类型行即 throw」分支', /缺少类型行（后端文案变了？）/.test(src));
+  t('isFile 含「取值未知即 throw」分支', /类型取值未知（后端文案变了？）/.test(src));
+  t('isFile 返回值由 kind 比较得出，不是恒值', /return kind === STAT_KIND_FILE/.test(src));
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
