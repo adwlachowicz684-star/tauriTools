@@ -181,6 +181,24 @@
       "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
     },
     {
+      "guard": "external-scan-failure-test.mjs",
+      "scripts": [
+        "test:external-scan-failure"
+      ],
+      "refs": [
+        "plugins/one/index.html",
+        "plugins/two/index.html",
+        "plugins/three/index.html"
+      ],
+      "repos": [
+        "（合成样本，无归属仓）"
+      ],
+      "kind": "样本（不读盘）",
+      "status": "样本（不读盘）",
+      "why": "该守卫里的 plugins/... 是合成夹具 / 台账字符串，不读盘；判据只要求它显式登记，既不把它误判成迁移欠账，也不让新增的引用悄悄混过集合比对。",
+      "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
+    },
+    {
       "guard": "external-test.mjs",
       "scripts": [
         "test:external"
@@ -842,6 +860,23 @@
       "status": "待迁移",
       "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
       "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "webview-runtime-test.mjs",
+      "scripts": [
+        "test:webview-runtime"
+      ],
+      "refs": [
+        "plugins/good/nexus.plugin.json",
+        "plugins/good/index.html"
+      ],
+      "repos": [
+        "（合成样本，无归属仓）"
+      ],
+      "kind": "样本（不读盘）",
+      "status": "样本（不读盘）",
+      "why": "该守卫里的 plugins/good/... 是 vm 内存 fs 的合成夹具字符串，不读盘；判据只要求它显式登记，既不把它误判成迁移欠账，也不让新增的引用悄悄混过集合比对。",
+      "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
     }
   ]
 }

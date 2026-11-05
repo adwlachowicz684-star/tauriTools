@@ -154,10 +154,36 @@ function onPluginCspViolation(d, manifest) {
 /** 设置页可能开着，给它一个刷新的机会 */
 let refreshExternalUI = null;
 
+/**
+ * 把一次扫描的异常也收成「没查成」，而不是「查过且干净」
+ * ------------------------------------------------------------
+ * scanEntry 读不到入口时返回 ok:false / hosts:[] —— 含义是这次根本没查成，
+ * 不是「没有外链」。旧版两条消费路径只看 externalEntry 与 hosts.length，
+ * 把它当成查过且干净：导入时一声不吭，设置页「重新检查」把异常吞成空清单
+ * 后还报「已检查 N 个插件」+ 成功样式。外链清单空着、smart 模式不询问，
+ * 而这是安全扫描 —— 漏报还报绿。两条路径共用这一份收口，避免再各写各的。
+ */
+function scanFailure(reason) {
+  return {
+    ok: false,
+    hosts: [],
+    error: String(reason?.error || reason?.message || reason || '未知原因'),
+  };
+}
+
 /** 安装 / 更新插件时扫一遍外链（用户要求：每次导入与更新都检查） */
 async function scanPluginExternal(p) {
-  if (!p?.entry) return { ok: false, hosts: [] };
-  const r = await extPolicy.scanEntry(p.entry, p.id);
+  if (!p?.entry) {
+    toast('⚠ 插件「' + (p?.name || p?.id || '未知') + '」的外链没查成：没有入口地址；外链清单不代表已确认干净', 'err');
+    refreshExternalUI?.();
+    return { ok: false, hosts: [] };
+  }
+  const r = await extPolicy.scanEntry(p.entry, p.id).catch(scanFailure);
+  if (r.ok === false) {
+    toast(`⚠ 插件「${p.name}」的外链没查成：${r.error || '未知原因'}；外链清单不代表已确认干净`, 'err');
+    refreshExternalUI?.();
+    return r;
+  }
   if (r.externalEntry) {
     toast(`⚠ 插件「${p.name}」的入口是外域地址，代码将来自网络`, 'err');
   } else if (r.hosts?.length && extPolicy.loadPolicy().mode === 'smart') {
@@ -172,11 +198,17 @@ async function scanPluginExternal(p) {
 async function rescanAllPlugins() {
   const list = host.getPlugins();
   let total = 0;
+  let failed = 0;
   for (const p of list) {
-    const r = await extPolicy.scanEntry(p.entry, p.id).catch(() => ({ hosts: [] }));
+    const r = await extPolicy.scanEntry(p.entry, p.id).catch(scanFailure);
+    if (r.ok === false) { failed++; continue; }
     total += r.hosts?.length || 0;
   }
-  toast(`已检查 ${list.length} 个插件，登记 ${total} 个外链`, 'ok');
+  if (failed) {
+    toast(`⚠ ${list.length} 个插件中有 ${failed} 个插件没扫成，登记 ${total} 个外链；外链清单不代表已确认干净`, 'err');
+  } else {
+    toast(`已检查 ${list.length} 个插件，登记 ${total} 个外链`, 'ok');
+  }
   refreshExternalUI?.();
 }
 
