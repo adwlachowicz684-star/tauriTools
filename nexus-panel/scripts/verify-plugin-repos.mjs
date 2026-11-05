@@ -168,7 +168,38 @@ if (stateDrift) {
     console.log('  ℹ️  状态漂移未校准；确认内容一致后可加 --fix-state');
   }
 }
+/* ------------------------------------------------------------------ *
+ * ⑤ 退场源码台账的归属仓可达性
+ * ------------------------------------------------------------------ *
+ * 主仓 retired-source-guard-test.mjs 把「哪些守卫还引用着已迁出的插件源码」
+ * 记成欠账，每行写明该判据该迁往哪个私有仓。台账若填了不存在的仓名，
+ * 那些欠账就永远销不掉、也没人发现 —— 归属仓清单必须与真实仓对齐。
+ * 只验仓名与「本轮核验通过」，不逐文件：逐文件是迁移落地时那一轮的事。
+ * --only 只核部分仓时，未核验的仓只提示、不算红。 */
+let ledgerRepos = new Set(), ledgerErr = '';
+try {
+  const L = JSON.parse(fs.readFileSync(
+    path.join(HERE, 'retired-source-guards.json'), 'utf8'));
+  for (const row of L.rows || []) {
+    for (const r of row.repos || []) {
+      if (r !== '（合成样本，无归属仓）') ledgerRepos.add(r);
+    }
+  }
+} catch (e) { ledgerErr = e.message; }
+const knownRepos = new Set(IDS.map(repoNameFor));
+const unknownRepos = [...ledgerRepos].filter((r) => !knownRepos.has(r));
+const unverified = ONLY ? [] : [...ledgerRepos]
+  .filter((r) => knownRepos.has(r) && !heads.has(r));
+if (ledgerErr || unknownRepos.length || unverified.length) {
+  console.log(`  ❌ 退场源码台账：解析失败「${ledgerErr || '无'}」`
+    + ` / 未知归属仓 ${unknownRepos.length}${unknownRepos.length ? '（' + unknownRepos.join(', ') + '）' : ''}`
+    + ` / 未核验通过 ${unverified.length}${unverified.length ? '（' + unverified.join(', ') + '）' : ''}`);
+  drift++;
+} else {
+  console.log(`  ✅ 退场源码台账：${ledgerRepos.size} 个归属仓均在 12 仓清单内${ONLY ? '' : '且本轮核验通过'}`);
+}
+
 console.log(`\n结果：${IDS_TODO.length} 仓 / ${checkedFiles} 文件 / 漂移 ${drift}`
-  + ` / 状态漂移 ${stateDrift} / 网络故障 ${netFail}`);
+  + ` / 状态漂移 ${stateDrift} / 网络故障 ${netFail} / 台账归属仓 ${ledgerRepos.size}`);
 if (netFail) process.exit(2);
 if (drift || stateDrift) process.exit(1);

@@ -1,0 +1,831 @@
+{
+  "note": "退场态源码引用欠账台账。判据 = retired-source-guard-test.mjs ②：剥注释后扫全部 test:* 脚本里的 plugins/<id>/<path> 字面量，与磁盘比对；不存在的引用必须与本台账双向一致（少登记 / 台账过期都报红）。归属仓从 plugin-repo-map.mjs 的 CAMEL 派生。⚠ 这是欠账台账，不是通行证：每条都要写明 why / unblock，销账条件是判据真正迁到源码所在仓并跑通。",
+  "capturedAt": "2026-11-05",
+  "capturedBy": "静态扫描（剥注释 + 路径字面量 + existsSync 比对），实跑抽样核对",
+  "rows": [
+    {
+      "guard": "canvas-theme-test.mjs",
+      "scripts": [
+        "test:canvas-theme"
+      ],
+      "refs": [
+        "plugins/mindmap/editor/index.html",
+        "plugins/mindmap/themes.js"
+      ],
+      "repos": [
+        "nexusPanel_plugin_mindmap"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "cargo-retirement-guard-test.mjs",
+      "scripts": [
+        "test:cargo-retirement"
+      ],
+      "refs": [
+        "plugins/dupview/pdfium.dll",
+        "plugins/dupview/x.dll"
+      ],
+      "repos": [
+        "nexusPanel_plugin_dupview"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "controls-test.mjs",
+      "scripts": [
+        "test:controls"
+      ],
+      "refs": [
+        "plugins/agent-flow/components/Inspector.tsx",
+        "plugins/agent-flow/components/McpServersPanel.tsx",
+        "plugins/agent-flow/components/inspectors/shared.tsx",
+        "plugins/agent-flow/styles.css",
+        "plugins/color-picker/ColorPicker.tsx",
+        "plugins/color-picker/SvPanel.tsx",
+        "plugins/color-picker/style.css",
+        "plugins/mindmap/panels.js",
+        "plugins/mindmap/styles.css",
+        "plugins/project-group/App.tsx",
+        "plugins/project-group/components/CardGrid.tsx",
+        "plugins/project-group/components/ContentPanel.tsx",
+        "plugins/project-group/components/DialogsHub.tsx",
+        "plugins/project-group/hooks/useFpx.ts",
+        "plugins/project-group/hooks/useLayoutMemory.ts",
+        "plugins/project-group/style.css"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_colorPicker",
+        "nexusPanel_plugin_mindmap",
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "credential-vault-persist-test.mjs",
+      "scripts": [
+        "test:credential-vault-persist"
+      ],
+      "refs": [
+        "plugins/agent-flow/hooks/useCredentialVault.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "crossend-fault-injection-test.mjs",
+      "scripts": [
+        "test:crossend-fault"
+      ],
+      "refs": [
+        "plugins/project-group/api.ts",
+        "plugins/project-group/types.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "dead-class-test.mjs",
+      "scripts": [
+        "test:dead-class"
+      ],
+      "refs": [
+        "plugins/agent-flow/styles.css",
+        "plugins/color-picker/style.css",
+        "plugins/mindmap/editor/kityminder.core.css",
+        "plugins/mindmap/styles.css",
+        "plugins/project-group/components/CardGrid.tsx",
+        "plugins/project-group/style.css",
+        "plugins/task-board/styles.css"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_colorPicker",
+        "nexusPanel_plugin_mindmap",
+        "nexusPanel_plugin_projectGroup",
+        "nexusPanel_plugin_taskBoard"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "dir-dialog-fail-test.mjs",
+      "scripts": [
+        "test:dir-dialog-fail"
+      ],
+      "refs": [
+        "plugins/agent-flow/components/DirPicker.tsx",
+        "plugins/project-group/components/DirDialog.tsx"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "drag-reorder-test.mjs",
+      "scripts": [
+        "test:drag-reorder"
+      ],
+      "refs": [
+        "plugins/project-group/utils/dragSort.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "err-diag-test.mjs",
+      "scripts": [
+        "test:errdiag"
+      ],
+      "refs": [
+        "plugins/demo/index.html"
+      ],
+      "repos": [
+        "（合成样本，无归属仓）"
+      ],
+      "kind": "样本（不读盘）",
+      "status": "样本（不读盘）",
+      "why": "该守卫里的 plugins/... 是合成夹具 / 台账字符串，不读盘；判据只要求它显式登记，既不把它误判成迁移欠账，也不让新增的引用悄悄混过集合比对。",
+      "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
+    },
+    {
+      "guard": "external-test.mjs",
+      "scripts": [
+        "test:external"
+      ],
+      "refs": [
+        "plugins/x/index.html"
+      ],
+      "repos": [
+        "（合成样本，无归属仓）"
+      ],
+      "kind": "样本（不读盘）",
+      "status": "样本（不读盘）",
+      "why": "该守卫里的 plugins/... 是合成夹具 / 台账字符串，不读盘；判据只要求它显式登记，既不把它误判成迁移欠账，也不让新增的引用悄悄混过集合比对。",
+      "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
+    },
+    {
+      "guard": "folder-picker-test.mjs",
+      "scripts": [
+        "test:folder-picker"
+      ],
+      "refs": [
+        "plugins/agent-flow/components/DirPicker.tsx",
+        "plugins/project-group/components/DirDialog.tsx"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "follow-theme-test.mjs",
+      "scripts": [
+        "test:follow-theme"
+      ],
+      "refs": [
+        "plugins/agent-flow/styles.css"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "ime-esc-guard-test.mjs",
+      "scripts": [
+        "test:ime-esc-guard"
+      ],
+      "refs": [
+        "plugins/agent-flow/components/ArgCell.tsx",
+        "plugins/agent-flow/components/NodeTip.tsx",
+        "plugins/color-picker/ColorPicker.tsx",
+        "plugins/mindmap/tab-drag.js"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_colorPicker",
+        "nexusPanel_plugin_mindmap"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "ime-guard-cross-plugin-test.mjs",
+      "scripts": [
+        "test:ime-guard-cross"
+      ],
+      "refs": [
+        "plugins/agent-flow/components/CanvasLibrary.tsx",
+        "plugins/agent-flow/components/CanvasTabs.tsx",
+        "plugins/agent-flow/components/CredentialPanel.tsx",
+        "plugins/agent-flow/components/DirPicker.tsx",
+        "plugins/project-group/testkit.mjs",
+        "plugins/project-group/utils/ime.ts",
+        "plugins/task-board/App.tsx"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_projectGroup",
+        "nexusPanel_plugin_taskBoard"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "inline-strip-audit-test.mjs",
+      "scripts": [
+        "test:inline-strip-audit"
+      ],
+      "refs": [
+        "plugins/mindmap/mm-export-name-test.mjs",
+        "plugins/mindmap/mm-shrink-name-test.mjs",
+        "plugins/project-group/backup-interval-test.mjs",
+        "plugins/project-group/config-corrupt-notice-test.mjs",
+        "plugins/project-group/mcp-addcard-guard-test.mjs",
+        "plugins/project-group/mcp-enum-args-test.mjs",
+        "plugins/project-group/mcp-string-args-test.mjs",
+        "plugins/project-group/mcp-typed-args-test.mjs",
+        "plugins/project-group/saveguard-test.mjs",
+        "plugins/project-group/shell-icon-notify-test.mjs",
+        "plugins/project-group/stack-reveal-once-test.mjs",
+        "plugins/project-group/watch-scope-test.mjs",
+        "plugins/project-group/watch-toggle-test.mjs",
+        "plugins/task-board/task-board-test.mjs"
+      ],
+      "repos": [
+        "nexusPanel_plugin_mindmap",
+        "nexusPanel_plugin_projectGroup",
+        "nexusPanel_plugin_taskBoard"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "mcp-server-save-test.mjs",
+      "scripts": [
+        "test:mcp-server-save"
+      ],
+      "refs": [
+        "plugins/agent-flow/components/McpServersPanel.tsx",
+        "plugins/agent-flow/engine/mcpServers.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "md-dedup-test.mjs",
+      "scripts": [
+        "test:md-dedup"
+      ],
+      "refs": [
+        "plugins/md-editor/index.html",
+        "plugins/md-editor/index.js"
+      ],
+      "repos": [
+        "nexusPanel_plugin_mdEditor"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "media-probe-silence-test.mjs",
+      "scripts": [
+        "test:media-probe-silence"
+      ],
+      "refs": [
+        "plugins/mindmap/panels.js"
+      ],
+      "repos": [
+        "nexusPanel_plugin_mindmap"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "mindmap-backup-list-test.mjs",
+      "scripts": [
+        "test:mindmap-backup-list"
+      ],
+      "refs": [
+        "plugins/mindmap/index.js",
+        "plugins/mindmap/panels.js"
+      ],
+      "repos": [
+        "nexusPanel_plugin_mindmap"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "native-assets-test.mjs",
+      "scripts": [
+        "test:native-assets"
+      ],
+      "refs": [
+        "plugins/icon-picker/index.html",
+        "plugins/icon-picker/index.js",
+        "plugins/icon-picker/preseticons/x.ico",
+        "plugins/project-group/index.html",
+        "plugins/project-group/presetIcons.ts",
+        "plugins/project-group/preseticons/x.ico"
+      ],
+      "repos": [
+        "nexusPanel_plugin_iconPicker",
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "open-plugin-test.mjs",
+      "scripts": [
+        "test:open-plugin"
+      ],
+      "refs": [
+        "plugins/project-group/App.tsx"
+      ],
+      "repos": [
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "plugin-admit-test.mjs",
+      "scripts": [
+        "test:plugin-admit"
+      ],
+      "refs": [
+        "plugins/brand-new-plugin/x.js",
+        "plugins/home/x.js",
+        "plugins/mindmap/x.js",
+        "plugins/settings/x.js"
+      ],
+      "repos": [
+        "（合成样本，无归属仓）"
+      ],
+      "kind": "样本（不读盘）",
+      "status": "样本（不读盘）",
+      "why": "该守卫里的 plugins/... 是合成夹具 / 台账字符串，不读盘；判据只要求它显式登记，既不把它误判成迁移欠账，也不让新增的引用悄悄混过集合比对。",
+      "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
+    },
+    {
+      "guard": "plugin-identity-test.mjs",
+      "scripts": [
+        "test:plugin-identity"
+      ],
+      "refs": [
+        "plugins/agent-flow/index.html"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "plugin-manifest-sync-test.mjs",
+      "scripts": [
+        "test:plugin-manifest-sync"
+      ],
+      "refs": [
+        "plugins/fx/index.html"
+      ],
+      "repos": [
+        "（合成样本，无归属仓）"
+      ],
+      "kind": "样本（不读盘）",
+      "status": "样本（不读盘）",
+      "why": "该守卫里的 plugins/... 是合成夹具 / 台账字符串，不读盘；判据只要求它显式登记，既不把它误判成迁移欠账，也不让新增的引用悄悄混过集合比对。",
+      "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
+    },
+    {
+      "guard": "plugin-panel-actions-test.mjs",
+      "scripts": [
+        "test:plugin-panel-actions"
+      ],
+      "refs": [
+        "plugins/log/index.html",
+        "plugins/x/index.html"
+      ],
+      "repos": [
+        "（合成样本，无归属仓）"
+      ],
+      "kind": "样本（不读盘）",
+      "status": "样本（不读盘）",
+      "why": "该守卫里的 plugins/... 是合成夹具 / 台账字符串，不读盘；判据只要求它显式登记，既不把它误判成迁移欠账，也不让新增的引用悄悄混过集合比对。",
+      "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
+    },
+    {
+      "guard": "regression-guard-test.mjs",
+      "scripts": [
+        "test:regression"
+      ],
+      "refs": [
+        "plugins/agent-flow/components/Sidebar.tsx",
+        "plugins/agent-flow/engine/customPresets.ts",
+        "plugins/agent-flow/engine/expr.ts",
+        "plugins/agent-flow/engine/ops.ts",
+        "plugins/agent-flow/engine/runners/table.ts",
+        "plugins/agent-flow/nodes/defs/join.tsx",
+        "plugins/color-picker/index.js",
+        "plugins/icon-picker/iconNames.js",
+        "plugins/mindmap/filelist.js",
+        "plugins/mindmap/index.js",
+        "plugins/mindmap/styles.css",
+        "plugins/project-group/components/CardGrid.tsx",
+        "plugins/project-group/components/dialogCards.tsx",
+        "plugins/project-group/contract-scan.mjs",
+        "plugins/project-group/hooks/useFpx.ts",
+        "plugins/project-group/presetIcons.ts",
+        "plugins/project-group/utils/dragSort.ts",
+        "plugins/task-board/core.mjs",
+        "plugins/task-board/types.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_iconPicker",
+        "nexusPanel_plugin_mindmap",
+        "nexusPanel_plugin_projectGroup",
+        "nexusPanel_plugin_taskBoard"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "responsive-test.mjs",
+      "scripts": [
+        "test:responsive"
+      ],
+      "refs": [
+        "plugins/agent-flow/styles.css",
+        "plugins/mindmap/styles.css",
+        "plugins/project-group/style.css"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_mindmap",
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "retired-supply-test.mjs",
+      "scripts": [
+        "test:retired-supply"
+      ],
+      "refs": [
+        "plugins/agent-flow/index.html",
+        "plugins/dupview/probe.mjs"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "runtime-plugin-test.mjs",
+      "scripts": [
+        "test:runtime-plugins"
+      ],
+      "refs": [
+        "plugins/task-board/index.html"
+      ],
+      "repos": [
+        "nexusPanel_plugin_taskBoard"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "service-plugin-test.mjs",
+      "scripts": [
+        "test:service-plugin"
+      ],
+      "refs": [
+        "plugins/color-picker/ColorPicker.tsx",
+        "plugins/color-picker/SvPanel.tsx",
+        "plugins/color-picker/color.ts",
+        "plugins/color-picker/main.tsx",
+        "plugins/color-picker/style.css",
+        "plugins/demo-service/index.js",
+        "plugins/icon-picker/index.js",
+        "plugins/md-editor/index.js",
+        "plugins/project-group/App.tsx",
+        "plugins/project-group/components/ColorPicker.tsx",
+        "plugins/project-group/components/SvPanel.tsx",
+        "plugins/project-group/components/dialogCards.tsx",
+        "plugins/project-group/components/dialogs.tsx",
+        "plugins/project-group/utils/color.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_colorPicker",
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "settings-test.mjs",
+      "scripts": [
+        "test:settings"
+      ],
+      "refs": [
+        "plugins/color-picker/ColorPicker.tsx"
+      ],
+      "repos": [
+        "nexusPanel_plugin_colorPicker"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "single-file-report-test.mjs",
+      "scripts": [
+        "test:single-file-report"
+      ],
+      "refs": [
+        "plugins/icon-picker/index.html"
+      ],
+      "repos": [
+        "nexusPanel_plugin_iconPicker"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "style-audit-test.mjs",
+      "scripts": [
+        "test:audit"
+      ],
+      "refs": [
+        "plugins/demo/styles.css",
+        "plugins/project-group/components/CardGrid.tsx",
+        "plugins/project-group/components/PresetIconGrid.tsx",
+        "plugins/project-group/style.css"
+      ],
+      "repos": [
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "style-tokens-test.mjs",
+      "scripts": [
+        "test:tokens"
+      ],
+      "refs": [
+        "plugins/agent-flow/styles.css",
+        "plugins/mindmap/styles.css",
+        "plugins/project-group/style.css"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_mindmap",
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "task-board-corrupt-guard-test.mjs",
+      "scripts": [
+        "test:tb-corrupt-guard"
+      ],
+      "refs": [
+        "plugins/task-board/core.mjs",
+        "plugins/task-board/lib/store.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_taskBoard"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "task-board-scan-restore-test.mjs",
+      "scripts": [
+        "test:tb-scan-restore"
+      ],
+      "refs": [
+        "plugins/task-board/App.tsx",
+        "plugins/task-board/lib/store.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_taskBoard"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "task-board-ui-guard-test.mjs",
+      "scripts": [
+        "test:tb-ui-guard"
+      ],
+      "refs": [
+        "plugins/task-board/App.tsx",
+        "plugins/task-board/Settings.tsx"
+      ],
+      "repos": [
+        "nexusPanel_plugin_taskBoard"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "tauri-http-test.mjs",
+      "scripts": [
+        "test:tauri-http"
+      ],
+      "refs": [
+        "plugins/agent-flow/lib/tauri.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "test-coverage-guard-test.mjs",
+      "scripts": [
+        "test:coverage-guard"
+      ],
+      "refs": [
+        "plugins/agent-flow/scripts/run-tests.sh"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "theme-mode-persist-test.mjs",
+      "scripts": [
+        "test:af-theme-mode-persist"
+      ],
+      "refs": [
+        "plugins/agent-flow/App.tsx",
+        "plugins/agent-flow/components/Inspector.tsx",
+        "plugins/agent-flow/components/inspectors/CanvasConfigPanel.tsx"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "theme-tokens-test.mjs",
+      "scripts": [
+        "test:theme-tokens"
+      ],
+      "refs": [
+        "plugins/agent-flow/styles.css",
+        "plugins/mindmap/styles.css"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow",
+        "nexusPanel_plugin_mindmap"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "toolbar-test.mjs",
+      "scripts": [
+        "test:toolbar"
+      ],
+      "refs": [
+        "plugins/agent-flow/App.tsx",
+        "plugins/agent-flow/components/CredentialPanel.tsx",
+        "plugins/agent-flow/main.tsx",
+        "plugins/shape/module.js"
+      ],
+      "repos": [
+        "nexusPanel_plugin_agentFlow"
+      ],
+      "kind": "混合",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    },
+    {
+      "guard": "typecheck-guard-test.mjs",
+      "scripts": [
+        "test:typecheck-guard"
+      ],
+      "refs": [
+        "plugins/project-group/App.tsx",
+        "plugins/project-group/hooks/useCardHotkeys.ts",
+        "plugins/project-group/types.ts"
+      ],
+      "repos": [
+        "nexusPanel_plugin_projectGroup"
+      ],
+      "kind": "真实读取",
+      "status": "待迁移",
+      "why": "第 38 轮「退场」把插件源码整体迁到独立私有仓，主仓 plugins/<id>/ 只剩空目录；该守卫仍按本地路径读取，实跑崩在 ENOENT / ERR_MODULE_NOT_FOUND，一条断言都跑不到。上一轮仅口头报了 2 套，实测是 43 个脚本、153 条引用。",
+      "unblock": "把该守卫迁到源码所在仓（在仓根运行，plugins/<id>/ 路径即存在），由该仓 package.json 登记并接 CI；主仓撤下对应 test:* 登记后，从台账移除此条并销账。"
+    }
+  ]
+}
