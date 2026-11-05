@@ -43,8 +43,29 @@ export const CAMEL = {
   'task-board': 'taskBoard',
 };
 
+/**
+ * 与 12 个可安装插件**并列平级**、但不参与产物链的外部工具型插件。
+ *
+ * github-manager：用 GitHub API 管理账号下全部仓库的插件（独立 Node 进程 +
+ * 本地 Web 仪表盘），不是 iframe 插件，没有可挂载的入口页面。
+ *
+ * 为什么不塞进 CAMEL：
+ *   · build-plugin-repos.mjs 的 IDS = Object.keys(CAMEL)，是建仓 / 骨架 /
+ *     增量刷新 / 核验四条通道的遍历源。塞进去会把共享镜像和
+ *     nexus.plugin.json 推到这个仓库，覆盖 Node CLI 的真实实现；
+ *   · 守卫按 registry 的 12 个 iframe 插件钉住「CAMEL 恰为 12 条」，
+ *     多一条会让 12 份 manifest 的交叉校验一起红；
+ *   · 给它发 manifest 反而制造假绿：宿主按 repo 去查 release 必然扑空，
+ *     界面只显示「这个插件没有可安装版本」。
+ * 所以只登记仓库名，不发 manifest / 不发 release 产物，也不进 IDS。
+ */
+export const EXTERNAL_PLUGINS = {
+  'github-manager': 'githubManager',
+};
+
+/** 可安装插件与外部工具型插件共用同一个仓库名规则，全表仍只有这一份。 */
 export function repoNameFor(id) {
-  const c = CAMEL[id];
+  const c = CAMEL[id] || EXTERNAL_PLUGINS[id];
   if (!c) throw new Error(`未登记的插件 id: ${id}（新增插件须同步补 CAMEL 映射）`);
   return `${REPO_PREFIX}${c}`;
 }
