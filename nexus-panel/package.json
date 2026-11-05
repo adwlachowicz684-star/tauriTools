@@ -39,7 +39,6 @@
     "test:admit-scan": "node scripts/scan-admit.mjs",
     "test:cmd-scan": "node scripts/scan-commands.mjs",
     "test:deps-scan": "node scripts/scan-deps.mjs --check",
-    "test:crossend-contract": "node cross-end-check.mjs --strict",
     "test:crossend-fault": "node crossend-fault-injection-test.mjs",
     "test:crossend-ci-guard": "node crossend-ci-guard-test.mjs",
     "test:dead-class": "node dead-class-test.mjs",

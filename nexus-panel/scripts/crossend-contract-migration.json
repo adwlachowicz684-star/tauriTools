@@ -1,0 +1,26 @@
+{
+  "note": "第 37 轮：主仓 test:crossend-contract 的两条红经实测恒为「契约源缺失」(api.ts / types.ts 已迁独立仓)，不是真契约漂移。真校验已在 projectGroup 仓 CI 跑绿，故把这条必然红从主仓体检单迁走。迁移不是删了了事：去向、证据、主仓仍保留的验证路径都记在这里，由 crossend-ci-guard-test.mjs ③ 节逐条钉住。",
+  "from": "test:crossend-contract",
+  "migratedAt": "2026-11-05",
+  "to": {
+    "repo": "nexusPanel_plugin_projectGroup",
+    "tsDir": "plugins/project-group",
+    "workflow": ".github/workflows/contract.yml",
+    "template": "templates/plugin-repo/contract.yml"
+  },
+  "why": "插件源码退场后主仓不再持有 TS 侧契约源；cross-end-check.mjs 的 readSource 读不到 api.ts / types.ts 时按 fail-closed 报红，于是 test:crossend-contract 无条件失败 2 项。留着它，体检单永远不可能全绿，而它报的并不是缺陷。",
+  "unblock": "契约双端比对改由持有 TS 契约的插件仓 CI 承担：checkout 本仓 TS、匿名 shallow clone 公开主仓取 Rust 声明与校验器，跑 --strict。主仓体检单由 test:crossend-fault 守住校验器六类判据，联网探针随时可真验。",
+  "evidence": {
+    "ciRun": "41963691202",
+    "head": "ff65c19d",
+    "conclusion": "success",
+    "probe": "scripts/probe-crossend-ci.mjs",
+    "probeSummary": "13 项 / 0 失败"
+  },
+  "mainRepoKeeps": [
+    "crossend:check —— 手工入口，仍可跑 cross-end-check.mjs 输出报告",
+    "test:crossend-fault —— 六类判据注入真跑 25/0，保证校验器本身没坏",
+    "test:crossend-ci-guard —— 钉住模板、适用仓集合与本迁移台账",
+    "scripts/probe-crossend-repos.mjs / probe-crossend-ci.mjs —— 联网真契约比对，不进 CI"
+  ]
+}
