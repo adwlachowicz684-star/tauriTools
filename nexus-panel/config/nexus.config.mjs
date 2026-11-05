@@ -105,7 +105,10 @@ export const BASE_CSP = {
   'style-src': ["'self'", "'unsafe-inline'"],
   'img-src': ["'self'", 'data:', 'asset:', 'http://asset.localhost', 'blob:'],
   'font-src': ["'self'", 'data:'],
-  'connect-src': ["'self'", 'ipc:', 'http://ipc.localhost', 'http://127.0.0.1:*', 'http://localhost:*'],
+  // https://api.github.com：github-manager 插件（nexusPanel_plugin_githubManager）
+  // 用 PAT 直连 GitHub REST 管理账号仓库。CSP 只按源放行，令牌由用户在插件内
+  // 输入并存宿主 store，不下发到页面 HTML；其余 GitHub 域名一律不放行。
+  'connect-src': ["'self'", 'ipc:', 'http://ipc.localhost', 'http://127.0.0.1:*', 'http://localhost:*', 'https://api.github.com'],
   'media-src': ["'self'", 'asset:', 'http://asset.localhost', 'blob:'],
   // frame-src 必须带 asset 源：运行时加载的 iframe 插件位于 asset.localhost 源
   // （convertFileSrc 转出来的资源协议 URL），只有 'self' 会被整体拦掉，
