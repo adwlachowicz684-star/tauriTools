@@ -23,6 +23,11 @@
  * 两边合起来必须**恰好**等于 registry 的全集（第 0 节的规模断言），
  * 少一个插件、多一个孤儿目录都会红。
  *
+ * ⚠️ 分流的依据是 registry 的 `runtime` 标记，**不是**磁盘上 plugins/ 下
+ * 有哪些目录。源码迁出后那 12 个目录只剩空壳（0 文件），git 不追踪空目录，
+ * 干净 clone 里根本没有、有残留的工作区里却会多出 12 个 —— 拿 dirs.length
+ * 当 module 集合，同一条断言会随本地残留漂移（第 38 轮重写时踩过）。
+ *
  * 刻意**不**做的：不校验三元 entry 指向的文件是否存在。
  * entry 随模式变（`noBuild ? './plugins/x/index.js' : './plugins/x/module.tsx'`），
  * 静态扫只能拿到两个字符串字面量，而"哪个生效"取决于运行时全局。
@@ -103,9 +108,12 @@ t('（前置）扫到了 module 插件目录（不是空集）', dirs.length >= 
 t('（前置）扫到了 registry id（不是空集）', ids.length >= 20, `${ids.length} 个`);
 t('（前置）每条 registry 登记都抽到了结构化条目', entries.length === ids.length,
   `${entries.length} vs ${ids.length}`);
+/* ⛔ 不能拿 dirs.length 当 module 集合：退场后 plugins/ 下残留的 12 个空
+ * 目录让它在「干净 clone = 13」与「有残留 = 25」之间漂移。分流的唯一依据
+ * 是 registry 的 runtime 标记，与磁盘状态无关。 */
 t('（前置）两类供给合起来恰为 registry 全集（口径没分叉）',
-  ids.length === dirs.length + runtimeIds.length,
-  `registry ${ids.length} = module ${dirs.length} + runtime ${runtimeIds.length}`);
+  ids.length === moduleIds.length + runtimeIds.length,
+  `registry ${ids.length} = module ${moduleIds.length} + runtime ${runtimeIds.length}`);
 
 /* ------------------------------------------------------------------
  * 第 1 节：目录有、registry 无 —— 插件永不显示
@@ -140,9 +148,25 @@ t('每个 module 插件都有 plugins/<id>/ 目录',
  * 第 4 节：module 目录名与 id 逐字节相同（不做归一化）
  * ---------------------------------------------------------------- */
 {
-  const set = new Set(moduleIds);
+  /* runtime 插件的 plugins/<id>/ 是退场后残留的空壳（0 文件），不属于
+   * module 供给，不能拿 moduleIds 去要求它逐字节匹配 —— 第 38 轮重写时
+   * 正是这么写错的，恒红 1 条。 */
+  const stray = dirs.filter((d) => !ids.includes(d));
   t('module 目录名与 id 逐字节相同（不做大小写/空白归一化）',
-    dirs.every((d) => set.has(d)), `${dirs.length} 个目录`);
+    moduleIds.every((id) => dirs.includes(id)) && stray.length === 0,
+    `module ${moduleIds.length} 个 / 磁盘目录 ${dirs.length} 个（runtime 空壳不计）`);
+  /* 退场彻底性：源码侧目录若还在，里面不许再有文件。git 不追踪空目录，
+   * 干净 clone 下目录不存在也算通过；一旦有人把旧 index.html 放回去，
+   * dev 态的 SPA fallback 套娃会复现，这条立刻报红。 */
+  const hasFiles = (d) => {
+    if (!existsSync(d)) return false;
+    return readdirSync(d, { withFileTypes: true }).some((e) =>
+      e.isFile() || hasFiles(join(d, e.name)));
+  };
+  const leftover = runtimeIds.filter((id) => hasFiles(join(HERE, 'plugins', id)));
+  t('runtime 插件源码已退场（plugins/<id>/ 下不留文件）',
+    leftover.length === 0,
+    leftover.length ? `残留：${leftover.join(', ')}` : `${runtimeIds.length} 个全退场`);
 }
 
 /* ------------------------------------------------------------------
