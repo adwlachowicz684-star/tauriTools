@@ -850,12 +850,18 @@ fn spawn_notify(notify_url: &str, body: &str) {
     if notify_url.trim().is_empty() {
         return;
     }
-    let url = notify_url.to_string();
+    /* ⛔ 与前端 fetch 同一份归一：fetch 会自动去掉 URL 前后空白，
+       而这里原来用未 trim 的原值 strip_prefix("http://") ——
+       notifyUrl=" http://127.0.0.1:9/hook " 界面能发、这一侧静默忽略。
+       trim 也统一写进 stderr 的地址，排查时看到的是真正要连的那个。 */
+    let url = notify_url.trim().to_string();
     let body = body.to_string();
     thread::spawn(move || {
-        // 只认 http://host[:port]/path，https 目标不在本机 webhook 场景内
-        let rest = match url.strip_prefix("http://") {
-            Some(r) => r,
+        // 只认 http://host[:port]/path，https 目标不在本机 webhook 场景内。
+        // scheme 大小写不敏感（fetch 也是），但路径大小写必须原样保留。
+        let lower = url.to_ascii_lowercase();
+        let rest = match lower.strip_prefix("http://") {
+            Some(_) => &url["http://".len()..],
             None => {
                 eprintln!("[task-board] 通知地址不是 http://，已忽略: {}", url);
                 return;
