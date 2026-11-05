@@ -1056,7 +1056,15 @@ pub fn mcp_tools() -> Vec<Value> {
             json!({
                 "id":   { "type": "string", "description": "窗口 ID，如 dev-a" },
                 "name": { "type": "string", "description": "显示名，可选" },
-                "role": { "type": "string", "enum": ["dev", "review", "manual"], "description": "缺省 dev" },
+                /*
+                  ⛔ 原来写死 enum ["dev","review","manual"]，而前端 Agent.role
+                  是普通 string、normalizeStore 认任意非空串、HTTP POST /api/agents
+                  也完全不校验 —— 严格按 inputSchema 做本地校验的 MCP 客户端
+                  会把一个服务端其实接受的值直接拒掉。与之前两处 status 写死
+                  7 个默认状态是同一类：**schema 把门关着、实现却开着**。
+                  这里只是显示标签，不参与任何判据，不做枚举。
+                */
+                "role": { "type": "string", "description": "窗口角色，自由文本（界面只作显示，不参与任何判据）；缺省 dev" },
             }),
             vec!["id"],
         ),
@@ -2132,11 +2140,27 @@ fn estimate_of(body: &Value) -> f64 {
     }
 }
 
-fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
-    let title = str_field(body, "title").unwrap_or_default();
-    if title.trim().is_empty() {
+/*
+  ⛔ 标题必填的判据以前只写在 create_task 里，`patch_task` 没有：
+  AI 经 PATCH 传 {"title": "  "} 能把标题清空（str_field 统一 trim 之后
+  就是空串）。而前端两处都挡着 —— 新建弹窗 `disabled={!title.trim()}`、
+  列表行内编辑 `onCommit={(v) => { if (v) ... }}`，界面**自己永远造不出**
+  空标题的任务；前端读盘虽有 `str(t.title,'') || '(无标题)'` 兜底，
+  于是 AI 读 tasks.json 看到 title:""、界面显示「(无标题)」，
+  两条通道说法不一致，且这个状态只有 AI 能造出来。
+
+  抽成一份共用判据：create 与 patch 都调它，以后加第三个写入口也不会漏。
+*/
+fn validate_title(v: &str) -> Result<String, String> {
+    let t = v.trim().to_string();
+    if t.is_empty() {
         return Err("title 不能为空".to_string());
     }
+    Ok(t)
+}
+
+fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
+    let title = validate_title(&str_field(body, "title").unwrap_or_default())?;
     /* 文本字段一律 trim：AI 手写 "  P4  " 不该因为多了空格就建不了任务 */
     let priority = str_field(body, "priority")
         .unwrap_or_else(|| "P2".to_string())
@@ -2172,7 +2196,7 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     let reporter = str_field(body, "reporter").unwrap_or_else(|| "manual".to_string());
     let mut task = Map::new();
     task.insert("id".to_string(), json!(id));
-    task.insert("title".to_string(), json!(title.trim()));
+    task.insert("title".to_string(), json!(title));
     task.insert(
         "detail".to_string(),
         json!(str_field(body, "detail").unwrap_or_default()),
@@ -2252,6 +2276,10 @@ fn patch_task(
         _ => "manual".to_string(),
     };
     let note = str_field(body, "note").unwrap_or_default();
+    /* 与 create 同一份判据：PATCH 不许把标题清空（界面两处都挡着） */
+    if let Some(v) = str_field(body, "title") {
+        validate_title(&v)?;
+    }
 
     let (snapshot, became_review) = {
         let tasks = store["tasks"].as_array_mut().ok_or("tasks 不是数组")?;
@@ -2265,6 +2293,9 @@ fn patch_task(
         // 「本次是否从别处进入 review」：进过的不再算（见下方 became 处的注释），
         // 初值 false，由下方 status 流转段置位。此前漏了声明，编译不过（已补）。
         let mut entered_review = false;
+        /* note 是否已被状态流转那条历史消费（作为后缀）。末尾据此决定
+           要不要再单独记一条 action=note —— 不能记两遍。 */
+        let mut note_in_status = false;
         /*
           ⛔ priority 与 create_task **必须同一判据**。
           原来 PATCH 直接把任意字符串塞进 obj，create 却校验 ——
@@ -2401,6 +2432,9 @@ fn patch_task(
                 }
                 let suffix = if note.is_empty() { String::new() } else { format!("（{}）", note) };
                 push_history(obj, &by, "status", &format!("{} -> {}{}", old, status, suffix));
+                /* 与前端 applyTransitionIn 同一份形状：note 是 status 历史的后缀，
+                   不再另写一条 action=note（否则同一备注在详情里出现两遍）。 */
+                note_in_status = !note.is_empty();
             }
         }
         /*
@@ -2425,9 +2459,25 @@ fn patch_task(
             }
         }
         if !changed {
+            /*
+              ⛔ 修前统一报「没有可应用的变更」——只传备注时 AI 会反复重试
+              各种参数，而正确做法是改用 tb_add_event。报错不指路，
+              和「流转失败文案把人往任务不存在上引」是同一类。
+              PATCH 的 note 语义是「随字段变更附带的备注」，不是独立事件。
+            */
+            if !note.is_empty() {
+                return Err("只有备注没有字段变更：追加备注请用 tb_add_event（POST /api/tasks/{id}/events）".to_string());
+            }
             return Err("没有可应用的变更".to_string());
         }
-        if !note.is_empty() {
+        /*
+          ⛔ 修前无条件 push 一条 action=note：状态流转时 note 已作为 status
+          历史的后缀写过一遍（见上方 suffix），末尾再写一次 → 同一个备注
+          在详情面板里出现两条，用户以为发生了两件事。
+          实测 {"status":"doing","note":"开始"} 修前落盘 2 条历史、修后 1 条。
+          只有「没走状态流转」的变更（改标题/优先级/加类型…）才单独记备注。
+        */
+        if !note.is_empty() && !note_in_status {
             push_history(obj, &by, "note", &note);
         }
         obj.insert("updatedAt".to_string(), json!(now_ms()));
