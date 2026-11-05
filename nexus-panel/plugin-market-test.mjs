@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto';
 
 import { parseTar, unpackTarGz } from './js/plugin-tarball.js';
 import { createPluginMarket, inferAssetId } from './js/plugin-market.js';
+import { createNodeFs } from './scripts/node-fs-adapter.mjs';
 import { createPluginDataStore } from './js/plugin-data-store.js';
 import { DATA_DIR_NAME } from './js/plugin-data-store.js';
 import { MANIFEST_FILE } from './js/plugin-manifest.js';
@@ -102,15 +103,8 @@ function pluginEntries(id, version = '1.0.0', extra = []) {
 /* ==========================================================================
    假 fetch / 假后端 fs —— 只替掉网络与 appData 边界，落盘全走真盘
    ========================================================================== */
-function nodeFsAdapter() {
-  return {
-    async exists(p) { return existsSync(p); },
-    async readText(p) { return readFileSync(p, 'utf8'); },
-    async writeText(p, s) { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, s); },
-    async move(a, b) { mkdirSync(dirname(b), { recursive: true }); renameSync(a, b); },
-    async remove(p) { rmSync(p, { recursive: true, force: true }); },
-  };
-}
+/* Node 侧 fs 适配器统一走 scripts/node-fs-adapter.mjs（第 46 轮抽公共），
+   不再在本文件里另写一份：缺 readdir/isFile 时两份会各自补，坏一份不喊。 */
 function jsonRes(obj) {
   return { status: 200, json: async () => obj };
 }
@@ -159,11 +153,12 @@ function makeMarket(cfg) {
   const ledgerFile = join(base, 'ledger', LEDGER_FILE);
   const dataRoot = join(base, 'appdata');
   mkdirSync(dirname(ledgerFile), { recursive: true });
+  const scanFs = createNodeFs();
   const dataStore = createPluginDataStore({
-    fs: nodeFsAdapter(), dataRoot, legacyStorage: null,
+    fs: scanFs, dataRoot, legacyStorage: null,
   });
   const market = createPluginMarket({
-    installedDir, ledgerFile, dataRoot, dataStore,
+    installedDir, ledgerFile, dataRoot, dataStore, fs: scanFs,
     staticPlugins: cfg.staticPlugins || [],
     fetch: makeFetch(cfg),
     headers: cfg.headers || null,
@@ -239,7 +234,7 @@ console.log('\n--- 3. 输入 GitHub 地址 → 装好可用 ---');
     ledgerRaw.plugins.demo?.source === 'market');
 
   /* 发现：扫描目录即出现，不需要改任何静态清单 */
-  const listed = market.list();
+  const listed = await market.list();
   t('list() 出现刚装的插件', listed.plugins.some((p) => p.id === 'demo' && p.installed === true));
   t('list() 没有把越界/暂存目录当插件', listed.found === 1, `found=${listed.found}`);
 

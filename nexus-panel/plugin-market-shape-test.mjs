@@ -123,8 +123,20 @@ try {
   t('①d 必备方法齐全', ['list', 'checkUpdates', 'readData', 'writeData', 'install', 'uninstall']
     .every((n) => names.includes(n)), names.join(','));
 
-  /* ② 判据自身的元断言 */
-  const injected = src.replace('    list() {', '    list() { return 0; },\n    list() {');
+  /* ② 判据自身的元断言
+     第 46 轮：list() 变成 async list() 后，原先写死的注入锚点
+     '    list() {' 不再命中，src.replace 空转 —— ②a/②c 一起红，
+     但那不是「抓到了缺陷」，是**注入根本没生效**。这个形状在第 40 轮
+     就踩过一次（改函数签名打断文本锚点），所以锚点用正则兼容 async，
+     并先断言它真的命中、真的改了文本。 */
+  const LIST_DEF = /^ {4}(?:async\s+)?list\s*\(\)\s*\{/m;
+  const anchor = LIST_DEF.exec(src);
+  t('②′ 注入锚点命中 list 定义（async 化后仍有效）', anchor != null,
+    anchor ? anchor[0] : 'not found');
+  const injected = anchor
+    ? src.replace(anchor[0], `${anchor[0]} return 0; },\n    list() {`)
+    : src;
+  t('②″ 注入确实改变了源码文本（防 replace 空转）', injected !== src);
   const injNames = methodNames(returnBlock(injected));
   t('②a 注入同名方法后判据报重复（防恒假）', hasDup(injNames), `注入后=${injNames.length}`);
   t('②b 判据对干净源码返回「无重复」（防恒真）', hasDup(names) === false);

@@ -29,6 +29,7 @@ import {
 } from './js/plugin-ledger.js';
 import { scanInstalledPlugins } from './js/installed-plugin-scan.js';
 import { MANIFEST_FILE } from './js/plugin-manifest.js';
+import { createNodeFs } from './scripts/node-fs-adapter.mjs';
 
 let pass = 0, fail = 0, skip = 0, note = 0;
 const t = (name, cond, extra = '') => {
@@ -372,7 +373,7 @@ console.log('\n--- 10. 台账与扫描器共存 ---');
   /* 再放台账文件（就在同一层） */
   writeLedger(join(d, LEDGER_FILE), emptyLedger());
 
-  const s = scanInstalledPlugins(d, {});
+  const s = await scanInstalledPlugins(d, { fs: createNodeFs() });
   t('台账文件不被当成插件目录', s.found === 1, `found=${s.found}`);
   t('正常插件仍被扫到', s.manifests.length === 1 && s.manifests[0].id === 'demo');
 }

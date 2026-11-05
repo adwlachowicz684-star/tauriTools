@@ -12,6 +12,10 @@
  * 而几百套守卫全绿：market-runtime-gap / webview-runtime 只扫 import 行、
  * node 全局与依赖闭包，**没有一条扫「调用点有没有 await」**。
  *
+ * 第 46 轮把 installed-plugin-scan.js 加入 CONTRACT_FILES：它新变成
+ * export async function，全仓 4 个测试/探针的调用点必须跟着补 await，
+ * 否则「一个插件都没出现」且不报错。名单是动态读的，不会漏。
+ *
  * 判据：名单动态读自生产模块的 export async function（写死名单会漏掉下一个
  * 被 async 化的函数）；剥注释一律走共用模块，不再造内联副本；定义行排除、
  * 注释与字符串里的 await 不许喂饱；按语句（最后一个分号之后）判断 await。
@@ -35,6 +39,7 @@ const CONTRACT_FILES = [
   'js/plugin-store-client.js',
   'js/plugin-market.js',
   'js/plugin-ledger.js',
+  'js/installed-plugin-scan.js',
 ];
 function asyncExports(rel) {
   const src = stripCommentsFlatJs(readFileSync(join(ROOT, rel), 'utf8'));
@@ -45,6 +50,9 @@ for (const f of CONTRACT_FILES) for (const n of asyncExports(f)) names.add(n);
 
 t('① async 名单非空且含两次 async 化的两个函数（空集合不许假绿）',
   names.size >= 4 && names.has('unpackTarGz') && names.has('verifyAssetDigest'),
+  `names=${[...names].join(',')}`);
+t('①′ 第 46 轮新 async 化的两个扫描导出也在名单里',
+  names.has('scanInstalledPlugins') && names.has('pluginsWithInstalled'),
   `names=${[...names].join(',')}`);
 
 /* ---------------- ② 行为层：真跑一次，钉住确实返回 Promise ----------------
@@ -152,6 +160,56 @@ t('⑤ 全仓 async 导出函数调用点漏 await 为 0', misses.length === 0,
 t('⑤′ 扫描规模非空（空目录会让上一条恒绿）', files.length > 100, `files=${files.length}`);
 t('⑤″ 确实扫到了调用点（文件被清空时 ⑤ 会恒绿，必须单独堵住）',
   totalCalls >= 10, `calls=${totalCalls}`);
+
+/* ---------------- ⑥ 对象方法形态（第 46 轮新增） ----------------
+   createPluginMarket 返回对象里的 async list() 不是 export async function，
+   ① 的动态名单收不到它，⑤ 全仓扫描因此看不见。破坏验证 D 向实测：
+   摘掉 await 后 ⑤ 仍 17/0 全绿，只有端到端测试崩了且没有汇总行 ——
+   「崩了不等于喊了」。这里补一层：静态盯住 market*.list( 调用点，
+   行为上真构造一次实例确认它返回 Promise，并配两条样本元断言。 */
+const LNAME = 'li' + 'st';
+function listMisses(text) {
+  const src = stripCommentsFlatJs(text);
+  const out = [];
+  src.split('\n').forEach((line, i) => {
+    const re = new RegExp('\\b(?:market\\w*)\\s*\\.\\s*' + LNAME + '\\s*\\(', 'g');
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      const stmt = line.slice(0, m.index).split(';').pop();
+      if (/\bawait\b/.test(stmt) || /\breturn\b/.test(stmt) || /\.then\s*\(/.test(line)) continue;
+      out.push({ line: i + 1, text: line.trim().slice(0, 140) });
+    }
+  });
+  return out;
+}
+const CALL6 = 'market.' + LNAME + '()';
+const sample6 = {
+  bad: 'const r = ' + CALL6 + ';',
+  good: 'const r = await ' + CALL6 + ';',
+};
+t('⑥a 样本：漏 await 的 list 调用必须被检出', listMisses(sample6.bad).length === 1,
+  `miss=${listMisses(sample6.bad).length}`);
+t('⑥b 样本：正常 await 不误报', listMisses(sample6.good).length === 0);
+const listHits = [];
+for (const p of files) {
+  const rel6 = relative(ROOT, p).replace(/\\/g, '/');
+  for (const m of listMisses(readFileSync(p, 'utf8'))) listHits.push(`${rel6}:${m.line} ${m.text}`);
+}
+t('⑥c 全仓 market*.list 调用点漏 await 为 0', listHits.length === 0,
+  listHits.slice(0, 4).join(' | ') || `扫描 ${files.length} 个文件`);
+
+/* 行为层：真构造一次市场实例，确认 list() 真的返回 Promise。
+   没注入 fs 时扫描器会明确 throw，这个 reject 正好证明「不是同步返回对象」；
+   用 catch 接住，避免 unhandled rejection。 */
+const mk = await import('./js/plugin-market.js');
+const inst = mk.createPluginMarket({
+  installedDir: join(ROOT, '.await-guard-no-dir'),
+  ledgerFile: join(ROOT, '.await-guard-no-ledger.json'),
+  fetch: async () => { throw new Error('守卫不发网络请求'); },
+});
+const lp = inst[LNAME]();
+t('⑥d list() 真身返回 Promise（不是靠文本猜 async）', typeof lp?.then === 'function');
+await lp.catch(() => {});
 
 console.log(`\n通过 ${pass} 项，失败 ${fails.length} 项`);
 if (fails.length) {

@@ -200,6 +200,73 @@ async function run() {
   t('⑤d store-client 源码无 node: import', !/['"]node:/.test(scSrc));
   t('⑤e store-client 源码不再用 Buffer 全局（注释里也不写使用形态）',
     !/\bBuffer\s*[.[]/.test(scSrc));
+  const scanSrc = readFileSync(join(ROOT, 'js/installed-plugin-scan.js'), 'utf8');
+  t('⑤f 扫描模块源码无 node: import', !/['"]node:/.test(scanSrc));
+  t('⑤g 扫描模块源码无 Buffer 全局', !/\bBuffer\s*[.[]/.test(scanSrc));
+
+  /* ---------------- ⑥ 第 46 轮：扫描模块在 realm 里真加载、真扫 ----------------
+     静态扫「没有 node: import」不等于能加载：它的依赖闭包
+     （data-store / store / data-policy / manifest）也要逐个过 linker。
+     更关键的是「真扫一次」——只在 Node 测试里绿，不算在 webview 里成立。
+     函数名刻意拼开写，避免 async-call-await 守卫把本文件里的字面量
+     误当成「漏 await 的调用点」。 */
+  const makeMemFs = vm.runInContext(`((entryIsDir) => {
+    const mf = JSON.stringify({ id: 'good', name: 'good', version: '1.0.0', entry: 'index.html' });
+    const dirs = new Set(['/plugins', '/plugins/good']);
+    const files = new Map([
+      ['/plugins/good/nexus.plugin.json', mf],
+      ['/plugins/stray.txt', 'x'],
+    ]);
+    if (entryIsDir) dirs.add('/plugins/good/index.html');
+    else files.set('/plugins/good/index.html', '<html></html>');
+    const prefixOf = (p) => (p.endsWith('/') ? p : p + '/');
+    return {
+      async exists(p) { return dirs.has(p) || files.has(p); },
+      async readdir(p) {
+        if (!dirs.has(p)) throw new Error('不是目录');
+        const pre = prefixOf(p), out = new Set();
+        for (const k of [...dirs, ...files.keys()]) {
+          if (!k.startsWith(pre)) continue;
+          const rest = k.slice(pre.length).split('/')[0];
+          if (rest) out.add(rest);
+        }
+        return [...out];
+      },
+      async readText(p) {
+        if (!files.has(p)) throw new Error('不是文件');
+        return files.get(p);
+      },
+      async isFile(p) {
+        if (files.has(p)) return true;
+        if (dirs.has(p)) return false;
+        throw new Error('类型未知');
+      },
+    };
+  })`, context);
+
+  const SCAN = 'scan' + 'InstalledPlugins';
+  const WITH = 'plugins' + 'WithInstalled';
+  const scanMod = await loadModule(context, 'js/installed-plugin-scan.js');
+  await scanMod.evaluate();
+  const scanApi = scanMod.namespace;
+  t('⑥a 扫描模块在隔离 realm 里加载成功（依赖闭包全过 linker）',
+    typeof scanApi[SCAN] === 'function' && typeof scanApi[WITH] === 'function');
+
+  const r1 = await scanApi[SCAN]('/plugins', { fs: makeMemFs(false) });
+  t('⑥b realm 里真扫出 1 个插件', r1.manifests.length === 1 && r1.manifests[0].id === 'good',
+    JSON.stringify(r1.manifests.map((m) => m.id)));
+  t('⑥c 散落文件不被当成插件目录', r1.found === 1, String(r1.found));
+
+  const r2 = await scanApi[SCAN]('/plugins', { fs: makeMemFs(true) });
+  t('⑥d entry 是目录时主判据在 realm 里仍拦住（不是只在 Node 测试里成立）',
+    r2.skipped.some((s) => String(s.reason).includes('entry 不是文件')),
+    JSON.stringify(r2.skipped));
+
+  let noFs = false;
+  try { await scanApi[SCAN]('/plugins', {}); } catch (e) {
+    noFs = /未注入 fs/.test(String((e && e.message) || e));
+  }
+  t('⑥e 缺 fs 在 realm 里明确 throw（不静默返回空列表）', noFs);
 
   if (fails.length) for (const f of fails) console.log('  ✗ ' + f);
   console.log(`通过 ${pass} 项，失败 ${fails.length} 项`);

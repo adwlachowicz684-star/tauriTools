@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { validateManifest, MANIFEST_FILE } from './js/plugin-manifest.js';
 import { scanInstalledPlugins } from './js/installed-plugin-scan.js';
 import { IDS, isRetired, sourceResidue, makeFixture } from './scripts/retired-guard-baseline.mjs';
+import { createNodeFs } from './scripts/node-fs-adapter.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGINS = join(HERE, 'plugins');
@@ -81,13 +82,13 @@ for (const p of iframe) {
 /* ------------------------------------------------------------------ *
  * 3. 扫描器仍需可用（判据不能因为退场就空跑）
  * ------------------------------------------------------------------ */
-const scan = scanInstalledPlugins(PLUGINS, { reservedIds: [] });
+const scan = await scanInstalledPlugins(PLUGINS, { reservedIds: [], fs: createNodeFs() });
 t('主仓空插件目录扫出 0 份 manifest', scan.manifests.length === 0, `实为 ${scan.manifests.length}`);
 t('主仓空插件目录无目录级错误', scan.errors.length === 0, scan.errors.join('; '));
 {
   const fx = makeFixture();
   try {
-    const s2 = scanInstalledPlugins(join(fx.root, 'plugins'), { reservedIds: [] });
+    const s2 = await scanInstalledPlugins(join(fx.root, 'plugins'), { reservedIds: [], fs: createNodeFs() });
     t('元断言H：扫描器在 fixture 上仍能发现 manifest（判据没失效）',
       s2.manifests.length >= 1 && s2.manifests.some((m) => m.id === fx.a),
       `实得 ${s2.manifests.length} 份`);

@@ -23,7 +23,11 @@
  * ✅ 第 44 轮：store-client 已销账（node:crypto → WebCrypto、Buffer → Uint8Array，
  *    verifyAssetDigest 变 async，本文件与联网探针已随之 await）。
  *
- * ⛔ 剩余 installer / ledger / installed-plugin-scan 三个模块
+ * ✅ 第 46 轮：installed-plugin-scan 已销账（注入式异步 fs + joinSegments）。
+ *    list() 随之变 async，所有调用点必须 await；漏一个就是拿 Promise 当
+ *    结果对象，表现为「一个插件都没出现」且不报错，已纳入 await 守卫监控。
+ *
+ * ⛔ 剩余 installer / ledger 两个模块
  *    仍带同步 node:fs，逐文件 unblock 记在
  *    scripts/market-runtime-debt.json；判定见 scripts/scan-market-runtime.mjs
  *    与 market-runtime-gap-test.mjs / webview-runtime-test.mjs。
@@ -150,6 +154,8 @@ function readManifestFromEntries(entries) {
  *                                  漏哪一处就表现为「装上了但永远查不到更新」。
  *                                  本层不读环境变量、不落盘、不回显凭据。
  * @param {object} [p.dataStore]    createPluginDataStore 的实例，读写 KV 用
+ * @param {object} [p.fs]           注入式异步文件能力（createFs(invoke) /
+ *                                  createNodeFs()），list() 扫目录时用
  * @param {string[]} [p.reservedIds] 与内置插件冲突的 id
  */
 export function createPluginMarket(p) {
@@ -161,6 +167,9 @@ export function createPluginMarket(p) {
   const fetchFn = o.fetch || globalThis.fetch;
   const ghOptsHeaders = o.headers && typeof o.headers === 'object' ? o.headers : null;
   const reservedIds = o.reservedIds || [];
+  /* list() 要扫目录，fs 必须由调用方注入：生产是 createFs(invoke)，
+     Node 测试是 createNodeFs()。缺了不静默返回空列表（见扫描模块 requireFs）。 */
+  const scanFs = o.fs || null;
   /* 用户数据目录必须复用 DATA_DIR_NAME：另写一份 'plugin-data' 会让
      data-store 写 A、uninstall 删 B，表现为"卸载保留了数据"却永远读不回。 */
   const userDataRoot = dataRoot ? joinSegments(dataRoot, DATA_DIR_NAME) : null;
@@ -190,9 +199,10 @@ export function createPluginMarket(p) {
   return {
     paths: { installedDir: root, ledgerFile, dataRoot, userDataRoot },
 
-    /** 静态注册表 + 已安装插件（扫描目录即发现，不需要改任何清单） */
-    list() {
-      return pluginsWithInstalled(staticPlugins, root);
+    /** 静态注册表 + 已安装插件（扫描目录即发现，不需要改任何清单）。
+     *  第 46 轮起为 async：扫描器改成注入式异步 fs，调用点必须 await。 */
+    async list() {
+      return pluginsWithInstalled(staticPlugins, root, { fs: scanFs });
     },
 
     /** 只报告不下载（D6）。台账没记录 = 查不到，正是契约①要防的失效。 */

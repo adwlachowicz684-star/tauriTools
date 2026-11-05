@@ -38,6 +38,7 @@ import { createPluginMarket } from '../js/plugin-market.js';
 import { createPluginDataStore } from '../js/plugin-data-store.js';
 import { LEDGER_FILE, readLedger } from '../js/plugin-ledger.js';
 import { unpackTarGz } from '../js/plugin-tarball.js';
+import { createNodeFs } from './node-fs-adapter.mjs';
 import { assetNameFor } from '../js/plugin-store-client.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -298,19 +299,14 @@ const installedDir = join(base, 'installed');
 const ledgerFile = join(base, 'ledger', LEDGER_FILE);
 const dataRoot = join(base, 'appdata');
 mkdirSync(dirname(ledgerFile), { recursive: true });
+const scanFs = createNodeFs();
 const dataStore = createPluginDataStore({
-  fs: {
-    async exists(p) { return existsSync(p); },
-    async readText(p) { return readFileSync(p, 'utf8'); },
-    async writeText(p, s) { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, s); },
-    async move(a, b) { mkdirSync(dirname(b), { recursive: true }); renameSync(a, b); },
-    async remove(p) { rmSync(p, { recursive: true, force: true }); },
-  },
+  fs: scanFs,
   dataRoot, legacyStorage: null,
 });
 function mkMarket(fetchFn, headers) {
   return createPluginMarket({
-    installedDir, ledgerFile, dataRoot, dataStore,
+    installedDir, ledgerFile, dataRoot, dataStore, fs: scanFs,
     fetch: fetchFn, headers,
     reservedIds: ['settings', 'home'],
   });
@@ -327,7 +323,7 @@ t('入口文件真的落盘', existsSync(join(installedDir, ID, 'index.html')));
 t('资源目录随包带上', existsSync(join(installedDir, ID, 'assets')));
 t('台账记下了 repo（契约①）',
   !!readLedger(ledgerFile).ledger.plugins?.[ID]?.repo);
-const listed = market.list();
+const listed = await market.list();
 t('扫描发现能看到它',
   Array.isArray(listed?.plugins) && listed.plugins.some((p) => p.id === ID),
   JSON.stringify(Object.keys(listed || {})).slice(0, 120));
