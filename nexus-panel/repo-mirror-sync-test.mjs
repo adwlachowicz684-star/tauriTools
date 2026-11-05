@@ -125,10 +125,29 @@ t('④d 元断言：空文本不被误判', !hasConflict(''));
 const rf = stripCommentsJs(read('scripts/refresh-plugin-repos.mjs'));
 t('⑤a 刷新用共享镜像、不再重建整仓骨架', usesSharedOnly(rf));
 t('⑤b 刷新仍验私有仓', rf.includes('不是私有仓库，拒绝刷新'));
-t('⑤c 刷新对共享路径缺失 fail-closed', rf.includes('共享镜像在远端缺失'));
+/* ⑤c 旧判据盯「共享镜像在远端缺失」字面量。主仓新增一个 js 文件后，
+ * 一律拒绝会把 12 仓全卡死：各仓照样能构建、界面照样能开，漂移静默。
+ * 新口径：缺失按新增（不带 sha 创建，422 即新增方向的防覆盖）。 */
+t('⑤c 刷新把缺失共享路径按新增处理，不再一律拒绝',
+  !rf.includes('共享镜像在远端缺失')
+  && rf.includes('const added = new Set(missing)')
+  && rf.includes('const isNew = !remote.has(rel)'));
+const newBranch = (rf.match(/if \(isNew\) \{([\s\S]*?)\n      \} else \{/) || ['', ''])[1];
+t('⑤c2 新增分支不带 sha 且写明是补齐',
+  newBranch.length > 0 && !/\bsha\s*:/.test(newBranch)
+  && newBranch.includes('补齐新增共享文件'));
+const hasNewGuard = (s) => !s.includes('共享镜像在远端缺失')
+  && s.includes('const isNew = !remote.has(rel)');
+t('⑤c3 元断言：撤掉 isNew 分支判据会红',
+  hasNewGuard(rf) && !hasNewGuard(rf.replace('const isNew = !remote.has(rel)', 'const isNew = false')));
 t('⑤d 刷新检查插件入口存在', rf.includes('插件入口'));
-t('⑤e 刷新复验核对 blob 总数不变', rf.includes('remote2.size !== remote.size'));
-t('⑤f 刷新带 sha 乐观锁', /sha:\s*cur\.sha/.test(rf));
+const hasTotalGuard = (s) => s.includes('const expectedTotal = remote.size + added.size')
+  && s.includes('remote2.size !== expectedTotal');
+t('⑤e 刷新复验核对 blob 总数按新增数增加', hasTotalGuard(rf));
+t('⑤e2 元断言：总数判据改回「不变」会红',
+  !hasTotalGuard(rf.replace('const expectedTotal = remote.size + added.size',
+    'const expectedTotal = remote.size')));
+t('⑤f 替换分支仍带 sha 乐观锁', /sha:\s*cur\.sha/.test(rf));
 t('⑤g 刷新对空共享镜像直接拒', rf.includes('拒绝空跑假绿'));
 t('⑤h 元断言：含 skeletonFiles 调用的旧版不合规',
   !usesSharedOnly('import { skeletonFiles } from "./x.mjs";\nconst files = skeletonFiles(id);'));

@@ -22,9 +22,12 @@
  * 防覆盖（三层，缺一不可）
  * ------------------------------------------------------------
  *  ① 只有 private 仓才刷新；非私有视为异常，不碰
- *  ② 远端必须**已存在全部** SHARED 路径（本通道不支持新增，缺失即拒绝）
- *  ③ 每个待替换文件 PUT 时带远端当前 blob sha：期间被改过 → 412 拒绝
- * 复验另核对远端 blob 总数不变，防 PUT 误删/误加别的文件。
+ *  ② 远端**已有**的 SHARED 路径 → PUT 带当前 blob sha：期间被改过 → 412 拒绝
+ *  ②' 远端**缺失**的 SHARED 路径 → 不带 sha 新建。GitHub 只在路径确实不存在
+ *      时创建；期间被别人建了会返回 422，同样按 fatal 拒绝，不是覆盖。
+ *      ⚠️ 不能一律「缺失即拒绝」：主仓新增一个 js 文件后，12 仓会被全部拒绝，
+ *         刷新通道彻底卡死；而各仓照样能构建、界面照样能开，漂移静默发生。
+ *  ③ 复验核对 blob 总数 = 原数 + 新增数，防 PUT 误删/误加别的文件。
  *
  * 状态同步
  * ------------------------------------------------------------
@@ -136,40 +139,52 @@ for (const id of IDS_TODO) {
       rejected++; continue;
     }
 
-    /* ② 远端必须已有全部 SHARED 路径。缺一个都拒绝：本通道不支持新增，
-     * 静默跳过会让「新共享文件没进仓」表现为全绿。 */
+    /* ② 分两类：远端缺失的按新增（不带 sha），远端已有的按替换（带 sha）。
+     * 之前这里一律「缺失即拒绝」—— 主仓新增一个 js 文件就把 12 仓全卡死，
+     * 而各仓照样能构建、界面照样能开，漂移静默发生。 */
     const missing = [...expected.keys()].filter(rel => !remote.has(rel));
-    if (missing.length) {
-      console.log(`  ⛔ ${repo}: 共享镜像在远端缺失 ${missing.length} 文件，拒绝增量刷新`);
-      console.log(`     示例: ${missing.slice(0, 3).join(', ')}`);
-      rejected++; continue;
-    }
     const changed = [...expected.keys()].filter(rel => remote.get(rel) !== expected.get(rel).want);
     if (!changed.length) {
       console.log(`  ✅ ${repo.padEnd(40)} ${expected.size} 共享文件已一致，无需刷新`);
       already++; continue;
     }
-    console.log(`  🔄 ${repo}: 待刷新 ${changed.length} 共享文件 → ${changed.join(', ')}`);
+    const added = new Set(missing);
+    console.log(`  🔄 ${repo}: 待刷新 ${changed.length} 共享文件`
+      + `（替换 ${changed.length - added.size} / 新增 ${added.size}） → ${changed.join(', ')}`);
     if (DRY) { refreshed++; continue; }
 
-    /* ③ 逐文件 PUT，带远端当前 blob sha 作乐观锁 */
+    /* ③ 逐文件 PUT：
+     *   · 已有 → 先 GET 拿当前 sha，PUT 带 sha 作乐观锁；
+     *   · 新增 → 不带 sha。GitHub 遇到「路径已存在」会返回 422（fatal），
+     *     这就是新增方向的防覆盖，不是省略了校验。 */
     let lastCommit = null;
     for (const rel of changed) {
-      const cur = await gh('GET', `/repos/${OWNER}/${repo}/contents/${cpath(rel)}?ref=main`);
-      if (cur.sha !== remote.get(rel)) {
-        throw Object.assign(new Error(`${rel}: 乐观锁前置不一致（读取时 ${cur.sha}，比树时 ${remote.get(rel)}）`), { fatal: true });
+      const isNew = !remote.has(rel);
+      let put;
+      if (isNew) {
+        put = await gh('PUT', `/repos/${OWNER}/${repo}/contents/${cpath(rel)}`, {
+          message: `chore: 补齐新增共享文件 ${rel}（与主仓骨架对齐）`,
+          content: expected.get(rel).buf.toString('base64'),
+          branch: 'main',
+        });
+      } else {
+        const cur = await gh('GET', `/repos/${OWNER}/${repo}/contents/${cpath(rel)}?ref=main`);
+        if (cur.sha !== remote.get(rel)) {
+          throw Object.assign(new Error(
+            `${rel}: 乐观锁前置不一致（读取时 ${cur.sha}，比树时 ${remote.get(rel)}）`), { fatal: true });
+        }
+        put = await gh('PUT', `/repos/${OWNER}/${repo}/contents/${cpath(rel)}`, {
+          message: `chore: 增量刷新 ${rel}（与主仓骨架对齐）`,
+          content: expected.get(rel).buf.toString('base64'),
+          sha: cur.sha,
+          branch: 'main',
+        });
       }
-      const put = await gh('PUT', `/repos/${OWNER}/${repo}/contents/${cpath(rel)}`, {
-        message: `chore: 增量刷新 ${rel}（与主仓骨架对齐）`,
-        content: expected.get(rel).buf.toString('base64'),
-        sha: cur.sha,
-        branch: 'main',
-      });
       if (!put.commit || !put.commit.sha) {
         throw Object.assign(new Error(`${rel}: PUT 未返回 commit`), { fatal: true });
       }
       lastCommit = put.commit.sha;
-      console.log(`     · ${rel} → ${lastCommit.slice(0, 8)}`);
+      console.log(`     · ${rel} ${isNew ? '(新增)' : '(替换)'} → ${lastCommit.slice(0, 8)}`);
     }
 
     /* 复验：共享文件逐字节对齐 + 远端 blob 总数不变（证明没碰别的文件），
@@ -179,9 +194,11 @@ for (const id of IDS_TODO) {
     if (tree2.truncated) throw Object.assign(new Error('复验 tree 被截断'), { fatal: true });
     const remote2 = new Map(tree2.tree.filter(x => x.type === 'blob').map(x => [x.path, x.sha]));
     const bad = [...expected.keys()].filter(rel => remote2.get(rel) !== expected.get(rel).want);
-    if (bad.length || remote2.size !== remote.size) {
+    const expectedTotal = remote.size + added.size;
+    if (bad.length || remote2.size !== expectedTotal) {
       throw Object.assign(new Error(
-        `复验失败：共享不一致 ${bad.length} 处 / blob 总数 ${remote.size}→${remote2.size}`), { fatal: true });
+        `复验失败：共享不一致 ${bad.length} 处 / blob 总数 ${remote.size}→${remote2.size}`
+        + `（预期 ${expectedTotal}，新增 ${added.size}）`), { fatal: true });
     }
 
     /* 状态同步：新 HEAD 才是我方最新提交，不写回去下次刷新会被防覆盖拦住 */
@@ -194,8 +211,8 @@ for (const id of IDS_TODO) {
     };
     savePluginRepoState(STATE, state);
     refreshed++;
-    console.log(`     ✅ 复验通过（共享 ${expected.size} 文件对齐 / blob 总数 ${remote.size} 不变）`
-      + `，状态 commit → ${head2.object.sha.slice(0, 8)}`);
+    console.log(`     ✅ 复验通过（共享 ${expected.size} 文件对齐 / blob 总数 ${remote.size} → ${remote2.size}`
+      + `，新增 ${added.size}） ，状态 commit → ${head2.object.sha.slice(0, 8)}`);
     await new Promise(z => setTimeout(z, 1500));
   } catch (e) {
     if (e.fatal || /412|409|422|乐观锁|复验|拒绝/.test(e.message)) {

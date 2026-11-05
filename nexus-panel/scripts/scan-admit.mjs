@@ -53,8 +53,10 @@ const EXTS = /\.(js|mjs|cjs|ts|tsx|jsx|html)$/;
  * 测试脚手架**按文件名**排除，不能只靠上面的目录名。
  *
  * 本项目的测试不是集中在一个 tests/ 里，而是**散落在各插件根目录** ——
- * plugins/mindmap/mindmap-test.mjs 是 1MB 的测试，和插件源码同层（实测
+ * plugins/mindmap/mindmap-test.mjs 是 1MB 的测试，和插件源码同层（当时实测
  * plugins/ 下有 129 个 *-test.mjs）。所以只按目录排除时，那条规则一条都没生效。
+ * 源码退场到独立插件仓后，本仓 plugins/ 下已无这类文件 —— 判据仍保留，
+ * 防的是脚手架回流时被重新淹；有效性改由下面的合成样本自检保证。
  *
  * 后果是它稳定输出 18 条 deny，全部集中在 mindmap-test.mjs：测试为了在
  * node 里模拟浏览器，必须去改原型、桩掉 location/click —— 这些在运行时源码
@@ -113,7 +115,8 @@ for (const f of walk(PLUGINS, [], skipped)) {
   }
 }
 
-console.log(`扫了 ${files} 个文件（另有 ${skipped.length} 个测试脚手架已排除）\n`);
+console.log(`扫了 ${files} 个文件（另有 ${skipped.length} 个测试脚手架已排除`
+  + (skipped.length === 0 ? '；本仓当前无测试脚手架，判据由合成样本验证' : '') + `）\n`);
 
 /* ---------------- deny ---------------- */
 if (deny.length) {
@@ -136,19 +139,34 @@ for (const [rule, list] of [...byRule.entries()].sort((a, b) => b[1].length - a[
 
 /* ---------------- 自检：排除判据不能失效、也不能过宽 ---------------- */
 /*
- * 少了这两条，把 TEST_FILE 改成「什么都不排除」或「什么都排除」，
- * 报告照样能打印出来：前者是又一批 18 条假拒绝，后者是 files=0 的假绿。
+ * ⚠️ 判据本身用**合成文件名样本**验，不再依赖磁盘上是否真的有测试文件。
+ *
+ * 第一版是「skipped.length === 0 就报红」。12 个插件源码退场到独立仓后，
+ * 主仓 plugins/ 下一个 *-test.mjs 都没有了，skipped 恒为 0 —— 这条自检从此
+ * **恒红**，而它想守的「TEST_FILE 被改成永不匹配」反而没人验了：报告照样
+ * 打印，只是此刻恰好没有脚手架可淹。环境一变就恒红的判据比没有更糟：
+ * 默认分支长期带一条红，看的人会习惯性忽略，真出事那天分不清是环境
+ * 还是判据坏了。
+ *
+ * 合成样本同时钉住两个方向：正例必须被排除（判据失效）、负例必须留下
+ * （判据过宽 → files 变 0 的假绿）。样本自身也验完整性，清空数组不算通过。
+ *
+ * ⓘ 不拿 TEST_FILE 去判「deny 里有没有测试条目」—— 那是用被检查的东西
+ *   检查它自己，判据瞎了它也跟着瞎（本项目反复撞的形状）。这里样本是
+ *   外部固定的，方向相反：用已知答案去考判据。
  */
+const PROBE = {
+  positive: ['mindmap-test.mjs', 'a-test.js', 'b-test.tsx', 'x.test.ts', 'y.test.mjs', 'z.test.jsx'],
+  negative: ['module.js', 'registry.js', 'index.html', 'App.tsx', 'styles.css'],
+};
 const selfFails = [];
-/*
- * ⓘ 两条都**只看结果、不再拿 TEST_FILE 去判一遍**。
- *   第一版写的是「deny 里有没有来自测试文件的条目」—— 用 TEST_FILE 自己
- *   去判，于是判据被改成永不匹配时它**跟着一起瞎**（破坏验证实测没报）。
- *   这正是本项目反复撞的形状：拿被检查的东西去检查它自己。
- */
-if (skipped.length === 0) {
-  selfFails.push('没有任何测试文件被排除 —— 排除判据失效，deny 会重新被测试脚手架淹没');
+if (!PROBE.positive.length || !PROBE.negative.length) {
+  selfFails.push('合成样本不完整（正例/负例缺一）—— 判据自检会恒绿');
 }
+const missed = PROBE.positive.filter((n) => !TEST_FILE.test(n));
+const overbroad = PROBE.negative.filter((n) => TEST_FILE.test(n));
+if (missed.length) selfFails.push(`排除判据漏掉测试脚手架样本：${missed.join(', ')}`);
+if (overbroad.length) selfFails.push(`排除判据过宽，把非测试文件也排除了：${overbroad.join(', ')}`);
 if (files === 0) selfFails.push('没有任何文件被真正扫描 —— 排除判据过宽');
 if (selfFails.length) {
   console.log(`\n❌ 自检失败 ${selfFails.length} 条：`);
