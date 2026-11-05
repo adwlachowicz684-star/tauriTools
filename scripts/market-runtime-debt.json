@@ -1,0 +1,61 @@
+{
+  "note": "编排层跑不进 webview 的逐文件欠账。entries 必须与「独立反推的 node: import 集合」完全一致：修好一个 → 要求销账；新增一个 → 必须报红。第 43 轮起另有 blindSpots 两类，只扫 import 行看不见它们。",
+  "entries": [
+    {
+      "file": "js/plugin-installer.js",
+      "node": ["crypto", "fs", "path"],
+      "why": "同步 node:fs 全量 API（mkdirSync/writeFileSync/rmSync/renameSync/existsSync/statSync/readFileSync/readdirSync）是落盘主路径，webview 无此模块，且 invoke 是异步的——同步语义无法直接替换。",
+      "unblock": "把 installPlugin 改 async、fs 调用改为注入式异步 fs（createFs(invoke) 提供 readText/writeText/exists/move/remove）；randomBytes 换 crypto.getRandomValues；path 操作复用 data-store 的 joinSegments。"
+    },
+    {
+      "file": "js/plugin-ledger.js",
+      "node": ["crypto", "fs", "path"],
+      "why": "台账读写的原子写入（write tmp + rename）走同步 fs；上层 checkUpdates 依赖它，改造时要连带把调用方改成 await。",
+      "unblock": "readLedger/writeLedger 改 async + 注入式 fs；与 installer 共用同一份 fs 适配器，避免两处各写一套。"
+    },
+    {
+      "file": "js/installed-plugin-scan.js",
+      "node": ["fs", "path"],
+      "why": "启动扫描目录靠 readdirSync/statSync，同步语义；扫描失败时曾拖垮整个列表，改成异步后 try/catch 边界必须保留。",
+      "unblock": "scanInstalledPlugins 改 async + 注入式 fs；保留单插件 try/catch 兜底，且主判据与兜底文案仍要刻意不同。"
+    },
+    {
+      "file": "js/plugin-store-client.js",
+      "node": ["crypto"],
+      "why": "只用 createHash 做 release asset 的 sha256 完整性校验，是纯计算、无文件依赖，但 node:crypto 在 webview 里仍不可用。",
+      "unblock": "换 WebCrypto subtle.digest（异步），并连带把 verifyAssetDigest 的调用链改成 await；注意 Buffer 全局也在这个文件里（见 blindSpots.globals），两处要一起销。"
+    }
+  ],
+  "resolved": [
+    {
+      "file": "js/plugin-market.js",
+      "was": ["path"],
+      "how": "删掉 import { join } from 'node:path'，改用 js/plugin-data-store.js 导出的 joinSegments（同一份实现，不另写一套）；unpackTarGz 变 async 后调用处已 await，readManifestFromEntries 也改成 TextDecoder 解码，不再依赖 Buffer.toString('utf8')。",
+      "evidence": "plugin-market-test.mjs 93/0；market-runtime-gap-test.mjs 与 webview-runtime-test.mjs"
+    },
+    {
+      "file": "js/plugin-tarball.js",
+      "was": ["zlib"],
+      "how": "gunzipSync → DecompressionStream('gzip')（Web 标准，异步流，unpackTarGz 因此变 Promise）；Buffer.isBuffer / buf.toString('utf8',a,b) / Buffer.from → Uint8Array + TextDecoder + 手写 ascii 解码；USTAR 控制流与判据一条没改。sniffArchive 抽到零依赖的 js/archive-magic.js，切断「为一个纯函数 import 整个 installer」的静态链。",
+      "evidence": "plugin-market-test.mjs 第 1 节真 tarball 全绿；webview-runtime-test.mjs 在无 Buffer / 无 process / 无 require 的 vm context 里真解包成功"
+    }
+  ],
+  "blindSpots": {
+    "note": "第 43 轮实测更正：台账原先只扫 import node:*，漏了两类同样致命的阻塞。它们不体现在 import 行里，所以旧守卫 29/0 全绿也看不见。",
+    "globals": [
+      {
+        "file": "js/plugin-store-client.js",
+        "names": ["Buffer"],
+        "why": "downloadAsset 用 Buffer.from(ab)、verifyAssetDigest 用 Buffer.isBuffer(buf)。webview 里没有 Buffer 全局，一个 node: import 都不写也会 ReferenceError；症状是「产物下载完了、装到一半没反应」，不报编译错。",
+        "unblock": "new Uint8Array(ab) + 鸭子类型 isBytes()（archive-magic.js 已提供，跨 realm 也成立）；错误文案同步改成「不是字节序列」。"
+      }
+    ],
+    "staticChain": [
+      {
+        "file": "js/plugin-market.js",
+        "why": "入口自身已零 node: import，但它 import 了 installer / ledger / installed-plugin-scan / store-client 四个 blocked 模块。静态 ESM 会把整条链一起加载，入口照样进不了 webview bundle —— 扫「谁写了 import node:」只会把入口判成 safe，得出假的 6/6 结论。",
+        "unblock": "把 entries 里 4 个模块逐个改造成注入式异步，集合自然销空；销空前不要用「入口零 node:」当可加载依据。"
+      }
+    ]
+  }
+}
