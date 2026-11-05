@@ -998,7 +998,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "priority": { "type": "string", "enum": PRIORITIES, "description": "默认 P2" },
                 "tags":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "标签 id 数组；单个标签写成字符串也认（会自动转成数组），数组里的空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些（用已有项的 id，不要自造裸名字——裸名字没有定义、没有颜色）" },
                 "type":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "任务类型 id 或 id 数组（该列可多选）；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些（默认 dev/bug/opt/research/review/plan，用户可能自定义过）；缺省=未分类" },
-                "estimate": { "type": ["number", "string"], "description": "预估工作量，单位人日，可小数（0.5=半天）；写成数字字符串（如 \"2.5\"）也认；缺省 0=没估" },
+                "estimate": { "type": ["number", "string"], "description": "预估工作量，单位人日，可小数（0.5=半天）；写成数字字符串（如 \"2.5\"）也认；缺省 0=没估；负数无意义，会被拒绝" },
                 "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（该列可多选；留空=不分组）。先调 tb_list_tasks 看 defs.groupDefs 里已有哪些——归到已有分组，不要自造近义名（'登录'和'登陆'会分成两组）" },
                 /*
                   ⛔ 原来 create schema **没有 assignee**：实现里明明写了
@@ -1036,7 +1036,7 @@ pub fn mcp_tools() -> Vec<Value> {
                 "summary":  { "type": "string", "description": "改任务说明" },
                 "tags":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "整体替换标签；单个标签写成字符串也认，空值/重复会清掉。先调 tb_list_tasks 看 defs.tagDefs 里已有哪些" },
                 "type":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "任务类型 id 或 id 数组（数组=整体替换）；先调 tb_list_tasks 看 defs.typeDefs 里已有哪些；传单个 id 且任务上已是数组时按追加处理（不会丢已有类型）；传空串或空数组=清成未分类" },
-                "estimate": { "type": ["number", "string"], "description": "预估工作量，单位人日，可小数；写成数字字符串也认" },
+                "estimate": { "type": ["number", "string"], "description": "预估工作量，单位人日，可小数；写成数字字符串也认；负数无意义，会被拒绝" },
                 "group":    { "type": ["string", "array"], "items": { "type": "string" }, "description": "分组名或名字数组（数组=整体替换）；先调 tb_list_tasks 看 defs.groupDefs 里已有哪些；传单个名字且任务上已是数组时按追加处理（不会丢已有分组）；传空串或空数组=取消分组" },
                 "deps":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "整体替换前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，传 [] =清空全部前置" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
@@ -1522,9 +1522,19 @@ fn deps_value(body: &Value, self_id: &str) -> Value {
         Some(Value::Array(a)) => a.clone(),
         _ => Vec::new(),
     };
+    /*
+      ⛔ id 字段（path / JSON 参数 / agent id）全走 norm_id，deps 里的 id
+      原来只 trim —— 同一份数据两种归一。AI 手写 %20 或带空格时，
+      用 norm_id 能查到任务 A，把同一个 id 写进 deps 却对不上：
+      lockOf 精确匹配失败 → 前置永远解锁不了，界面标「前置不存在
+      （可能已被删除）」，用户以为是任务被删了。与「流转失败文案把人往
+      任务不存在上引」同族。保留不存在 id 的策略不变（见上方注释）。
+    */
+    let self_norm = norm_id(self_id);
     let list: Vec<String> = clean_str_array(&raw)
         .into_iter()
-        .filter(|d| d.as_str() != self_id)
+        .map(|d| norm_id(&d))
+        .filter(|d| !d.is_empty() && d != &self_norm)
         .collect();
     Value::Array(list.into_iter().map(Value::String).collect())
 }
@@ -1856,9 +1866,19 @@ fn pct_decode_with(s: &str, plus_as_space: bool) -> String {
 }
 
 /// query string 专用：把 `+` 当空格。签名与语义保持原样（守卫钉着）。
-fn pct_decode(s: &str) -> String {
-    pct_decode_with(s, true)
-}
+/* ⛔ 删掉 pct_decode（= pct_decode_with(s, true) 的一层包装）。
+   它唯一的调用点曾是本文件里的 norm_id —— 而 norm_id 处理的是
+     · HTTP **path** 段：`+` 在 path 里是字面量（RFC 3986 sub-delims），
+       只有 query 的 application/x-www-form-urlencoded 才把 + 当空格
+     · MCP **JSON 参数**：`+` 更是字面量
+   两处都该用 plus_as_space=false。上一轮特意为 norm_text 区分了协议，
+   却漏了同一个 pct_decode_with 的第三个调用点，还用守卫把它钉死在
+   「pct_decode 保留」上 —— 正是「相似问题没一次性扫干净」。
+   现在 id 归一直接走 norm_text(raw, false)，与 MCP 过滤值同一判据。
+
+   实测修前：register_agent {"id":"C++"} → agents 里存 "C  "；
+             GET /api/tasks/a+b → 找的是 "a b"（任务 a+b 明明在）。
+   修后：两者都原样保留。 */
 
 /// **所有过滤值 / 关键词的归一化**：百分号解码 + 首尾空白，一处定义。
 ///
@@ -1883,7 +1903,7 @@ fn norm_text(s: &str, plus_as_space: bool) -> String {
 ///   · AI 请求 `GET /api/tasks/%20tb-0001` → path 段没解码，也找不到
 /// 三条读写入口 + 新增的删除入口共用这一份，不再逐处补 trim。
 fn norm_id(raw: &str) -> String {
-    pct_decode(raw).trim().to_string()
+    norm_text(raw, false)
 }
 
 /// 读通道的过滤条件。**HTTP GET /api/tasks 与 MCP tb_list_tasks 共用这一份**。
@@ -2811,7 +2831,7 @@ fn shape_label(sh: Shape) -> &'static str {
     match sh {
         Shape::Str => "字符串",
         Shape::StrOrArr => "字符串或字符串数组",
-        Shape::NumOrStr => "数字或数字字符串",
+        Shape::NumOrStr => "非负数字或数字字符串（0 表示没估）",
         Shape::Ignore => "任意",
     }
 }
@@ -2867,11 +2887,14 @@ fn check_shapes(tool: &str, args: &Value) -> Result<(), String> {
                 _ => false,
             },
             Shape::NumOrStr => match v {
-                Value::Number(_) => true,
-                /* 空串视为清空（estimate_of → 0），非法字符串要指路而不是静默变 0 */
+                Value::Number(n) => n.as_f64().map(|x| x.is_finite() && x >= 0.0).unwrap_or(false),
+                /* ⛔ 原来只判 finite：负数也被放行，而 estimate_of 是 `> 0.0`，
+                   于是 create 落盘 0、PATCH 报「没有可应用的变更」——
+                   AI 明明传了值，得到的却是「没改」/ 静默归零，反复重试。
+                   与「只传备注时报错不指路」同族：校验得把路指对。 */
                 Value::String(x) => {
                     let t = x.trim();
-                    t.is_empty() || t.parse::<f64>().map(|n| n.is_finite()).unwrap_or(false)
+                    t.is_empty() || t.parse::<f64>().map(|n| n.is_finite() && n >= 0.0).unwrap_or(false)
                 }
                 _ => false,
             },
