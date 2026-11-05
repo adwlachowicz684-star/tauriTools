@@ -70,7 +70,8 @@
  * 与后端 af_flow.rs 的写死文案互钉（与 EMPTY_DIR_TEXT 同一手法），
  * 取值不是「文件/目录」两种之一时 **throw**，绝不静默返回 false。
  * 需要大小 / 修改时间仍不提供，将来后端补结构化命令再说；
- * 需要存不存在用 `exists()`（后端返回稳定的 "true"/"false"）。
+ * 需要存不存在用 `exists()` —— 同样只认两种写死文案，其余 throw，
+ * 绝不把「后端文案变了」静默表现成「这个路径不存在」。
  */
 
 /**
@@ -119,6 +120,12 @@ export const EMPTY_DIR_TEXT = '（空目录）';
 export const STAT_TYPE_PREFIX = '类型: ';
 export const STAT_KIND_FILE = '文件';
 export const STAT_KIND_DIR = '目录';
+
+/** fs_op "exists" 回执的两种取值（见 af_flow.rs 的 exists 分支）。
+ * 导出理由同 EMPTY_DIR_TEXT：测试要断言「JS 侧认的文案 == Rust 侧写死的文案」，
+ * 后端改一次文案，那条断言会红，而不是我们把未知回执解析成「不存在」。 */
+export const EXISTS_TRUE = 'true';
+export const EXISTS_FALSE = 'false';
 
 /**
  * 造一个文件能力对象。
@@ -174,10 +181,24 @@ export function createFs(invoke) {
       return text.split('\n').map((s) => s.trim()).filter(Boolean);
     },
 
-    /** 存在性。后端返回 "true"/"false" 字符串 */
+    /**
+     * 存在性。后端只返回 EXISTS_TRUE / EXISTS_FALSE 两种字符串。
+     *
+     * 🔴 未知回执一律 throw，绝不静默返回 false。
+     *    这条判据是 plugin-data-store.js 硬约束 2 的分界点：
+     *    「文件不存在 → 空 record」「文件损坏 / 读不到 → 抛错」。
+     *    静默 false 会把一个**已存在但回执异常**的 store.json 判成
+     *    「没有数据」，于是 readAll() 返回空、set() 拿空 record 写回
+     *    覆盖真数据 —— 用户看到「插件设置全丢了」，全程无报错且不可逆。
+     *    isFile() 用的是同一条 fail-closed 原则，见上文。
+     */
     async exists(path) {
       const text = await call({ op: 'exists', path });
-      return String(text).trim() === 'true';
+      const v = String(text).trim();
+      if (v !== EXISTS_TRUE && v !== EXISTS_FALSE) {
+        throw new Error(`fs_op exists 回执未知（后端文案变了？）: ${JSON.stringify(text)}`);
+      }
+      return v === EXISTS_TRUE;
     },
 
     async move(src, dst, opts = {}) {

@@ -15,7 +15,10 @@ import { dirname, join } from 'node:path';
 import {
   createFs, fsOp, resolveDataDir,
   EMPTY_DIR_TEXT, STAT_TYPE_PREFIX, STAT_KIND_FILE, STAT_KIND_DIR,
+  EXISTS_TRUE, EXISTS_FALSE,
 } from './js/plugin-fs-bridge.js';
+import { stripCommentsFlatJs } from './test-scan-utils.mjs';
+import { createPluginDataStore, STORE_VERSION } from './js/plugin-data-store.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -123,16 +126,51 @@ console.log('— plugin-fs-bridge —');
   t('readdir 透传 recursive/exts', calls.at(-1).args.recursive === true && calls.at(-1).args.exts[0] === 'js');
 }
 
-/* ── 第 3 节：exists 的布尔判定 ────────────────────────── */
+/* ── 第 3 节 🔴：exists 的 fail-closed 判定 ───────────────
+ * 旧口径把「未知回执 → false」当成正确行为，还配了反向自检钉住它。
+ * 但这条 false 正是 plugin-data-store.js「不存在 / 损坏」的分界点：
+ * 静默 false 会让一份已存在的 store.json 被当成「没有数据」，
+ * set() 随即把真数据覆盖成空。行为级证据见第 11 节。 */
 
 {
-  const { invoke } = mockInvoke({ exists: { ok: true, text: 'false' } });
-  t('exists "false" → false', (await createFs(invoke).exists('/x')) === false);
+  const { invoke } = mockInvoke({ exists: { ok: true, text: EXISTS_TRUE } });
+  t('exists 真回执 → true', (await createFs(invoke).exists('/x')) === true);
 }
 {
-  // 后端若哪天返回布尔 true 而不是字符串，也要判成 true —— 但不能靠 == 宽松比较
-  const { invoke } = mockInvoke({ exists: { ok: true, text: 'TRUE' } });
-  t('exists 大小写异常时不谎报存在', (await createFs(invoke).exists('/x')) === false);
+  const { invoke } = mockInvoke({ exists: { ok: true, text: EXISTS_FALSE } });
+  t('exists 假回执 → false', (await createFs(invoke).exists('/x')) === false);
+}
+{
+  // 大小写异常、空串、错误文本、缺 text：全都必须喊，不能静默判成不存在
+  for (const [label, reply] of [
+    ['TRUE', { ok: true, text: 'TRUE' }],
+    ['False', { ok: true, text: 'False' }],
+    ['空串', { ok: true, text: '' }],
+    ['中文文案', { ok: true, text: '存在' }],
+    ['缺 text', { ok: true }],
+  ]) {
+    const { invoke } = mockInvoke({ exists: reply });
+    let threw = false;
+    try { await createFs(invoke).exists('/x'); } catch { threw = true; }
+    t(`exists 未知回执「${label}」→ 抛错（不谎报不存在）`, threw);
+  }
+}
+{
+  // 后端文案互钉：JS 侧认的两种取值必须就是 Rust 侧写死的那两种。
+  // 只认分支附近 4 行 —— 全文件扫 "true" 会被别处的字面量喂饱。
+  const rs = readFileSync(join(HERE, 'src-tauri/src/af_flow.rs'), 'utf8');
+  const lines = rs.split('\n');
+  const idx = lines.findIndex((l) => /"exists"\s*=>/.test(l));
+  const seg = idx >= 0 ? lines.slice(idx, idx + 4).join('\n') : '';
+  const echoMatches = (s) => {
+    const vals = [...s.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    return vals.includes(EXISTS_TRUE) && vals.includes(EXISTS_FALSE);
+  };
+  t('后端 exists 分支找得到', idx >= 0);
+  t('后端写死 true/false 且与 JS 常量一致', echoMatches(seg));
+  t('元断言：后端改掉文案后互钉判据会红（非恒真）',
+    !echoMatches(seg.replace(/"true"/g, '"t"').replace(/"false"/g, '"f"')));
+  t('JS 常量就是后端那两个字面量', EXISTS_TRUE === 'true' && EXISTS_FALSE === 'false');
 }
 
 /* ── 第 4 节 🔴：remove 默认不带 force ────────────────── */
@@ -248,13 +286,21 @@ console.log('— plugin-fs-bridge —');
     ),
   );
 
-  // 判据 ②：exists 的判定不能是宽松比较（否则 'false' 会被判成存在）
-  t(
-    '反向：exists 用严格 === "true"，不是 if(text)',
-    /String\(text\)\.trim\(\)\s*===\s*'true'/.test(
-      readFileSync(join(HERE, 'js/plugin-fs-bridge.js'), 'utf8'),
-    ),
-  );
+  // 判据 ②：exists 必须显式判两种取值、其余 throw。
+  // ⛔ 旧版这条反向自检钉的是「严格 === 'true'」—— 恰好把「不是 true 就
+  //    静默 false」当成正确行为钉死了，正是第 3/11 节要抓的洞。
+  // 剥注释走共用模块：源码注释里原样写着 EXISTS_TRUE / 'true' 这些字样，
+  // 不剥会被注释喂饱（本项目反复栽的形状）。
+  const fsSrc = stripCommentsFlatJs(readFileSync(join(HERE, 'js/plugin-fs-bridge.js'), 'utf8'));
+  const exAt = fsSrc.indexOf('async exists(');
+  const exBody = exAt >= 0 ? fsSrc.slice(exAt, exAt + 700) : '';
+  t('反向：exists 函数体找得到（不是空集合恒绿）', exBody.length > 100);
+  t('反向：exists 显式比较两种常量',
+    /v\s*!==\s*EXISTS_TRUE\s*&&\s*v\s*!==\s*EXISTS_FALSE/.test(exBody));
+  t('反向：未知回执分支里确实 throw',
+    /EXISTS_FALSE[\s\S]{0,220}throw new Error/.test(exBody));
+  t('反向：不残留「不是 true 就 false」的旧写法',
+    !/return\s+String\(text\)\.trim\(\)\s*===\s*'true'/.test(exBody));
 }
 
 /* ── 第 10 节：isFile —— 扫描模块销账的前置能力 ──────────
@@ -315,6 +361,56 @@ console.log('— plugin-fs-bridge —');
   t('isFile 含「缺类型行即 throw」分支', /缺少类型行（后端文案变了？）/.test(src));
   t('isFile 含「取值未知即 throw」分支', /类型取值未知（后端文案变了？）/.test(src));
   t('isFile 返回值由 kind 比较得出，不是恒值', /return kind === STAT_KIND_FILE/.test(src));
+}
+
+/* ── 第 11 节 🔴：静默 false 会覆盖真数据（跨模块行为级） ─────
+ * plugin-data-store.js 硬约束 2 承诺「文件不存在才返回空对象、文件
+ * 损坏必须抛错」，而分界点就是 fs.exists()。把 createFs 真注入进去，
+ * 让 exists 回执飘成未知文案、read 仍返回一份完好的 record ——
+ * 也就是 store.json 明明在、里面明明有数据，只是回执形态变了。
+ * 旧写法会把它判成「没有数据」，set() 随即拿空 record 写回覆盖。 */
+
+{
+  const before11 = pass + fail;
+  const REC = JSON.stringify({ v: STORE_VERSION, data: { keep: 'YES' } });
+  const base = {
+    read: { ok: true, text: REC },
+    write: { ok: true, text: 'ok' },
+    move: { ok: true, text: 'ok' },
+    delete: { ok: true, text: 'ok' },
+  };
+
+  const bad = mockInvoke({ ...base, exists: { ok: true, text: '存在' } });
+  const ds = createPluginDataStore({ fs: createFs(bad.invoke), dataRoot: '/APPDATA' });
+  const THREW = Symbol('threw');
+  const runChain = async (fn) => { try { return await fn(); } catch { return THREW; } };
+  // 四条链各一条独占判据：合起来数「抛了几个」会让某条链的静默降级
+  // 被其它三条的抛错盖住，且「没有 delete 调用」在两种情况下都绿（恒真）。
+  t('readAll 回执异常时抛错（不返回空数据）',
+    (await runChain(() => ds.readAll('demo'))) === THREW);
+  t('set 回执异常时抛错（不拿空 record 写回）',
+    (await runChain(() => ds.set('demo', 'newKey', 1))) === THREW);
+  t('purge 回执异常时抛错（不返回 removed:false 静默跳过删除）',
+    (await runChain(() => ds.purge('demo'))) === THREW);
+  t('report 回执异常时抛错（不谎报 exists:false）',
+    (await runChain(() => ds.report('demo'))) === THREW);
+  t('元断言：exists 真的被调用过（注入生效，不是空跑）',
+    bad.calls.some((c) => c.args.op === 'exists'));
+  t('set 未写回（真数据没被覆盖成空）',
+    !bad.calls.some((c) => c.args.op === 'write' || c.args.op === 'move'));
+  t('purge 未真去删（delete 没被调用）',
+    !bad.calls.some((c) => c.args.op === 'delete'));
+
+  // 正常存在路径：set 必须带着旧键写回，而不是拿空 record 覆盖
+  const ok = mockInvoke({ ...base, exists: { ok: true, text: EXISTS_TRUE } });
+  const ds2 = createPluginDataStore({ fs: createFs(ok.invoke), dataRoot: '/APPDATA' });
+  await ds2.set('demo', 'newKey', 1);
+  const writeCall = ok.calls.find((c) => c.args.op === 'write');
+  t('正常路径 set 写回保留旧键 keep 且带上新键',
+    !!writeCall && writeCall.args.content.includes('"keep"') &&
+    writeCall.args.content.includes('YES') && writeCall.args.content.includes('newKey'));
+  // 本条自身尚未计入 pass+fail，故此处是「前 8 条都在」（全节共 9 条）
+  t('元断言：第 11 节前 8 条判据都在（防空集合恒绿）', (pass + fail) - before11 >= 8);
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
