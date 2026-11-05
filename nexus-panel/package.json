@@ -180,7 +180,8 @@
     "test:retired-guard-debt": "node retired-guard-debt-test.mjs",
     "test:retired-source-guard": "node retired-source-guard-test.mjs",
     "test:plugin-repo-state": "node plugin-repo-state-test.mjs",
-    "test:cargo-retirement": "node cargo-retirement-guard-test.mjs"
+    "test:cargo-retirement": "node cargo-retirement-guard-test.mjs",
+    "test:async-await-guard": "node async-call-await-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",

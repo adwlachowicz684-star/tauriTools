@@ -133,7 +133,7 @@ for (const id of IDS) {
   const assetName = assetNameFor(id, VER);
   try {
     const tar = makeTarGz(collectBundle(id));
-    const back = unpackTarGz(tar);
+    const back = await unpackTarGz(tar);
     if (!back.ok) throw new Error(`打包回读失败: ${back.error}`);
     const mfCount = back.entries.filter(e => e.name.split('/').pop() === 'nexus.plugin.json').length;
     if (mfCount !== 1) throw new Error(`包内 manifest 数 ${mfCount}（应为 1）`);

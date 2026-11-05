@@ -155,7 +155,7 @@ const authedFetch = (url, opts = {}) => fetch(url, {
  * 3. 发版（幂等、不 clobber）
  * ──────────────────────────────────────────────────────────────── */
 const tar = makeTarGz(collectBundle());
-const back = unpackTarGz(tar);
+const back = await unpackTarGz(tar);
 t('打包回读：产物能被项目自己的解包器读回', back.ok === true, back.error || '');
 t('打包回读：包内有且只有一份 manifest',
   back.ok && back.entries.filter((e) => e.name.split('/').pop() === 'nexus.plugin.json').length === 1);
@@ -273,7 +273,7 @@ if (asset) {
     + (denied ? '（出口策略阻断，已启用单跳替身）' : '（未阻断，走真下载）'));
   if (denied) SUBSTITUTE = true;   // 后续 release 响应同步替换 digest/size
   t('替身字节流本身合法（解包器读得回、digest 是 64hex）',
-    unpackTarGz(tar).ok === true && /^sha256:[0-9a-f]{64}$/.test(localDigest));
+    (await unpackTarGz(tar)).ok === true && /^sha256:[0-9a-f]{64}$/.test(localDigest));
 
   /* PATCH 修掉 prerelease 后 /releases/latest 可能短暂仍返回 404（传播延迟）。
      探针重试而不是假装成功；产品侧不需要这层，用户点安装时早已生效。 */

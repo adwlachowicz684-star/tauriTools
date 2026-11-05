@@ -431,6 +431,22 @@
       "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
     },
     {
+      "guard": "plugin-fs-bridge-test.mjs",
+      "scripts": [
+        "test:plugin-fs-bridge"
+      ],
+      "refs": [
+        "plugins/a/index.html"
+      ],
+      "repos": [
+        "（合成样本，无归属仓）"
+      ],
+      "kind": "样本（不读盘）",
+      "status": "样本（不读盘）",
+      "why": "该守卫里的 plugins/... 是合成夹具 / 台账字符串，不读盘；判据只要求它显式登记，既不把它误判成迁移欠账，也不让新增的引用悄悄混过集合比对。",
+      "unblock": "无需迁移。样本若被删除，同步从台账移除该 ref 即可；若改成真读盘，必须补 repo 与迁移计划。"
+    },
+    {
       "guard": "plugin-identity-test.mjs",
       "scripts": [
         "test:plugin-identity"

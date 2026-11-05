@@ -111,7 +111,7 @@ if (QUICK) {
   check('下载成功且是 gzip', dl.ok === true && dl.buffer.subarray(0, 2).toString('hex') === '1f8b',
     `bytes=${dl.bytes} err=${dl.error || ''}`);
   if (dl.ok) {
-    const out = unpackTarGz(dl.buffer);
+    const out = await unpackTarGz(dl.buffer);
     const longs = out.entries.filter((e) => e.name.length > 100);
     console.log(`   entries=${out.entries.length} >100字符=${longs.length} maxLen=${Math.max(0, ...out.entries.map((e) => e.name.length))} skipped=${out.skipped.length} warnings=${out.warnings.length}`);
     check('真实 tarball 解包成功', out.ok === true, out.error || '');
