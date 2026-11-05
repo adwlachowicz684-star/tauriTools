@@ -63,10 +63,32 @@ export const EXTERNAL_PLUGINS = {
   'github-manager': 'githubManager',
 };
 
-/** 可安装插件与外部工具型插件共用同一个仓库名规则，全表仍只有这一份。 */
+/**
+ * 可安装插件与外部工具型插件共用同一个仓库名规则，全表仍只有这一份。
+ *
+ * ⛔ 两件事不能靠 `CAMEL[id] || EXTERNAL_PLUGINS[id]` 的短路糊过去：
+ *   · 同一个 id 同时登记在两张表时，短路会静默以 CAMEL 为准 —— 外部工具
+ *     被当成可安装插件，IDS 多一条，共享镜像与 manifest 就会推到它的仓库，
+ *     覆盖 Node CLI 的真实实现。这正是上面三条不塞进 CAMEL 的理由之一，
+ *     而短路写法让这个错误**不报错、也没有任何仓库名变化**可被察觉
+ *     （camelOf('github-manager') 恰好也是 githubManager）。
+ *   · 对象字面量直接取值会把原型链上的键当登记项：传 'constructor' 会拿到
+ *     Object 函数、拼出一个形似合规的仓库名，而不是 fail-closed 抛错。
+ * 所以两边都用 hasOwnProperty 判定，重叠显式拒绝。
+ */
 export function repoNameFor(id) {
-  const c = CAMEL[id] || EXTERNAL_PLUGINS[id];
-  if (!c) throw new Error(`未登记的插件 id: ${id}（新增插件须同步补 CAMEL 映射）`);
+  const has = (obj, k) => Object.prototype.hasOwnProperty.call(obj, k);
+  const inCamel = has(CAMEL, id);
+  const inExternal = has(EXTERNAL_PLUGINS, id);
+  if (inCamel && inExternal) {
+    throw new Error(`插件 id ${id} 同时登记在 CAMEL 与 EXTERNAL_PLUGINS，`
+      + '只能属于其中一类；同时登记会让共享镜像与 manifest 推到外部工具仓');
+  }
+  const c = inCamel ? CAMEL[id] : (inExternal ? EXTERNAL_PLUGINS[id] : null);
+  if (!c) {
+    throw new Error(`未登记的插件 id: ${id}（可安装 iframe 插件补 CAMEL；`
+      + '不参与产物链的外部工具型插件补 EXTERNAL_PLUGINS）');
+  }
   return `${REPO_PREFIX}${c}`;
 }
 
