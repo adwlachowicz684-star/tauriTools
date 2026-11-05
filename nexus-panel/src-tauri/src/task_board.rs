@@ -722,7 +722,10 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             Err(e) => (api_status(&e), err_json(&e), None),
         },
         ("GET", ["api", "tasks", id]) => {
-            let id = norm_id(id);
+            let id = match norm_path_id(id) {
+                Ok(v) => v,
+                Err(e) => return (api_status(&e), err_json(&e), None),
+            };
             match load_tasks(dir) {
                 Ok(store) => match find_task(&store, &id) {
                     /* 与全量读通道同一口径：AI 取单条后也要能查可选值 */
@@ -741,7 +744,7 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
                 Err(e) => (api_status(&e), err_json(&e), None),
             }
         },
-        ("POST", ["api", "tasks"]) => match parse_write_body(&req.body, TB_CREATE) {
+        ("POST", ["api", "tasks"]) => match parse_write_body(&req.body, TB_CREATE, None) {
             Ok(body) => match create_task(dir, &body) {
                 Ok(t) => ok_json(json!({"ok": true, "task": t})),
                 Err(e) => (api_status(&e), err_json(&e), None),
@@ -749,8 +752,11 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             Err(e) => (400, err_json(&e), None),
         },
         ("PATCH", ["api", "tasks", id]) => {
-            let id = norm_id(id);
-            match parse_write_body(&req.body, TB_UPDATE) {
+            let id = match norm_path_id(id) {
+                Ok(v) => v,
+                Err(e) => return (api_status(&e), err_json(&e), None),
+            };
+            match parse_write_body(&req.body, TB_UPDATE, Some(id.as_str())) {
             Ok(body) => match patch_task(dir, &id, &body, notify_status) {
                 Ok((t, entered_notify)) => {
                     /*
@@ -788,7 +794,10 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             }
         },
         ("DELETE", ["api", "tasks", id]) => {
-            let id = norm_id(id);
+            let id = match norm_path_id(id) {
+                Ok(v) => v,
+                Err(e) => return (api_status(&e), err_json(&e), None),
+            };
             match delete_task(dir, &id) {
                 Ok(v) => {
                     let mut out = Map::new();
@@ -807,8 +816,11 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             }
         },
         ("POST", ["api", "tasks", id, "events"]) => {
-            let id = norm_id(id);
-            match parse_write_body(&req.body, TB_EVENT) {
+            let id = match norm_path_id(id) {
+                Ok(v) => v,
+                Err(e) => return (api_status(&e), err_json(&e), None),
+            };
+            match parse_write_body(&req.body, TB_EVENT, Some(id.as_str())) {
             Ok(body) => match add_event(dir, &id, &body) {
                 Ok(t) => (200, json!({"ok": true, "task": t}).to_string(), None),
                 Err(e) => (api_status(&e), err_json(&e), None),
@@ -816,7 +828,7 @@ fn route(req: &Request, dir: &PathBuf, notify_status: &str) -> (u16, String, Opt
             Err(e) => (400, err_json(&e), None),
             }
         },
-        ("POST", ["api", "agents"]) => match parse_write_body(&req.body, TB_AGENT) {
+        ("POST", ["api", "agents"]) => match parse_write_body(&req.body, TB_AGENT, None) {
             Ok(body) => match register_agent(dir, &body) {
                 Ok(agents) => (200, json!({"ok": true, "agents": agents}).to_string(), None),
                 Err(e) => (api_status(&e), err_json(&e), None),
@@ -1105,7 +1117,7 @@ pub fn mcp_call_tool(name: &str, args: &Value, dir: &PathBuf, notify_status: &st
        改名把语义钉死：这个函数只用于 id。 */
     let id_of = |k: &str| args.get(k).and_then(|v| v.as_str()).map(norm_id);
     /* 双保险：mcp_dispatch 已校验，这里再兜一次（内置单测/直接调用也指对路） */
-    if let Err(e) = check_write_args(name, args) {
+    if let Err(e) = check_write_args(name, args, None) {
         return json!({ "content": [{ "type": "text", "text": err_json(&e) }],
                        "isError": true });
     }
@@ -1238,7 +1250,7 @@ fn mcp_dispatch(req: &Value, dir: &PathBuf, notify_status: &str) -> Option<Value
                 Some(_) => return Some(json!({"jsonrpc":"2.0","id":id,
                     "error":{"code":-32602,"message":"Invalid params: name 必须是字符串"}})),
             };
-            if let Err(e) = check_write_args(name, &args) {
+            if let Err(e) = check_write_args(name, &args, None) {
                 return Some(json!({"jsonrpc":"2.0","id":id,
                     "error":{"code":-32602,"message":format!("Invalid params: {}", e)}}));
             }
@@ -1904,6 +1916,21 @@ fn norm_text(s: &str, plus_as_space: bool) -> String {
 /// 三条读写入口 + 新增的删除入口共用这一份，不再逐处补 trim。
 fn norm_id(raw: &str) -> String {
     norm_text(raw, false)
+}
+
+/* ⛔ MCP 的 id 由 check_required 判空（"必填参数 id 不能为空（工具 …）"），
+   而 HTTP 的 id 来自 **URL 路径**：`GET/PATCH/DELETE/events /api/tasks/%20`
+   norm_id 之后是空串，一路走到 find_task / patch_task，回「任务  不存在」→ 404。
+   同一个「没给 id」，一条通道报参数错、一条报没找到，AI 查错方向又反了。
+   与上一轮「必填校验套到路径分支」是同一根因的两面：id 有两种来源，
+   判空却只做在了其中一种上。四个分支共用这一份，不再各写一遍。 */
+fn norm_path_id(raw: &str) -> Result<String, String> {
+    let id = norm_id(raw);
+    if id.is_empty() {
+        Err("必填参数 id 不能为空（路径）".to_string())
+    } else {
+        Ok(id)
+    }
 }
 
 /// 读通道的过滤条件。**HTTP GET /api/tasks 与 MCP tb_list_tasks 共用这一份**。
@@ -2780,8 +2807,15 @@ fn required_of(name: &str) -> &'static [&'static str] {
     }
 }
 
-fn check_required(name: &str, args: &Value) -> Result<(), String> {
+fn check_required(name: &str, args: &Value, path_id: Option<&str>) -> Result<(), String> {
     for &k in required_of(name) {
+        /* ⛔ HTTP 的 PATCH / events 分支，id 来自**路径**，不在 body 里。
+           上一轮把「必填校验」一并套到这两个分支，于是所有 HTTP PATCH
+           （{"title":"Y"}）都报「缺少必填参数 id」—— 界面流转 / 改名 /
+           送审全走这条链，等于整条写通道被掐断，而 MCP 侧完全正常。
+           与「同一判据两个入口」相反：这次是「一份必填清单、两种 id 来源」。
+           path_id 只跳过 id，**其它必填字段一个都不放过**。 */
+        if k == "id" && path_id.is_some() { continue; }
         match args.get(k) {
             None | Some(Value::Null) => {
                 return Err(format!("缺少必填参数 {}（工具 {} 需要它）", k, name));
@@ -2908,18 +2942,20 @@ fn check_shapes(tool: &str, args: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn check_write_args(tool: &str, args: &Value) -> Result<(), String> {
-    check_required(tool, args)?;
+fn check_write_args(tool: &str, args: &Value, path_id: Option<&str>) -> Result<(), String> {
+    check_required(tool, args, path_id)?;
     check_shapes(tool, args)
 }
 
-/* HTTP 四个写分支共用：解析 + 必填 + 形状，一次做完 */
-fn parse_write_body(body: &str, tool: &str) -> Result<Value, String> {
+/* HTTP 四个写分支共用：解析 + 必填 + 形状，一次做完。
+   path_id = Some(...) 时 id 由 URL 路径提供（PATCH / events），
+   None 时 id/title 都必须在 body 里（create / agents 与 MCP 全体）。 */
+fn parse_write_body(body: &str, tool: &str, path_id: Option<&str>) -> Result<Value, String> {
     let v = parse_body(body)?;
     if !v.is_object() {
         return Err("请求体必须是 JSON 对象".to_string());
     }
-    check_write_args(tool, &v)?;
+    check_write_args(tool, &v, path_id)?;
     Ok(v)
 }
 
