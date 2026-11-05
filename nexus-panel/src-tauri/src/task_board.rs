@@ -2343,13 +2343,11 @@ fn create_task(dir: &PathBuf, body: &Value) -> Result<Value, String> {
     store["nextId"] = json!(next_id.saturating_add(1));
 
     /*
-      ⛔ str_field 统一 trim 后空串是 Some("")，unwrap_or_else 不触发 →
-      文件里 reporter=""；而前端 normalizeTask 是 `str(...) || 'manual'`
-      —— 界面显示「manual」，tasks.json 里是空串，两条线索不一致。
-      与上一轮 register_agent 的空串覆盖是同一族：空串应视为「没给」。
+      ⛔ 空串 = 「没给」的判据只存在 opt_str 一份，这里不再手写 filter：
+      文件里若落成 reporter=""，前端 normalizeTask 的 `str(...) || 'manual'`
+      会显示「manual」，两条线索打架。detail / summary 允许清空，不在此列。
     */
-    let reporter = str_field(body, "reporter")
-        .filter(|v| !v.is_empty())
+    let reporter = opt_str(body, "reporter")
         .unwrap_or_else(|| "manual".to_string());
     let mut task = Map::new();
     task.insert("id".to_string(), json!(id));
@@ -2483,19 +2481,23 @@ fn patch_task(
           但 AI 直接读 tasks.json 看到的是带空格的，两条通道数据不一致。
         */
         for key in ["title", "detail", "summary", "priority", "reporter"] {
-            if let Some(v) = str_field(body, key) {
-                let next = v.trim();
-                /* ⛔ 与 opt_str 同一份判据：这两个是**枚举/身份**字段，
-                   空串 = 没给。只修校验段不够 —— 校验跳过后这里照样会
-                   把 "" 写进文件，前端读盘又兜成 P2 / manual，两条线索打架。
-                   detail / summary 不在此列：它们允许清空。 */
-                if next.is_empty() && (key == "priority" || key == "reporter") {
-                    continue;
-                }
-                if obj.get(key).and_then(|x| x.as_str()) != Some(next) {
-                    obj.insert(key.to_string(), json!(next));
-                    changed = true;
-                }
+            /* ⛔ 枚举 / 身份字段的空串判据只存在 opt_str 一份：这里按同一份
+               取值，不再手写 `is_empty()` + 字段名单。校验段跳过后照样会走到
+               写盘，若这里另写一份，改判据时只有一半跟着变，"" 又落进文件。
+               detail / summary 的空串是合法值（允许清空），不走 opt_str。 */
+            let v_opt = if key == "priority" || key == "reporter" {
+                opt_str(body, key)
+            } else {
+                str_field(body, key)
+            };
+            let v = match v_opt {
+                Some(v) => v,
+                None => continue,
+            };
+            let next = v.trim();
+            if obj.get(key).and_then(|x| x.as_str()) != Some(next) {
+                obj.insert(key.to_string(), json!(next));
+                changed = true;
             }
         }
         /*

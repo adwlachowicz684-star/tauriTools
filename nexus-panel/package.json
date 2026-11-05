@@ -133,6 +133,7 @@
     "test:sweep": "node sweep-tests.mjs",
     "test:tauri-http": "node tauri-http-test.mjs",
     "test:tb-scan-restore": "node task-board-scan-restore-test.mjs",
+    "test:tb-opt-str": "node task-board-opt-str-test.mjs",
     "test:theme-alpha-percent": "node theme-alpha-percent-test.mjs",
     "test:theme": "node theme-test.mjs",
     "test:theme-bridge": "node theme-bridge-test.mjs",
