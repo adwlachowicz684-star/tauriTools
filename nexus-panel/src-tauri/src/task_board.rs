@@ -12,11 +12,12 @@
 //!   POST   /api/tasks               新建 {title, detail?, summary?, priority?, tags?,
 //!                                   type?, group?, assignee?, estimate?, deps?, reporter?}
 //!   PATCH  /api/tasks/{id}          改字段/流转 {status?, assignee?, type?, group?,
-//!                                   priority?, title?, detail?, summary?, tags?, deps?,
-//!                                   estimate?, by?, note?}（三个多值列也认数组）
+//!                                   priority?, title?, detail?, summary?, reporter?,
+//!                                   tags?, deps?, estimate?, by?, note?}（三个多值列也认数组）
 //!   DELETE /api/tasks/{id}          删除任务（不可撤销；响应带 dependents）
 //!   POST   /api/tasks/{id}/events   追加事件 {by, action, note?}
 //!   POST   /api/agents              注册窗口身份 {id, name?, role?}
+//!   POST   /mcp                     MCP JSON-RPC 2.0（7 个工具，支持 batch）
 //!
 //! 校验：token 非空时要求请求头 X-TB-Token 匹配（防本机其他程序静默调用）；
 //! 留空则不校验（单机自用场景，用户在设置里自选）。
@@ -975,7 +976,7 @@ pub fn mcp_tools() -> Vec<Value> {
     vec![
         tool(
             "tb_list_tasks",
-            "列出任务看板全部任务（可按状态/优先级/类型/分组/标签/认领人/关键词过滤；除 q 外每个参数都可传数组表示 OR 命中，HTTP GET /api/tasks 的 query string 也支持同一套参数、重复键累加）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）、生效状态清单（statuses）、状态完整定义 statusDefs（名字/颜色/是否完成态）、界面实际生效的流转图 transitions、以及新建任务必须落在的初始状态 initial——建任务或改字段前先读它，才知道各列有哪些可选值、当前状态能流转到哪",
+            "列出任务看板全部任务（可按状态/优先级/类型/分组/标签/认领人/关键词过滤；除 q 外每个参数都可传数组表示 OR 命中，HTTP GET /api/tasks 的 query string 也支持同一套参数、重复键累加）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）、生效状态清单（statuses）、状态完整定义 statusDefs（名字/颜色/是否完成态）、界面实际生效的流转图 transitions、以及新建任务必须落在的初始状态 initial——建任务或改字段前先读它，才知道各列有哪些可选值、当前状态能流转到哪。⛔ 过滤参数里的 "__none__" 只是查询「空值」的标记，不是可以写进任务的值；写入侧会把它清掉，清空某一列请传空串或空数组",
             json!({
                 "status":   { "type": ["string", "array"], "description": "按状态过滤，缺省=全部；传数组=多个状态 OR 命中。⛔ 不写 enum：用户可能自定义过流程，写死那 7 个会让严格校验 schema 的 MCP 客户端在本地就拒掉自定义状态；实际生效的状态看响应里的 defs.statuses" },
                 "priority": { "type": ["string", "array"], "enum": PRIORITIES, "description": "按优先级过滤；传数组=多档 OR 命中" },
@@ -1036,6 +1037,11 @@ pub fn mcp_tools() -> Vec<Value> {
                 "deps":     { "type": ["string", "array"], "items": { "type": "string" }, "description": "整体替换前置任务 id 数组（单个写成字符串也认）；空值/重复/指向自己会被清掉，传 [] =清空全部前置" },
                 "by":       { "type": "string", "description": "操作者窗口 ID，进历史" },
                 "note":     { "type": "string", "description": "备注；打回时必填原因" },
+                /* ⛔ 原来漏了 reporter：patch_task 的 for 循环早就能改它，
+                   create schema 也列了，唯独 update schema 看不见 ——
+                   严格按 inputSchema 做本地校验的 MCP 客户端会拒掉一个
+                   服务端其实接受的参数。与「create 漏 assignee」同族。 */
+                "reporter": { "type": "string", "description": "报告人窗口 ID（与 create 的 reporter 同一字段）" },
             }),
             vec!["id"],
         ),
@@ -1197,9 +1203,24 @@ fn mcp_dispatch(req: &Value, dir: &PathBuf, notify_status: &str) -> Option<Value
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({ "tools": mcp_tools() })),
         "tools/call" => {
+            /*
+              ⛔ 原来 `arguments` 传字符串 / 数组 / null 时一律静默当空对象：
+              `args.get(k)` 全返 None → 业务层报「title 不能为空」「id 不能为空」，
+              AI 会去改参数值反复重试，而真正错的是**参数形状**。
+              与「流转失败文案把人往任务不存在上引」同一族：报错指错方向。
+              JSON-RPC 2.0 规定 params / arguments 必须是对象；给标准 -32602。
+            */
             let params = req.get("params").cloned().unwrap_or(json!({}));
-            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if !params.is_object() {
+                return Some(json!({"jsonrpc":"2.0","id":id,
+                    "error":{"code":-32602,"message":"Invalid params: params 必须是对象"}}));
+            }
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
+            if !args.is_object() {
+                return Some(json!({"jsonrpc":"2.0","id":id,
+                    "error":{"code":-32602,"message":"Invalid params: arguments 必须是对象"}}));
+            }
+            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
             Ok(mcp_call_tool(name, &args, dir, notify_status))
         }
         other => Err(json!({ "code": -32601, "message": format!("未知方法: {other}") })),
@@ -1412,12 +1433,32 @@ fn num_of(v: Option<&Value>) -> Option<f64> {
     }
 }
 
+/*
+  ⛔ 筛选用的「空值哨兵」是内部标记（__none__ / __notype__ / __nogroup__ /
+  __notag__ / __noestimate__，每列不同但都是 __xxx__ 形状），**不是真实值**。
+
+  读侧 TaskFilter.matches 早就把它们排除在"真实值"之外；写侧却一直不认：
+  AI 在 list schema 里读到「传 "__none__" 查未分类」，很容易把同一个值
+  填进 create / update 表示"清空这一列" —— 于是文件里存下 "__none__"，
+  界面上那一列显示成一串内部标记（labelFor 只认**本列**的哨兵，跨列的
+  原样显示；认领人恰好同名的那个则显示成空白）。
+  更矛盾的是：筛"未认领"时读侧把它当哨兵排除 → 真能筛到，
+  而列表里明明写着 "__none__" —— 两条线索打架，不报错。
+
+  判据只存在这一处：写侧（清洗函数 / 单值入口）与读侧（matches / 守卫）
+  共用，以后加一列哨兵不用再回来补第二份。前端 normalizeTask 读盘也按
+  同一形状兜底，老数据里的残留同样被清掉。
+*/
+fn is_sentinel(v: &str) -> bool {
+    v.starts_with("__") && v.ends_with("__")
+}
+
 /// 字符串数组清洗：逐元素 trim、去空、去重（与前端 `oneOrMany` / `ids` 一致）。
 fn clean_str_array(a: &[Value]) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     for x in a.iter().filter_map(|x| x.as_str()) {
         let t = x.trim().to_string();
-        if !t.is_empty() && !seen.contains(&t) {
+        if !t.is_empty() && !is_sentinel(&t) && !seen.contains(&t) {
             seen.push(t);
         }
     }
@@ -1435,7 +1476,7 @@ fn tags_value(body: &Value) -> Value {
     match body.get("tags") {
         Some(Value::String(v)) => {
             let t = v.trim();
-            if t.is_empty() { json!([]) } else { json!([t]) }
+            if t.is_empty() || is_sentinel(t) { json!([]) } else { json!([t]) }
         }
         Some(Value::Array(a)) => Value::Array(
             clean_str_array(a).into_iter().map(Value::String).collect(),
@@ -1531,7 +1572,7 @@ fn enum_value(body: &Value, key: &str) -> Value {
     match body.get(key) {
         Some(Value::String(v)) => {
             let t = v.trim();
-            if t.is_empty() { json!("") } else { json!(t) }
+            if t.is_empty() || is_sentinel(t) { json!("") } else { json!(t) }
         }
         Some(Value::Array(a)) => Value::Array(
             clean_str_array(a).into_iter().map(Value::String).collect(),
@@ -1560,7 +1601,8 @@ fn patch_vals(
 ) -> bool {
     let cur = vals_from_map(obj, key);
     let was_array = obj.get(key).map(|v| v.is_array()).unwrap_or(false);
-    let v = incoming.trim();
+    /* 哨兵不是真实值：传它就是「清空这一列」，别把内部标记写进文件 */
+    let v = { let t = incoming.trim(); if is_sentinel(t) { "" } else { t } };
     let next: Vec<String> = if v.is_empty() {
         Vec::new()
     } else if was_array {
@@ -1641,7 +1683,7 @@ fn guard_assignee(cur: &[String], next: &[String]) -> Result<(), String> {
     }
     let dropped: Vec<String> = cur
         .iter()
-        .filter(|c| !(c.starts_with("__") && c.ends_with("__")))
+        .filter(|c| !is_sentinel(c))
         .filter(|c| !next.iter().any(|n| n == *c))
         .cloned()
         .collect();
@@ -1923,7 +1965,7 @@ impl TaskFilter {
             let cur = vals_of(t, field);
             let real: Vec<&String> = cur
                 .iter()
-                .filter(|v| !(v.starts_with("__") && v.ends_with("__")))
+                .filter(|v| !is_sentinel(v))
                 .collect();
             let mut ok = false;
             for w in wants {
