@@ -17,12 +17,25 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
+/* 源码根可注入 —— 插件源码退场后，TS 侧契约源已迁到 12 个独立仓。
+   --root=<dir>     整体覆盖：故障注入测试把 Rust 源复制进临时目录，
+                     所有注入只改副本，绝不碰真实源码（第 34 节那次
+                     fpx_no_such_cmd 残留的根因就是注入打在真实 main.rs 上）。
+   --ts-root=<dir>  只覆盖 TS 侧：联网探针取独立仓的 api.ts / types.ts，
+                     Rust 仍读主仓真实源，做真契约比对。
+   两者都不给时回到主仓默认路径；契约源读不到必须显式报红，不能空跑。 */
+const argVal = (k) => {
+  /* 取最后一个：故障注入测试会先给 --root=<夹具>，再追加 --root=<空目录>
+     验证「换源根会被喊出来」。用 find 取第一个会让后者形同虚设。 */
+  const a = process.argv.filter((x) => x.startsWith(k + '=')).pop();
+  return a ? resolve(a.slice(k.length + 1)) : null;
+};
+const ROOT = argVal('--root') ?? dirname(fileURLToPath(import.meta.url));
 const SRC = join(ROOT, 'src-tauri/src');
-const PLUGIN = join(ROOT, 'plugins/project-group');
+const PLUGIN = argVal('--ts-root') ?? join(ROOT, 'plugins/project-group');
 
 /** Tauri 注入参数：不是前端传的，比对时排除 */
 const INJECTED = new Set(['app', 'state']);
@@ -42,16 +55,33 @@ const snakeToCamel = (s) =>
 const problems = [];
 const notes = [];
 
+/** 读契约源。读不到时显式记一条 problem（--strict 下 exit 1，且有汇总行），
+ *  不能返回空串当作「没有调用/没有 interface」放行 —— 那是空跑假绿。 */
+function readSource(file) {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    problems.push(`[契约源缺失] 读不到 ${file}：插件源码退场后 TS 侧契约已迁到独立仓，需用 --ts-root 指向其副本，或用 --root 指向含完整源树的临时目录`);
+    return '';
+  }
+}
+
 /* ---------------------- 1. 解析 Rust 命令 ---------------------- */
 
 function parseRustCommands() {
   const cmds = {};
-  const files = readdirSync(join(SRC, 'fpx'))
-    .filter((f) => f.endsWith('.rs'))
-    .map((f) => join(SRC, 'fpx', f));
+  let files;
+  try {
+    files = readdirSync(join(SRC, 'fpx'))
+      .filter((f) => f.endsWith('.rs'))
+      .map((f) => join(SRC, 'fpx', f));
+  } catch {
+    problems.push(`[契约源缺失] Rust 源目录 ${join(SRC, 'fpx')} 读不到`);
+    return cmds;
+  }
 
   for (const file of files) {
-    const src = readFileSync(file, 'utf8');
+    const src = readSource(file);
     const re =
       /#\[tauri::command([^\]]*)\]\s*(?:(?:\/\/[^\n]*\n|#\[[^\]]*\]\n)\s*)*pub (?:async )?fn (\w+)\s*\(([^)]*)\)/g;
     let m;
@@ -88,7 +118,7 @@ function parseRustCommands() {
 /* ---------------------- 2. 解析 main.rs 注册 ---------------------- */
 
 function parseRegistered() {
-  const src = readFileSync(join(SRC, 'main.rs'), 'utf8');
+  const src = readSource(join(SRC, 'main.rs'));
   const i = src.indexOf('invoke_handler');
   const rest = src.slice(i);
   /* 窗口取到宏结束的 `])` 为止。曾经写死 +5000 字：handler 里
@@ -129,7 +159,7 @@ function parseObjectKeys(body) {
 }
 
 function parseApiCalls() {
-  const src = readFileSync(join(PLUGIN, 'api.ts'), 'utf8');
+  const src = readSource(join(PLUGIN, 'api.ts'));
   const calls = {};
   const re = /call\s*<[^>]*>\s*\(\s*['"]([\w_]+)['"]\s*(?:,\s*(\{[\s\S]*?\}))?\s*\)/g;
   let m;
@@ -179,7 +209,7 @@ function parseRustStructs() {
 }
 
 function parseTsInterfaces() {
-  const src = readFileSync(join(PLUGIN, 'types.ts'), 'utf8');
+  const src = readSource(join(PLUGIN, 'types.ts'));
   const out = {};
   for (const m of src.matchAll(/export interface (\w+)\s*\{/g)) {
     const body = readBraced(src, src.indexOf('{', m.index));
@@ -205,6 +235,7 @@ const rustStructs = parseRustStructs();
 const tsIfaces = parseTsInterfaces();
 
 console.log('═══ 跨端一致性校验 ═══\n');
+console.log(`契约源：Rust ${SRC} · TS ${PLUGIN}\n`);
 console.log(`Rust 命令 ${Object.keys(rustCmds).length} · 注册 ${registered.size} · 前端调用 ${Object.keys(apiCalls).length}`);
 console.log(`Rust DTO ${Object.keys(rustStructs).length} · TS interface ${Object.keys(tsIfaces).length}\n`);
 
