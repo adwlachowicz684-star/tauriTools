@@ -994,7 +994,7 @@ pub fn mcp_tools() -> Vec<Value> {
     vec![
         tool(
             "tb_list_tasks",
-            "列出任务看板全部任务（可按状态/优先级/类型/分组/标签/认领人/关键词过滤；除 q 外每个参数都可传数组表示 OR 命中，HTTP GET /api/tasks 的 query string 也支持同一套参数、重复键累加）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）、生效状态清单（statuses）、状态完整定义 statusDefs（名字/颜色/是否完成态）、界面实际生效的流转图 transitions、以及新建任务必须落在的初始状态 initial——建任务或改字段前先读它，才知道各列有哪些可选值、当前状态能流转到哪。⛔ 过滤参数里的 "__none__" 只是查询「空值」的标记，不是可以写进任务的值；写入侧会把它清掉，清空某一列请传空串或空数组",
+            "列出任务看板全部任务（可按状态/优先级/类型/分组/标签/认领人/关键词过滤；除 q 外每个参数都可传数组表示 OR 命中，HTTP GET /api/tasks 的 query string 也支持同一套参数、重复键累加）。响应里的 defs 带了各列定义表（groupDefs/typeDefs/tagDefs/assigneeDefs/priorityDefs）、生效状态清单（statuses）、状态完整定义 statusDefs（名字/颜色/是否完成态）、界面实际生效的流转图 transitions、以及新建任务必须落在的初始状态 initial——建任务或改字段前先读它，才知道各列有哪些可选值、当前状态能流转到哪。⛔ 过滤参数里的 \"__none__\" 只是查询「空值」的标记，不是可以写进任务的值；写入侧会把它清掉，清空某一列请传空串或空数组",
             json!({
                 "status":   { "type": ["string", "array"], "description": "按状态过滤，缺省=全部；传数组=多个状态 OR 命中。⛔ 不写 enum：用户可能自定义过流程，写死那 7 个会让严格校验 schema 的 MCP 客户端在本地就拒掉自定义状态；实际生效的状态看响应里的 defs.statuses" },
                 "priority": { "type": ["string", "array"], "enum": PRIORITIES, "description": "按优先级过滤；传数组=多档 OR 命中" },

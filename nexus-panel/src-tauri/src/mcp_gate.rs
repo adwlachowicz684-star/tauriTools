@@ -519,7 +519,9 @@ pub fn register_builtins(app: &AppHandle, state: &GatewayState) {
             let _guard = task_board::file_lock()
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let result = task_board::mcp_call_tool(&name_c, args, &dir);
+            // notify_status 由 task-board 前端下发、只作用于 HTTP PATCH 通道；
+            // MCP 网关通道按约定不发通知，传空串（无通知状态）即可。
+            let result = task_board::mcp_call_tool(&name_c, args, &dir, "");
             // task-board 的 MCP 层把业务失败放在 result.isError 里
             // （与 MCP 约定一致），原样回传即可，网关不拆开重包。
             Ok(result)
