@@ -282,9 +282,17 @@ console.log('\n=== 4. 设置页「用默认」（真身实跑）===');
   const run = async (invokeImpl) => {
     const msgs = [];
     const cfgs = [];
+    let state = { dataDir: 'old' };
+    /* ⛔ 桩必须支持函数式 updater：await 之后不再用发起时刻的 cfg 整份
+       快照回盖，改成 setCfg((prev) => ({ ...prev, dataDir: dir }))。
+       只收值的桩会把函数本身 push 进 cfgs，成功路径被误判成「没填进目录」。 */
+    const setCfg = (v) => {
+      state = typeof v === 'function' ? v(state) : v;
+      cfgs.push(state);
+    };
     // eslint-disable-next-line no-new-func
     const fn = new Function('ctx', 'cfg', 'setCfg', 'setMsg', 'return ' + js + ';')(
-      { invoke: invokeImpl }, { dataDir: 'old' }, (v) => cfgs.push(v), (v) => msgs.push(v));
+      { invoke: invokeImpl }, state, setCfg, (v) => msgs.push(v));
     const threw = await awaitSafe(fn());
     return { msgs, cfgs, threw };
   };
