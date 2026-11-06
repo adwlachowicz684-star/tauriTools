@@ -284,20 +284,30 @@ export async function fetchRelease(repo, opts = {}) {
  * @param {string|null} installedVersion 已装版本（没装传 null）
  * @param {object} latest fetchRelease 的 release
  * @param {string} id
- * @returns {{hasUpdate:boolean, from:string|null, to:string|null, asset:object|null, reason:string}}
+ * @returns {{hasUpdate:boolean, indeterminate:boolean, from:string|null, to:string|null, asset:object|null, reason:string}}
  *
  * 版本号判不了（返回 null）时 **hasUpdate 一律 false** ——
  * 「不确定」不能当「有更新」推给用户。
+ *
+ * 但「没有 update」不等于「已是最新」。没有 release、release 里没有本插件
+ * 的规范命名产物、版本号无法比较，这三种是**根本没比成**，reason 里都
+ * 明写着「不宣称有更新」。此前只给 hasUpdate:false，消费方（真实联调探针、
+ * 以及将来任何接界面的人）会把它们读成「查过且干净」——远端 v1.0.1、本地
+ * v1.0.0，只因产物名不合规就永远报最新。
+ *
+ * 与 js/plugin-ledger.js 的 resolveUpdateFor 是同一句承诺的两份实现：
+ * 不可判定分支必须一一对应地带上 indeterminate。任何一份改判据，另一份
+ * 必须跟着改；守卫 resolve-update-parity-test.mjs 真跑两份并逐分支核对。
  */
 export function resolveUpdate(installedVersion, latest, id) {
-  if (!latest) return { hasUpdate: false, from: installedVersion || null, to: null, asset: null, reason: '没有 release 信息' };
+  if (!latest) return { hasUpdate: false, indeterminate: true, from: installedVersion || null, to: null, asset: null, reason: '没有 release 信息' };
   const to = String(latest.tag_name || latest.name || '').replace(/^v/i, '');
   const asset = pickAsset(latest.assets, id, to);
-  if (!asset) return { hasUpdate: false, from: installedVersion || null, to, asset: null, reason: 'release 里没有可用产物' };
-  if (!installedVersion) return { hasUpdate: true, from: null, to, asset, reason: '未安装' };
+  if (!asset) return { hasUpdate: false, indeterminate: true, from: installedVersion || null, to, asset: null, reason: 'release 里没有可用产物' };
+  if (!installedVersion) return { hasUpdate: true, indeterminate: false, from: null, to, asset, reason: '未安装' };
   const c = compareVersion(installedVersion, to);
-  if (c === null) return { hasUpdate: false, from: installedVersion, to, asset, reason: '版本号无法比较，不宣称有更新' };
-  return { hasUpdate: c < 0, from: installedVersion, to, asset, reason: c < 0 ? '版本更新' : '已是最新' };
+  if (c === null) return { hasUpdate: false, indeterminate: true, from: installedVersion, to, asset, reason: '版本号无法比较，不宣称有更新' };
+  return { hasUpdate: c < 0, indeterminate: false, from: installedVersion, to, asset, reason: c < 0 ? '版本更新' : '已是最新' };
 }
 
 /* ------------------------------------------------------------------ *

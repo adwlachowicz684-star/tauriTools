@@ -80,9 +80,15 @@ for (const [owner, repo] of REPOS) {
     check(`   ${owner}/${repo} asset 是已上传完成`, isUploadedAsset(a0) === true);
     check(`   ${owner}/${repo} digest 是 sha256:64hex`, /^sha256:[0-9a-f]{64}$/i.test(a0.digest || ''));
   }
-  /* 两种形态都要能见到：全是 sha 或全是分支名都说明我们的采样偏了 */
+  /* 用不存在的插件 id 采样：release 取到了，但没有本插件的规范命名产物。
+     hasUpdate=false 只说明「没推出有更新」，不等于「已是最新」——
+     必须带 indeterminate，否则这一行会把「根本没比成」读成「查过且干净」。 */
   const u = resolveUpdate('0.0.1', rel, 'probe-nonexistent-plugin');
-  console.log(`   resolveUpdate → hasUpdate=${u.hasUpdate} reason=${u.reason}`);
+  const verdict = u.indeterminate ? '没比成（不等于已是最新）'
+    : (u.hasUpdate ? '有更新' : '已是最新');
+  console.log(`   resolveUpdate → ${verdict} reason=${u.reason}`);
+  check(`   ${owner}/${repo} 没有规范产物时判为「没比成」而非「已是最新」`,
+    u.indeterminate === true && u.hasUpdate === false);
 }
 
 console.log('\n===== B. target_commitish 两种形态都被覆盖 =====');
