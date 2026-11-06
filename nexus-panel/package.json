@@ -175,6 +175,7 @@
     "test:market-runtime-gap": "node market-runtime-gap-test.mjs",
     "test:market-binding-guard": "node market-binding-guard-test.mjs",
     "test:market-binding-runtime": "node market-binding-runtime-test.mjs",
+    "test:market-panel-result": "node market-panel-result-test.mjs",
     "test:real-device-runtime": "node real-device-runtime-guard-test.mjs",
     "test:release-chain-contract": "node release-chain-contract-test.mjs",
     "test:webview-runtime": "node webview-runtime-test.mjs",

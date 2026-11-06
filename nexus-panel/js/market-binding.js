@@ -131,3 +131,89 @@ export async function createWebviewMarket(p = {}) {
     },
   };
 }
+
+/* ============================================================================
+ * 面板结果汇总（第 51 轮）
+ * ----------------------------------------------------------------------------
+ * ⚠️ 这里只把编排层返回的字段翻成界面文案，不是第二份编排：四个纯函数
+ *    都不调用市场实例的任何方法，也不重写「有没有更新 / 数据去留」判据
+ *    —— 那两份判据分别在 plugin-ledger.js 与 plugin-data-policy.js 里。
+ *
+ * 为什么需要这一层：生产入口原来只数 hasUpdate 为真的条数，于是
+ *   · 台账读不到 → 空 results 加 errors，界面报「均为最新」并带成功样式
+ *   · 某个仓库查询失败 → checked 为假、hasUpdate 也为假，同样报「均为最新」
+ *   · 同版本产物被重新上传 → fingerprintChanged 为真但 hasUpdate 为假，
+ *     plugin-ledger.js 明写「必须让用户知道」，界面却一个字都不显示
+ *   · 安装成功但产物没有 digest / 解包跳过了条目 → warnings 被整段吞掉
+ *   · 卸载按来源策略真的清了用户数据，界面却写死「用户数据已保留」
+ * 把「没查成」报成「查过且干净」是本项目第 203 轮已在别处修过的形状，
+ * 这次是刚接线的联网商店面板重新引入了它。
+ * ========================================================================== */
+
+/** 常驻状态行：已装数量 + 装了没生效 / 扫描出错的条目，不许只报数量。 */
+export function formatMarketList(r) {
+  const o = r || {};
+  const plugins = Array.isArray(o.plugins) ? o.plugins : [];
+  const n = plugins.filter((x) => !x || !x.builtin).length;
+  const skipped = Array.isArray(o.skipped) ? o.skipped : [];
+  const errors = Array.isArray(o.errors) ? o.errors.filter(Boolean) : [];
+  const notes = [];
+  if (skipped.length) notes.push(`${skipped.length} 项装了但没生效`);
+  if (errors.length) notes.push(`${errors.length} 项扫描出错：${String(errors[0])}`);
+  return {
+    tone: notes.length ? 'err' : 'ok',
+    text: `联网安装已就绪 · 已安装 ${n} 个市场插件`
+      + (notes.length ? ` · ${notes.join('；')}` : ''),
+  };
+}
+
+/** 查更新：失败与「没查成」必须与「已是最新」分开说，产物指纹变化单独说。 */
+export function formatCheckUpdates(r) {
+  const o = r || {};
+  const results = Array.isArray(o.results) ? o.results : [];
+  const errors = Array.isArray(o.errors) ? o.errors.filter(Boolean) : [];
+  const unchecked = results.filter((x) => x && x.checked === false);
+  const changed = results.filter((x) => x && x.fingerprintChanged === true);
+  const hits = results.filter((x) => x && x.hasUpdate === true);
+  const notes = [];
+  if (errors.length) notes.push(`${errors.length} 项检查失败：${String(errors[0])}`);
+  if (unchecked.length) notes.push(`${unchecked.length} 个插件没查成（不等于已是最新）`);
+  if (changed.length) notes.push(
+    `${changed.length} 个插件同版本产物被重新上传，建议核对来源：${changed.map((x) => x.id).join('、')}`);
+  if (hits.length) notes.push(`${hits.length} 个插件有更新：${hits.map((x) => x.id).join('、')}`);
+  if (!notes.length) {
+    return { tone: 'ok', text: results.length
+      ? '所有已检查插件均为最新' : '当前没有可检查的市场插件' };
+  }
+  const broken = errors.length > 0 || unchecked.length > 0 || changed.length > 0;
+  return { tone: broken ? 'err' : 'ok', text: notes.join('；') };
+}
+
+/** 安装：版本缺失不拼 undefined，告警条目要出现，失败要带阶段。 */
+export function formatInstall(r) {
+  const o = r || {};
+  if (!o.ok) {
+    const stage = o.stage ? `（阶段：${o.stage}）` : '';
+    return { tone: 'err', text: `安装失败：${o.error || o.stage || '未知原因'}${stage}` };
+  }
+  const ver = o.version ? ` v${o.version}` : '';
+  const warns = Array.isArray(o.warnings) ? o.warnings.filter(Boolean) : [];
+  return {
+    tone: 'ok',
+    text: `已安装「${o.id}」${ver}` + (warns.length ? ` · ${warns.length} 项告警：${String(warns[0])}` : ''),
+  };
+}
+
+/** 卸载：成功文案必须跟着 purgeUserData 走，不能写死「已保留」。 */
+export function formatUninstall(r) {
+  const o = r || {};
+  if (!o.ok) return { tone: 'err', text: `卸载失败：${o.error || o.stage || '未知原因'}` };
+  if (o.purgeUserData === true) {
+    return { tone: 'ok', text: `已卸载「${o.id}」（按来源策略清除了该插件的用户数据）` };
+  }
+  const kept = Array.isArray(o.kept) ? o.kept : [];
+  return {
+    tone: 'ok',
+    text: `已卸载「${o.id}」（用户数据已保留${kept.length ? ` · ${kept.length} 项` : ''}）`,
+  };
+}

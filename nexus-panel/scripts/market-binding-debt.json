@@ -35,7 +35,7 @@
       ],
       "status": "resolved-in-code",
       "evidence": "curl -sSI -H \"Authorization: token ***\" -H \"Accept: application/octet-stream\" <asset.url> → HTTP/2 302, location: https://release-assets.githubusercontent.com/github-production-release-asset/...",
-      "resolution": "tauri.conf.json 的 connect-src 补 https://github.com 与 https://*.githubusercontent.com（用通配覆盖 CDN 子域漂移）；api.github.com 等原有指令一字未动。assetProtocol.scope 本就含 $APPDATA/**、$RESOURCE/**。真机剩余项仅为「302 是否实际通过 CSP」，由 devtools 探针 csp302 一项验。"
+      "resolution": "config/nexus.config.mjs 的 BASE_CSP.connect-src 补 https://github.com 与 https://*.githubusercontent.com（用通配覆盖 CDN 子域漂移），再由 npm run config:sync 派生到 tauri.conf.json / tauri.vite.conf.json / index.html / index.react.html 共 7 处；api.github.com 等原有指令一字未动。只手改某一处派生文件会被 config:check 报红，且下一次 config:sync 会把它改回去（第 51 轮先手改了 tauri.conf.json 没动共享源，正是这个形状）。assetProtocol.scope 本就含 $APPDATA/**、$RESOURCE/**。真机剩余项仅为「302 是否实际通过 CSP」，由 devtools 探针 csp302 一项验。"
     },
     {
       "id": "runtime-load",

@@ -7,7 +7,10 @@ import { prompt as askPrompt } from '../../js/dialog.js';
 /* 联网商店装配层：把编排层第一次接进产品（清单第 50 轮）。
    只在 mount 里实例化，模块顶层不触发任何 invoke —— 否则面板还没挂载
    就去读 appDataDir，浏览器调试态会直接打不开。 */
-import { createWebviewMarket } from '../../js/market-binding.js';
+import {
+  createWebviewMarket, formatMarketList, formatCheckUpdates,
+  formatInstall, formatUninstall,
+} from '../../js/market-binding.js';
 
 /**
  * 插件面板（插件商店）
@@ -292,8 +295,7 @@ export default definePlugin({
     if (market) {
       try {
         const listed = await market.list();
-        const n = (listed?.plugins || []).filter((x) => !x.builtin).length;
-        netState.textContent = `联网安装已就绪 · 已安装 ${n} 个市场插件`;
+        netState.textContent = formatMarketList(listed).text;
       } catch (e) {
         netState.textContent = `联网安装已就绪，但列表读取失败：${e?.message || e}`;
       }
@@ -317,12 +319,20 @@ export default definePlugin({
       },
     });
 
+    /* 编排层按契约返回结构化失败，但注入口 / 宿主 fs / 网络抛出的异常
+       不会自己变成提示。这里统一兜住，否则按钮就是「点了没反应」。 */
     const netBtn = (label, fn, danger = false) => h('button.p-btn', {
       style: {
         height: '28px', padding: '0 10px', fontSize: '11px',
         ...(danger ? { color: 'var(--danger)' } : {}),
       },
-      onclick: fn,
+      onclick: async () => {
+        try {
+          await fn();
+        } catch (e) {
+          ctx.toast?.(`操作失败：${e?.message || e}`, 'err');
+        }
+      },
     }, label);
 
     const needMarket = () => {
@@ -343,11 +353,8 @@ export default definePlugin({
         patInput,
         netBtn('检查更新', async () => {
           if (!needMarket()) return;
-          const r = await market.checkUpdates();
-          const hits = (r?.results || []).filter((x) => x.hasUpdate);
-          ctx.toast?.(hits.length
-            ? `${hits.length} 个插件有更新：${hits.map((x) => x.id).join('、')}`
-            : '所有已安装插件均为最新', 'ok');
+          const m = formatCheckUpdates(await market.checkUpdates());
+          ctx.toast?.(m.text, m.tone);
         }),
         netBtn('从仓库安装', async () => {
           if (!needMarket()) return;
@@ -358,9 +365,8 @@ export default definePlugin({
           });
           if (!repo) return;
           const r = await market.install(repo.trim());
-          ctx.toast?.(r.ok
-            ? `已安装「${r.id}」 v${r.version}`
-            : `安装失败：${r.error || r.stage}`, r.ok ? 'ok' : 'err');
+          const m = formatInstall(r);
+          ctx.toast?.(m.text, m.tone);
           if (r.ok) render();
         }),
         netBtn('卸载', async () => {
@@ -371,9 +377,8 @@ export default definePlugin({
           });
           if (!id) return;
           const r = await market.uninstall(id.trim());
-          ctx.toast?.(r.ok
-            ? `已卸载「${id.trim()}」（用户数据已保留）`
-            : `卸载失败：${r.error || ''}`, r.ok ? 'ok' : 'err');
+          const m = formatUninstall(r);
+          ctx.toast?.(m.text, m.tone);
           if (r.ok) render();
         }, true),
       ),

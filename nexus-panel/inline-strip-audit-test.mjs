@@ -61,6 +61,35 @@ const LEDGER = {
     why: '块注释正则不是标准 [\\s\\S]*? 形态，需先确认是否保偏移',
     unblock: '对照 stripCommentsKeep 的语义确认后替换',
   },
+  /* 第 49/50 轮上游新增的守卫与扫描脚本，各自带了一份内联实现。
+     这是登记欠账，不是收口：line-colon / line-safe / block-other 三种
+     行注释判据语义不同（本项目第 187 轮已栽过「机械替换改坏断言」），
+     先如实记着，逐文件确认后再换公共设施。 */
+  'market-binding-guard-test.mjs': {
+    kinds: ['flat', 'line-colon'],
+    why: '第 50 轮接线守卫自带剥注释实现，判据是 (^|[^:])//，与公共设施 (^|\\s)// 不同；需确认 URL 形态与注释内实例化样本不会被误判',
+    unblock: '用两套样本比对两种判据的结论后，改为 import ./test-scan-utils.mjs 的 stripCommentsFlatJs 并从台账销账',
+  },
+  'plugin-repo-state-test.mjs': {
+    kinds: ['flat', 'line-safe'],
+    why: '第 49 轮状态守卫自带剥注释实现，用于扫三个脚本的接线；未确认与公共设施语义完全等价',
+    unblock: '对照 stripCommentsFlatJs 逐项比对后替换并销账',
+  },
+  'retired-source-guard-test.mjs': {
+    kinds: ['flat', 'line-safe'],
+    why: '退场源码守卫自带剥注释实现，替换前需逐项确认是否与公共设施语义等价',
+    unblock: '对照 stripCommentsFlatJs / stripCommentsKeep 逐项比对后替换并销账',
+  },
+  'scan-admit-selfcheck-test.mjs': {
+    kinds: ['flat', 'line-safe'],
+    why: '上游新增的自检守卫自带剥注释实现，形态与公共设施未逐项比对',
+    unblock: '比对后改为公共设施并销账',
+  },
+  'scripts/scan-market-runtime.mjs': {
+    kinds: ['block-other', 'line-safe'],
+    why: '上游新增的市场运行时扫描器自带块注释剥离，形态不是标准 [\\s\\S]*?，需先确认是否保偏移',
+    unblock: '对照 stripCommentsKeep 确认后替换并销账',
+  },
 };
 
 /* 已销账：换成公共设施、且仍在主仓的文件。必须真的 import，且不再有内联实现。 */

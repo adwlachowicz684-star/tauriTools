@@ -107,8 +107,16 @@ export const BASE_CSP = {
   'font-src': ["'self'", 'data:'],
   // https://api.github.com：github-manager 插件（nexusPanel_plugin_githubManager）
   // 用 PAT 直连 GitHub REST 管理账号仓库。CSP 只按源放行，令牌由用户在插件内
-  // 输入并存宿主 store，不下发到页面 HTML；其余 GitHub 域名一律不放行。
-  'connect-src': ["'self'", 'ipc:', 'http://ipc.localhost', 'http://127.0.0.1:*', 'http://localhost:*', 'https://api.github.com'],
+  // 输入并存宿主 store，不下发到页面 HTML。
+  // https://github.com 与 https://*.githubusercontent.com：第 51 轮 curl 实取
+  // release asset 的 302 落点是 https://release-assets.githubusercontent.com/...，
+  // 不是早期台账里写的 objects.githubusercontent.com。fetch 跟随重定向时每一跳
+  // 都受 connect-src 约束，只放行 api.github.com 会变成「清单查得到、产物下不下来」，
+  // 而界面上只有一句下载失败，不会指向 CSP。用通配覆盖 CDN 子域漂移。
+  // ⚠️ 这两项必须写在这里（共享源），不能手改 src-tauri/tauri.conf.json：
+  //    config-sync 的 --check 会因派生值漂移报红，且任何人跑 config:sync
+  //    都会把这两个域名抹回去，把实测修复退回成「下不下来」。
+  'connect-src': ["'self'", 'ipc:', 'http://ipc.localhost', 'http://127.0.0.1:*', 'http://localhost:*', 'https://api.github.com', 'https://github.com', 'https://*.githubusercontent.com'],
   'media-src': ["'self'", 'asset:', 'http://asset.localhost', 'blob:'],
   // frame-src 必须带 asset 源：运行时加载的 iframe 插件位于 asset.localhost 源
   // （convertFileSrc 转出来的资源协议 URL），只有 'self' 会被整体拦掉，
