@@ -314,19 +314,27 @@ console.log('\n=== 5. 设置页初始化（真身实跑）===');
       实测踩到：notifyStatus 那版新增了 readStore / setStatuses，桩没跟上，
       这一节从 43/0 变成 41/2 —— 看着像设置页坏了，其实是桩漏了。
     */
+    /* ⛔ 切片只取 (async () => {...}) 的块体，而 mountSeq 是 effect 里、
+       async 函数**外**声明的。不给它注入就会 ReferenceError → 被被测代码
+       自己的 catch 接住 → 成功路径写成「配置加载失败」。桩要跟着切片边界走。 */
     const fn = new Function(
-      'ctx', 'alive', 'S', 'setCfg', 'setLoaded', 'setMsg', 'setServiceOn', 'setStatuses',
+      'ctx', 'alive', 'S', 'setCfg', 'setLoaded', 'setMsg', 'setServiceOn', 'setStatuses', 'mountSeq',
       'return ' + js + ';',
     )(
       { invoke: async () => 'x' }, true,
-      { loadConfig: loadImpl, apiHealth: healthImpl || (async () => false), readStore: async () => null },
-      (v) => { st.cfg = v; }, () => { st.loaded++; }, (v) => st.msg.push(v), () => {}, () => {});
+      /* ⛔ 桩必须跟着初始化块走：这轮挂载链新增了 claimRead / isLatestRead /
+         latestRead。漏一个 → ReferenceError 被被测代码自己的 catch 接住 →
+         成功路径被判成「加载失败」并写错误提示（又是桩漏了，不是设置页坏了）。 */
+      { loadConfig: loadImpl, apiHealth: healthImpl || (async () => false), readStore: async () => null,
+        claimRead: () => 1, isLatestRead: () => true,
+        latestRead: (p, apply, onErr) => { void p.then(apply, onErr || (() => {})); } },
+      (v) => { st.cfg = v; }, () => { st.loaded++; }, (v) => st.msg.push(v), () => {}, () => {}, 1);
     st.threw = await awaitSafe(fn());
     return st;
   };
   const ok = await run(async () => ({ dataDir: 'D:/tb', port: 9911, token: '', notifyUrl: '', autoStart: false }));
   t('成功 → 标记已加载', ok.loaded === 1, `loaded=${ok.loaded}`);
-  t('成功 → 不写错误提示', ok.msg.length === 0);
+  t('成功 → 不写错误提示', ok.msg.length === 0, JSON.stringify(ok.msg));
 
   const bad = await run(async () => { throw new Error('目录未授权'); });
   t('失败 → 不往调用方抛（未捕获 rejection）★', bad.threw === null, `抛出 ${String(bad.threw?.message || bad.threw)}`);
