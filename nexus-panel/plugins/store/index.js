@@ -290,14 +290,19 @@ export default definePlugin({
       style: { fontSize: '11px', lineHeight: '1.6', marginTop: '4px' },
     }, market ? '' : marketMsg);
 
-    /* 至少调用一个能力方法：list() 把「已联网安装」的数量写进状态行。
-       只实例化、不调用，等于没接线（台账 unblock 第一条）。 */
+    /* 至少调用一个能力方法：list() 把状态行填满。
+       只实例化、不调用，等于没接线（台账 unblock 第一条）。
+       结果文案与色调统一走 formatMarketList()：skipped / errors 不能被
+       数量淹没，err 也不能用成功样式显示。 */
     if (market) {
       try {
         const listed = await market.list();
-        netState.textContent = formatMarketList(listed).text;
+        const view = formatMarketList(listed);
+        netState.textContent = view.text;
+        netState.style.color = view.tone === 'err' ? 'var(--danger)' : '';
       } catch (e) {
         netState.textContent = `联网安装已就绪，但列表读取失败：${e?.message || e}`;
+        netState.style.color = 'var(--danger)';
       }
     }
 

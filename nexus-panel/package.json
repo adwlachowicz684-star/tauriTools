@@ -178,6 +178,7 @@
     "test:market-panel-result": "node market-panel-result-test.mjs",
     "test:real-device-runtime": "node real-device-runtime-guard-test.mjs",
     "test:release-chain-contract": "node release-chain-contract-test.mjs",
+    "test:market-result-format": "node market-result-format-test.mjs",
     "test:webview-runtime": "node webview-runtime-test.mjs",
     "test:plugin-market-shape": "node plugin-market-shape-test.mjs",
     "test:retired-supply": "node retired-supply-test.mjs",

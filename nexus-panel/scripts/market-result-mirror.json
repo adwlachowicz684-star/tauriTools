@@ -1,0 +1,22 @@
+{
+  "why": "12 个私有插件仓各镜像一份 js/market-binding.js。第 52 轮把 12 仓的 220 行超集提上主仓并接上 4 个生产调用点后，主仓成为权威源；以后改这个文件必须同步刷新 12 仓并更新此 sha，否则守卫 ⑩c 会红。只改台账不改文件等于把漂移洗白成基线。",
+  "capturedAt": "2026-11-06",
+  "source": "git/trees/main?recursive=1 逐仓取 blob sha，12 仓同一值",
+  "sharedBlobSha": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+  "path": "js/market-binding.js",
+  "repos": [
+    "nexusPanel_plugin_agentFlow",
+    "nexusPanel_plugin_colorPicker",
+    "nexusPanel_plugin_demoIframe",
+    "nexusPanel_plugin_demoLight",
+    "nexusPanel_plugin_demoReact",
+    "nexusPanel_plugin_demoService",
+    "nexusPanel_plugin_dupview",
+    "nexusPanel_plugin_iconPicker",
+    "nexusPanel_plugin_mdEditor",
+    "nexusPanel_plugin_mindmap",
+    "nexusPanel_plugin_projectGroup",
+    "nexusPanel_plugin_taskBoard"
+  ],
+  "note": "第 13 仓 githubManager 不参与共享镜像集合（无 js/ css/ src/ 镜像），不列入。"
+}
