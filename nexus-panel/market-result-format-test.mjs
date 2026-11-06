@@ -190,13 +190,81 @@ for (const [read, src, emitted] of pairs) {
   t(`⑨a 格式层读 ${read}，编排层确实返回`, binding.includes(read) && emitted.test(src));
 }
 
-/* 共享镜像：主仓是权威源，12 仓那份必须与它逐字节相同。 */
-const mirror = JSON.parse(rd('scripts/market-result-mirror.json'));
-t('⑩a 台账 12 仓恰好 12 条', Array.isArray(mirror.repos) && mirror.repos.length === 12);
-t('⑩b 台账 sha 是 40 位 hex', /^[0-9a-f]{40}$/.test(mirror.sharedBlobSha || ''));
+/* 共享镜像：主仓是权威源，12 仓那份必须与它逐字节相同。
+ *
+ * ⚠️ 原来 ⑩c 的名字叫「== 12 仓镜像 sha」，实现却只比「主仓文件 vs
+ *    台账里手写的 sharedBlobSha」。台账是 JSON 文本，不是 12 仓实测：
+ *    · 报红时最省事的「修法」就是改台账 sha —— 正是台账 why 里点名禁止
+ *      的「把漂移洗白成基线」；
+ *    · 12 仓任何一仓被自治提交改了，离线守卫全绿；
+ *    · 台账填 12 个任意仓名也全绿（⑩a 只数条数）。
+ *    所以台账升级成逐仓实测快照（perRepo）：离线把「主仓文件 / 台账 /
+ *    唯一真值源的 12 仓名」三方钉自洽，联网由 verify-plugin-repos.mjs ⑦ 节
+ *    逐仓拿 API 实测复核台账。判据只有一份 evaluateMirror(m,...)，元断言
+ *    把坏台账喂给同一个函数，确认不是恒真 / 空集合恒真。 */
+let mirror;
+try {
+  mirror = JSON.parse(rd('scripts/market-result-mirror.json'));
+} catch (e) {
+  console.log('⛔ 镜像台账解析失败，守卫拒绝空跑：' + String((e && e.message) || e));
+  process.exit(1);
+}
 const localSha = blobSha(readFileSync(join(ROOT, 'js/market-binding.js')));
-t('⑩c 主仓装配层 blob sha == 12 仓镜像 sha', localSha === mirror.sharedBlobSha);
-t('⑩d 台账说明写清「改主仓必须同步刷 12 仓」', /同步|刷新|12/.test(mirror.why || ''));
+let expectedRepos = [];
+let mapErr = '';
+try {
+  const rm = await import(pathToFileURL(join(ROOT, 'scripts/plugin-repo-map.mjs')).href);
+  expectedRepos = Object.keys(rm.CAMEL).map((id) => rm.repoNameFor(id)).sort();
+} catch (e) { mapErr = String((e && e.message) || e); }
+
+function evaluateMirror(m, masterSha, repos) {
+  const rows = [];
+  const t2 = (name, ok) => rows.push({ name, ok: !!ok });
+  const hex = (s) => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s);
+  const keys = m && m.perRepo && typeof m.perRepo === 'object' && !Array.isArray(m.perRepo)
+    ? Object.keys(m.perRepo).sort() : [];
+  const want = [...repos].sort();
+  t2('⑩a 台账 12 仓恰好 12 条', Array.isArray(m.repos) && m.repos.length === 12);
+  t2('⑩b 台账 sha 是 40 位 hex', hex(m.sharedBlobSha));
+  t2('⑩c 主仓装配层 blob sha == 台账记录的共享镜像 sha', masterSha === m.sharedBlobSha);
+  t2('⑩d 台账说明写清「改主仓必须同步刷 12 仓」', /同步|刷新|12/.test(m.why || ''));
+  t2('⑩e 唯一真值源可取（12 个可安装仓）', repos.length === 12 && !mapErr);
+  t2('⑩f perRepo 键集合 == 唯一真值源 12 仓',
+    keys.length === 12 && keys.every((k, i) => k === want[i]));
+  t2('⑩g perRepo 与 repos 两份名单一致',
+    Array.isArray(m.repos) && [...m.repos].sort().join('|') === keys.join('|'));
+  t2('⑩h perRepo 每仓 sha 合法且 == sharedBlobSha',
+    keys.length > 0 && keys.every((k) => hex(m.perRepo[k]) && m.perRepo[k] === m.sharedBlobSha));
+  t2('⑩i 不含第 13 仓 githubManager（它不进共享镜像）',
+    keys.length > 0 && keys.every((k) => !/githubManager/i.test(k)));
+  return rows;
+}
+for (const r of evaluateMirror(mirror, localSha, expectedRepos)) t(r.name, r.ok);
+
+/* 元断言：坏台账必须被同一份判据抓出。变体对空 / 损坏台账也要能构造 ——
+ * 否则台账一坏守卫先崩在半路，连「自己没在干活」都不会说。 */
+const badMirrors = [
+  ['删掉 perRepo', (m) => ({ ...m, perRepo: undefined })],
+  ['某仓 sha 改成旧值', (m) => {
+    const keys = Object.keys(m.perRepo || {});
+    const k = keys[0] || '__none__';
+    return { ...m, perRepo: { ...(m.perRepo || {}), [k]: '0'.repeat(40) } };
+  }],
+  ['某仓名填错', (m) => {
+    const p = { ...(m.perRepo || {}) };
+    const k = Object.keys(p)[0];
+    if (k) { const v = p[k]; delete p[k]; p['nexusPanel_plugin_typo'] = v; }
+    else p['nexusPanel_plugin_typo'] = '0'.repeat(40);
+    return { ...m, perRepo: p };
+  }],
+  ['sharedBlobSha 改掉', (m) => ({ ...m, sharedBlobSha: 'f'.repeat(40) })],
+];
+for (const [name, mutate] of badMirrors) {
+  const rows = evaluateMirror(mutate(mirror), localSha, expectedRepos);
+  t(`⑪a 坏台账「${name}」被抓出`, rows.some((r) => !r.ok));
+}
+t('⑪b 判据对空台账 fail-closed',
+  evaluateMirror({}, localSha, expectedRepos).some((r) => !r.ok));
 
 console.log(`通过 ${pass} 项，失败 ${fails.length} 项`);
 for (const f of fails) console.log('  FAIL ' + f);

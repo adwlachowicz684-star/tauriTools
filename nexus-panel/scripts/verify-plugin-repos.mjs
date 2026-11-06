@@ -89,6 +89,7 @@ console.log(`核验口径：共享镜像 ${expected.length} 文件 + 入口 + ${
 
 let drift = 0, netFail = 0, checkedFiles = 0, stateDrift = 0;
 const heads = new Map();                 // 只有「逐文件一致 + private」通过的仓才进这里
+const mirrorShas = new Map();            // ② 节顺手记下每仓 js/market-binding.js 的实测 sha，供 ⑦ 节用
 for (const id of IDS_TODO) {
   const repo = repoNameFor(id);
   try {
@@ -100,6 +101,7 @@ for (const id of IDS_TODO) {
     const tree = await gh(`/repos/${OWNER}/${repo}/git/trees/${head.object.sha}?recursive=1`);
     if (tree.truncated) { console.log(`  ❌ ${repo}: tree 被截断，无法判定`); drift++; continue; }
     const remote = new Map(tree.tree.filter(x => x.type === 'blob').map(x => [x.path, x.sha]));
+    mirrorShas.set(repo, remote.get('js/market-binding.js') || '');
     let diff = 0, missing = 0;
     for (const [rel, want] of expected) {
       if (!remote.has(rel)) missing++;
@@ -265,8 +267,61 @@ for (const { id, repo } of PRODUCT_REPOS) {
 }
 drift += chainDrift;
 
+/* ------------------------------------------------------------------ *
+ * ⑦ 镜像台账逐仓实测交叉
+ * ------------------------------------------------------------------ *
+ * market-result-format-test.mjs 的 ⑩c 只比「主仓文件 vs 台账 sha」，台账
+ * 本身从没拿 12 仓实测复核过：改主仓时顺手改台账，离线守卫就全绿，而
+ * 12 仓还是旧文件（台账 why 里管这叫「把漂移洗白成基线」）。
+ * ② 节守「主仓 vs 12 仓」，⑦ 节守「台账声明 vs 12 仓实测」——闭环里
+ * 缺的正是这一环。台账解析失败 / 缺 perRepo 一律 fail-closed 报红，
+ * --only 只核指定仓，未核的不算红。 */
+let mirrorDrift = 0, mirrorChecked = 0;
+const MIRROR_REL = 'js/market-binding.js';
+let mirrorLedger = null, mirrorErr = '';
+try {
+  mirrorLedger = JSON.parse(fs.readFileSync(
+    path.join(HERE, 'market-result-mirror.json'), 'utf8'));
+} catch (e) { mirrorErr = e.message; }
+const masterSha = gitBlobSha(fs.readFileSync(path.join(ROOT, MIRROR_REL)));
+if (mirrorErr || !mirrorLedger || !mirrorLedger.perRepo
+    || typeof mirrorLedger.perRepo !== 'object' || Array.isArray(mirrorLedger.perRepo)) {
+  console.log(`  ❌ 镜像台账：解析失败「${mirrorErr || '无'}」或缺 perRepo 逐仓快照`);
+  mirrorDrift++;
+} else {
+  if (masterSha !== mirrorLedger.sharedBlobSha) {
+    console.log(`  ❌ 镜像台账：主仓 ${MIRROR_REL} sha 与台账 sharedBlobSha 不符`
+      + `（主仓 ${masterSha.slice(0, 8)} / 台账 ${String(mirrorLedger.sharedBlobSha).slice(0, 8)}）`);
+    mirrorDrift++;
+  }
+  const ledgerKeys = Object.keys(mirrorLedger.perRepo);
+  const missingRepos = [...knownRepos].filter((r) => !ledgerKeys.includes(r));
+  if (missingRepos.length) {
+    console.log(`  ❌ 镜像台账：perRepo 缺 ${missingRepos.length} 仓（${missingRepos.join(', ')}）`);
+    mirrorDrift++;
+  }
+  for (const id of IDS_TODO) {
+    const repo = repoNameFor(id);
+    const actual = mirrorShas.get(repo);
+    if (!actual) continue;          // ② 节没取到（网络/API 故障已计入 netFail）
+    const claimed = mirrorLedger.perRepo[repo];
+    mirrorChecked++;
+    if (claimed !== actual || claimed !== masterSha) {
+      console.log(`  ❌ ${repo}: 镜像台账 sha 与实测不符`
+        + `（台账 ${String(claimed).slice(0, 8)} / 12 仓 ${actual.slice(0, 8)}`
+        + ` / 主仓 ${masterSha.slice(0, 8)}）`);
+      mirrorDrift++;
+    }
+  }
+  if (!mirrorDrift) {
+    console.log(`  ✅ 镜像台账：${mirrorChecked} 仓逐仓实测与台账 / 主仓一致${ONLY ? '（--only）' : ''}`);
+  }
+}
+drift += mirrorDrift;
+
 console.log(`\n结果：${IDS_TODO.length} 仓 / ${checkedFiles} 文件 / 漂移 ${drift}`
   + ` / 状态漂移 ${stateDrift} / 网络故障 ${netFail} / 台账归属仓 ${ledgerRepos.size}`
-  + ` / 产物链 ${chainChecked} 核验（未发版 ${chainSkipped} / 违约 ${chainDrift}）`);
+  + ` / 产物链 ${chainChecked} 核验（未发版 ${chainSkipped} / 违约 ${chainDrift}）`
+  + ` / 镜像台账 ${mirrorChecked} 核验（违约 ${mirrorDrift}）`);
 if (netFail) process.exit(2);
 if (drift || stateDrift) process.exit(1);

@@ -1,7 +1,7 @@
 {
-  "why": "12 个私有插件仓各镜像一份 js/market-binding.js。第 52 轮把 12 仓的 220 行超集提上主仓并接上 4 个生产调用点后，主仓成为权威源；以后改这个文件必须同步刷新 12 仓并更新此 sha，否则守卫 ⑩c 会红。只改台账不改文件等于把漂移洗白成基线。",
-  "capturedAt": "2026-11-06",
-  "source": "git/trees/main?recursive=1 逐仓取 blob sha，12 仓同一值",
+  "why": "12 个私有插件仓各镜像一份 js/market-binding.js。第 52 轮把 12 仓的 220 行超集提上主仓并接上 4 个生产调用点后，主仓成为权威源；以后改这个文件必须同步刷新 12 仓并更新本台账。⑩c 只比「主仓文件 vs 台账 sha」，台账本身若没人拿 12 仓实测复核，改主仓时顺手改台账就能把漂移洗白成基线。所以本台账同时记逐仓实测 sha，由 verify-plugin-repos.mjs ⑦ 节逐仓复验。",
+  "capturedAt": "2026-11-07",
+  "source": "API 逐仓 git/trees/main?recursive=1 实读 js/market-binding.js 的 blob sha 生成；12 仓同一值。不是手写常量，也不从主仓文件反推。",
   "sharedBlobSha": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
   "path": "js/market-binding.js",
   "repos": [
@@ -18,5 +18,20 @@
     "nexusPanel_plugin_projectGroup",
     "nexusPanel_plugin_taskBoard"
   ],
-  "note": "第 13 仓 githubManager 不参与共享镜像集合（无 js/ css/ src/ 镜像），不列入。"
+  "note": "第 13 仓 githubManager 不参与共享镜像集合（无 js/ css/ src/ 镜像），不列入。",
+  "perRepo": {
+    "nexusPanel_plugin_agentFlow": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_colorPicker": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_demoIframe": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_demoLight": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_demoReact": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_demoService": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_dupview": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_iconPicker": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_mdEditor": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_mindmap": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_projectGroup": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da",
+    "nexusPanel_plugin_taskBoard": "1f45a3b0fb7dcc71698032d26cfd425a5e9813da"
+  },
+  "verifiedBy": "market-result-format-test.mjs ⑩a~⑩i 离线钉住「主仓 / 台账 / 唯一真值源 12 仓名」三方自洽；scripts/verify-plugin-repos.mjs ⑦ 节联网逐仓拿 API 实测复核台账"
 }
