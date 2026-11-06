@@ -63,7 +63,7 @@
   ],
   "unblock": [
     "在 Tauri 窗口 devtools 粘贴 scripts/probe-real-device-runtime.mjs 的 DEVTOOLS_SNIPPET，把打印的 checks 数组贴回（进注册表已由第 54 轮销掉，此项只剩加载 URL 分支）",
-    "用 evaluate(checks) 得到 nextAction：wire-frameBase / backend-proxy-or-copy-to-dist / srcdoc-or-inline-bundle / bridge-fallback / fix-csp，按分支改对应一行",
+    "用 evaluate(checks) 得到 nextAction：wire-installed-frame-src / no-tauri-runtime / backend-proxy-or-copy-to-dist / srcdoc-or-inline-bundle / bridge-fallback / fix-csp；每条 reason 点名的生产文件即落点（守卫 ⑦g/⑦h 逐条取证），按分支改对应一行",
     "真机五项全通过后再把 runtimeVerified 改 true、status 改 bound；守卫 real-device-runtime-guard-test.mjs ① 节双向校验，自查自封会红"
   ],
   "knownLimit": "纯静态守卫挡不住「把主断言整行删掉或改成 true」；元断言 A–I 只验判据本身，靠每轮破坏验证兜这一层。另：守卫判的是「生产入口是否实例化 + 三个能力是否各有调用点」，不是「每个能力在真机上各自跑通」——后者只能靠 runtimeVerified 的真机实测。",

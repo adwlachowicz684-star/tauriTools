@@ -31,6 +31,10 @@
  *     产物 0 命中；产物真实信号是 nexus-bridge-v1/ready postMessage。
  *     ⑥ 节对真实产物逐份实证，防止判据再锚到臆想约定。
  *
+ * 第 58 轮新增 ⑦ 节：32 种 true/false 组合穷举、tauri 元前提优先、
+ * 多项失败列全，以及 nextAction 落点实证 —— 旧的全通过指令指向一个
+ * 生产 js/ 下 0 命中的概念，真机跑完仍不知道改哪一行。
+ *
  * 已知边界：纯静态守卫挡不住「把主断言整行删掉或改成 true」，靠每轮
  * 破坏验证兜，不假装能自证。
  *
@@ -119,8 +123,8 @@ t('④e 探针显式标注不进 CI', /不进 CI|不登记 npm script/.test(prob
 /* ---------------- ⑤ 元断言：真判据不是恒真 / 空集合不冒充通过 ---------------- */
 const allOk = REQUIRED_CHECKS.map((id) => ({ id, ok: true }));
 const ev = (arr) => evaluate(arr);
-t('⑤a 五项全通过 → wire-frameBase 且 canMarkBound=true',
-  ev(allOk).nextAction === 'wire-frameBase' && ev(allOk).canMarkBound === true);
+t('⑤a 五项全通过 → wire-installed-frame-src 且 canMarkBound=true',
+  ev(allOk).nextAction === 'wire-installed-frame-src' && ev(allOk).canMarkBound === true);
 t('⑤b appDataHtml=false → backend-proxy-or-copy-to-dist',
   ev(allOk.map((c) => c.id === 'appDataHtml' ? { ...c, ok: false } : c)).nextAction === 'backend-proxy-or-copy-to-dist');
 t('⑤c moduleScript=false → srcdoc-or-inline-bundle',
@@ -199,11 +203,68 @@ const mockRun = await runDeviceProbe(mockEnv);
 t('⑥o mock 环境下采集链跑通（canRun=true）', mockRun.canRun === true);
 t('⑥p mock 产出恰好 5 项', mockRun.checks.length === 5);
 t('⑥q mock 五项均 ok=true', mockRun.checks.every((c) => c.ok === true));
-t('⑥r mock 全通 → wire-frameBase / canMarkBound=true',
-  mockRun.evaluated.nextAction === 'wire-frameBase' && mockRun.evaluated.canMarkBound === true);
+t('⑥r mock 全通 → wire-installed-frame-src / canMarkBound=true',
+  mockRun.evaluated.nextAction === 'wire-installed-frame-src' && mockRun.evaluated.canMarkBound === true);
 const mockBad = await runDeviceProbe({ ...mockEnv, probeIframe: async () => ({ moduleScript: undefined, contentDocument: true }) });
 t('⑥s mock 返回非三态 → 归一化为 null 且不标 bound',
   mockBad.checks.find((c) => c.id === 'moduleScript').ok === null && mockBad.evaluated.canMarkBound === false);
+
+/* ---------------- ⑦ 第58轮：分支完备性 + nextAction 落点实证 ----------------
+   真机贴回 JSON 后拿的是 nextAction，不是「红几条」。指令若指向生产代码里
+   不存在的概念、或把 tauri 元前提排后面、或多项失败只报第一条，用户会
+   白改一轮甚至改坏产品。这里穷举组合并对落点逐条取证。 */
+const ALL_FALSE = REQUIRED_CHECKS.map((id) => ({ id, ok: false }));
+const combos = [];
+for (let mask = 0; mask < (1 << REQUIRED_CHECKS.length); mask++) {
+  combos.push(REQUIRED_CHECKS.map((id, i) => ({ id, ok: !(mask & (1 << i)) })));
+}
+t('⑦a 32 种 true/false 组合：只有全 true 可标 bound',
+  combos.every((c) => ev(c).canMarkBound === c.every((x) => x.ok === true)), `${combos.length} 组合`);
+t('⑦b 32 种组合的 nextAction 均非空',
+  combos.every((c) => typeof ev(c).nextAction === 'string' && ev(c).nextAction.length > 0));
+t('⑦c 五项全 false → no-tauri-runtime（元前提优先，不给改产品代码的指令）',
+  ev(ALL_FALSE).nextAction === 'no-tauri-runtime', ev(ALL_FALSE).nextAction);
+t('⑦d tauri=false 与任意另一项 false 并存时仍判 no-tauri-runtime',
+  REQUIRED_CHECKS.filter((id) => id !== 'tauri').every((id) => {
+    const c = REQUIRED_CHECKS.map((x) => ({ id: x, ok: !(x === 'tauri' || x === id) }));
+    return ev(c).nextAction === 'no-tauri-runtime';
+  }));
+t('⑦e 多项失败 reasons 列全（不静默丢其余失败项）',
+  (() => { const r = ev(REQUIRED_CHECKS.map((x) => ({ id: x, ok: x === 'tauri' })));
+    const s = r.reasons.join(' | ');
+    return r.nextAction === 'backend-proxy-or-copy-to-dist' && /moduleScript/.test(s) && /csp302/.test(s) && /其余失败项/.test(s); })());
+t('⑦f 单项失败不产生「其余失败项」噪声',
+  !ev(allOk.map((c) => c.id === 'csp302' ? { ...c, ok: false } : c)).reasons.join('').includes('其余失败项'));
+
+/* 落点实证：每条指令文案里的锚点必须真的存在于它点名的生产文件里。
+   只查「字符串在仓里出现过」会假绿 —— 旧指令名曾在探针/守卫/台账里
+   出现 3 次，生产 js/ 下 0 次。 */
+const LANDINGS = [
+  ['wire-installed-frame-src', 'js/host.js', ['resolveFrameSrc', 'manifest.installed === true']],
+  ['no-tauri-runtime', 'scripts/probe-real-device-runtime.mjs', ['no-tauri-runtime']],
+  ['backend-proxy-or-copy-to-dist', 'js/installed-registry.js', ['installedEntry']],
+  ['srcdoc-or-inline-bundle', 'js/host.js', ['srcdoc']],
+  ['bridge-fallback', 'js/host.js', ['e.source']],
+  ['fix-csp', 'src-tauri/tauri.conf.json', ['connect-src']],
+];
+const ACTION_TO_CHECK = {
+  'no-tauri-runtime':'tauri','backend-proxy-or-copy-to-dist':'appDataHtml',
+  'srcdoc-or-inline-bundle':'moduleScript','bridge-fallback':'contentDocument','fix-csp':'csp302'};
+for (const [action, rel, needles] of LANDINGS) {
+  const txt = existsSync(join(ROOT, rel)) ? read(join(ROOT, rel)) : '';
+  t(`⑦g ${action} 落点文件 ${rel} 存在且锚点齐`,
+    txt.length > 0 && needles.every((n) => txt.includes(n)), needles.join(','));
+  const r = action === 'wire-installed-frame-src' ? ev(allOk)
+    : ev(REQUIRED_CHECKS.map((x) => ({ id: x, ok: x !== ACTION_TO_CHECK[action] })));
+  t(`⑦h ${action} 的 reason 点名该落点文件`,
+    r.nextAction === action && r.reasons.some((x) => x.includes(rel)), r.nextAction);
+}
+t('⑦i 探针不再出现臆想概念 frameBase（生产 js/ 下 0 命中）', !/frameBase/.test(probe));
+t('⑦j 生产 js/ 下确实没有 frameBase（反证不是拿自证当实证）',
+  !readdirSync(join(ROOT, 'js')).some((f) => /\.(js|mjs)$/.test(f) && read(join(ROOT, 'js', f)).includes('frameBase')));
+const debtUnblock = JSON.stringify(debt.unblock || []);
+t('⑦k 台账 unblock 的 action 清单与 6 个分支一致（台账不撒谎）',
+  LANDINGS.every(([a]) => debtUnblock.includes(a)) && !debtUnblock.includes('wire-frameBase'));
 
 /* ---------------- 汇总 ---------------- */
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

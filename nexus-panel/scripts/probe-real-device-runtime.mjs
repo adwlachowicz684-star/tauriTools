@@ -31,6 +31,18 @@
  * 采集项里 ok:null 表示这一跳真机没测出来，evaluate() 一律判未测出，
  * 绝不当成通过 —— 空集合恒真是本项目反复栽的假绿。
  *
+ * 第 58 轮修的三处（都是「真机跑完仍不知道改哪一行」的形状）
+ * ------------------------------------------------------------
+ *   · 全通过那条指令原指向一个生产代码里 0 命中的概念；实测 js/ 下
+ *     没有任何实现，只有探针/守卫/台账自己写过它。真机五项全通过照它
+ *     去搜会一无所获。现指向 js/host.js 的 resolveFrameSrc() 中
+ *     manifest.installed === true 那个 throw 分支 —— 那才是真实落点。
+ *   · BRANCH 把元前提 tauri 排在第四：若有人在普通浏览器 devtools 跑
+ *     片段，tauri=false 会先被 appDataHtml 抢走，给出「改后端代下」这种
+ *     让人去改产品代码的错误指令。现提到最前。
+ *   · 多项失败只返回第一条，其余失败项被静默丢弃，改完再跑才冒下一处。
+ *     现 reasons 一并列全，并注明按优先级一次只改一处、改完重跑。
+ *
  * 第 57 轮修的两处（都是「真机白跑一次」的形状）
  * ------------------------------------------------------------
  *   · evaluate() 原来只认 ok === false。贴回来的 JSON 若把 ok 写成
@@ -92,23 +104,26 @@ export function evaluate(checks) {
   if (!failed.length) {
     return {
       conclusion: 'asset-protocol-works',
-      nextAction: 'wire-frameBase',
+      nextAction: 'wire-installed-frame-src',
       canMarkBound: true,
-      reasons: ['五项全通过：给市场插件的 manifest 注入 frameBase，resolveFrameSrc 走该基址，再转 bound'],
+      reasons: ['五项全通过：在 js/host.js 的 resolveFrameSrc() 里，把 manifest.installed === true 的 throw 分支换成真机选定的加载 URL（同源投影 / srcdoc / 后端代理）；同步销 scripts/market-binding-debt.json 的 load-url，再转 bound'],
     };
   }
 
-  /* 优先级按「越靠前越底层」：先解决取不到文件，再谈 module / 桥接 / 下载。 */
+  /* 优先级按「越靠前越底层」。tauri 是元前提，必须第一：不在 Tauri 里
+     采集的其余四项都在错误环境里，不能据此去改产品代码。 */
   const BRANCH = [
-    ['appDataHtml', 'backend-proxy-or-copy-to-dist', 'asset 协议取不到 $APPDATA 的 index.html：改后端代下或安装时把产物拷进 dist 的 runtime-plugins/'],
-    ['moduleScript', 'srcdoc-or-inline-bundle', '取到了文件但 ES module 跨源被挡：改 srcdoc / 内联 bundle'],
-    ['contentDocument', 'bridge-fallback', 'iframe 跨源、contentDocument 恒 null：桥接层要改 e.source 跨源语义'],
-    ['tauri', 'no-tauri-runtime', '当前不是 Tauri 运行时，go/prod 态结论无效'],
-    ['csp302', 'fix-csp', '资产 302 没过 CSP：按实测 Location 补 connect-src'],
+    ['tauri', 'no-tauri-runtime', '当前不是 Tauri 运行时：其余四项在错误环境采集，结论无效；请用 scripts/probe-real-device-runtime.mjs 的 DEVTOOLS_SNIPPET 在 Tauri 窗口重跑，不要按其它分支改产品代码'],
+    ['appDataHtml', 'backend-proxy-or-copy-to-dist', 'asset 协议取不到 $APPDATA 的 index.html：改后端代下，或在 js/installed-registry.js 的 installedEntry 投影里把产物拷进 dist 的 runtime-plugins/'],
+    ['moduleScript', 'srcdoc-or-inline-bundle', '取到了文件但 ES module 跨源被挡：改 js/host.js 的 srcdoc / 内联 bundle'],
+    ['contentDocument', 'bridge-fallback', 'iframe 跨源、contentDocument 恒 null：桥接层要改 js/host.js 里的 e.source 跨源语义'],
+    ['csp302', 'fix-csp', '资产 302 没过 CSP：按实测 Location 补 src-tauri/tauri.conf.json 的 connect-src'],
   ];
   for (const [id, action, why] of BRANCH) {
     if (by.get(id).ok === false) {
       reasons.push(why);
+      const rest = failed.filter((x) => x !== id);
+      if (rest.length) reasons.push(`其余失败项（按优先级先只改上面这一处，改完重跑探针）：${rest.join(', ')}`);
       return { conclusion: `${id}-failed`, nextAction: action, canMarkBound: false, reasons };
     }
   }
