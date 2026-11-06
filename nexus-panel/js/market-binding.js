@@ -167,17 +167,29 @@ export function formatMarketList(r) {
   };
 }
 
-/** 查更新：失败与「没查成」必须与「已是最新」分开说，产物指纹变化单独说。 */
+/**
+ * 查更新：失败与「没查成」必须与「已是最新」分开说，产物指纹变化单独说。
+ *
+ * 还有第三类漏网：**取到 release 却没比出结论**。编排层 checked=true 只表示
+ * 「这次请求成功了」，resolveUpdateFor 遇到「release 里没有本插件的规范产物」
+ * 或「版本号无法比较」时明写「不宣称有更新」，却不带 hasUpdate / errors /
+ * checked:false 中的任何一个 —— 只数这三项的话，界面会报「所有已检查插件
+ * 均为最新」并带成功色，而远端 v1.0.1、本地 v1.0.0 根本没比过。
+ * 这类条目由编排层的 indeterminate 标出，这里单独成句且必须用 err 色调。
+ */
 export function formatCheckUpdates(r) {
   const o = r || {};
   const results = Array.isArray(o.results) ? o.results : [];
   const errors = Array.isArray(o.errors) ? o.errors.filter(Boolean) : [];
   const unchecked = results.filter((x) => x && x.checked === false);
+  const indeterminate = results.filter((x) => x && x.indeterminate === true);
   const changed = results.filter((x) => x && x.fingerprintChanged === true);
   const hits = results.filter((x) => x && x.hasUpdate === true);
   const notes = [];
   if (errors.length) notes.push(`${errors.length} 项检查失败：${String(errors[0])}`);
   if (unchecked.length) notes.push(`${unchecked.length} 个插件没查成（不等于已是最新）`);
+  if (indeterminate.length) notes.push(
+    `${indeterminate.length} 个插件没法判定是否最新（${indeterminate.slice(0, 2).map((x) => x.reason || '原因未知').join('；')}）；不等于已是最新`);
   if (changed.length) notes.push(
     `${changed.length} 个插件同版本产物被重新上传，建议核对来源：${changed.map((x) => x.id).join('、')}`);
   if (hits.length) notes.push(`${hits.length} 个插件有更新：${hits.map((x) => x.id).join('、')}`);
@@ -185,7 +197,8 @@ export function formatCheckUpdates(r) {
     return { tone: 'ok', text: results.length
       ? '所有已检查插件均为最新' : '当前没有可检查的市场插件' };
   }
-  const broken = errors.length > 0 || unchecked.length > 0 || changed.length > 0;
+  const broken = errors.length > 0 || unchecked.length > 0
+    || indeterminate.length > 0 || changed.length > 0;
   return { tone: broken ? 'err' : 'ok', text: notes.join('；') };
 }
 

@@ -379,12 +379,22 @@ export async function checkUpdates(ledger, opts = {}) {
   return { results, errors };
 }
 
-/** 内部：把一条台账记录与远端 release 比对（纯函数，便于单测） */
+/**
+ * 内部：把一条台账记录与远端 release 比对（纯函数，便于单测）
+ *
+ * indeterminate：这次**没能把装的版本与仓库最新版本比出结论**。
+ * 取到 release 不等于查成了 —— 「release 里没有本插件的规范产物」和
+ * 「版本号无法比较」两种都拿不到可比较的基准，reason 里明写着「不宣称
+ * 有更新」。此前上层只按 checked（是否取到 release）分流，把这两类混进
+ * 「所有已检查插件均为最新」并带成功色：远端明明是 v1.0.1、本地 v1.0.0，
+ * 只因产物名不合规就永远报「已是最新」。这个字段是给界面的结构化结论，
+ * 不许只留在注释/文案里。
+ */
 export function resolveUpdateFor(entry, release, id) {
-  if (!release) return { hasUpdate: false, from: null, to: null, asset: null, reason: '没有 release 信息' };
+  if (!release) return { hasUpdate: false, indeterminate: true, from: null, to: null, asset: null, reason: '没有 release 信息' };
   const to = String(release.tag_name || release.name || '').replace(/^v/i, '');
   const asset = pickAsset(release.assets, id, to);
-  if (!asset) return { hasUpdate: false, from: (entry && entry.version) || null, to, asset: null, reason: 'release 里没有可用产物' };
+  if (!asset) return { hasUpdate: false, indeterminate: true, from: (entry && entry.version) || null, to, asset: null, reason: 'release 里没有可用产物' };
 
   const from = (entry && entry.version) || null;
   /* 产物指纹优先：同版本但产物换了，也要算「有变化」——
@@ -392,11 +402,11 @@ export function resolveUpdateFor(entry, release, id) {
   const newFp = assetFingerprint(asset);
   if (from && to && from === to && entry.fingerprint && newFp) {
     if (entry.fingerprint !== newFp) {
-      return { hasUpdate: false, from, to, asset, reason: '版本未变但产物已变化（重新上传过），建议核对来源', fingerprintChanged: true };
+      return { hasUpdate: false, indeterminate: false, from, to, asset, reason: '版本未变但产物已变化（重新上传过），建议核对来源', fingerprintChanged: true };
     }
   }
-  if (!from) return { hasUpdate: true, from: null, to, asset, reason: '未安装' };
+  if (!from) return { hasUpdate: true, indeterminate: false, from: null, to, asset, reason: '未安装' };
   const c = compareVersion(from, to);
-  if (c === null) return { hasUpdate: false, from, to, asset, reason: '版本号无法比较，不宣称有更新', fingerprintChanged: false };
-  return { hasUpdate: c < 0, from, to, asset, reason: c < 0 ? '版本更新' : '已是最新', fingerprintChanged: false };
+  if (c === null) return { hasUpdate: false, indeterminate: true, from, to, asset, reason: '版本号无法比较，不宣称有更新', fingerprintChanged: false };
+  return { hasUpdate: c < 0, indeterminate: false, from, to, asset, reason: c < 0 ? '版本更新' : '已是最新', fingerprintChanged: false };
 }
