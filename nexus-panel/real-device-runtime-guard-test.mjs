@@ -6,7 +6,7 @@
  * 为什么单独做这个守卫
  * ------------------------------------------------------------
  * 第 50 轮把两个 blocker 都标成 pending-real-device，台账 note 里写着
- * 「CSP 资产重定向」和「installed-plugins/ → 侧边栏」一起等真机。本轮实测
+ * 「CSP 资产重定向」和「installed-plugins/ → 侧边栏」一起等真机。实测
  * 拆开：CSP 域名是确定性配置缺口（资产 302 真实落点是
  * release-assets.githubusercontent.com，不是台账沿用 50 轮的
  * objects.githubusercontent.com），配置已修；真正只剩 asset 协议下
@@ -24,13 +24,20 @@
  * 不是拿正则去猜判据长什么样 —— 判据恒真 / 空集合恒真 / 缺项冒充通过
  * 这三类假绿必须当场喊出来。
  *
+ * 第 57 轮新增 ⑥ 节：抓两个会让「真机白跑一次」的缺陷
+ *   · evaluate() 原来只认 ok === false，非三态值会被当成全通过并
+ *     canMarkBound=true —— 自查自封转 bound 的唯一口子。
+ *   · devtools 片段查 documentElement.dataset.probeReady，实测 12/12
+ *     产物 0 命中；产物真实信号是 nexus-bridge-v1/ready postMessage。
+ *     ⑥ 节对真实产物逐份实证，防止判据再锚到臆想约定。
+ *
  * 已知边界：纯静态守卫挡不住「把主断言整行删掉或改成 true」，靠每轮
  * 破坏验证兜，不假装能自证。
  *
  * 零外部依赖，按 import.meta.url 定位根，从任意 cwd 可跑。
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -42,6 +49,7 @@ const CONF = join(ROOT, 'src-tauri', 'tauri.conf.json');
 const DEBT = join(ROOT, 'scripts', 'market-binding-debt.json');
 const STORE = join(ROOT, 'plugins', 'store', 'index.js');
 const PROBE = join(ROOT, 'scripts', 'probe-real-device-runtime.mjs');
+const BUILT = join(ROOT, 'runtime-plugins');
 
 let pass = 0, fail = 0;
 const t = (name, cond, extra = '') => {
@@ -130,6 +138,72 @@ t('⑤h 缺采集项 → inconclusive',
 const noEnv = await runDeviceProbe({});
 t('⑤i 无 Tauri 环境 → cannot-run，不抛异常、不恒真',
   noEnv.canRun === false && noEnv.reason === 'no-tauri-runtime');
+
+/* ---------------- ⑥ 第57轮：值域 fail-closed + 采集信号实证 ---------------- */
+const TRI = 'ok === true ? true : ok === false ? false : null';
+t('⑥a Node 侧 push 有三态归一化', probe.includes(TRI));
+t('⑥b devtools 片段 push 同样有三态归一化（两侧语义一致）', DEVTOOLS_SNIPPET.includes(TRI));
+t('⑥c devtools 片段不再引用臆想标记 probeReady', !/probeReady/.test(DEVTOOLS_SNIPPET));
+t('⑥d devtools 片段采集 nexus-bridge-v1 / ready',
+  /nexus-bridge-v1/.test(DEVTOOLS_SNIPPET) && /'ready'/.test(DEVTOOLS_SNIPPET));
+t('⑥e moduleScript 采集依赖 readySeen 与 module 标签，不是常量',
+  /push\('moduleScript'[\s\S]{0,200}readySeen/.test(DEVTOOLS_SNIPPET)
+  && /push\('moduleScript'[\s\S]{0,200}script\[type=module\]/.test(DEVTOOLS_SNIPPET));
+
+/* 产物实证：判据所依赖的信号必须真的存在于构建产物里，不能靠注释自证。 */
+const probeId = 'demo-iframe';
+const probeHtml = read(join(BUILT, probeId, 'index.html'));
+t('⑥f demo-iframe 产物含 nexus-bridge-v1', probeHtml.includes('nexus-bridge-v1'));
+t('⑥g demo-iframe 产物含 type:"ready"', probeHtml.includes('type:"ready"'));
+t('⑥h demo-iframe 产物不含 probeReady', !probeHtml.includes('probeReady'));
+const builtDirs = readdirSync(BUILT).filter((d) => existsSync(join(BUILT, d, 'index.html')));
+const withSignal = builtDirs.filter((d) => {
+  const h = read(join(BUILT, d, 'index.html'));
+  const hasReady = (s) => s.includes('nexus-bridge-v1') && s.includes('type:"ready"');
+  /* 只认实际会被执行的那份脚本：内联 module 查 html 本身；
+     外链 module 查 src 指向的那一个 js。早期版本遍历整个 assets/，
+     demo-iframe 里一份未被加载的第二份 bundle 含该信号就把
+     「html 里的信号被抹掉」洗白了 —— F 向破坏验证只红 1 条才查出。 */
+  const modSrc = (h.match(/<script[^>]*type=["']module["'][^>]*\bsrc=["']([^"']+)["']/) || [])[1];
+  if (!modSrc) return hasReady(h);
+  const jsPath = join(BUILT, d, modSrc.replace(/^\.\//, ''));
+  return existsSync(jsPath) && hasReady(read(jsPath));
+});
+t('⑥i 12 份产物全部实证含 ready 信号（含外链 bundle）',
+  builtDirs.length === 12 && withSignal.length === builtDirs.length,
+  `${withSignal.length}/${builtDirs.length}`);
+
+/* 值域：非三态值既不进 unknown 也不进 failed，旧判据会当成全通过。 */
+const withOk = (v) => ev(allOk.map((c) => c.id === 'moduleScript' ? { ...c, ok: v } : c));
+for (const [label, v] of [['undefined', undefined], ['字符串false', 'false'], ['数字0', 0], ['字符串true', 'true'], ['空串', '']]) {
+  const r = withOk(v);
+  t(`⑥j ${label} → inconclusive 且 canMarkBound=false`,
+    r.conclusion === 'inconclusive' && r.canMarkBound === false);
+  t(`⑥k ${label} 点名到具体 id moduleScript`, r.reasons.some((x) => x.includes('moduleScript')));
+}
+const dupArr = [...allOk, { id: 'moduleScript', ok: true }];
+t('⑥l 重复 id → inconclusive（防 false 被后写 true 洗掉）', ev(dupArr).conclusion === 'inconclusive');
+t('⑥m 重复 id 点名', ev(dupArr).reasons.some((x) => x.includes('重复')));
+t('⑥n 合法三态全 true 仍可标 bound（没有修过头）', ev(allOk).canMarkBound === true);
+
+/* 沙盒可模拟部分穷尽：mock env 走完整采集链，真机只剩「提供真实 env」。 */
+const gzipBuf = new Uint8Array([0x1f, 0x8b, 8, 0]).buffer;
+const mkFetch = async () => ({ status: 200, text: async () => '<!doctype html><html></html>', arrayBuffer: async () => gzipBuf });
+const mockEnv = {
+  tauri: {}, convertFileSrc: () => 'asset://probe', appDataDir: '/appdata',
+  joinPath: (...p) => p.join('/'), fetch: mkFetch,
+  assetApiUrl: 'https://api.github.com/assets/1', headers: {},
+  probeIframe: async () => ({ moduleScript: true, contentDocument: true, note: 'mock' }),
+};
+const mockRun = await runDeviceProbe(mockEnv);
+t('⑥o mock 环境下采集链跑通（canRun=true）', mockRun.canRun === true);
+t('⑥p mock 产出恰好 5 项', mockRun.checks.length === 5);
+t('⑥q mock 五项均 ok=true', mockRun.checks.every((c) => c.ok === true));
+t('⑥r mock 全通 → wire-frameBase / canMarkBound=true',
+  mockRun.evaluated.nextAction === 'wire-frameBase' && mockRun.evaluated.canMarkBound === true);
+const mockBad = await runDeviceProbe({ ...mockEnv, probeIframe: async () => ({ moduleScript: undefined, contentDocument: true }) });
+t('⑥s mock 返回非三态 → 归一化为 null 且不标 bound',
+  mockBad.checks.find((c) => c.id === 'moduleScript').ok === null && mockBad.evaluated.canMarkBound === false);
 
 /* ---------------- 汇总 ---------------- */
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
