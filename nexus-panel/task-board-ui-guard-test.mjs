@@ -314,11 +314,13 @@ console.log('\n=== 5. 设置页初始化（真身实跑）===');
       实测踩到：notifyStatus 那版新增了 readStore / setStatuses，桩没跟上，
       这一节从 43/0 变成 41/2 —— 看着像设置页坏了，其实是桩漏了。
     */
-    /* ⛔ 切片只取 (async () => {...}) 的块体，而 mountSeq 是 effect 里、
-       async 函数**外**声明的。不给它注入就会 ReferenceError → 被被测代码
-       自己的 catch 接住 → 成功路径写成「配置加载失败」。桩要跟着切片边界走。 */
+    /* ⛔ 切片只取 (async () => {...}) 的块体，而 mountSeq（effect 里）与
+       readFlowStatuses（模块级本地函数）都在 async 函数**外**声明。
+       不给它俩注入就会 ReferenceError → 被被测代码自己的 catch 接住 →
+       成功路径写成「配置加载失败」、setLoaded 还被记两次。桩要跟着切片边界走。 */
     const fn = new Function(
-      'ctx', 'alive', 'S', 'setCfg', 'setLoaded', 'setMsg', 'setServiceOn', 'setStatuses', 'mountSeq',
+      'ctx', 'alive', 'S', 'setCfg', 'setLoaded', 'setMsg', 'setServiceOn', 'setStatuses',
+      'mountSeq', 'readFlowStatuses',
       'return ' + js + ';',
     )(
       { invoke: async () => 'x' }, true,
@@ -328,7 +330,8 @@ console.log('\n=== 5. 设置页初始化（真身实跑）===');
       { loadConfig: loadImpl, apiHealth: healthImpl || (async () => false), readStore: async () => null,
         claimRead: () => 1, isLatestRead: () => true,
         latestRead: (p, apply, onErr) => { void p.then(apply, onErr || (() => {})); } },
-      (v) => { st.cfg = v; }, () => { st.loaded++; }, (v) => st.msg.push(v), () => {}, () => {}, 1);
+      (v) => { st.cfg = v; }, () => { st.loaded++; }, (v) => st.msg.push(v), () => {}, () => {},
+      1, async () => []);
     st.threw = await awaitSafe(fn());
     return st;
   };
