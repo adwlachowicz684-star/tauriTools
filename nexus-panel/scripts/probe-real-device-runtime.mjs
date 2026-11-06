@@ -57,6 +57,10 @@
  *     undefined / "false" / 0 / "true"，它既不进 unknown 也不进 failed，
  *     会落进 !failed.length 被当成五项全通过并 canMarkBound=true ——
  *     这是唯一能让自查自封蒙混过去的口子。现改为严格三态校验 + 重复 id 校验。
+ *   · 第 59 轮：⑦ 的 32 组合穷举只覆盖 true/false，而采集链在跨源时把
+ *     moduleScript 正常化成 null（第三态）；unknown fail-closed 会把整局
+ *     降级成 collect-more，bridge-fallback 这条真实落点永远不可达。现在
+ *     跨源结构性结论单独接管，moduleScript 的 null 只标「因此未测出」。
  *   · DEVTOOLS_SNIPPET 的 moduleScript 原来查
  *     documentElement.dataset.probeReady。实测 12/12 产物 0 命中该标记，
  *     这一项恒 false，真机再好也转不了 bound，还会给出错误分支。
@@ -91,9 +95,24 @@ export function evaluate(checks) {
   /* fail-closed：缺项 / 未测出 / 值域非法 / 重复项，一律不许标 bound。
      值域这条是第 57 轮补的：旧判据只认 ok === false，非三态值会被
      !failed.length 当成「五项全通过」，是自查自封转 bound 的唯一口子。 */
+  /* 第 59 轮：采集链是三态（true/false/null），⑦ 的 32 组合穷举只覆盖两态。
+     真实 devtools 片段在 iframe 跨源（contentDocument=false）时把
+     moduleScript 正常化成 null ——「DOM 不可读」是确定结论，不是「没测出来」。
+     若 unknown 直接把它拦成 collect-more，BRANCH 里 bridge-fallback 这条
+     真实落点永远不可达，用户拿到的是「再采一次」而不是「改哪一行」。
+     豁免只对这一形态生效，三条红线不动：
+       · moduleScript=false 仍按 BRANCH 给 srcdoc-or-inline-bundle
+       · 元前提 tauri / appDataHtml 非 true 时不豁免
+       · canMarkBound 恒 false，不借它转 bound */
+  const cdFail = by.get('contentDocument')?.ok === false;
+  const upstreamOk = by.get('tauri')?.ok === true && by.get('appDataHtml')?.ok === true;
+  const msUnmeasured = by.get('moduleScript')?.ok === null;
+  const structuralCrossOrigin = cdFail && upstreamOk && msUnmeasured;
+
   const missing = REQUIRED_CHECKS.filter((id) => !by.has(id));
   if (missing.length) reasons.push(`缺采集项：${missing.join(', ')}`);
-  const unknown = REQUIRED_CHECKS.filter((id) => by.has(id) && by.get(id).ok === null);
+  const unknown = REQUIRED_CHECKS.filter((id) => by.has(id) && by.get(id).ok === null
+    && !(structuralCrossOrigin && id === 'moduleScript'));
   if (unknown.length) reasons.push(`真机未测出：${unknown.join(', ')}`);
   const malformed = REQUIRED_CHECKS.filter((id) => {
     if (!by.has(id)) return false;
@@ -106,6 +125,18 @@ export function evaluate(checks) {
   if (dup.length) reasons.push(`重复采集项（后写会把 false 洗成 true）：${dup.join(', ')}`);
   if (missing.length || unknown.length || malformed.length || dup.length) {
     return { conclusion: 'inconclusive', nextAction: 'collect-more', canMarkBound: false, reasons };
+  }
+
+  /* 跨源是结构性结论，优先于 BRANCH 里排在它前面的 moduleScript 空值。
+     reason 明说 module 只是「因此未测出」，不冒充通过、也不让人去改 srcdoc。 */
+  if (structuralCrossOrigin) {
+    const rest = REQUIRED_CHECKS.filter((id) => id !== 'contentDocument' && by.get(id).ok === false);
+    const rr = [
+      'iframe 跨源：contentDocument 不可读，桥接层要改 js/host.js 里的 e.source 跨源语义',
+      'moduleScript 因 DOM 不可读未测出（不是 module 被挡），改完同源后重跑本项，不冒充通过',
+    ];
+    if (rest.length) rr.push(`其余失败项（按优先级先只改上面这一处，改完重跑探针）：${rest.join(', ')}`);
+    return { conclusion: 'contentDocument-failed', nextAction: 'bridge-fallback', canMarkBound: false, reasons: rr };
   }
 
   const failed = REQUIRED_CHECKS.filter((id) => by.get(id).ok === false);
@@ -231,7 +262,7 @@ export const DEVTOOLS_SNIPPET = `(async () => {
     let cd = null; try { cd = f.contentDocument; } catch (_) {}
     push('contentDocument', !!cd, cd ? 'same-origin' : 'cross-origin / null');
     push('moduleScript', cd ? (!!cd.querySelector('script[type=module]') && readySeen) : null,
-      cd ? 'module 标签 + nexus-bridge-v1/ready 消息' : 'DOM 不可读，需人工判读');
+      cd ? 'module 标签 + nexus-bridge-v1/ready 消息' : 'iframe 跨源：DOM 不可读，module 执行未测出（不是 module 被挡）');
     window.removeEventListener('message', onMsg);
     f.remove();
   } else if (!out.some(x => x.id === 'appDataHtml')) push('appDataHtml', null, 'no asset url');

@@ -292,6 +292,47 @@ const probeNote = String(debt?.realDeviceProbe?.note || '');
 t('⑦p 台账 realDeviceProbe.note 记有剥注释落点口径（台账不撒谎）',
   /剥注释/.test(probeNote) && /srcdoc/.test(probeNote));
 
+/* ---------------- ⑧ 第59轮：采集链三态 → evaluate 端到端可达性 ----------------
+   ⑦ 穷举 2^5 个 true/false 组合；真实 devtools 片段在 iframe 跨源时把
+   moduleScript 正常化成 null（第三态）。只测 evaluate 的直接入参会全绿，
+   却让 bridge-fallback 这条真实落点永远不可达。 */
+const crossOrigin = REQUIRED_CHECKS.map((id) => ({
+  id, ok: id === 'contentDocument' ? false : id === 'moduleScript' ? null : true,
+}));
+const evCross = ev(crossOrigin);
+t('⑧a 跨源采集形态确实含第三态 null（不是臆想输入）',
+  crossOrigin.find((c) => c.id === 'moduleScript').ok === null);
+t('⑧b 跨源 + moduleScript 未测出 → bridge-fallback，不是 collect-more',
+  evCross.nextAction === 'bridge-fallback', evCross.nextAction);
+t('⑧c 该形态 canMarkBound 恒 false（不借豁免转 bound）', evCross.canMarkBound === false);
+t('⑧d reason 点名真实落点 js/host.js',
+  evCross.reasons.some((x) => x.includes('js/host.js')));
+t('⑧e reason 明说 moduleScript 未测出且不冒充通过',
+  evCross.reasons.some((x) => /moduleScript/.test(x) && /未测出/.test(x) && /不冒充通过/.test(x)));
+t('⑧f moduleScript=false 仍走 BRANCH 的 srcdoc-or-inline-bundle（不吞 58/210 轮语义）',
+  ev(REQUIRED_CHECKS.map((id) => ({ id, ok: id === 'contentDocument' || id === 'moduleScript' ? false : true }))).nextAction === 'srcdoc-or-inline-bundle');
+t('⑧g 元前提 tauri=false 时不豁免，仍 fail-closed',
+  ev(REQUIRED_CHECKS.map((id) => ({ id, ok: id === 'tauri' || id === 'contentDocument' ? false : id === 'moduleScript' ? null : true }))).nextAction === 'collect-more');
+t('⑧h 元前提 appDataHtml=false 时不豁免，仍 fail-closed',
+  ev(REQUIRED_CHECKS.map((id) => ({ id, ok: id === 'appDataHtml' || id === 'contentDocument' ? false : id === 'moduleScript' ? null : true }))).nextAction === 'collect-more');
+t('⑧i 非法值仍先拦（豁免不松值域红线）',
+  ev(crossOrigin.map((c) => c.id === 'moduleScript' ? { ...c, ok: 'false' } : c)).conclusion === 'inconclusive');
+t('⑧j 重复项仍先拦（防 false 被后写 true 洗掉）',
+  ev([...crossOrigin, { id: 'moduleScript', ok: true }]).conclusion === 'inconclusive');
+const mockCross = await runDeviceProbe({ ...mockEnv,
+  probeIframe: async () => ({ moduleScript: undefined, contentDocument: false, note: 'cross-origin' }) });
+t('⑧k 端到端采集链（runDeviceProbe）跨源 → bridge-fallback',
+  mockCross.checks.find((c) => c.id === 'moduleScript').ok === null
+  && mockCross.checks.find((c) => c.id === 'contentDocument').ok === false
+  && mockCross.evaluated.nextAction === 'bridge-fallback'
+  && mockCross.evaluated.canMarkBound === false, mockCross.evaluated.nextAction);
+t('⑧l 元断言：⑦ 穷举只覆盖二态，三态全集差 211 个组合',
+  combos.length === 32 && combos.every((c) => c.every((x) => x.ok === true || x.ok === false))
+  && 3 ** REQUIRED_CHECKS.length - 2 ** REQUIRED_CHECKS.length === 211);
+t('⑧m devtools 片段在 DOM 不可读时确实把 moduleScript 正常化成 null',
+  /cd \?[\s\S]{0,120}: null/.test(DEVTOOLS_SNIPPET)
+  && /iframe 跨源：DOM 不可读/.test(DEVTOOLS_SNIPPET));
+
 /* ---------------- 汇总 ---------------- */
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 if (fail) process.exit(1);
