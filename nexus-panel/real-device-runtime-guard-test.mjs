@@ -47,6 +47,7 @@ import { fileURLToPath } from 'node:url';
 import {
   evaluate, runDeviceProbe, REQUIRED_CHECKS, DEVTOOLS_SNIPPET,
 } from './scripts/probe-real-device-runtime.mjs';
+import { stripCommentsJs } from './test-scan-utils.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)));
 const CONF = join(ROOT, 'src-tauri', 'tauri.conf.json');
@@ -243,17 +244,25 @@ const LANDINGS = [
   ['wire-installed-frame-src', 'js/host.js', ['resolveFrameSrc', 'manifest.installed === true']],
   ['no-tauri-runtime', 'scripts/probe-real-device-runtime.mjs', ['no-tauri-runtime']],
   ['backend-proxy-or-copy-to-dist', 'js/installed-registry.js', ['installedEntry']],
-  ['srcdoc-or-inline-bundle', 'js/host.js', ['srcdoc']],
+  ['srcdoc-or-inline-bundle', 'js/host.js', ['resolveFrameSrc', 'manifest.installed === true']],
   ['bridge-fallback', 'js/host.js', ['e.source']],
   ['fix-csp', 'src-tauri/tauri.conf.json', ['connect-src']],
 ];
 const ACTION_TO_CHECK = {
   'no-tauri-runtime':'tauri','backend-proxy-or-copy-to-dist':'appDataHtml',
   'srcdoc-or-inline-bundle':'moduleScript','bridge-fallback':'contentDocument','fix-csp':'csp302'};
+/* 第 210 轮：落点实证必须看**实现**，不能看全文。
+   全文 includes 会被注释喂饱 —— srcdoc 只出现在 js/host.js 的
+   resolveFrameSrc 方案注释里，实现 0 命中，而 85 项全绿。
+   剥注释走公共设施 stripCommentsJs，不新增内联副本（inline-strip-audit 会报）。 */
+const landingOk = (txt, needles) => {
+  const code = stripCommentsJs(String(txt || ''));
+  return code.length > 0 && needles.every((n) => code.includes(n));
+};
 for (const [action, rel, needles] of LANDINGS) {
   const txt = existsSync(join(ROOT, rel)) ? read(join(ROOT, rel)) : '';
-  t(`⑦g ${action} 落点文件 ${rel} 存在且锚点齐`,
-    txt.length > 0 && needles.every((n) => txt.includes(n)), needles.join(','));
+  t(`⑦g ${action} 落点文件 ${rel} 存在且锚点齐（剥注释后）`,
+    landingOk(txt, needles), needles.join(','));
   const r = action === 'wire-installed-frame-src' ? ev(allOk)
     : ev(REQUIRED_CHECKS.map((x) => ({ id: x, ok: x !== ACTION_TO_CHECK[action] })));
   t(`⑦h ${action} 的 reason 点名该落点文件`,
@@ -265,6 +274,23 @@ t('⑦j 生产 js/ 下确实没有 frameBase（反证不是拿自证当实证）
 const debtUnblock = JSON.stringify(debt.unblock || []);
 t('⑦k 台账 unblock 的 action 清单与 6 个分支一致（台账不撒谎）',
   LANDINGS.every(([a]) => debtUnblock.includes(a)) && !debtUnblock.includes('wire-frameBase'));
+
+/* 第 210 轮：⑦g 改剥注释后，判据自身也要被验 —— 否则「改成全文 includes」
+   或「改成恒假」都不会被 ⑦g 自己发现。 */
+const commentOnly = '/* resolveFrameSrc manifest.installed === true */\nexport const x = 1;\n';
+t('⑦l 只有注释含锚点时 landingOk 必须判 false（防注释喂饱）',
+  landingOk(commentOnly, ['resolveFrameSrc']) === false);
+t('⑦m 真实实现含锚点时 landingOk 必须判 true（防改恒假）',
+  landingOk('export async function resolveFrameSrc(m) {}\n', ['resolveFrameSrc']) === true);
+const srcdocReason = ev(allOk.map((c) => c.id === 'moduleScript' ? { ...c, ok: false } : c)).reasons.join(' | ');
+t('⑦n moduleScript 分支 reason 点名真实落点 resolveFrameSrc 且说明 srcdoc 非现成实现',
+  srcdocReason.includes('resolveFrameSrc') && srcdocReason.includes('js/host.js')
+  && srcdocReason.includes('srcdoc') && /注释/.test(srcdocReason));
+t('⑦o js/host.js 剥注释后确实没有 srcdoc 实现（反证不是拿注释当落点）',
+  !stripCommentsJs(read(join(ROOT, 'js', 'host.js'))).includes('srcdoc'));
+const probeNote = String(debt?.realDeviceProbe?.note || '');
+t('⑦p 台账 realDeviceProbe.note 记有剥注释落点口径（台账不撒谎）',
+  /剥注释/.test(probeNote) && /srcdoc/.test(probeNote));
 
 /* ---------------- 汇总 ---------------- */
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

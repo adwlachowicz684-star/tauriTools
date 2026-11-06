@@ -76,6 +76,6 @@
     "path": "scripts/probe-real-device-runtime.mjs",
     "guard": "real-device-runtime-guard-test.mjs",
     "measuredLocation": "https://release-assets.githubusercontent.com/github-production-release-asset/...",
-    "note": "采集与判定分离：devtools 片段只采集，evaluate() 是唯一判据；ok:null 一律 inconclusive，不冒充通过。不进 CI。"
+    "note": "采集与判定分离：devtools 片段只采集，evaluate() 是唯一判据；ok:null 一律 inconclusive，不冒充通过。不进 CI。第 210 轮：nextAction 的落点一律以剥注释后的实现为准 —— srcdoc 只是 resolveFrameSrc 方案注释里的词，生产实现 0 命中；守卫 ⑦g 改剥注释后判定，全文 includes 会被同一份注释喂饱。"
   }
 }

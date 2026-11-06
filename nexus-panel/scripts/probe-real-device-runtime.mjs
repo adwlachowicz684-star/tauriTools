@@ -31,6 +31,14 @@
  * 采集项里 ok:null 表示这一跳真机没测出来，evaluate() 一律判未测出，
  * 绝不当成通过 —— 空集合恒真是本项目反复栽的假绿。
  *
+ * 第 210 轮补的一处（同一类形状的漏网）
+ * ------------------------------------------------------------
+ *   · 全通过指令的臆想概念修好了，但 moduleScript 失败那条仍指向
+ *     js/host.js 的 srcdoc —— 实测它只出现在 resolveFrameSrc 的方案
+ *     注释里，实现 0 命中；落点实证 ⑦g 又用全文 includes，被同一份
+ *     注释喂饱，85 项全绿看不出来。现 reason 改指 resolveFrameSrc()
+ *     的真实 throw 分支，⑦g 改剥注释后判定并配注释喂饱反例自检。
+ *
  * 第 58 轮修的三处（都是「真机跑完仍不知道改哪一行」的形状）
  * ------------------------------------------------------------
  *   · 全通过那条指令原指向一个生产代码里 0 命中的概念；实测 js/ 下
@@ -115,7 +123,7 @@ export function evaluate(checks) {
   const BRANCH = [
     ['tauri', 'no-tauri-runtime', '当前不是 Tauri 运行时：其余四项在错误环境采集，结论无效；请用 scripts/probe-real-device-runtime.mjs 的 DEVTOOLS_SNIPPET 在 Tauri 窗口重跑，不要按其它分支改产品代码'],
     ['appDataHtml', 'backend-proxy-or-copy-to-dist', 'asset 协议取不到 $APPDATA 的 index.html：改后端代下，或在 js/installed-registry.js 的 installedEntry 投影里把产物拷进 dist 的 runtime-plugins/'],
-    ['moduleScript', 'srcdoc-or-inline-bundle', '取到了文件但 ES module 跨源被挡：改 js/host.js 的 srcdoc / 内联 bundle'],
+    ['moduleScript', 'srcdoc-or-inline-bundle', '取到了文件但 ES module 跨源被挡：在 js/host.js 的 resolveFrameSrc() 里、manifest.installed === true 的 throw 分支处接 srcdoc / 内联 bundle —— srcdoc 目前只是注释里的方案名，生产实现 0 命中，照它去搜会一无所获'],
     ['contentDocument', 'bridge-fallback', 'iframe 跨源、contentDocument 恒 null：桥接层要改 js/host.js 里的 e.source 跨源语义'],
     ['csp302', 'fix-csp', '资产 302 没过 CSP：按实测 Location 补 src-tauri/tauri.conf.json 的 connect-src'],
   ];
