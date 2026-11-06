@@ -206,7 +206,7 @@ t('④b loadRegistry 内真的调用合并，且排在 registerBuiltinIds 之后
   hasMergeCall(body), body.slice(0, 120).replace(/\s+/g, ' '));
 t('④c 扫描报告写入 lastInstalledScan，不静默吞',
   /lastInstalledScan\s*=\s*merged\.report/.test(host));
-t('④d 报告有导出，UI / 诊断取得到',
+t('④d 报告有导出（真正的 UI 消费点由 ⑨ 节钉，别把导出当接线）',
   /export\s+function\s+installedScanReport\s*\(/.test(host));
 t('④e 合并委托 pluginsWithInstalled，判据只有一份',
   /pluginsWithInstalled\s*\(/.test(reg));
@@ -287,6 +287,130 @@ t('⑦e3 剥注释判据不把注释里的说明算成调用',
   t('⑦g projectInstalled 不污染静态插件', out[0] === stat
     && out[0].loadState === undefined);
 }
+
+/* ---------------- ⑧ 行为层：报告 → 提示（真跑纯函数） ----------------
+ *
+ * 汇总函数用动态 import 取，不放进静态 import 列表：导出一旦被删，
+ * 静态 import 会让整个守卫崩在 ESM 实例化阶段、一条断言都跑不到
+ * （本项目反复栽过的「崩了不等于喊了」）。这里改成显式报红 + 空结果，
+ * 汇总行一定还在。 */
+let alertFn = null;
+try {
+  alertFn = (await import('./js/installed-registry.js')).formatInstalledScanAlert;
+} catch (e) {
+  t('⑧0a 汇总函数所在模块可加载', false, String((e && e.message) || e));
+}
+t('⑧0b 汇总函数有导出且是函数（删掉不许静默通过）',
+  typeof alertFn === 'function');
+const fmt = (rep) => (typeof alertFn === 'function' ? alertFn(rep) : null);
+{
+  const clean = { found: 2, skipped: [], errors: [], degraded: null };
+  t('⑧a 干净报告不该弹提示', fmt(clean) === null);
+  t('⑧b 浏览器调试态降级不弹提示（否则每次启动都报红）',
+    fmt({ ...clean, degraded: 'not-in-tauri' }) === null);
+  t('⑧c 取不到数据目录的降级不弹提示',
+    fmt({ ...clean, degraded: 'no-data-dir' }) === null);
+
+  const errAlert = fmt({
+    ...clean, errors: ['读目录失败: EACCES'], degraded: 'throw',
+  });
+  t('⑧d 扫描失败如实报「没查成」并点出侧边栏后果',
+    !!errAlert && errAlert.tone === 'err'
+      && /没查成/.test(errAlert.text) && /侧边栏/.test(errAlert.text)
+      && !/已检查|均为最新|正常态/.test(errAlert.text),
+    JSON.stringify(errAlert));
+  t('⑧e degraded 为 throw 时不许被当成正常降级',
+    !!errAlert && errAlert.tone === 'err');
+
+  const skipAlert = fmt({
+    ...clean,
+    skipped: [
+      { id: 'broken', reason: '清单不是 JSON' },
+      { id: 'noEntry', reason: '缺入口' },
+    ],
+  });
+  t('⑧f skipped 逐项点名，不是静默丢弃',
+    !!skipAlert && skipAlert.tone === 'err'
+      && /broken/.test(skipAlert.text) && /2 项/.test(skipAlert.text),
+    JSON.stringify(skipAlert));
+
+  for (const [name, bad] of [
+    ['null', null], ['数组', []], ['缺 errors', { skipped: [] }],
+    ['errors 不是数组', { errors: 'x', skipped: [] }],
+  ]) {
+    const a = fmt(bad);
+    t(`⑧g 报告${name}时 fail-closed（不许静默当干净）`,
+      !!a && a.tone === 'err', JSON.stringify(a));
+  }
+  t('⑧h 汇总函数对干净报告不恒返回告警（防恒真）',
+    fmt(clean) === null);
+}
+
+/* ---------------- ⑨ 结构层：报告真的有人消费 ----------------
+ *
+ * ④d 只钉「导出存在」，而导出可以零消费 —— 守卫自己就会把形式接线
+ * 说成「UI 取得到」。这一节钉三件真事：catch 分支不留陈旧报告、
+ * shell.js 真 import、init() 真把报告交给汇总函数并 toast。
+ * 判据一律剥注释，否则本文件与生产文件里的说明会把断言喂饱。
+ */
+const shellRaw = r('js/shell.js');
+
+function initBody(src) {
+  const i = src.indexOf('async function init()');
+  if (i < 0) return '';
+  const j = src.indexOf('\n}', i);
+  return j > i ? src.slice(i, j) : src.slice(i);
+}
+/* 必须定位到「合并调用之后」的那个 catch：loadRegistry 里还有别的
+   catch（registry.js 加载失败），抓错块会拿别处的 console.warn 当证据。 */
+function catchAfterMerge(src) {
+  const s = stripJs(src);
+  const i = s.indexOf('await loadInstalledRegistry(');
+  if (i < 0) return '';
+  const j = s.indexOf('} catch (e) {', i);
+  if (j < 0) return '';
+  const k = s.indexOf('\n  }', j + 1);
+  return k > j ? s.slice(j, k) : s.slice(j);
+}
+const catchUpdatesReport = (src) => {
+  const b = catchAfterMerge(loadRegistryBody(src));
+  return /lastInstalledScan\s*=/.test(b)
+    && /degraded:\s*'throw'/.test(b) && /errors:/.test(b);
+};
+const shellWiresAlert = (src) => {
+  const s = stripJs(src);
+  const ib = initBody(s);
+  return /import\s*\{[^}]*installedScanReport/.test(s)
+    && /import\s*\{[^}]*formatInstalledScanAlert[^}]*\}\s*from\s*'\.\/installed-registry\.js'/.test(s)
+    && /formatInstalledScanAlert\s*\(\s*installedScanReport\s*\(\)\s*\)/.test(ib)
+    && /toast\s*\(\s*alert\.text\s*,\s*alert\.tone\s*\)/.test(ib);
+};
+const catchTxt = catchAfterMerge(loadRegistryBody(host));
+const initTxt = initBody(stripJs(shellRaw));
+
+t('⑨a loadRegistry 的 catch 分支更新扫描报告，不留上一份「干净」',
+  catchUpdatesReport(host), catchTxt.slice(0, 160).replace(/\s+/g, ' '));
+t('⑨b shell.js 真引入报告与汇总函数',
+  /import\s*\{[^}]*installedScanReport/.test(stripJs(shellRaw))
+    && /import\s*\{[^}]*formatInstalledScanAlert[^}]*\}\s*from\s*'\.\/installed-registry\.js'/.test(stripJs(shellRaw)));
+t('⑨c init() 把报告交给汇总函数并按 tone 弹 toast',
+  /formatInstalledScanAlert\s*\(\s*installedScanReport\s*\(\)\s*\)/.test(initTxt)
+    && /toast\s*\(\s*alert\.text\s*,\s*alert\.tone\s*\)/.test(initTxt));
+t('⑨d 同一份失败不重复弹（init 会被增删插件后再次调用）',
+  /lastInstalledAlertText/.test(initTxt) && /!==\s*lastInstalledAlertText/.test(initTxt));
+
+/* 元断言：判据对「修复前的旧形态」必须为假，否则等于恒真。 */
+const OLD_HOST = 'export async function loadRegistry(){\n'
+  + '  try { const merged = await loadInstalledRegistry(list);\n'
+  + '    lastInstalledScan = merged.report; } catch (e) { console.warn("x"); }\n'
+  + '  lastRawRegistry = list;\n}';
+const OLD_SHELL = 'import { loadRegistry } from "./host.js";\n'
+  + 'async function init() { host.state.plugins = filterByRuntime(await loadRegistry()); renderSidebar();\n}';
+t('⑨e catch 判据对「只 console.warn」的旧形态为假',
+  catchUpdatesReport(OLD_HOST) === false && catchUpdatesReport('') === false);
+t('⑨f 接线判据对「init 只读注册表」的旧形态为假',
+  shellWiresAlert(OLD_SHELL) === false && shellWiresAlert('') === false);
+t('⑨g 接线判据能认出真接线（不恒假）', shellWiresAlert(shellRaw) === true);
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -298,8 +298,16 @@ export async function loadRegistry() {
       console.warn('[registry] 已安装插件存在未生效或扫描异常条目', merged.report);
     }
   } catch (e) {
-    /* 扫描失败绝不能把静态清单弄丢 —— 那会变成整个面板没有插件。 */
+    /* 扫描失败绝不能把静态清单弄丢 —— 那会变成整个面板没有插件。
+     * ⚠️ 也不能把报告留在上一次的「干净」：installedScanReport() 会被
+     * 界面拿去判断要不要提示，陈旧值会让这次失败显示成没发生过。 */
     console.warn('[registry] 已安装插件扫描失败，静态清单照常可用', e);
+    lastInstalledScan = {
+      found: 0,
+      skipped: [],
+      errors: [`已安装插件扫描失败: ${String((e && e.message) || e)}`],
+      degraded: 'throw',
+    };
   }
   lastRawRegistry = list;
   return list;

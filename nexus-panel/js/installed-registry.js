@@ -127,3 +127,47 @@ export async function loadInstalledRegistry(staticPlugins, p = {}) {
     };
   }
 }
+
+/**
+ * 把扫描报告折成一条界面提示（纯函数，守卫真跑）。
+ *
+ * 为什么需要它：报告此前只写进 console.warn，而 installedScanReport()
+ * 虽导出却没有任何调用点 —— 「装了却没出现在侧边栏」在界面上一点线索
+ * 都没有，用户只会重复安装或以为安装坏了。这与外链扫描失败那轮同形。
+ *
+ * 三种「不许当成干净」的形状，缺一个就把异常报成成功：
+ *   · errors 非空 —— 目录读不了 / 扫描抛错，静态清单照常但装好的插件没了
+ *   · skipped 非空 —— 坏清单 / 缺入口 / 与内置 id 冲突，插件不会进注册表
+ *   · report 结构异常 —— 不是对象或字段不是数组，绝不能静默当空报告
+ *
+ * degraded 为 not-in-tauri / no-data-dir 是浏览器调试态与首次运行的正常
+ * 降级，不弹提示；否则每次启动都报红，反而会把真提示淹掉。
+ *
+ * @returns {{tone: string, text: string}|null}
+ */
+export function formatInstalledScanAlert(report) {
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    return { tone: 'err', text: '已安装插件扫描报告不可读；侧边栏可能缺少刚装好的插件' };
+  }
+  const errors = Array.isArray(report.errors) ? report.errors : null;
+  const skipped = Array.isArray(report.skipped) ? report.skipped : null;
+  if (!errors || !skipped) {
+    return { tone: 'err', text: '已安装插件扫描报告字段缺失；侧边栏可能缺少刚装好的插件' };
+  }
+  if (report.degraded === 'not-in-tauri' || report.degraded === 'no-data-dir') return null;
+  if (errors.length) {
+    return {
+      tone: 'err',
+      text: `已安装插件扫描没查成（${errors.length} 项：${String(errors[0]).slice(0, 120)}）；静态清单照常，但刚装好的插件可能不出现在侧边栏`,
+    };
+  }
+  if (skipped.length) {
+    const ids = skipped.slice(0, 3)
+      .map((s) => (s && s.id) || '未知').join('、');
+    return {
+      tone: 'err',
+      text: `已安装插件有 ${skipped.length} 项没生效（${ids}${skipped.length > 3 ? ' 等' : ''}）；这些插件不会出现在侧边栏`,
+    };
+  }
+  return null;
+}

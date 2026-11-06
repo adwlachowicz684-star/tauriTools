@@ -9,8 +9,10 @@ import {
   createHost, loadRegistry, getCustomPlugins, saveCustomPlugins,
   takeCustomPluginWriteError, customPluginWriteFailMsg,
   filterByRuntime, visiblePlugins, isInsideTauri, escapeHtml,
+  installedScanReport,
   KEY_LAST_PLUGIN, KEY_SIDEBAR_OPEN,
 } from './host.js';
+import { formatInstalledScanAlert } from './installed-registry.js';
 import {
   applyTheme, setAccent, getCurrent, exportVars, getBase,
   listThemes,        // 插件主题下拉：按基调分列可选主题
@@ -678,9 +680,22 @@ window.__nexusRemovePlugin = async (id) => {
 };
 
 /* ---------------------------- 启动 ---------------------------- */
+/* 同一份失败只在文案变化时提示一次：init() 在增删插件后还会再跑，
+   每次都弹会把真提示淹掉；报告转好时清空，下次再坏还能重新提示。 */
+let lastInstalledAlertText = '';
 async function init() {
   host.state.plugins = filterByRuntime(await loadRegistry());
   renderSidebar();
+  /* 第 209 轮：扫描报告不再只是 console 里的诊断数据。
+     报告坏 / 有 skipped / 有 errors 时如实呈现，否则用户只会看到
+     「装好的插件没出现在侧边栏」而没有任何线索。 */
+  const alert = formatInstalledScanAlert(installedScanReport());
+  if (alert && alert.text !== lastInstalledAlertText) {
+    lastInstalledAlertText = alert.text;
+    toast(alert.text, alert.tone);
+  } else if (!alert) {
+    lastInstalledAlertText = '';
+  }
 }
 
 /**
