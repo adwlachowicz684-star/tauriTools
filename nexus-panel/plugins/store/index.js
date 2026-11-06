@@ -15,7 +15,7 @@ import { createWebviewMarket } from '../../js/market-binding.js';
  * 一个独立面板，集中做三件事：
  *   1. 列出**已安装**的应用插件与服务插件（服务单独一区，标注用途）
  *   2. 添加 / 移除自定义插件
- *   3. 未来接联网安装与卸载（面板结构已按商店形态预留）
+ *   3. 联网安装 / 卸载 / 检查更新（从私有插件仓 Release 安装）
  *
  * 为什么单独做一个面板，而不是继续塞在设置里：
  * 插件数量会增长，还要区分「应用 / 服务」两类、展示版本与来源，
@@ -221,7 +221,7 @@ export default definePlugin({
       h('h2', {}, '添加插件'),
       h('div.p-muted', {
         style: { fontSize: '11px', lineHeight: '1.6', marginTop: '4px' },
-      }, '填写插件入口信息即可安装。未来这里会接联网商店，直接从目录安装与卸载。'),
+      }, '填写插件入口信息即可安装自定义插件；从私有仓库安装请用下方「联网安装」。'),
       h('div', { style: { marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' } },
         h('button.p-btn', {
           onclick: async () => {
@@ -379,7 +379,7 @@ export default definePlugin({
       ),
       h('div.p-muted', {
         style: { fontSize: '11px', lineHeight: '1.6', marginTop: '6px' },
-      }, '产物需为各插件仓 Release 里的规范命名 tarball。资产下载会重定向到 GitHub 对象存储，真机需确认 CSP 放行；装完后的加载与侧边栏呈现属阶段 0，待本机实测。'),
+      }, '产物需为各插件仓 Release 里的规范命名 tarball。资产下载会 302 到 release-assets.githubusercontent.com，CSP connect-src 已放行；装完后的加载与侧边栏呈现属阶段 0，待本机实测。'),
     ));
 
     render();

@@ -1,5 +1,5 @@
 {
-  "note": "能加载 ≠ 已被调用，已接线 ≠ 能力完整可用。第 48 轮把 6 条运行时欠账全部销空（入口闭包 10 模块 safe 10 / blocked 0，隔离 realm 真加载、真解包、真校验、真卸载）；第 50 轮落地 js/market-binding.js 并在 plugins/store/index.js 的 mount 里真正实例化，三个能力各有调用点，产品第一次出现「联网安装」入口。但阶段 0 加载侧与 CSP 资产重定向未经真机实测，所以 status 停在 wired，不写 bound。orphan-modules-guard 判模块级可达，只要 host.js 有一条 import 就把整组点亮，守不住这件事。",
+  "note": "能加载 ≠ 已被调用，已接线 ≠ 能力完整可用。第 48 轮把 6 条运行时欠账全部销空（入口闭包 10 模块 safe 10 / blocked 0，隔离 realm 真加载、真解包、真校验、真卸载）；第 50 轮落地 js/market-binding.js 并在 plugins/store/index.js 的 mount 里真正实例化，三个能力各有调用点，产品第一次出现「联网安装」入口。CSP 资产 302 的真实落点已实测并修好配置（真机只需确认 302 实际通过）；阶段 0 加载侧（asset 协议下 ES module / iframe 同源）仍待真机判，所以 status 停在 wired，不写 bound。orphan-modules-guard 判模块级可达，只要 host.js 有一条 import 就把整组点亮，守不住这件事。",
   "phase": 50,
   "status": "wired",
   "runtimeVerified": false,
@@ -28,12 +28,14 @@
     },
     {
       "id": "csp-asset",
-      "why": "release asset 下载会 302 到 objects.githubusercontent.com；沙盒出口策略对该域名返回 403（probe-private-install.mjs 用本地替身跑完这一跳，并显式标注不假装全真）。真机上需确认 connect-src / asset 协议是否放行该域名，否则「查得到版本、下载失败」。",
+      "why": "release asset 走 asset.url（api.github.com，已在 connect-src）→ 302 到签名地址。真实 Location 为 https://release-assets.githubusercontent.com/...（第 51 轮 curl 实取），不是台账沿用 50 轮的 objects.githubusercontent.com；照旧假设补 CSP 会补错域名，真机上照样「查得到版本、下载失败」。browser_download_url 回退在私有仓带 PAT 直接 403，不是主路径。",
       "options": [
         "真机实测一次重定向下载，按结果补 CSP 或改后端代下",
         "沿用后端代下方案，前端不直连资产域名"
       ],
-      "status": "pending-real-device"
+      "status": "resolved-in-code",
+      "evidence": "curl -sSI -H \"Authorization: token ***\" -H \"Accept: application/octet-stream\" <asset.url> → HTTP/2 302, location: https://release-assets.githubusercontent.com/github-production-release-asset/...",
+      "resolution": "tauri.conf.json 的 connect-src 补 https://github.com 与 https://*.githubusercontent.com（用通配覆盖 CDN 子域漂移）；api.github.com 等原有指令一字未动。assetProtocol.scope 本就含 $APPDATA/**、$RESOURCE/**。真机剩余项仅为「302 是否实际通过 CSP」，由 devtools 探针 csp302 一项验。"
     },
     {
       "id": "runtime-load",
@@ -47,14 +49,20 @@
     }
   ],
   "unblock": [
-    "本机 Tauri 实测一次完整链路：输入 PAT → 检查更新 → 从私有仓安装 → 资产 302 下载 → 插件出现在侧边栏并能打开 → 卸载 → 重装后用户数据可读回",
-    "按实测结果补 CSP 放行或改后端代下（csp-asset），并打通 installed-plugins/ → registry 的加载入口（runtime-load）",
-    "两个 blocker 都验完且能力真可用后，把 runtimeVerified 改为 true、status 改为 bound，并补 evidence 里的真机依据；守卫 ②e/②f 会双向校验，台账自查自封会红"
+    "在 Tauri 窗口 devtools 粘贴 scripts/probe-real-device-runtime.mjs 的 DEVTOOLS_SNIPPET，把打印的 checks 数组贴回",
+    "用 evaluate(checks) 得到 nextAction：wire-frameBase / backend-proxy-or-copy-to-dist / srcdoc-or-inline-bundle / bridge-fallback / fix-csp，按分支改对应一行",
+    "真机五项全通过后再把 runtimeVerified 改 true、status 改 bound；守卫 real-device-runtime-guard-test.mjs ① 节双向校验，自查自封会红"
   ],
   "knownLimit": "纯静态守卫挡不住「把主断言整行删掉或改成 true」；元断言 A–I 只验判据本身，靠每轮破坏验证兜这一层。另：守卫判的是「生产入口是否实例化 + 三个能力是否各有调用点」，不是「每个能力在真机上各自跑通」——后者只能靠 runtimeVerified 的真机实测。",
   "related": [
     "scripts/market-runtime-debt.json（运行时阻塞，48 轮已 all-resolved）",
     "market-runtime-gap-test.mjs / webview-runtime-test.mjs",
     "orphan-modules-guard-test.mjs（模块级可达，固有边界见其文件头）"
-  ]
+  ],
+  "realDeviceProbe": {
+    "path": "scripts/probe-real-device-runtime.mjs",
+    "guard": "real-device-runtime-guard-test.mjs",
+    "measuredLocation": "https://release-assets.githubusercontent.com/github-production-release-asset/...",
+    "note": "采集与判定分离：devtools 片段只采集，evaluate() 是唯一判据；ok:null 一律 inconclusive，不冒充通过。不进 CI。"
+  }
 }
