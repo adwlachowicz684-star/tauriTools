@@ -331,6 +331,9 @@ console.log('\n=== 5. 设置页初始化（真身实跑）===');
          但漏了这两个外层变量会 ReferenceError 被 catch 接住 → 成功路径误判。 */
       { loadConfig: loadImpl, apiHealth: healthImpl || (async () => false), readStore: async () => null,
         claimRead: (_slot) => 1, isLatestRead: (_n, _slot) => true,
+        /* 挂载探活改走 beginRead('service') + done(...)：桩漏一个就
+           ReferenceError 被 catch 接住 → 成功路径误判成「配置加载失败」。 */
+        beginRead: (_slot) => (fn) => { fn(); return true; },
         latestRead: (p, apply, _slot, onErr) => { void p.then(apply, onErr || (() => {})); } },
       (v) => { st.cfg = v; }, () => { st.loaded++; }, (v) => st.msg.push(v), () => {}, () => {},
       1, 1, async () => []);
