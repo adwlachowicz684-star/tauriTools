@@ -44,22 +44,25 @@ export const CAMEL = {
 };
 
 /**
- * 与 12 个可安装插件**并列平级**、但不参与产物链的外部工具型插件。
+ * 与 12 个可安装插件**并列平级**、但不进共享镜像遍历源（IDS）的插件。
  *
  * github-manager：用 GitHub API 管理账号下全部仓库的插件（独立 Node 进程 +
- * 本地 Web 仪表盘），不是 iframe 插件，没有可挂载的入口页面。
+ * 本地 Web 仪表盘）。它**现在也参与产物链**：插件仓自己有
+ * nexus.plugin.json、v0.1.0 release 与 nexus-plugin-github-manager-<ver>.tar.gz，
+ * 宿主按同一条 pickAsset / verifyAssetDigest / plugin-installer 链路安装，
+ * 主仓 CSP 也为它放行了 https://api.github.com。
  *
- * 为什么不塞进 CAMEL：
+ * ⚠️ 「参与产物链」不等于「该进 CAMEL」：
  *   · build-plugin-repos.mjs 的 IDS = Object.keys(CAMEL)，是建仓 / 骨架 /
- *     增量刷新 / 核验四条通道的遍历源。塞进去会把共享镜像和
- *     nexus.plugin.json 推到这个仓库，覆盖 Node CLI 的真实实现；
+ *     增量刷新 / 共享镜像核验四条通道的遍历源。塞进去会把 js/ css/ src/
+ *     推到这个仓库，覆盖 Node CLI 的真实实现；
  *   · 守卫按 registry 的 12 个 iframe 插件钉住「CAMEL 恰为 12 条」，
  *     多一条会让 12 份 manifest 的交叉校验一起红；
  *   · 主仓 12 份 manifest 由 gen-plugin-manifest.mjs 从 registry 派生，
  *     给它硬塞一份会破坏「12 个 iframe」的交叉校验。
- * 它现在**已经是可安装 iframe 插件**：manifest 与 release 产物都在插件仓自己
- * （nexus.plugin.json / nexus-plugin-github-manager-<ver>.tar.gz），
- * 由插件市场按 full_name 安装。主仓这里只登记仓库名，不进 IDS。
+ * 所以这里只登记仓库名、不进 IDS；**发版契约单独由
+ * scripts/release-chain-contract.mjs 覆盖 13 个仓**，别再把两件事
+ * 混成一句「不参与产物链」。
  */
 export const EXTERNAL_PLUGINS = {
   'github-manager': 'githubManager',

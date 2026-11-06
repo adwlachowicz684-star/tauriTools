@@ -43,6 +43,9 @@ import { fileURLToPath } from 'node:url';
 import { IDS, sharedMirrorFiles, repoNameFor, ROOT, repoStatePath } from './build-plugin-repos.mjs';
 import { wantFields, fieldDiffs } from './plugin-manifest-fields.mjs';
 import {
+  PRODUCT_REPOS, workflowContract, assetContract,
+} from './release-chain-contract.mjs';
+import {
   loadPluginRepoState, savePluginRepoState, stateDriftReport,
 } from './plugin-repo-state.mjs';
 
@@ -203,7 +206,67 @@ if (ledgerErr || unknownRepos.length || unverified.length) {
   console.log(`  ✅ 退场源码台账：${ledgerRepos.size} 个归属仓均在 12 仓清单内${ONLY ? '' : '且本轮核验通过'}`);
 }
 
+/* ------------------------------------------------------------------ *
+ * ⑥ 产物链契约：13 个仓（12 可安装 + 已发版的外部工具型）
+ * ------------------------------------------------------------------ *
+ * 历史口径把 EXTERNAL_PLUGINS 写成「不参与产物链」，建仓 / 刷新 / 发布
+ * 三条通道只遍历 IDS，主仓守卫还把这个「不覆盖」钉成契约。但
+ * githubManager 仓已有 manifest、v0.1.0 release 与 tar.gz 资产，宿主按
+ * 同一条 pickAsset / verifyAssetDigest / plugin-installer 链路安装，主仓
+ * CSP 也为它放行了 api.github.com —— 它参与产物链，只是不该进共享镜像：
+ * 把外部仓塞进 IDS 会把 js/ css/ src/ 推过去覆盖 Node CLI 的真实实现。
+ *
+ * 所以这里单独覆盖 13 个仓的**发版契约**，不动四条通道的遍历源。
+ * 没有 release 的仓视为尚未发版，跳过资产校验（不算红）。
+ */
+let chainChecked = 0, chainSkipped = 0, chainDrift = 0;
+const ONLY_IDS = ONLY ? new Set(ONLY.split(',')) : null;
+for (const { id, repo } of PRODUCT_REPOS) {
+  if (ONLY_IDS && !ONLY_IDS.has(id)) continue;
+  try {
+    const meta = await gh(`/repos/${OWNER}/${repo}`);
+    if (!meta.private) {
+      console.log(`  ❌ ${repo}: 产物链仓不是私有仓库`);
+      chainDrift++;
+      continue;
+    }
+    const wf = await gh(`/repos/${OWNER}/${repo}/contents/.github/workflows/release.yml`);
+    const yml = Buffer.from(wf.content, 'base64').toString('utf8');
+    const wc = workflowContract(yml);
+    if (!wc.ok) {
+      console.log(`  ❌ ${repo}: release.yml 违约（${wc.errors.join('；')}）`);
+      chainDrift++;
+    }
+    const mfRaw = await gh(`/repos/${OWNER}/${repo}/contents/nexus.plugin.json`);
+    const mf = JSON.parse(Buffer.from(mfRaw.content, 'base64').toString('utf8'));
+    let rel = null;
+    try {
+      rel = await gh(`/repos/${OWNER}/${repo}/releases/latest`);
+    } catch (e) {
+      if (!/HTTP 404/.test(e.message)) throw e;
+    }
+    if (!rel) {
+      chainSkipped++;
+      console.log(`  ⏭  ${repo.padEnd(40)} 尚未发版，跳过资产校验${wc.ok ? '' : '（workflow 仍需修）'}`);
+    } else {
+      const ac = assetContract(rel, id, mf.version);
+      if (!ac.ok) {
+        console.log(`  ❌ ${repo}: release 资产违约（${ac.errors.join('；')}）`);
+        chainDrift++;
+      } else {
+        console.log(`  ✅ ${repo.padEnd(40)} 发版契约 / state / digest / tag 一致`);
+      }
+    }
+    chainChecked++;
+  } catch (e) {
+    console.log(`  ⚠️  ${repo}: 产物链无法核验（${e.message}）`);
+    netFail++;
+  }
+}
+drift += chainDrift;
+
 console.log(`\n结果：${IDS_TODO.length} 仓 / ${checkedFiles} 文件 / 漂移 ${drift}`
-  + ` / 状态漂移 ${stateDrift} / 网络故障 ${netFail} / 台账归属仓 ${ledgerRepos.size}`);
+  + ` / 状态漂移 ${stateDrift} / 网络故障 ${netFail} / 台账归属仓 ${ledgerRepos.size}`
+  + ` / 产物链 ${chainChecked} 核验（未发版 ${chainSkipped} / 违约 ${chainDrift}）`);
 if (netFail) process.exit(2);
 if (drift || stateDrift) process.exit(1);

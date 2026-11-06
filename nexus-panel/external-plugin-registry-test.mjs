@@ -151,7 +151,12 @@ async function variant(transform, label) {
   writeFileSync(p, transform(mapText), 'utf8');
   try {
     const mod = await import(pathToFileURL(p).href);
-    t(`④ 编译闸门：${label} 变体可加载`, true);
+    /* ⛔ 不许写 `, true` 占位：那样变体编译出空模块也照样报绿，
+       后面十几条断言会拿 undefined 当证据，整节变成假绿。 */
+    t(`④ 编译闸门：${label} 变体可加载`, !!(mod
+      && typeof mod.repoNameFor === 'function'
+      && mod.CAMEL && mod.EXTERNAL_PLUGINS),
+      `repoNameFor=${typeof (mod && mod.repoNameFor)}`);
     return mod;
   } catch (e) {
     t(`④ 编译闸门：${label} 变体可加载`, false, String((e && e.message) || e));
