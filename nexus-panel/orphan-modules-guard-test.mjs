@@ -55,9 +55,22 @@ const t = (name, ok, extra = '') => {
   else { fail++; console.log(`  ❌ ${name}${extra ? ' — ' + extra : ''}`); }
 };
 
-/* ---------------- 台账：10 条（7 个待接线 + 3 个测试专用工具） --------------
+/* ---------------- 台账：3 条（仅测试专用工具） ----------------
+ * 第 50 轮销账 7 条 wiring-pending：js/market-binding.js 装配层落地后，
+ * plugins/store/index.js（内置插件）→ market-binding.js → 七个市场模块
+ * 第一次真正连到生产入口，BFS 把它们判为生产可达，①b 按设计报红要求销账。
+ * 对照实验：临时移走 js/market-binding.js → 12/0，放回 → 9/3，红完全来自接线。
+ * 这不是「改台账消红」：守卫文件头写明接线完成必须删条目，且
+ * market-binding-runtime-test.mjs 在无 Tauri 环境里真实例化、真调
+ * list / writeData / readData / checkUpdates / install，可达性有实跑依据。
+ *
+ * ⚠️ 边界照旧：本守卫判「整组是否连到宿主」，不判「每个能力在真机上各自
+ * 可用」。阶段 0 加载侧与 CSP 302 仍待本机实测，由
+ * scripts/market-binding-debt.json 的 status=wired / runtimeVerified=false
+ * 单独钉住 —— 别拿这里的销账当成「装插件能力已完整可用」。
+ *
  * kind 不是装饰：② 会独立核对「生产引用只能来自台账内部」，
- * 把一条 wiring-pending 改成 test-tool 骗不过去。
+ * 把一条接线状态改个名字骗不过去。
  */
 const KNOWN = {
   'js/dead-class-scan.js': {
@@ -72,60 +85,11 @@ const KNOWN = {
        + '上一轮「按 import 算零引用」的报告曾把它误列为孤儿，人工复核后确认是测试用。',
     unblock: '若主题运行时真的接入，它会变成生产可达并自动从台账销账；否则迁到测试目录。',
   },
-  'js/installed-plugin-scan.js': {
-    kind: 'wiring-pending',
-    why: '阶段 1 的目录扫描器，29 项测试全绿，但宿主启动时没人调它 —— 装了插件也不会出现在侧边栏。',
-    unblock: '阶段 0 结论出来后接入宿主启动扫描（或 IPC 命令），从台账删除本条。',
-  },
-  /* 2026-11-05 销账 3 条：publish-plugin-releases.mjs / verify-source-retirement.mjs
-     已从运维侧接入 manifest / installer / store-client / tarball，BFS 把它们
-     点亮成「生产可达」。这是**运维侧接线**，不等于 UI 已能装插件 ——
-     编排层 plugin-market.js 仍在台账里，那才是产品能力的唯一根因。 */
-  'js/plugin-ledger.js': {
-    kind: 'wiring-pending',
-    why: '阶段 3 的安装台账与更新检测，83 项测试全绿；台账文件没人写也就没人读。',
-    unblock: '装成功后的 saveLedger 已由 market 编排层串好，随编排层接线销账。',
-  },
   'js/media-info.js': {
     kind: 'test-tool',
     why: '媒体信息解析工具，当前仅被 media-probe-silence-test.mjs 引用；'
        + '宿主运行时不加载它，属测试专用模块而非待接线的在制品。',
     unblock: '若将来运行时真的接入，它会变成生产可达并从台账销账；否则迁到测试目录。',
-  },
-  'js/plugin-fs-bridge.js': {
-    kind: 'wiring-pending',
-    why: '阶段 4.1 的 fs_op 前端桥，40 项测试全绿；真实文件读写要经 Tauri invoke，webview 里没人调。',
-    unblock: '后端 IPC 命令落地、或 data-store 改走真实 invoke 后销账。',
-  },
-  'js/plugin-data-store.js': {
-    kind: 'wiring-pending',
-    why: '阶段 4.1 用户数据存储（按插件 id 分目录、原子写、卸载保留），76 项测试全绿；'
-       + '当前所有测试都注入假 invoke，产品里还没有任何插件数据落盘。',
-    unblock: '接线到真实 invoke 并确认 appDataDir 可写后销账。',
-  },
-  'js/plugin-market.js': {
-    kind: 'wiring-pending',
-    why: '宿主侧编排层（安装/发现/查更新/卸载/数据读写），端到端 93 项全绿，'
-       + '但全仓零生产引用 —— 「产品里还不存在装插件这个能力」的唯一根因。',
-    unblock: 'store 面板 / IPC 命令接入它即销账；接线落点等阶段 0 加载侧实测结论。',
-  },
-  /* 2026-11-05 第 43 轮：切断 tarball → installer 静态链后，这两条从
-     prodReach 掉回 testOnly。之前它们**不是真的已接线**，只是被
-     plugin-tarball.js「为一个 sniffArchive 而 import installer」顺带
-    拉进生产可达集合 —— 正是 market-runtime-debt.json 里记的盲区②。
-    所以这不是退步，是假象被纠正；按「新增只被测试引用的模块要红、
-    想清楚再落地」的原则在这里登记，而不是把链加回去。 */
-  'js/plugin-installer.js': {
-    kind: 'wiring-pending',
-    why: '安装/卸载执行器（80 项全绿）。它的生产入边只剩 plugin-market.js（同在台账内），'
-       + '运维侧发布脚本也只经市场链路间接用到；产品运行时没有调用它。',
-    unblock: '编排层整体进入 webview 后自然变成生产可达并销账；届时要连同 node:fs 异步化一起验。',
-  },
-  'js/plugin-manifest.js': {
-    kind: 'wiring-pending',
-    why: 'manifest 校验与 id 规则（34 项全绿），被 installer / scan / data-store / market 引用，'
-       + '但引用方整组都还是市场孤儿；此前被 installer 链顺带点亮成生产可达。',
-    unblock: '同 installer：编排层接线后销账。',
   },
 };
 const knownKeys = Object.keys(KNOWN);
@@ -173,8 +137,10 @@ const malformed = knownKeys.filter((k) => {
     || typeof it.why !== 'string' || it.why.length < 20
     || typeof it.unblock !== 'string' || it.unblock.length < 20;
 });
-t('④ 台账 10 条均有真实文件 / 合法 kind / why / unblock（销账时要同步改这个数）',
-  knownKeys.length === 10 && malformed.length === 0, malformed.join(' ; '));
+/* 条数写死是刻意的：销账 / 新增都必须显式改这里，防「悄悄删一条台账消红」。
+ * 第 50 轮 10 → 3（销掉 7 条已接线的 wiring-pending）。 */
+t('④ 台账 3 条均有真实文件 / 合法 kind / why / unblock（销账时要同步改这个数）',
+  knownKeys.length === 3 && malformed.length === 0, malformed.join(' ; '));
 
 /* ---------------- ⑤ 元断言：判据不能是摆设 ----------------
  * 本项目反复栽的形状：判据恒真/恒假时主断言照样全绿。

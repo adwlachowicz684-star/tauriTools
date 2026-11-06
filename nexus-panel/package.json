@@ -174,6 +174,7 @@
     "test:plugin-market": "node plugin-market-test.mjs",
     "test:market-runtime-gap": "node market-runtime-gap-test.mjs",
     "test:market-binding-guard": "node market-binding-guard-test.mjs",
+    "test:market-binding-runtime": "node market-binding-runtime-test.mjs",
     "test:release-chain-contract": "node release-chain-contract-test.mjs",
     "test:webview-runtime": "node webview-runtime-test.mjs",
     "test:plugin-market-shape": "node plugin-market-shape-test.mjs",

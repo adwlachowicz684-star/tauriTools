@@ -1,25 +1,30 @@
 {
-  "note": "能加载 ≠ 已被调用。第 48 轮把 6 条运行时欠账全部销空（入口闭包 10 模块 safe 10 / blocked 0，隔离 realm 真加载、真解包、真校验、真卸载），但产品里至今没有一处实例化 createPluginMarket：装/卸载/查更新能力依旧不存在。台账 status 必须与「生产入口里是否真的出现实例化」双向一致——接线后本守卫会报红逼你销账，台账改成 bound 却没接线同样报红。orphan-modules-guard 判的是模块级可达性，只要 host.js 有一条 import 就会把整组点亮，守不住这件事。",
-  "phase": 49,
-  "status": "unbound",
-  "evidence": "",
+  "note": "能加载 ≠ 已被调用，已接线 ≠ 能力完整可用。第 48 轮把 6 条运行时欠账全部销空（入口闭包 10 模块 safe 10 / blocked 0，隔离 realm 真加载、真解包、真校验、真卸载）；第 50 轮落地 js/market-binding.js 并在 plugins/store/index.js 的 mount 里真正实例化，三个能力各有调用点，产品第一次出现「联网安装」入口。但阶段 0 加载侧与 CSP 资产重定向未经真机实测，所以 status 停在 wired，不写 bound。orphan-modules-guard 判模块级可达，只要 host.js 有一条 import 就把整组点亮，守不住这件事。",
+  "phase": 50,
+  "status": "wired",
+  "runtimeVerified": false,
+  "evidence": "第 50 轮：js/market-binding.js 装配层（getTauri + resolveDataDir + createFs + createPluginDataStore → createPluginMarket），plugins/store/index.js mount 内实例化并调用 list()/install()/uninstall()/checkUpdates()，PAT 只存闭包变量 sessionPat 且输入框 type=password。守卫 market-binding-guard-test.mjs 验装配层零 node:、headerBox 传引用、凭据不落盘不进日志、三能力各有调用点。真机 Tauri 运行与 302 资产下载未验，故 runtimeVerified=false。",
   "blockers": [
     {
       "id": "credentials",
-      "why": "12 个插件仓库全部 private，webview 直连 api.github.com 需要 Authorization；token 不能写进代码、不能进仓库、不能靠构建期注入。CSP 已由 fdad79257 放行 connect-src api.github.com，但凭据来源仍未定。",
+      "why": "12 个插件仓库全部 private，webview 直连 api.github.com 需要 Authorization；token 不能写进代码、不能进仓库、不能靠构建期注入。CSP 已由 fdad79257 放行 connect-src api.github.com。",
       "options": [
         "用户在商店面板输入 PAT，只存内存态不落盘（不改 Rust、不入库；会话结束即失效）",
         "后端持 token 代下 release asset（需改 Rust 新增命令，至今未编译验证）",
         "源码私有 + 产物推公开镜像仓（多维护一个仓库与同步链路）"
-      ]
+      ],
+      "resolution": "已选 options[0]：js/market-binding.js 的 sessionPat 闭包 + setToken()，装配层把 token 转成 Authorization 写入 headerBox（同一引用，运行时输入立即生效）；生产入口输入框 type=password，autocomplete=off。守卫 ⑥d/⑥i/⑥j 钉住引用契约与不落盘。",
+      "status": "resolved-in-code"
     },
     {
       "id": "ui-actions",
-      "why": "plugins/store/index.js 第 14 行注释写着「未来接联网安装与卸载（面板结构已按商店形态预留）」，但目前只有本地自定义插件的添加/移除，没有任何按钮调用编排层的 install / uninstall / checkUpdates / list。",
+      "why": "plugins/store/index.js 原注释写着「未来接联网安装与卸载（面板结构已按商店形态预留）」，但只有本地自定义插件的添加/移除，没有任何按钮调用编排层。",
       "options": [
         "在商店面板加输入仓库地址 + 安装/卸载/检查更新三个动作，market 由 createWebviewMarket(invoke, headers) 装配",
         "先在 host.js 暴露单例并在面板做能力检测，UI 动作分两步落地"
-      ]
+      ],
+      "resolution": "已选 options[0] 并在第 50 轮落地：新增「联网安装」卡片，PAT 输入框 + 检查更新 / 从仓库安装 / 卸载三个按钮，分别调 market.checkUpdates() / install() / uninstall()；mount 初始化时调一次 market.list() 写状态行。原注释已更正，不再写「未来接」。守卫 ⑦ 逐个钉住四个调用点。",
+      "status": "resolved-in-code"
     },
     {
       "id": "csp-asset",
@@ -27,15 +32,26 @@
       "options": [
         "真机实测一次重定向下载，按结果补 CSP 或改后端代下",
         "沿用后端代下方案，前端不直连资产域名"
-      ]
+      ],
+      "status": "pending-real-device"
+    },
+    {
+      "id": "runtime-load",
+      "why": "install() 把插件落到 ${appDataDir}/installed-plugins/<id>/，ledger 能记、list() 能列、查更新能查、卸载能删、用户数据能保留；但「装完的插件被外壳加载并出现在侧边栏」属阶段 0 加载侧：plugins/registry.js 的 entry 指向 runtime-plugins/ 或内置路径，装进 appDataDir 的插件目前不会自动进注册表。这是第 50 轮接线时新查出、此前台账与守卫都没登记的缺口 —— 不补它，接线只完成半套（能下载落盘，不能打开）。",
+      "options": [
+        "registry 增加「从 installed-plugins/ 扫描并合并」的动态入口（需与 runtime:true 分流配合）",
+        "安装成功后调 refreshShell 重建注册表，让新插件进侧边栏",
+        "先本机实测确认 asset 协议能从 appDataDir 加载 index.html，再定接入方式"
+      ],
+      "status": "pending-real-device"
     }
   ],
   "unblock": [
-    "在生产入口（js/host.js 或 plugins/store/index.js）真正实例化 createPluginMarket，并至少调用一个能力方法；只 import、只挂 window、只写注释都不算",
-    "把 status 改为 bound 并填写 evidence（提交 sha + 接线文件 + 实跑依据）",
-    "守卫 ② 会先报红要求销账；销账时逐条确认三个能力各自可用，不能只确认整组可达"
+    "本机 Tauri 实测一次完整链路：输入 PAT → 检查更新 → 从私有仓安装 → 资产 302 下载 → 插件出现在侧边栏并能打开 → 卸载 → 重装后用户数据可读回",
+    "按实测结果补 CSP 放行或改后端代下（csp-asset），并打通 installed-plugins/ → registry 的加载入口（runtime-load）",
+    "两个 blocker 都验完且能力真可用后，把 runtimeVerified 改为 true、status 改为 bound，并补 evidence 里的真机依据；守卫 ②e/②f 会双向校验，台账自查自封会红"
   ],
-  "knownLimit": "纯静态守卫挡不住「把主断言整行删掉或改成 true」；元断言 A–F 只验判据本身，靠每轮破坏验证兜这一层。",
+  "knownLimit": "纯静态守卫挡不住「把主断言整行删掉或改成 true」；元断言 A–I 只验判据本身，靠每轮破坏验证兜这一层。另：守卫判的是「生产入口是否实例化 + 三个能力是否各有调用点」，不是「每个能力在真机上各自跑通」——后者只能靠 runtimeVerified 的真机实测。",
   "related": [
     "scripts/market-runtime-debt.json（运行时阻塞，48 轮已 all-resolved）",
     "market-runtime-gap-test.mjs / webview-runtime-test.mjs",

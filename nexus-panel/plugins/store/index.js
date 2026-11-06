@@ -4,6 +4,10 @@ import {
   takeCustomPluginWriteError, customPluginWriteFailMsg,
 } from '../../js/host.js';
 import { prompt as askPrompt } from '../../js/dialog.js';
+/* 联网商店装配层：把编排层第一次接进产品（清单第 50 轮）。
+   只在 mount 里实例化，模块顶层不触发任何 invoke —— 否则面板还没挂载
+   就去读 appDataDir，浏览器调试态会直接打不开。 */
+import { createWebviewMarket } from '../../js/market-binding.js';
 
 /**
  * 插件面板（插件商店）
@@ -58,6 +62,31 @@ export default definePlugin({
   async mount(ctx) {
     const shell = shellGlobal();
     const root = ctx.container;
+
+    /* ============ 联网商店装配（第 50 轮接线） ============
+     * PAT 只活在这个闭包里：不落盘、不进 localStorage、不进日志、不回显。
+     * 拿不到 Tauri / appDataDir 时装配层返回结构化失败，这里只显示提示，
+     * 不能让整个面板打不开（浏览器调试态没有 Tauri）。 */
+    let sessionPat = '';
+    let market = null;
+    let marketCtl = null;
+    let marketMsg = '';
+    try {
+      const wired = await createWebviewMarket({
+        getToken: () => sessionPat,
+        /* 内置插件 id 由外壳真实列表派生，不另写一份硬编码表：
+           少写一个就可能被同名市场插件顶替，且不报错。 */
+        reservedIds: (readPlugins() || []).map((x) => x.id),
+      });
+      if (wired.ok) {
+        marketCtl = wired;
+        market = wired.market;
+      } else {
+        marketMsg = wired.message || '联网安装不可用';
+      }
+    } catch (e) {
+      marketMsg = `联网安装初始化失败：${e?.message || e}`;
+    }
 
     /* ---- 分区容器 ---- */
     const appList = h('div', {});
@@ -251,6 +280,106 @@ export default definePlugin({
           },
         }, '＋ 添加自定义插件'),
       ),
+    ));
+
+    /* ============ 联网商店（从私有仓库安装 / 卸载 / 查更新） ============ */
+    const netState = h('div.p-muted', {
+      style: { fontSize: '11px', lineHeight: '1.6', marginTop: '4px' },
+    }, market ? '' : marketMsg);
+
+    /* 至少调用一个能力方法：list() 把「已联网安装」的数量写进状态行。
+       只实例化、不调用，等于没接线（台账 unblock 第一条）。 */
+    if (market) {
+      try {
+        const listed = await market.list();
+        const n = (listed?.plugins || []).filter((x) => !x.builtin).length;
+        netState.textContent = `联网安装已就绪 · 已安装 ${n} 个市场插件`;
+      } catch (e) {
+        netState.textContent = `联网安装已就绪，但列表读取失败：${e?.message || e}`;
+      }
+    }
+
+    const patInput = h('input', {
+      type: 'password',
+      placeholder: 'GitHub PAT（私有仓必需，仅本次会话，不保存）',
+      autocomplete: 'off',
+      spellcheck: 'false',
+      style: {
+        flex: '1', minWidth: '220px', height: '28px', padding: '0 8px',
+        fontSize: '11px', borderRadius: 'var(--r-sm)',
+        border: '1px solid var(--border, #8884)', background: 'var(--surface-sunk)',
+      },
+      oninput: (e) => {
+        sessionPat = e?.target?.value || '';
+        /* 只写内存：装配层把 token 转成 Authorization 放进 headerBox，
+           任何一步都不落盘、不进日志、不回显。 */
+        marketCtl?.setToken?.(sessionPat);
+      },
+    });
+
+    const netBtn = (label, fn, danger = false) => h('button.p-btn', {
+      style: {
+        height: '28px', padding: '0 10px', fontSize: '11px',
+        ...(danger ? { color: 'var(--danger)' } : {}),
+      },
+      onclick: fn,
+    }, label);
+
+    const needMarket = () => {
+      if (market) return true;
+      ctx.toast?.(marketMsg || '联网安装不可用', 'err');
+      return false;
+    };
+
+    root.appendChild(h('div.p-card', { style: { marginTop: '12px' } },
+      h('h2', {}, '联网安装'),
+      netState,
+      h('div', {
+        style: {
+          marginTop: '8px', display: 'flex', gap: '6px',
+          flexWrap: 'wrap', alignItems: 'center',
+        },
+      },
+        patInput,
+        netBtn('检查更新', async () => {
+          if (!needMarket()) return;
+          const r = await market.checkUpdates();
+          const hits = (r?.results || []).filter((x) => x.hasUpdate);
+          ctx.toast?.(hits.length
+            ? `${hits.length} 个插件有更新：${hits.map((x) => x.id).join('、')}`
+            : '所有已安装插件均为最新', 'ok');
+        }),
+        netBtn('从仓库安装', async () => {
+          if (!needMarket()) return;
+          const repo = await askPrompt({
+            title: '插件仓库',
+            placeholder: 'owner/repo，例如 xxx/nexusPanel_plugin_demoIframe',
+            validate: (v) => (v.trim() && v.trim().includes('/') ? null : '请填写 owner/repo'),
+          });
+          if (!repo) return;
+          const r = await market.install(repo.trim());
+          ctx.toast?.(r.ok
+            ? `已安装「${r.id}」 v${r.version}`
+            : `安装失败：${r.error || r.stage}`, r.ok ? 'ok' : 'err');
+          if (r.ok) render();
+        }),
+        netBtn('卸载', async () => {
+          if (!needMarket()) return;
+          const id = await askPrompt({
+            title: '卸载插件 id', placeholder: '例如 demoIframe',
+            validate: (v) => (v.trim() ? null : '请填写插件 id'),
+          });
+          if (!id) return;
+          const r = await market.uninstall(id.trim());
+          ctx.toast?.(r.ok
+            ? `已卸载「${id.trim()}」（用户数据已保留）`
+            : `卸载失败：${r.error || ''}`, r.ok ? 'ok' : 'err');
+          if (r.ok) render();
+        }, true),
+      ),
+      h('div.p-muted', {
+        style: { fontSize: '11px', lineHeight: '1.6', marginTop: '6px' },
+      }, '产物需为各插件仓 Release 里的规范命名 tarball。资产下载会重定向到 GitHub 对象存储，真机需确认 CSP 放行；装完后的加载与侧边栏呈现属阶段 0，待本机实测。'),
     ));
 
     render();

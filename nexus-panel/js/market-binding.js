@@ -1,0 +1,133 @@
+/**
+ * 插件市场 · webview 侧装配层（第 50 轮接线）
+ * ============================================================================
+ *
+ * 定位：把第 41–48 轮销空了运行时阻塞的编排层，第一次真正接进产品。
+ * 运行位置只有 webview —— Tauri 的 invoke 只能调 Rust 命令，Rust 里跑不了
+ * JS 编排层（清单第 41 节的定性，别再写「Node 侧 / IPC 桥」）。
+ *
+ * ⚠️ 本文件是「装配」，不是第二份编排
+ * ------------------------------------------------------------
+ * 生命周期判据一条都不在这里重写：install / uninstall / checkUpdates /
+ * list / readData / writeData 全部转发给 createPluginMarket 的实例。
+ * 这里出现第二份同类逻辑就是 bug（plugin-market.js 文件头同款红线）。
+ *
+ * 凭据：只存内存态，不落盘、不进日志、不内嵌
+ * ------------------------------------------------------------
+ * 12 个插件仓库全部 private，webview 直连 api.github.com 需要 Authorization。
+ * 方案取台账 blockers[credentials].options[0]：用户在商店面板输入 PAT，
+ * 只存闭包变量。token 不写进任何文件、不进 localStorage、不进 console。
+ *
+ * headerBox 为什么必须是同一个引用
+ * ------------------------------------------------------------
+ * createPluginMarket 在构造时把 p.headers 存成 ghOptsHeaders，之后每次
+ * fetchRelease / downloadAsset / fetchRefSha 都把这个**引用**透给
+ * plugin-store-client 的 ghHeaders()。所以运行时写入 headerBox 会立刻生效；
+ * 若改成 `headers: { ...headerBox }`（拷贝）或每次构造新对象，用户后输的
+ * PAT 永远用不上，症状是「输对了 token 还是 404 / 提示没发版」，不报错。
+ * 这条引用契约由 market-binding-guard-test.mjs ⑥ 节钉住。
+ *
+ * 拿不到 Tauri / appDataDir 时返回结构化失败，不抛异常
+ * ------------------------------------------------------------
+ * 浏览器里调 UI 时没有 Tauri，抛错会让整个商店面板打不开（调试环境退化成
+ * 不可用）。resolveDataDir() 的注释也是同一条判据。调用方按 `if (!r.ok)`
+ * 显示提示即可。
+ *
+ * 🔴 接线 ≠ 能力完整可用（清单第 50 轮如实登记）
+ * ------------------------------------------------------------
+ * install() 把插件落到 `${appDataDir}/installed-plugins/<id>/`，ledger 能
+ * 记、list() 能列、checkUpdates 能查、卸载能删、用户数据能保留。
+ * 但「装完的插件被外壳加载并出现在侧边栏」属于阶段 0 加载侧，至今仍待
+ * 本机 Tauri 实测；CSP 对 release asset 302 到
+ * objects.githubusercontent.com 的放行也待真机确认。这两条没验完之前，
+ * 台账 status 只能是 wired，不能写 bound。
+ */
+
+import { createPluginMarket } from './plugin-market.js';
+import { createFs, resolveDataDir } from './plugin-fs-bridge.js';
+import { createPluginDataStore, joinSegments } from './plugin-data-store.js';
+import { LEDGER_FILE } from './plugin-ledger.js';
+import { INSTALLED_PLUGINS_DIR } from './plugin-manifest.js';
+import { getTauri } from './tauri-core.js';
+
+/**
+ * 装配一个可在 webview 里用的市场实例。
+ *
+ * @param {object} [p]
+ * @param {() => string|null} [p.getToken] 内存态 PAT getter（每次请求前调用）
+ * @param {string[]} [p.reservedIds] 内置插件 id，防市场插件顶替内置
+ * @param {object} [p.tauri] 仅供测试注入；生产不传，走 getTauri()
+ * @param {() => Promise<string|null>} [p.resolveDataDir] 仅供测试注入
+ * @returns {Promise<{ok:boolean, reason?:string, message?:string,
+ *                    market?:object, setToken?:(t:string|null)=>void}>}
+ */
+export async function createWebviewMarket(p = {}) {
+  const o = p || {};
+  /* sessionToken 是唯一的凭据存放处。它活在这个闭包里，不落盘、不进日志。 */
+  let sessionToken = null;
+  const getToken = typeof o.getToken === 'function' ? o.getToken : () => sessionToken;
+
+  const tauri = o.tauri || await getTauri();
+  if (!tauri || typeof tauri.invoke !== 'function') {
+    return {
+      ok: false,
+      reason: 'not-in-tauri',
+      message: '联网安装仅在客户端内可用（当前不是 Tauri 运行时）',
+    };
+  }
+
+  const resolve = typeof o.resolveDataDir === 'function' ? o.resolveDataDir : resolveDataDir;
+  const dataRoot = await resolve();
+  if (!dataRoot || typeof dataRoot !== 'string') {
+    return {
+      ok: false,
+      reason: 'no-data-dir',
+      message: '取不到应用数据目录，无法安装插件',
+    };
+  }
+
+  /* 生产默认：fs_op 走宿主原生 invoke（绕过 ctx.invoke 的插件级白名单）。
+   * 后端 fs_op 的授权根默认包含 appDataDir（见 plugin-fs-bridge.js 文件头）。
+   * p.fs / p.fetchFn 仅供隔离环境测试注入，生产一律不传，守卫 ⑥k/⑥l 钉住。 */
+  const invoke = (cmd, args) => tauri.invoke(cmd, args);
+  const fs = o.fs || createFs(invoke);
+  const fetchFn = typeof o.fetchFn === 'function' ? o.fetchFn : null;
+  const dataStore = createPluginDataStore({ fs, dataRoot, legacyStorage: null });
+
+  /* 同一个对象引用交给编排层，运行时写入立即被后续请求读到。 */
+  const headerBox = {};
+  const applyToken = () => {
+    const tok = getToken();
+    if (tok && typeof tok === 'string' && tok.trim()) {
+      headerBox.Authorization = `Bearer ${tok.trim()}`;
+    } else {
+      delete headerBox.Authorization;
+    }
+  };
+  applyToken();
+
+  const market = createPluginMarket({
+    installedDir: joinSegments(dataRoot, INSTALLED_PLUGINS_DIR),
+    ledgerFile: joinSegments(dataRoot, LEDGER_FILE),
+    dataRoot,
+    dataStore,
+    fs,
+    /* 每次请求前再刷一次：用户可能是在面板打开之后才输入 PAT 的。 */
+    fetch: (url, opts = {}) => {
+      applyToken();
+      return (fetchFn || fetch)(url, opts);
+    },
+    headers: headerBox,
+    reservedIds: Array.isArray(o.reservedIds) ? o.reservedIds : [],
+  });
+
+  return {
+    ok: true,
+    market,
+    /** 面板输入 PAT 后调这里；传 null / 空串即撤销凭据。 */
+    setToken(t) {
+      sessionToken = typeof t === 'string' && t.trim() ? t.trim() : null;
+      applyToken();
+    },
+  };
+}
