@@ -576,8 +576,19 @@ console.log('\n--- H. 检查器提示按平台 ---');
   t('tip 不写死 Ctrl（Mac 上应为 ⌘）', !/tip:\s*'[^']*Ctrl/.test(code));
   t('tip 按平台生成', /get tip\(\)/.test(code) && /isMac\(\)/.test(code)
     && /⌘/.test(code) && /Ctrl/.test(code));
-  t('平台判断有 try/catch（无 navigator 环境不能抛）',
-    /function isMac\(\)[\s\S]{0,160}try\s*\{/.test(code));
+  /* 平台判断已抽到 js/accel.js（宿主 / SDK / 检查器共用一份）。旧判据钉的是
+   * 「本文件内 function isMac() 后 160 字符内有 try」——抽走之后它恒红，
+   * 而实现其实更好了：accel.js 的 isMac 仍带 try，且不再有第二份会漂。
+   * 守原意（无 navigator 环境不能抛）、不守写法：
+   *   ① 检查器不抄一份，走 import；
+   *   ② 共享那份必须真的带 try/catch（accel 读不到就报红，不恒真）。 */
+  const accel = stripBlock(src('js/accel.js'));
+  t('平台判断只有一份（检查器走 js/accel.js，不抄在本地）',
+    accel.length > 0
+    && /from\s+['"][^'"]*js\/accel\.js['"]/.test(m)
+    && !/function\s+isMac\s*\(/.test(code));
+  t('共享 isMac 有 try/catch（无 navigator 环境不能抛）',
+    /export function isMac\(\)[\s\S]{0,240}try\s*\{/.test(accel));
 }
 
 /* ================================================================
