@@ -1,6 +1,6 @@
 {
-  "note": "能加载 ≠ 已被调用，已接线 ≠ 能力完整可用。第 48 轮把 6 条运行时欠账全部销空（入口闭包 10 模块 safe 10 / blocked 0，隔离 realm 真加载、真解包、真校验、真卸载）；第 50 轮落地 js/market-binding.js 并在 plugins/store/index.js 的 mount 里真正实例化，三个能力各有调用点，产品第一次出现「联网安装」入口。CSP 资产 302 的真实落点已实测并修好配置（真机只需确认 302 实际通过）；阶段 0 加载侧（asset 协议下 ES module / iframe 同源）仍待真机判，所以 status 停在 wired，不写 bound。orphan-modules-guard 判模块级可达，只要 host.js 有一条 import 就把整组点亮，守不住这件事。",
-  "phase": 50,
+  "note": "能加载 ≠ 已被调用，已接线 ≠ 能力完整可用。第 48 轮把 6 条运行时欠账全部销空（入口闭包 10 模块 safe 10 / blocked 0，隔离 realm 真加载、真解包、真校验、真卸载）；第 50 轮落地 js/market-binding.js 并在 plugins/store/index.js 的 mount 里真正实例化，三个能力各有调用点，产品第一次出现「联网安装」入口。CSP 资产 302 的真实落点已实测并修好配置（真机只需确认 302 实际通过）；阶段 0 加载侧（asset 协议下 ES module / iframe 同源）仍待真机判，所以 status 停在 wired，不写 bound。orphan-modules-guard 判模块级可达，只要 host.js 有一条 import 就把整组点亮，守不住这件事。 第 54 轮把「装完不进注册表」这一半销掉：js/installed-registry.js 用 pluginsWithInstalled 把 installed-plugins/ 合并进 loadRegistry()，host.refresh / shell.js / src/App.tsx 三处赋值点同时生效，插件会出现在侧边栏；resolveFrameSrc 对 installed:true 显式 fail-closed 并给 nextAction，不再静默套壳。加载 URL 仍待真机，status 保持 wired。",
+  "phase": 54,
   "status": "wired",
   "runtimeVerified": false,
   "evidence": "第 50 轮：js/market-binding.js 装配层（getTauri + resolveDataDir + createFs + createPluginDataStore → createPluginMarket），plugins/store/index.js mount 内实例化并调用 list()/install()/uninstall()/checkUpdates()，PAT 只存闭包变量 sessionPat 且输入框 type=password。守卫 market-binding-guard-test.mjs 验装配层零 node:、headerBox 传引用、凭据不落盘不进日志、三能力各有调用点。真机 Tauri 运行与 302 资产下载未验，故 runtimeVerified=false。",
@@ -39,17 +39,30 @@
     },
     {
       "id": "runtime-load",
-      "why": "install() 把插件落到 ${appDataDir}/installed-plugins/<id>/，ledger 能记、list() 能列、查更新能查、卸载能删、用户数据能保留；但「装完的插件被外壳加载并出现在侧边栏」属阶段 0 加载侧：plugins/registry.js 的 entry 指向 runtime-plugins/ 或内置路径，装进 appDataDir 的插件目前不会自动进注册表。这是第 50 轮接线时新查出、此前台账与守卫都没登记的缺口 —— 不补它，接线只完成半套（能下载落盘，不能打开）。",
+      "why": "第 54 轮已把「不进注册表」这一半销掉（见新增 blocker registry-entry）。剩余只有加载 URL：install() 的产物落在 ${appDataDir}/installed-plugins/<id>/，不在 dist/ 内，同源相对路径取不到；asset 协议下 ES module 的 CORS 行为、iframe 是否同源可读，只有真机能判。若现在偷偷拼一个地址，症状是白屏或 iframe 套整个主面板，不报 404 不报错。",
       "options": [
         "registry 增加「从 installed-plugins/ 扫描并合并」的动态入口（需与 runtime:true 分流配合）",
         "安装成功后调 refreshShell 重建注册表，让新插件进侧边栏",
         "先本机实测确认 asset 协议能从 appDataDir 加载 index.html，再定接入方式"
       ],
-      "status": "pending-real-device"
+      "status": "pending-real-device",
+      "resolution": "第 54 轮：进注册表已落地；resolveFrameSrc 对 installed:true 抛带 nextAction: real-device-checks 的结构化错误，走 showError() 明确错误框，不再是静默失败。加载 URL 分支未定，等 5 项 checks 回来按 evaluate() 的 nextAction 接入对应一行。",
+      "evidence": "installed-registry-guard-test.mjs 真跑合并/降级/fail-closed 三组夹具并做破坏验证。"
+    },
+    {
+      "id": "registry-entry",
+      "why": "market.list() 早已调 pluginsWithInstalled() 合并 installed-plugins/，但外壳 loadRegistry() 只读静态 registry.js + 自定义插件，host.js/shell.js/App.tsx 三处赋值点都走它 —— 装完的插件不进 state.plugins，侧边栏不出现、也打不开。这是第 50 轮接线时查出、第 54 轮才销掉的半套缺口。",
+      "options": [
+        "在 loadRegistry() 内合并 installed-plugins/（三处赋值点自动生效，判据复用 market.list() 同一份）",
+        "安装成功后单独调 refreshShell() 重建注册表（多一条调用链，漏一处就又装了不出现）",
+        "把已安装插件写进 registry.js 静态常量（不可能：产物在运行时数据目录）"
+      ],
+      "resolution": "已选 options[0]：新增 js/installed-registry.js（委托 pluginsWithInstalled，三条降级契约：非 Tauri / 目录不存在 / 扫描抛错都返回静态清单），loadRegistry() 在 registerBuiltinIds() 之后调用它；projectInstalled() 给装进来的插件打 loadState 与 installedEntry，静态插件一个字段不动。扫描报告经 installedScanReport() 暴露，skipped/errors 不静默吞。",
+      "status": "resolved-in-code"
     }
   ],
   "unblock": [
-    "在 Tauri 窗口 devtools 粘贴 scripts/probe-real-device-runtime.mjs 的 DEVTOOLS_SNIPPET，把打印的 checks 数组贴回",
+    "在 Tauri 窗口 devtools 粘贴 scripts/probe-real-device-runtime.mjs 的 DEVTOOLS_SNIPPET，把打印的 checks 数组贴回（进注册表已由第 54 轮销掉，此项只剩加载 URL 分支）",
     "用 evaluate(checks) 得到 nextAction：wire-frameBase / backend-proxy-or-copy-to-dist / srcdoc-or-inline-bundle / bridge-fallback / fix-csp，按分支改对应一行",
     "真机五项全通过后再把 runtimeVerified 改 true、status 改 bound；守卫 real-device-runtime-guard-test.mjs ① 节双向校验，自查自封会红"
   ],

@@ -90,6 +90,21 @@ const LEDGER = {
     why: '上游新增的市场运行时扫描器自带块注释剥离，形态不是标准 [\\s\\S]*?，需先确认是否保偏移',
     unblock: '对照 stripCommentsKeep 确认后替换并销账',
   },
+  /* 第 53 / 54 轮新增的两个守卫：远端 main 上 market-result-format 一直未登记
+     （基线 27/2 红）；installed-registry 是第 54 轮落地时新增的第 3 条红。
+     两者都是**登记欠账，不是销账** —— 行注释判据带 [^:] 左边界，与公共设施
+     (^|\s)// 不同，机械替换会让「注释里的历史说明」被算成真调用或把 a//b 吞掉，
+     症状是守卫假绿而不是报红。逐文件比对样本前保持现形态。 */
+  'market-result-format-test.mjs': {
+    kinds: ['block-other', 'line-colon'],
+    why: '第 206/53 轮面板结果守卫自带剥注释实现，块注释形态不是标准 [\\s\\S]*?、行注释用 (^|[^:])//；两项与公共设施语义均未逐项比对',
+    unblock: '用含 URL / 行内 // / 注释内正则的三套样本比对两种判据结论后，改为 import ./test-scan-utils.mjs 并从台账销账',
+  },
+  'installed-registry-guard-test.mjs': {
+    kinds: ['flat', 'line-colon'],
+    why: '第 54 轮已安装注册表守卫自带剥注释实现；它必须剥掉文件头「mergeInstalled 早就写好」这句历史说明，否则 ④e 会把注释算成真调用，行注释判据与公共设施不同',
+    unblock: '比对 (^|[^:])// 与 (^|\\s)// 在 http:// 与 a//b 两类样本上的结论后，改为公共设施并销账',
+  },
 };
 
 /* 已销账：换成公共设施、且仍在主仓的文件。必须真的 import，且不再有内联实现。 */

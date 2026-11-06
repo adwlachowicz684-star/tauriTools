@@ -8,6 +8,7 @@
     "build": "node scripts/build-plugins.mjs && node scripts/stash-dist.mjs && vite build && node scripts/copy-runtime.mjs",
     "plugins:build": "node scripts/build-plugins.mjs",
     "check:dist": "node dist-integrity-test.mjs",
+    "test:installed-registry": "node installed-registry-guard-test.mjs",
     "test:smoke": "node smoke-test.mjs",
     "test:dist-integrity": "node dist-integrity-test.mjs",
     "config:check": "node scripts/sync-config.mjs --check",

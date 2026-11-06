@@ -6,6 +6,10 @@
  */
 
 import { getTauri, isInsideTauri } from './tauri-core.js';
+/* 已安装插件（installed-plugins/<id>/）合并进注册表的唯一入口。
+ * host.refresh / shell.js / src/App.tsx 三处赋值点都走 loadRegistry，
+ * 所以只在这一处合并即可三端同时生效，不用改调用方。 */
+import { loadInstalledRegistry } from './installed-registry.js';
 import { shouldPurgeDataOnUninstall, SOURCE_CUSTOM } from './plugin-data-policy.js';
 /* 插件存储键：与 js/plugin-sdk.js 那份**必须是同一套**。
    两种挂载模式落到同一份 localStorage，键名岔开就是"这边存那边读不到"，
@@ -235,10 +239,18 @@ export function createBus() {
  * 在这一处缓存就不会漏。
  */
 let lastRawRegistry = [];
+/* 最近一次已安装插件扫描报告。「装了但没生效 / 扫描出错」不许静默吞：
+ * loadRegistry 会把它们带出来，UI 与诊断都能取到（第 54 轮）。 */
+let lastInstalledScan = { found: 0, skipped: [], errors: [], degraded: null };
 
 /** 未过滤的原始清单（含被运行时过滤掉的），仅供诊断 */
 export function rawRegistry() {
   return lastRawRegistry;
+}
+
+/** 最近一次已安装插件扫描报告（含 skipped / errors / 降级原因） */
+export function installedScanReport() {
+  return lastInstalledScan;
 }
 
 export async function loadRegistry() {
@@ -270,6 +282,25 @@ export async function loadRegistry() {
     const ids = new Set(list.map((p) => p.id));
     list = list.concat(custom.filter((p) => !ids.has(p.id)));
   } catch { /* ignore */ }
+
+  /* 第 54 轮：装进 ${appDataDir}/installed-plugins/<id>/ 的插件在这里
+   * 合并进注册表，侧边栏才会出现。必须排在 registerBuiltinIds() **之后**
+   * —— 顺序反了会把第三方插件也注册成内置，"只对第三方生效"的拦截
+   * 会静默失效（与上面 custom 那段的注释同一条判据）。
+   *
+   * 拿不到 Tauri / 数据目录时 loadInstalledRegistry 降级返回原样清单，
+   * 不抛错：浏览器调试态与设置页都要能正常打开注册表。 */
+  try {
+    const merged = await loadInstalledRegistry(list);
+    list = merged.plugins;
+    lastInstalledScan = merged.report;
+    if (merged.report.skipped.length || merged.report.errors.length) {
+      console.warn('[registry] 已安装插件存在未生效或扫描异常条目', merged.report);
+    }
+  } catch (e) {
+    /* 扫描失败绝不能把静态清单弄丢 —— 那会变成整个面板没有插件。 */
+    console.warn('[registry] 已安装插件扫描失败，静态清单照常可用', e);
+  }
   lastRawRegistry = list;
   return list;
 }
@@ -2162,6 +2193,25 @@ export function runtimeFrameUrl({ id, vars, base }) {
  * entry 已指向产物，由 dev 中间件直出，三态加载同一份文件。
  */
 export async function resolveFrameSrc(manifest) {
+  /* 🔴 已安装插件（installed: true）的加载入口尚未通过真机验证。
+   * 产物在 ${appDataDir}/installed-plugins/<id>/，不在 dist/ 内 ——
+   * 同源相对路径取不到；asset 协议下 ES module 的 CORS 行为又未验
+   * （runtimeFrameUrl 注释 ②、market-binding-debt.json 的 5 项 checks）。
+   *
+   * 这里必须**先拦住**：若退回 resolveEntry(manifest.entry)，包内相对
+   * entry（如 index.html）会被拼到 location.href，指向外壳自己 ——
+   * iframe 里套整个主面板、不报 404 不报错，比白屏更难查（第 38 轮
+   * dev 态实测过的同款形状）。抛错会走 mount() 的 showError() 错误框，
+   * 明确告诉用户下一步，而不是静默失败。
+   *
+   * 真机 checks 回来后按 nextAction 选定加载方式（同源投影 / srcdoc /
+   * 后端代理），再在这里接对应分支，并销掉台账的 load-url 一条。 */
+  if (manifest && manifest.installed === true) {
+    throw new Error(
+      `已安装插件「${manifest.id}」的加载入口尚未通过真机验证：`
+      + '产物位于应用数据目录，需按 DEVTOOLS_SNIPPET 的 5 项 checks 结果'
+      + '选定加载方式后再接入。nextAction: real-device-checks');
+  }
   const mode = frameSrcMode();
   if (!manifest || !manifest.runtime || mode !== 'prod') {
     return resolveEntry(manifest.entry);
