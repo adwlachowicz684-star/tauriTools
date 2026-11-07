@@ -122,6 +122,7 @@
     "test:responsive": "node responsive-test.mjs",
     "test:rtdeps": "node runtime-deps-test.mjs",
     "test:runtime-plugins": "node runtime-plugin-test.mjs",
+    "test:runtime-bare-import": "node runtime-bare-import-test.mjs",
     "test:service-available": "node service-available-test.mjs",
     "test:service-plugin": "node service-plugin-test.mjs",
     "test:settings": "node settings-test.mjs",

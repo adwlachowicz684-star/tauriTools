@@ -1201,15 +1201,75 @@ body.nx-inspecting * { cursor: crosshair !important; }
   box-shadow: var(--sh-in-sm);
 }
 
-/* ---------- 外壳区块（#dw-shell）----------
+/* ---------- 外壳区块（.dw-shell）----------
    抽屉里插件自己的设置在 .drawer-body（自带 16px 18px 内边距），
-   外壳固定提供的这一段紧随其后，但 #dw-shell 原先**没有内边距** ——
+   外壳固定提供的这一段紧随其后，但这一块原先**没有内边距** ——
    于是上面的插件区缩在里面、下面的外壳区贴着抽屉边，两块根本不对齐。
-   这是它看起来"没排版"的第一眼原因。 */
-#dw-shell { padding: 0 var(--sp-9) var(--sp-9); }
+   这是它看起来"没排版"的第一眼原因。
+
+   ⚠️ 这里必须写**类**选择器，不能写 #dw-shell。
+   无构建版（js/shell.js）确实给了 id，但 React 版（SandboxSection）
+   返回的是 Fragment，结构上根本没有这个 id —— 用 # 选择器时
+   React 壳的这一段拿不到内边距，"贴着抽屉边"在无构建版修好了、
+   在 Vite 版照旧。同一个坑在两套外壳里各踩一次，就是因为
+   判据钉的是 id 而不是"两壳共用的那个容器"。 */
+.dw-shell { padding: 0 var(--sp-9) var(--sp-9); }
 /* 插件没提供设置面板时 .drawer-body 是空的，这里要自己撑出上边距，
    否则第一张分区卡片会直接贴到标题栏分隔线上。 */
-.drawer-body:empty + #dw-shell { padding-top: var(--sp-9); }
+.drawer-body:empty + .dw-shell { padding-top: var(--sp-9); }
+
+/* 抽屉外壳区：分组是凹陷底板，里面的行不能再凹陷一次。
+   ----------------------------------------------------------------------
+   .set-group 与 .cfg-row 此前用了**同一组**值（--surface-sunk + --sh-in-sm），
+   而 .cfg-row 就是摆在 .set-group 里的 —— 两层同款凹陷叠在一起等于谁都没凹，
+   行的边界完全看不出来，整块糊成一片，这也是它"看着没排版"的一部分原因。
+
+   这里把行抬到 --surface（高一级）并去掉内阴影，层次靠色差 + 圆角分开，
+   不新增令牌。作用域限定在 .dw-shell：设置插件页（plugins/settings）
+   里的 .set-group 装的是参数项而不是 .cfg-row，不受影响。 */
+.dw-shell .cfg-row {
+  background: var(--surface);
+  box-shadow: none;
+}
+
+/* 外壳区顶部「保存失败」提示。
+   此前写在 React 组件的内联 style 里（字号、内距、色值全写死）：
+   内联优先级高于任何类名，改外层 CSS 无效，也绕过了全部令牌。
+   同一份组件里刚清理过一轮内联写法，这里是漏网的那一处。 */
+.dw-err {
+  padding: 0 0 var(--sp-5, 10px);
+  font-size: var(--fs-note);
+  color: var(--danger);
+  line-height: 1.6;
+}
+
+/* 底部操作条
+   ----------------------------------------------------------------------
+   「严格沙箱」这类改动要**重载插件**才生效，而抽屉里此前没有任何重载入口：
+   提示写着"重载后生效"，用户却得先关掉抽屉、再回顶栏找那个 ↻。
+   改完当场能重载，这条链路才闭环。
+
+   固定在底部（flex:none，.drawer-scroll 已经是 flex:1），不随内容滚走 ——
+   滚到下面也能一键重载，不必先滚回顶部。 */
+.drawer-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-6);
+  padding: var(--sp-5, 10px) var(--sp-9);
+  /* 与头部同一档底板：上下两条夹住中间可滚动区，观感对称 */
+  background: var(--surface-overlay);
+  /* 同 .drawer-head：必须用 --divider，--border 在新拟态下是 transparent */
+  border-top: 1px solid var(--divider);
+}
+.drawer-foot-note {
+  font-size: var(--fs-note);
+  color: var(--text-mute);
+  line-height: 1.5;
+  min-width: 0;
+}
+.drawer-foot .p-btn { flex: none; }
 
 /* 尊重系统"减少动效"：滑入改为直接出现 */
 @media (prefers-reduced-motion: reduce) {
