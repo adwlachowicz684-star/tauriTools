@@ -97,7 +97,14 @@ export async function fsOp(invoke, req) {
   if (req.maxBytes != null) args.maxBytes = req.maxBytes;
   if (Array.isArray(req.exts)) args.exts = req.exts;
 
-  const r = await invoke('fs_op', args);
+  /* 🔴 Tauri v2 按「命令参数名」取 payload，不摊平 struct。
+   * 后端签名是 `pub fn fs_op(app: AppHandle, req: FsRequest)`，
+   * 所以顶层必须有且只有 `req`，字段放在 req 里。
+   * 平铺成 { op, path, ... } 会真机报
+   *   invalid args `req` for command `fs_op`: missing required key req
+   * 而 Node 侧 mock 若也按平铺断言就是「测试全绿、真机必挂」。
+   * plugin-fs-bridge-test.mjs 第 12 节把本形状与 Rust 签名互钉。 */
+  const r = await invoke('fs_op', { req: args });
   // 后端 Ok(FsResult{ok,text}) 会被序列化成对象；拿不到就当失败
   if (!r || typeof r !== 'object') {
     throw new Error(`fs_op ${req.op} 返回异常: ${String(r)}`);

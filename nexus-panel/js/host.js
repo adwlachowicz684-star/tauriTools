@@ -1024,7 +1024,17 @@ export function createHost(opts = {}) {
     const failed = [];
     for (const c of claims) {
       try {
-        await tauri.invoke('fs_op', { op: 'delete', path: c.path });
+        /* Tauri v2 按命令参数名取 payload：后端签名是
+         * `pub fn fs_op(app: AppHandle, req: FsRequest)`，顶层必须是 { req }，
+         * 且 FsRequest 里没带 serde(default) 的字段都得给全。
+         * 平铺成 { op, path } 会真机报 "missing required key req"
+         * （同一形状见 js/plugin-fs-bridge.js 的 fsOp）。 */
+        await tauri.invoke('fs_op', {
+          req: {
+            op: 'delete', path: c.path,
+            target: '', content: '', recursive: false, force: false, dryRun: false,
+          },
+        });
         deleted.push(c.path);
       } catch (e) {
         failed.push({ path: c.path, error: String(e?.message || e) });
