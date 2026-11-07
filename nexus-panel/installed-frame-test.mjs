@@ -31,7 +31,7 @@
  * 零外部依赖，按 import.meta.url 定位根，从任意 cwd 可跑。
  */
 
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -39,6 +39,8 @@ import {
   INSTALLED_DIR,
 } from './js/installed-frame.js';
 import { checkSingleFile } from './scripts/single-file.mjs';
+import { checkSingleFile as shapeCheck } from './js/single-file-shape.mjs';
+import { spawnSync } from 'node:child_process';
 /* 剥注释复用公共设施，不新增内联副本（inline-strip-audit 会点名）。 */
 import { stripCommentsJs } from './test-scan-utils.mjs';
 
@@ -212,9 +214,10 @@ t('④c 空 fileUrl 明确抛错',
       && !/return resolveEntry\(/.test(b);
   };
   t('⑥f host.js 的 installed 分支真的委托新模块', delegates(hostCode));
-  t('⑥g 新模块 import 的是构建期那份 single-file.mjs（不另写正则）',
-    /from\s*['"]\.\.\/scripts\/single-file\.mjs['"]/.test(frameCode)
-    && /checkSingleFile\s*\(/.test(frameCode));
+  t('⑥g 形态判据来自零依赖的 js/ 模块（不再跨到 scripts/，不另写正则）',
+    /from\s*['"]\.\/single-file-shape\.mjs['"]/.test(frameCode)
+    && /checkSingleFile\s*\(/.test(frameCode)
+    && !/from\s*['"]\.\.\/scripts\//.test(frameCode));
   t('⑥h 三态抛错都在实现里（不是只在注释里）',
     (frameCode.match(/throw fail\(/g) || []).length >= 3);
 
@@ -233,7 +236,128 @@ t('④c 空 fileUrl 明确抛错',
     && /nextAction/.test(s);
   t('⑦g 三态判据对空文本为假（不恒真）', shapeMatches('') === false);
   t('⑦h 三态判据对真模块为真（不恒假）', shapeMatches(frameCode) === true);
+
+  /* ---------------- ⑧ 生产入口运行时边界（第 64 轮 P0） ----------------
+   * 既有运行时守卫的入口都是 js/plugin-market.js，扫描集合只含 js/，
+   * 从未覆盖主壳 js/host.js，也没把 scripts/ 当可达边界。第 63 轮
+   * js/installed-frame.js 一句 `import ../scripts/single-file.mjs`
+   * 就把 node:path 拖进了主壳闭包（BFS 实测 27 模块里恰好 1 个
+   * node: 内建 import），webview 里整块加载失败，而 18 个守卫全绿。
+   * 这一节从真实生产入口做 BFS，钉住「闭包内零 node: / 零 Node 全局 /
+   * import 目标全存在 / js 不跨到 scripts」，再用隔离 realm 真加载。 */
+  const IMPORT_RE = /(?:import|export)\s[^;]*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  const nodeGlobalRe = /\bBuffer\.|\bprocess\.|\b__dirname\b|\brequire\s*\(/g;
+  const importsOf = (rel) => {
+    const p = join(ROOT, rel);
+    if (!existsSync(p)) return [];
+    const s = stripCommentsJs(readFileSync(p, 'utf8'));
+    const out = [];
+    for (const m of s.matchAll(IMPORT_RE)) out.push(m[1] || m[2] || m[3]);
+    return out;
+  };
+  /* 从入口做闭包。只认能解析成本地真实文件的相对路径；
+   * 裸包名 / node: 单列，不算进 seen。 */
+  const hostClosure = (entry = 'js/host.js') => {
+    const seen = new Set([entry]);
+    const queue = [entry];
+    const nodeImports = [];
+    const missing = [];
+    const crossScripts = [];
+    const globals = [];
+    while (queue.length) {
+      const cur = queue.shift();
+      const src = existsSync(join(ROOT, cur))
+        ? stripCommentsJs(readFileSync(join(ROOT, cur), 'utf8')) : '';
+      for (const g of src.matchAll(nodeGlobalRe)) globals.push([cur, g[0]]);
+      for (const spec of importsOf(cur)) {
+        if (spec.startsWith('node:')) { nodeImports.push([cur, spec]); continue; }
+        if (!spec.startsWith('.')) continue;
+        const tgt = join(dirname(cur), spec).replace(/\\/g, '/');
+        if (cur.startsWith('js/') && tgt.startsWith('scripts/')) crossScripts.push([cur, spec]);
+        if (!existsSync(join(ROOT, tgt))) { missing.push([cur, spec, tgt]); continue; }
+        if (!seen.has(tgt)) { seen.add(tgt); queue.push(tgt); }
+      }
+    }
+    return { seen, nodeImports, missing, crossScripts, globals };
+  };
+  const hc = hostClosure();
+  t('⑧a 主壳闭包规模不是空集合（BFS 真的走了）', hc.seen.size >= 20,
+    `size=${hc.seen.size}`);
+  t('⑧b 主壳闭包内零 node: 内建 import', hc.nodeImports.length === 0,
+    JSON.stringify(hc.nodeImports.slice(0, 3)));
+  t('⑧c 主壳闭包内零 Node 专有全局', hc.globals.length === 0,
+    JSON.stringify(hc.globals.slice(0, 3)));
+  t('⑧d 主壳闭包内 import 目标全部存在（镜像不悬空）', hc.missing.length === 0,
+    JSON.stringify(hc.missing.slice(0, 3)));
+  t('⑧e js/ 下运行时模块不跨到 scripts/（构建期与运行期分层）',
+    hc.crossScripts.length === 0, JSON.stringify(hc.crossScripts.slice(0, 3)));
+  t('⑧f 判据只有一份：构建期重导出的 checkSingleFile 与运行时同一函数引用',
+    checkSingleFile === shapeCheck && typeof shapeCheck === 'function');
+  const shapeSrc = stripCommentsJs(r('js/single-file-shape.mjs'));
+  t('⑧g 形态判据模块源码零 node: / 零 Node 全局',
+    !/['"]node:/.test(shapeSrc) && !nodeGlobalRe.test(shapeSrc));
+  /* ⑧h 隔离 realm 真加载：linker 遇到 node: 会记下来；
+   * 静态 BFS 说「没有」不等于「能加载」，这一层是硬证据。 */
+  const VM_SCRIPT = `
+import vm from 'node:vm';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+const ROOT = process.env.PROBE_ROOT;
+const context = vm.createContext(Object.create(null));
+const blocked = [];
+const loaded = [];
+async function linker(spec, ref) {
+  if (spec.startsWith('node:')) {
+    blocked.push(spec + ' <- ' + String(ref.identifier).replace(ROOT + '/', ''));
+    const names = ['resolve','dirname','join','basename','sep','readFileSync','createHash','gzipSync'];
+    return new vm.SyntheticModule(names, function () {
+      for (const n of names) this.setExport(n, () => '');
+    }, { context, identifier: spec });
+  }
+  const abs = resolve(dirname(ref.identifier), spec);
+  loaded.push(abs.replace(ROOT + '/', ''));
+  return new vm.SourceTextModule(readFileSync(abs, 'utf8'), { context, identifier: abs });
 }
+const entry = join(ROOT, 'js/installed-frame.js');
+const m = new vm.SourceTextModule(readFileSync(entry, 'utf8'), { context, identifier: entry });
+await m.link(linker);
+await m.evaluate();
+console.log(JSON.stringify({ blocked, loaded, exports: Object.keys(m.namespace) }));
+`;
+  const vmRun = spawnSync(process.execPath,
+    ['--experimental-vm-modules', '--input-type=module', '-e', VM_SCRIPT],
+    { env: { ...process.env, PROBE_ROOT: ROOT }, encoding: 'utf8', timeout: 45000 });
+  let vmJson = null;
+  try {
+    const line = String(vmRun.stdout || '').split('\n').filter((x) => x.trim().startsWith('{')).pop();
+    vmJson = line ? JSON.parse(line) : null;
+  } catch (_) { vmJson = null; }
+  t('⑧h vm 隔离 realm 探针跑通（有 JSON 结果、不是崩了没汇总）',
+    vmRun.status === 0 && !!vmJson,
+    `status=${vmRun.status} stderr=${String(vmRun.stderr || '').slice(0, 120)}`);
+  t('⑧i 真加载链零 node: 阻塞', !!vmJson && vmJson.blocked.length === 0,
+    JSON.stringify(vmJson && vmJson.blocked));
+  t('⑧j 真加载拿到完整导出面', !!vmJson
+    && ['resolveInstalledFrameSrc', 'classifyInstalledHtml', 'installedFrameUrl', 'INSTALLED_DIR']
+      .every((k) => vmJson.exports.includes(k)),
+    JSON.stringify(vmJson && vmJson.exports));
+  /* 元断言：BFS 判据不能恒真 / 恒假 */
+  const fakeEntry = 'js/__probe_node.mjs';
+  const fakePath = join(ROOT, fakeEntry);
+  writeFileSync(fakePath, "import { readFileSync } from 'node:fs';\nexport const x = 1;\n");
+  let injected = null;
+  try { injected = hostClosure(fakeEntry); }
+  finally { unlinkSync(fakePath); }
+  t('⑧k 注入 node: 后 BFS 必须报出（判据不恒真）',
+    !!injected && injected.nodeImports.length === 1
+    && injected.nodeImports[0][1] === 'node:fs',
+    JSON.stringify(injected && injected.nodeImports));
+  const plain = hostClosure('js/single-file-shape.mjs');
+  t('⑧l 纯模块闭包为空阻塞（判据不恒假）',
+    plain.nodeImports.length === 0 && plain.globals.length === 0
+    && plain.missing.length === 0);
+}
+
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

@@ -24,9 +24,9 @@
  * 会被解析到协议根、被 asset scope 拒成 403。
  *
  * 但那条只对**有外部相对资源**的 HTML 成立。构建期契约由
- * scripts/single-file.mjs 的 checkSingleFile() 守着（plugin-singlefile
- * 测试文件头第 6 行就写着「单文件内联是插件装到 $APPDATA 后用 asset
- * 协议加载这条路的唯一…」）。对 12 份产物实测：
+ * checkSingleFile() 守着（plugin-singlefile 测试文件头第 6 行就写着
+ *「单文件内联是插件装到 $APPDATA 后用 asset 协议加载这条路的唯一…」）。
+ * 对 12 份产物实测：
  *
  *   11 份 ok=true（remaining=0 / warnings=0）—— 零外部相对资源
  *   project-group ok=false（script + stylesheet 共 2 项）
@@ -35,10 +35,21 @@
  * 单文件形态 → 直接给 asset URL；非单文件形态 → 明确错误框，
  * 绝不拼一个看似能跑、实际 403 后白屏且不报错的地址。
  *
- * ⚠️ 判据只有一份
+ * ⚠️ 判据只有一份，且必须 webview-safe（第 64 轮 P0 修复）
  * ------------------------------------------------------------
  * 不在运行期另造「外部引用」正则，也不按 id 列白名单。形态变了
  * （构建产物改成外链）时 checkSingleFile 会自然报红，这里跟着拦住。
+ *
+ * 原实现 import 的是 ../scripts/single-file.mjs，那份脚本顶层有
+ * node:path 内建 import、inlineHtml 里用 Buffer —— 从 js/host.js 做
+ * import BFS 时它是主壳闭包里唯一的 node: 阻塞点，webview 里会让
+ * **整个主面板加载失败**。现改为 import 同目录的零依赖模块
+ * js/single-file-shape.mjs：纯判据搬到了 js/ 下，构建期脚本从那里
+ * 重导出同一份函数（函数引用相等），既保住「判据只有一份」，也
+ * 让 js/ 闭包不再跨到 scripts/（12 仓共享镜像里 import 目标齐全）。
+ *
+ * ⛔ 不要再改回 ../scripts/single-file.mjs：installed-frame-test.mjs
+ *    的 ⑧ 节从生产入口做 BFS 钉住这条边界。
  *
  * 降级契约（三条，任何一条失守都是静默白屏）
  * ------------------------------------------------------------
@@ -53,7 +64,7 @@
  * throw 的安全级别完全一致：明确告诉用户下一步，而不是静默失败。
  */
 
-import { checkSingleFile } from '../scripts/single-file.mjs';
+import { checkSingleFile } from './single-file-shape.mjs';
 
 /** 已安装插件目录名。与 plugin-manifest.js 的 INSTALLED_PLUGINS_DIR 同源，
  *  这里不 import 那个模块是为了让本文件在 Node 守卫里零副作用可加载；
