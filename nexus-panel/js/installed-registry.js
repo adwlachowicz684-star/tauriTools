@@ -28,14 +28,20 @@
  *   ③ 扫描抛错 → 记进 report.errors，plugins 仍是静态清单
  * 「扫描失败」绝不许把静态清单弄丢：否则一次后端异常 = 面板空白。
  *
- * 🔴 加载 URL 仍待真机（别在这里偷偷下结论）
+ * 加载 URL（第 63 轮：分支已落，真机只验 asset URL 可达性）
  * ------------------------------------------------------------
- * 装进来的插件在 appDataDir，**不在 dist/ 内**，同源相对路径取不到；
- * 而 asset 协议下 ES module 的 CORS 行为尚未经真机验证（见 host.js
- * runtimeFrameUrl 注释 ② 与 scripts/market-binding-debt.json 的 checks）。
- * 所以本模块只让插件「进注册表、出现在侧边栏」，
- * resolveFrameSrc() 对 installed:true 显式 fail-closed 并给出 nextAction，
- * 不拼一个看似能跑、实际白屏的地址。真机 5 项 checks 回来再按分支接入。
+ * 装进来的插件在 appDataDir，**不在 dist/ 内**，同源相对路径取不到。
+ * 第 61 轮真实浏览器四象限 + 第 62 轮构建链实证把「asset 协议下 ES
+ * module 的 CORS 行为只有真机能判」拆开了：release tarball 就是
+ * runtime-plugins/<id>/ 那份产物，12 份里 11 份是零外部相对资源的
+ * 单文件内联 bundle。所以 resolveFrameSrc() 现在走 js/installed-frame.js
+ * 的形态分流（复用构建期同一份 checkSingleFile），单文件形态给 asset
+ * URL，其余形态明确 fail-closed 走错误框。
+ *
+ * 本模块仍只负责「进注册表、出现在侧边栏」，不参与 URL 拼装。
+ * ⚠️ convertFileSrc 对 $APPDATA 路径生成的编码 URL 能否被 Tauri asset
+ * 协议服务，沙盒验不了；台账 status 保持 wired / runtimeVerified=false，
+ * 真机 checks 回来才转 bound。别在这里偷偷下结论。
  */
 
 import { pluginsWithInstalled } from './installed-plugin-scan.js';
@@ -53,7 +59,7 @@ const EMPTY_REPORT = { found: 0, skipped: [], errors: [], degraded: null };
  * 把合并结果投影成外壳可用的清单（纯函数，便于守卫真跑）。
  *
  * 不改 mergeInstalled 的任何字段语义，只补两项：
- *   · loadState      —— 让 resolveFrameSrc 明确拒绝，而不是退回 resolveEntry
+ *   · loadState      —— 让 resolveFrameSrc 走形态分流，而不是退回 resolveEntry
  *   · installedEntry —— 保留包内相对入口，供真机方案选分支时使用
  * 静态插件一个字段都不动：给它们打标记会让 12 个 runtime 插件一起被拦。
  */

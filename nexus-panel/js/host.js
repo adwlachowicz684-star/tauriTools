@@ -10,6 +10,10 @@ import { getTauri, isInsideTauri } from './tauri-core.js';
  * host.refresh / shell.js / src/App.tsx 三处赋值点都走 loadRegistry，
  * 所以只在这一处合并即可三端同时生效，不用改调用方。 */
 import { loadInstalledRegistry } from './installed-registry.js';
+/* 第 63 轮：已安装插件的 iframe src。形态判定复用构建期 checkSingleFile，
+ * 三态 fail-closed；这里只负责把 Tauri 能力装进去，不另写判据。 */
+import { resolveInstalledFrameSrc, INSTALLED_DIR } from './installed-frame.js';
+import { createFs } from './plugin-fs-bridge.js';
 import { shouldPurgeDataOnUninstall, SOURCE_CUSTOM } from './plugin-data-policy.js';
 /* 插件存储键：与 js/plugin-sdk.js 那份**必须是同一套**。
    两种挂载模式落到同一份 localStorage，键名岔开就是"这边存那边读不到"，
@@ -2146,6 +2150,52 @@ export async function getResourceDir() {
   return null;
 }
 
+/**
+ * 装配已安装插件加载所需的 Tauri 能力（第 63 轮）。
+ *
+ * 与 getResourceDir() 同一策略：先全局注入、再动态 import npm 包，
+ * 缺任一项都返回不完整 deps —— 由 resolveInstalledFrameSrc 显式报
+ * `no-tauri-runtime`，不在这里猜、不静默降级成相对路径。
+ *
+ * 为什么不直接 convertFileSrc(appDataDir) 就完事：见 installed-frame.js
+ * 文件头，必须先读 index.html 过一遍 checkSingleFile，确认产物是
+ * 零外部相对资源的单文件形态；有外链就明确拦住，否则相对资源会
+ * 解析到 asset 协议根被拒（2026-10-24 实机坑①）。
+ */
+async function installedFrameDeps() {
+  const tauri = await getTauri();
+  if (!tauri || typeof tauri.invoke !== 'function') return {};
+  const w = typeof window !== 'undefined' ? window : globalThis;
+  let appDataDir = null;
+  let convertFileSrc = null;
+  try {
+    const p = w.__TAURI__ && w.__TAURI__.path;
+    if (p && typeof p.appDataDir === 'function') appDataDir = await p.appDataDir();
+    const c = w.__TAURI__ && w.__TAURI__.core;
+    if (c && typeof c.convertFileSrc === 'function') convertFileSrc = c.convertFileSrc;
+  } catch { /* 继续下一条来源 */ }
+  if (!appDataDir) {
+    try {
+      const mod = await import('@tauri-apps/api/path');
+      if (mod && typeof mod.appDataDir === 'function') appDataDir = await mod.appDataDir();
+    } catch { /* 无该依赖（无构建模式） */ }
+  }
+  if (!convertFileSrc) {
+    try {
+      const mod = await import('@tauri-apps/api/core');
+      if (mod && typeof mod.convertFileSrc === 'function') convertFileSrc = mod.convertFileSrc;
+    } catch { /* 无该依赖（无构建模式） */ }
+  }
+  if (!appDataDir || !convertFileSrc) return {};
+  const fs = createFs((cmd, args) => tauri.invoke(cmd, args));
+  return {
+    appDataDir,
+    convertFileSrc,
+    installedDir: INSTALLED_DIR,
+    readText: (path) => fs.readText(path),
+  };
+}
+
 /** 供测试/诊断：当前入口解析模式与资源目录探测状态 */
 export function runtimePluginState() {
   return { mode: frameSrcMode(), resourceDir: _resourceDir ?? null };
@@ -2201,24 +2251,34 @@ export function runtimeFrameUrl({ id, vars, base }) {
  * entry 已指向产物，由 dev 中间件直出，三态加载同一份文件。
  */
 export async function resolveFrameSrc(manifest) {
-  /* 🔴 已安装插件（installed: true）的加载入口尚未通过真机验证。
-   * 产物在 ${appDataDir}/installed-plugins/<id>/，不在 dist/ 内 ——
-   * 同源相对路径取不到；asset 协议下 ES module 的 CORS 行为又未验
-   * （runtimeFrameUrl 注释 ②、market-binding-debt.json 的 5 项 checks）。
+  /* 第 63 轮：已安装插件（installed: true）走 installed-frame.js。
    *
-   * 这里必须**先拦住**：若退回 resolveEntry(manifest.entry)，包内相对
-   * entry（如 index.html）会被拼到 location.href，指向外壳自己 ——
-   * iframe 里套整个主面板、不报 404 不报错，比白屏更难查（第 38 轮
-   * dev 态实测过的同款形状）。抛错会走 mount() 的 showError() 错误框，
-   * 明确告诉用户下一步，而不是静默失败。
+   * 旧实现在这里无条件 throw（nextAction: real-device-checks）。第 61 轮
+   * 真实 Chromium 四象限 + 第 62 轮构建链实证把「ES module CORS 只有
+   * 真机能判」拆开了：tarball 就是 runtime-plugins 那份产物，11/12 是
+   * 零外部资源的单文件内联 bundle；内联 script 不发跨源 module 请求，
+   * 握手走 e.source，contentDocument=null 也不阻断加载。
    *
-   * 真机 checks 回来后按 nextAction 选定加载方式（同源投影 / srcdoc /
-   * 后端代理），再在这里接对应分支，并销掉台账的 load-url 一条。 */
+   * 所以这里不再无条件拦住，但也**绝不退回 resolveEntry(manifest.entry)**：
+   * 包内相对 entry 会被拼到 location.href，iframe 里套整个主面板、
+   * 不报 404 不报错（第 38 轮 dev 态实测过的同款形状）。全部失败路径
+   * 由 resolveInstalledFrameSrc 抛带 nextAction 的结构化错误，走
+   * mount() 的 showError() 明确错误框，安全级别与旧 throw 一致。
+   *
+   * ⚠️ 仍不自查自封：convertFileSrc 对 $APPDATA 路径生成的编码 URL
+   * 能否被 Tauri asset 协议服务，沙盒验不了。台账 status 保持 wired、
+   * runtimeVerified 保持 false，等 devtools 的 checks 回来才转 bound。
+   * 非单文件形态（实测 12 份里仅 project-group）也会在这里被明确拦住。 */
   if (manifest && manifest.installed === true) {
-    throw new Error(
-      `已安装插件「${manifest.id}」的加载入口尚未通过真机验证：`
-      + '产物位于应用数据目录，需按 DEVTOOLS_SNIPPET 的 5 项 checks 结果'
-      + '选定加载方式后再接入。nextAction: real-device-checks');
+    let vars = {};
+    let base = null;
+    try {
+      vars = exportVars();
+      base = themeManager.getResolvedBase && themeManager.getResolvedBase();
+    } catch { /* 主题未初始化时不带参数，插件侧自有兜底 */ }
+    return resolveInstalledFrameSrc(manifest, {
+      ...(await installedFrameDeps()), vars, base,
+    });
   }
   const mode = frameSrcMode();
   if (!manifest || !manifest.runtime || mode !== 'prod') {

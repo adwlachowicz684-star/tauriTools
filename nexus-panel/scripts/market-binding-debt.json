@@ -1,6 +1,6 @@
 {
-  "note": "能加载 ≠ 已被调用，已接线 ≠ 能力完整可用。第 48 轮把 6 条运行时欠账全部销空（入口闭包 10 模块 safe 10 / blocked 0，隔离 realm 真加载、真解包、真校验、真卸载）；第 50 轮落地 js/market-binding.js 并在 plugins/store/index.js 的 mount 里真正实例化，三个能力各有调用点，产品第一次出现「联网安装」入口。CSP 资产 302 的真实落点已实测并修好配置（真机只需确认 302 实际通过）；阶段 0 加载侧（asset 协议下 ES module / iframe 同源）仍待真机判，所以 status 停在 wired，不写 bound。orphan-modules-guard 判模块级可达，只要 host.js 有一条 import 就把整组点亮，守不住这件事。 第 54 轮把「装完不进注册表」这一半销掉：js/installed-registry.js 用 pluginsWithInstalled 把 installed-plugins/ 合并进 loadRegistry()，host.refresh / shell.js / src/App.tsx 三处赋值点同时生效，插件会出现在侧边栏；resolveFrameSrc 对 installed:true 显式 fail-closed 并给 nextAction，不再静默套壳。加载 URL 仍待真机，status 保持 wired。",
-  "phase": 54,
+  "note": "能加载 ≠ 已被调用，已接线 ≠ 能力完整可用。第 48 轮把 6 条运行时欠账全部销空（入口闭包 10 模块 safe 10 / blocked 0，隔离 realm 真加载、真解包、真校验、真卸载）；第 50 轮落地 js/market-binding.js 并在 plugins/store/index.js 的 mount 里真正实例化，三个能力各有调用点，产品第一次出现「联网安装」入口。CSP 资产 302 的真实落点已实测并修好配置（真机只需确认 302 实际通过）；阶段 0 加载侧（asset 协议下 ES module / iframe 同源）仍待真机判，所以 status 停在 wired，不写 bound。orphan-modules-guard 判模块级可达，只要 host.js 有一条 import 就把整组点亮，守不住这件事。 第 54 轮把「装完不进注册表」这一半销掉：js/installed-registry.js 用 pluginsWithInstalled 把 installed-plugins/ 合并进 loadRegistry()，host.refresh / shell.js / src/App.tsx 三处赋值点同时生效，插件会出现在侧边栏；resolveFrameSrc 对 installed:true 显式 fail-closed 并给 nextAction，不再静默套壳。第 63 轮把加载分支落地：js/installed-frame.js 复用构建期唯一的 checkSingleFile 做形态分流（12 份产物实测 11 份零外部相对资源、仅 project-group 有外链），单文件形态走 convertFileSrc 的 asset URL，其余三态 fail-closed 明确报错误框，绝不退回 resolveEntry 静默套壳。第 61 轮真实浏览器四象限 + 第 62 轮构建链实证已把「asset 协议下 ES module CORS 只有真机能判」拆开：tarball == runtime-plugins 产物，内联 bundle 不发跨源 module 请求、握手走 e.source。唯一仍待真机的是 convertFileSrc 对 $APPDATA 路径生成的编码 URL 能否被 Tauri asset 协议服务，故 status 保持 wired、runtimeVerified=false，不自查自封。",
+  "phase": 63,
   "status": "wired",
   "runtimeVerified": false,
   "evidence": "第 50 轮：js/market-binding.js 装配层（getTauri + resolveDataDir + createFs + createPluginDataStore → createPluginMarket），plugins/store/index.js mount 内实例化并调用 list()/install()/uninstall()/checkUpdates()，PAT 只存闭包变量 sessionPat 且输入框 type=password。守卫 market-binding-guard-test.mjs 验装配层零 node:、headerBox 传引用、凭据不落盘不进日志、三能力各有调用点。真机 Tauri 运行与 302 资产下载未验，故 runtimeVerified=false。",
@@ -39,15 +39,16 @@
     },
     {
       "id": "runtime-load",
-      "why": "第 54 轮已把「不进注册表」这一半销掉（见新增 blocker registry-entry）。剩余只有加载 URL：install() 的产物落在 ${appDataDir}/installed-plugins/<id>/，不在 dist/ 内，同源相对路径取不到；asset 协议下 ES module 的 CORS 行为、iframe 是否同源可读，只有真机能判。若现在偷偷拼一个地址，症状是白屏或 iframe 套整个主面板，不报 404 不报错。",
+      "why": "第 54 轮已把「不进注册表」销掉；第 63 轮把加载分支落地。install() 产物落在 ${appDataDir}/installed-plugins/<id>/，不在 dist/ 内，同源相对路径取不到。旧定性「asset 协议下 ES module 的 CORS 行为、iframe 是否同源可读只有真机能判」已被拆开：第 61 轮真实 Chromium 四象限实证内联 bundle 不发跨源 module 请求、握手走 e.source 不受 contentDocument=null 阻断；第 62 轮从构建链证实 release tarball 就是 runtime-plugins/<id>/ 那份产物。唯一剩余的不确定性是 convertFileSrc 对 $APPDATA 路径生成的编码 URL 能否被 Tauri asset 协议服务 —— 沙盒模拟不出来，硬造证据会被守卫抓红。",
       "options": [
-        "registry 增加「从 installed-plugins/ 扫描并合并」的动态入口（需与 runtime:true 分流配合）",
-        "安装成功后调 refreshShell 重建注册表，让新插件进侧边栏",
-        "先本机实测确认 asset 协议能从 appDataDir 加载 index.html，再定接入方式"
+        "按产物形态分流：单文件内联形态走 convertFileSrc asset URL，非单文件形态明确 fail-closed",
+        "后端代下 / 把产物拷进 dist 做同源投影（需改 Rust，至今未编译验证）",
+        "srcdoc 内联（外链产物在 about:srcdoc 基准下取不到 ./assets/，不可行）"
       ],
       "status": "pending-real-device",
-      "resolution": "第 54 轮：进注册表已落地；resolveFrameSrc 对 installed:true 抛带 nextAction: real-device-checks 的结构化错误，走 showError() 明确错误框，不再是静默失败。加载 URL 分支未定，等 5 项 checks 回来按 evaluate() 的 nextAction 接入对应一行。",
-      "evidence": "installed-registry-guard-test.mjs 真跑合并/降级/fail-closed 三组夹具并做破坏验证。"
+      "codeLanded": true,
+      "resolution": "第 63 轮：新增 js/installed-frame.js，复用构建期唯一的 checkSingleFile 判据做形态分流，三态 fail-closed（缺 Tauri 能力 / 读不到 index.html / 非单文件形态）一律抛带 nextAction 的结构化错误走 showError()，安全级别与旧无条件 throw 一致；host.js 的 installed 分支改为委托它，绝不退回 resolveEntry。代码已落，status 仍为 pending-real-device 只因 asset URL 可达性待真机确认，不表示分支未写。",
+      "evidence": "scripts/single-file.mjs 的 checkSingleFile() 对 12 份 runtime-plugins/<id>/index.html 实测：11 份 ok=true（remaining=0/warnings=0），project-group ok=false（script+stylesheet 2 项），与第 61 轮四象限逐份吻合。installed-frame-test.mjs 真跑三态与成功路径；installed-registry-guard-test.mjs ④h/④i 升级为剥注释后的委托判据（旧判据会被注释里的历史字样喂饱）。"
     },
     {
       "id": "registry-entry",
@@ -62,9 +63,9 @@
     }
   ],
   "unblock": [
-    "在 Tauri 窗口 devtools 粘贴 scripts/probe-real-device-runtime.mjs 的 DEVTOOLS_SNIPPET，把打印的 checks 数组贴回（进注册表已由第 54 轮销掉，此项只剩加载 URL 分支）",
-    "用 evaluate(checks) 得到 nextAction：wire-installed-frame-src / no-tauri-runtime / backend-proxy-or-copy-to-dist / srcdoc-or-inline-bundle / bridge-fallback / fix-csp；每条 reason 点名的生产文件即落点（守卫 ⑦g/⑦h 逐条取证），按分支改对应一行",
-    "真机五项全通过后再把 runtimeVerified 改 true、status 改 bound；守卫 real-device-runtime-guard-test.mjs ① 节双向校验，自查自封会红"
+    "在 Tauri 窗口 devtools 粘贴 scripts/probe-real-device-runtime.mjs 的 DEVTOOLS_SNIPPET，把打印的 checks 数组贴回。加载分支已由第 63 轮落地，这一步只用于确认 convertFileSrc 生成的 asset URL 在真实 asset 协议下可达、CSP 302 实际通过，不再用于「选加载方式」",
+    "若 checks 显示 asset URL 不可达，按 evaluate(checks) 的 nextAction 换方案，六条分支仍为：wire-installed-frame-src（第 63 轮已落地，勿重复实现） / no-tauri-runtime / backend-proxy-or-copy-to-dist / srcdoc-or-inline-bundle / bridge-fallback / fix-csp；守卫 ⑦g/⑦h 逐条取证落点。不要退回 resolveEntry，那会静默套壳",
+    "真机五项全通过后再把 runtimeVerified 改 true、status 改 bound，并把 runtime-load 的 status 从 pending-real-device 销掉；守卫 real-device-runtime-guard-test.mjs ① 节与 installed-registry-guard-test.mjs ⑥b/⑥c 双向校验，自查自封会红"
   ],
   "knownLimit": "纯静态守卫挡不住「把主断言整行删掉或改成 true」；元断言 A–I 只验判据本身，靠每轮破坏验证兜这一层。另：守卫判的是「生产入口是否实例化 + 三个能力是否各有调用点」，不是「每个能力在真机上各自跑通」——后者只能靠 runtimeVerified 的真机实测。",
   "related": [

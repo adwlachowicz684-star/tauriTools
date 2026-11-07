@@ -231,10 +231,43 @@ function installedFirst(src) {
 }
 t('④g resolveFrameSrc 的 installed 分支排在 resolveEntry 之前',
   installedFirst(host));
-t('④h installed 分支是 throws（走 showError 明确错误框，不静默套壳）',
-  /manifest\.installed === true[\s\S]{0,900}throw new Error/.test(host));
-t('④i 错误文案带 nextAction，用户知道下一步做什么',
-  host.includes('nextAction: real-device-checks'));
+/* 第 63 轮：installed 分支不再无条件 throw，改为委托
+ * js/installed-frame.js 的形态分流 + 三态 fail-closed。旧判据
+ * 「必须 throw / 必须含 real-device-checks 字样」会被 host.js 与
+ * 本文件注释里的历史说明喂饱（第 210 轮同款坑），所以改成剥注释后
+ * 验真实委托 + 真实模块里三态结构化错误，两侧都不能靠注释过关。 */
+const hostCode = stripJs(host);
+const frameCode = stripJs(r('js/installed-frame.js'));
+/* 只切 installed 分支的函数体。用「900 字符窗口」会把分支后面那条
+ * 正常的 return resolveEntry(manifest.entry) 也算进负向条件，判据恒假
+ * （第 63 轮第一版实测）。 */
+const installedBranchBody = (s) => {
+  const i = s.indexOf('manifest.installed === true');
+  if (i < 0) return '';
+  const open = s.indexOf('{', i);
+  if (open < 0) return '';
+  let depth = 0;
+  for (let j = open; j < s.length; j += 1) {
+    if (s[j] === '{') depth += 1;
+    else if (s[j] === '}') {
+      depth -= 1;
+      if (depth === 0) return s.slice(open + 1, j);
+    }
+  }
+  return '';
+};
+const installedDelegates = (s) => {
+  const b = installedBranchBody(s);
+  return b.length > 0 && /resolveInstalledFrameSrc\s*\(/.test(b)
+    && !/return resolveEntry\(/.test(b);
+};
+const frameFailsClosed = (s) => (s.match(/throw fail\(/g) || []).length >= 3
+  && /nextAction/.test(s) && /backend-proxy-or-inline-bundle/.test(s)
+  && /no-tauri-runtime/.test(s);
+t('④h installed 分支委托 resolveInstalledFrameSrc（不静默套壳、不退回 resolveEntry）',
+  installedDelegates(hostCode));
+t('④i 加载模块三态都抛带 nextAction 的结构化错误',
+  frameFailsClosed(frameCode));
 t('④j 静态 runtime 分支仍在（12 个内置插件不受影响）',
   /!manifest\s*\|\|\s*!manifest\.runtime/.test(host));
 
@@ -278,6 +311,16 @@ t('⑦e2 剥注释判据能认出真写了第二份 mergeInstalled（不恒假�
   hasDuplicateMerge('import { mergeInstalled } from "./x.js";\nconst y = mergeInstalled(a, b);') === true);
 t('⑦e3 剥注释判据不把注释里的说明算成调用',
   hasDuplicateMerge('/* 以前用过 mergeInstalled() */\nconst y = doScan(a, b);') === false);
+t('⑦h installedDelegates 对「退回 resolveEntry」的旧形态为假',
+  installedDelegates('export async function resolveFrameSrc(m){'
+    + ' if (m.installed === true) return resolveEntry(m.entry); }') === false);
+t('⑦i installedDelegates 对空文本与「只留 throw」都为假',
+  installedDelegates('') === false
+  && installedDelegates('if (manifest.installed === true) throw new Error("x");') === false);
+t('⑦j frameFailsClosed 对「删掉失败分支」为假（不恒真）',
+  frameFailsClosed('export const x = 1;') === false);
+t('⑦k frameFailsClosed 对真模块为真（不恒假）',
+  frameFailsClosed(frameCode) === true);
 {
   const stat = { id: 'home' };
   const inst = { id: 'foo', installed: true, entry: 'index.html' };
