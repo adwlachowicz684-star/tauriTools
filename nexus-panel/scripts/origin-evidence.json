@@ -1,0 +1,62 @@
+{
+  "pluginCount": 12,
+  "productShape": {
+    "inlineBundle": 11,
+    "externalBundle": 1,
+    "externalBundleId": "project-group"
+  },
+  "scenario": {
+    "sameOriginRuntime": {
+      "contentDocumentReadable": true,
+      "readyReceived": true
+    },
+    "installedSameOriginProjection": {
+      "contentDocumentReadable": true,
+      "readyReceived": true
+    },
+    "crossOriginInlineBundle": {
+      "contentDocumentReadable": false,
+      "readyReceived": true,
+      "readyOrigin": [
+        "http://127.0.0.1:8802"
+      ]
+    },
+    "crossOriginExternalBundle": {
+      "contentDocumentReadable": false,
+      "readyReceived": false,
+      "externalModuleDownloaded": 1,
+      "downloadedPaths": [
+        "/assets/index-BHa1fkan.js"
+      ],
+      "requestOrigins": [
+        null
+      ],
+      "fixedACAO": "http://127.0.0.1:8803"
+    }
+  },
+  "consoleErrors": [
+    "Access to CSS stylesheet at 'http://127.0.0.1:8804/assets/index-CFaJFC0p.css' from origin 'http://127.0.0.1:8802' has been blocked by CORS policy: The 'Access-Control-Allow-Origin' header has a value 'http://127.0.0.1:8803' that is not equa",
+    "Failed to load resource: net::ERR_FAILED",
+    "Access to script at 'http://127.0.0.1:8804/assets/index-BHa1fkan.js' from origin 'http://127.0.0.1:8802' has been blocked by CORS policy: The 'Access-Control-Allow-Origin' header has a value 'http://127.0.0.1:8803' that is not equal to the ",
+    "Failed to load resource: net::ERR_FAILED",
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ],
+  "windowErrors": [],
+  "rawMessages": [
+    {
+      "who": "same",
+      "type": "ready",
+      "origin": "http://127.0.0.1:8801"
+    },
+    {
+      "who": "installed",
+      "type": "ready",
+      "origin": "http://127.0.0.1:8801"
+    },
+    {
+      "who": "assetInline",
+      "type": "ready",
+      "origin": "http://127.0.0.1:8802"
+    }
+  ]
+}
