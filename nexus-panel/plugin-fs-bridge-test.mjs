@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  createFs, fsOp, resolveDataDir,
+  createFs, fsOp, resolveDataDir, APP_DATA_SUBDIR, appDataRoot,
   EMPTY_DIR_TEXT, STAT_TYPE_PREFIX, STAT_KIND_FILE, STAT_KIND_DIR,
   EXISTS_TRUE, EXISTS_FALSE,
 } from './js/plugin-fs-bridge.js';
@@ -480,6 +480,50 @@ console.log('— plugin-fs-bridge —');
   t('host.js purge 补齐 target/content/recursive/force/dryRun',
     ['target', 'content', 'recursive', 'force', 'dryRun']
       .every((k) => new RegExp(`\\b${k}\\s*:`).test(purgeArgs)));
+}
+
+/* ── 第 13 节 🔴：前端 dataRoot 必须落在后端 fs_op 授权根内 ────────
+ * 真机截图（2026-11-07 20:25）第二层报错：
+ *   「路径越权，已拒绝 … 允许的范围 …\com.nexus.panel\project-group」
+ * 根因：Rust `fpx::store::resolve_data_dir()` = app_data_dir().join("project-group")，
+ * `fs_roots_snapshot` 拿它当兜底授权根；前端却用裸 appDataDir 当 dataRoot，
+ * 台账 / installed-plugins / plugin-data 全落在授权根之外，逐条被拒。
+ * 本节把前端子目录名与 Rust 源码里的 join(...) 互钉，并钉住两处调用点。 */
+
+{
+  const storeRs = readFileSync(join(HERE, 'src-tauri/src/fpx/store.rs'), 'utf8');
+  const rx = /app_data_dir\(\)[\s\S]{0,160}?\.join\("([^"]+)"\)/;
+  const m = storeRs.match(rx);
+  t('Rust resolve_data_dir 里取得出子目录名', !!m);
+  t('前端 APP_DATA_SUBDIR 与 Rust join 的子目录名一致',
+    !!m && APP_DATA_SUBDIR === m[1], m ? m[1] : 'not found');
+
+  t('appDataRoot 收敛到授权根子目录',
+    appDataRoot('C:/Users/x/com.nexus.panel/') === `C:/Users/x/com.nexus.panel/${APP_DATA_SUBDIR}`);
+  t('appDataRoot 处理反斜杠与多个尾斜杠',
+    appDataRoot('C:\\Users\\x\\com.nexus.panel\\\\') === `C:/Users/x/com.nexus.panel/${APP_DATA_SUBDIR}`);
+  t('appDataRoot 空输入返回 null（不伪造路径）',
+    appDataRoot('') === null && appDataRoot(null) === null && appDataRoot(undefined) === null);
+  t('元断言：resolveDataDir 在 Node 下仍返回 null（不抛）',
+    (await resolveDataDir()) === null);
+
+  const bridgeSrc = stripCommentsFlatJs(readFileSync(join(HERE, 'js/plugin-fs-bridge.js'), 'utf8'));
+  const hostSrc = stripCommentsFlatJs(readFileSync(join(HERE, 'js/host.js'), 'utf8'));
+  const fn = bridgeSrc.slice(bridgeSrc.indexOf('export async function resolveDataDir'));
+  t('resolveDataDir 返回 appDataRoot(base) 而非裸 appDataDir',
+    /return appDataRoot\(base\);/.test(fn));
+  t('host.js 引入了 appDataRoot',
+    /import\s*\{[^}]*appDataRoot[^}]*\}\s*from\s*'\.\/plugin-fs-bridge\.js'/.test(hostSrc));
+  t('host.js installedFrameDeps 用 appDataRoot 收敛目录',
+    /appDataDir:\s*appDataRoot\(appDataDir\)/.test(hostSrc));
+
+  /* 反向自检：后端改了子目录名，互钉判据必须能红；判据也不能恒假。 */
+  const fake = storeRs.replace(/\.join\("project-group"\)/, '.join("renamed-dir")');
+  const fakeM = fake.match(rx);
+  t('反向：后端改子目录名后互钉判据会红（非恒真）',
+    !!fakeM && fakeM[1] !== APP_DATA_SUBDIR, fakeM ? fakeM[1] : 'not found');
+  t('反向：appDataRoot 不返回裸 appDataDir（判据不恒假）',
+    appDataRoot('C:/x/com.nexus.panel') !== 'C:/x/com.nexus.panel');
 }
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`);

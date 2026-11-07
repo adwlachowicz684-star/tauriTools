@@ -23,11 +23,13 @@
  * | 授权根白名单 | `af_fs_allow_root` / `af_fs_list_roots` / `af_fs_disallow_root` |
  * | 路径收口（白名单 + 系统目录黑名单） | `fpx::guard::must_be_under` |
  *
- * 而且 `fs_roots_snapshot()` 有**兜底**：应用数据目录（appDataDir）
- * 永远在授权根内 —— 「刚装好、还没配过任何目录」时也能写自己的数据区
- * （af_flow.rs 的注释就是这么写的）。
+ * `fs_roots_snapshot()` 有**兜底**：`appDataDir/project-group` 永远在授权根内
+ * —— 「刚装好、还没配过任何目录」时也能写自己的数据区。注意不是裸
+ * appDataDir：Rust `fpx::store::resolve_data_dir()` 带这一层子目录，
+ * 见本文件 `appDataRoot()` 与 plugin-fs-bridge-test.mjs 第 13 节。
  *
- * → 结论：**装插件 / 存用户数据都不需要动 Rust，也不需要用户先授权**。
+ * → 结论：**装插件 / 存用户数据都不需要动 Rust，也不需要用户先授权**，
+ *   但前端 dataRoot 必须用 `appDataRoot()` 收敛到同一个授权根。
  *
  * ------------------------------------------------------------
  * 三条硬约束（改代码前先看）
@@ -251,29 +253,54 @@ export function createFs(invoke) {
 }
 
 /**
+ * 🔴 fs_op 的授权根不是 appDataDir 本身，而是它的 project-group 子目录：
+ * Rust `fpx::store::resolve_data_dir()` = `app_data_dir().join("project-group")`，
+ * `af_flow::fs_roots_snapshot` 拿它当兜底授权根（见 fs-roots 段注释）。
+ *
+ * 市场链路的台账 `.nexus-installed.json`、`installed-plugins/`、`plugin-data/`
+ * 若直接以 appDataDir 为 dataRoot，每条路径都落在授权根之外，
+ * `must_be_under` 会逐条报「路径越权，已拒绝」（2026-11-07 真机截图实证）。
+ * 所以前端一律收敛到同一子目录 —— **不放宽后端安全边界**。
+ *
+ * 子目录名只有这一份：`plugin-fs-bridge-test.mjs` 第 13 节从 Rust 源码
+ * 反推 join("project-group") 与它互钉，后端改名会红而不是静默漂移。
+ */
+export const APP_DATA_SUBDIR = 'project-group';
+
+/** 把 appDataDir() 的原始返回值收敛到后端 fs_op 的授权根。 */
+export function appDataRoot(base) {
+  const s = String(base || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  return s ? `${s}/${APP_DATA_SUBDIR}` : null;
+}
+
+/**
  * 取应用数据目录的绝对路径（fs_op 要绝对路径才能过 resolve_within）。
  *
+ * 返回值是 `appDataRoot()` 收敛后的授权根，不是裸 appDataDir。
  * 拿不到时返回 null 而**不是**抛错：浏览器里调 UI 时没有 Tauri，
  * 让它崩掉会导致面板整个打不开 —— 那是"调试环境退化成不可用"。
  * 调用方拿到 null 应自行降级（比如提示"仅在客户端内可用"）。
  */
 export async function resolveDataDir() {
+  let base = null;
   try {
     const pathApi = await import('@tauri-apps/api/path');
     if (pathApi && typeof pathApi.appDataDir === 'function') {
-      return await pathApi.appDataDir();
+      base = await pathApi.appDataDir();
     }
   } catch {
     /* 没装 npm 包或不在壳内 */
   }
-  const w = typeof window !== 'undefined' ? window : globalThis;
-  const g = w.__TAURI_INTERNALS__;
-  if (g && g.path && typeof g.path.appDataDir === 'function') {
-    try {
-      return await g.path.appDataDir();
-    } catch {
-      /* 忽略，走下面的 null */
+  if (!base) {
+    const w = typeof window !== 'undefined' ? window : globalThis;
+    const g = w.__TAURI_INTERNALS__;
+    if (g && g.path && typeof g.path.appDataDir === 'function') {
+      try {
+        base = await g.path.appDataDir();
+      } catch {
+        /* 忽略，走下面的 null */
+      }
     }
   }
-  return null;
+  return appDataRoot(base);
 }

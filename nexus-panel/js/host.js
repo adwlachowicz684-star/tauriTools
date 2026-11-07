@@ -13,7 +13,7 @@ import { loadInstalledRegistry } from './installed-registry.js';
 /* 第 63 轮：已安装插件的 iframe src。形态判定复用构建期 checkSingleFile，
  * 三态 fail-closed；这里只负责把 Tauri 能力装进去，不另写判据。 */
 import { resolveInstalledFrameSrc, INSTALLED_DIR } from './installed-frame.js';
-import { createFs } from './plugin-fs-bridge.js';
+import { createFs, appDataRoot } from './plugin-fs-bridge.js';
 import { shouldPurgeDataOnUninstall, SOURCE_CUSTOM } from './plugin-data-policy.js';
 /* 插件存储键：与 js/plugin-sdk.js 那份**必须是同一套**。
    两种挂载模式落到同一份 localStorage，键名岔开就是"这边存那边读不到"，
@@ -287,7 +287,7 @@ export async function loadRegistry() {
     list = list.concat(custom.filter((p) => !ids.has(p.id)));
   } catch { /* ignore */ }
 
-  /* 第 54 轮：装进 ${appDataDir}/installed-plugins/<id>/ 的插件在这里
+  /* 第 54 轮：装进 ${appDataRoot}/installed-plugins/<id>/ 的插件在这里
    * 合并进注册表，侧边栏才会出现。必须排在 registerBuiltinIds() **之后**
    * —— 顺序反了会把第三方插件也注册成内置，"只对第三方生效"的拦截
    * 会静默失效（与上面 custom 那段的注释同一条判据）。
@@ -2199,7 +2199,10 @@ async function installedFrameDeps() {
   if (!appDataDir || !convertFileSrc) return {};
   const fs = createFs((cmd, args) => tauri.invoke(cmd, args));
   return {
-    appDataDir,
+    /* 与 market-binding / installed-registry 同源：收敛到 Rust fs_op 的
+     * 授权根 appDataDir/project-group。裸 appDataDir 会让 readText 被
+     * must_be_under 判越权（2026-11-07 真机截图）。 */
+    appDataDir: appDataRoot(appDataDir),
     convertFileSrc,
     installedDir: INSTALLED_DIR,
     readText: (path) => fs.readText(path),

@@ -35,7 +35,7 @@
  *
  * 🔴 接线 ≠ 能力完整可用（清单第 50 轮如实登记）
  * ------------------------------------------------------------
- * install() 把插件落到 `${appDataDir}/installed-plugins/<id>/`，ledger 能
+ * install() 把插件落到 `${appDataRoot}/installed-plugins/<id>/`（appDataRoot = appDataDir/project-group，见 plugin-fs-bridge.js），ledger 能
  * 记、list() 能列、checkUpdates 能查、卸载能删、用户数据能保留。
  * 但「装完的插件被外壳加载并出现在侧边栏」属于阶段 0 加载侧，至今仍待
  * 本机 Tauri 实测；CSP 对 release asset 302 到

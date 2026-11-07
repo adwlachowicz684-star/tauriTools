@@ -3,7 +3,7 @@
  * ============================================================================
  *
  * 背景：第 50 轮接线后，install() 能把插件落到
- * `${appDataDir}/installed-plugins/<id>/`，ledger 能记、market.list() 能列，
+ * `${appDataRoot}/installed-plugins/<id>/`，ledger 能记、market.list() 能列，
  * 但外壳的 `loadRegistry()` 只读静态 registry.js + 自定义插件 ——
  * 装完的插件**不进 state.plugins**，于是侧边栏不出现、也打不开。
  *

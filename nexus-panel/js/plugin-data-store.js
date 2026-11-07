@@ -16,7 +16,7 @@
  *      已写明），隔离只能靠键名前缀，一旦哪处拼错就串数据且不报错。
  *   3. 卸载要"保留"，就得让保留的东西有个明确、可枚举、可备份的家。
  *
- * 落点：`${appDataDir}/plugin-data/<id>/store.json`，一个插件一个目录。
+ * 落点：`${appDataRoot}/plugin-data/<id>/store.json`，一个插件一个目录。
  * 后端 fs_op 的授权根白名单本来就**默认包含 appDataDir**
  * （af_flow.rs 的注释：「刚装好、还没配过任何目录时 fs_op 仍可用于自己的
  * 数据区」），所以不需要新增 Rust 命令，也不需要用户先授权。
