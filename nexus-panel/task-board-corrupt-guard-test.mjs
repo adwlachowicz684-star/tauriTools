@@ -73,6 +73,13 @@ const MU_SRC = extractFn(src, 'export async function mutate(');
   而这是**测试脚手架的缺口**，不是产品代码的问题。
 */
 const TD_SRC = extractFn(src, 'function toDisk(');
+/*
+  mutate 现在还调同文件的 uiDir（按磁盘已保存配置取目录，与 Rust 授权表
+  同源）。以前只切 parseStoreText / toDisk 就够，这轮不补上会
+  ReferenceError —— 又是测试脚手架缺口，不是产品代码的问题。
+  仍然切真身，不另写一份判据；readSavedConfig 作为外部依赖参数注入。
+*/
+const UD_SRC = extractFn(src, 'async function uiDir(');
 
 t('（前置）切得到 parseStoreText 真身', !!PS_SRC);
 t('（前置）切得到 mutate 真身', !!MU_SRC);
@@ -85,8 +92,12 @@ if (PS_SRC && MU_SRC) {
     放在同一个 Function 作用域里，让它们互为真实依赖 ——
     不是另行实现一份（另写一份就变成"测我写的替身"，没意义）。
   */
-  const factory = new Function('normalizeStore', `${strip(PS_SRC)}\n${strip(TD_SRC)}\n${strip(MU_SRC)}\nreturn { parseStoreText, mutate };`);
-  const { parseStoreText, mutate } = factory(C.normalizeStore);
+  const factory = new Function('normalizeStore', 'readSavedConfig',
+    `${strip(PS_SRC)}\n${strip(TD_SRC)}\n${strip(UD_SRC)}\n${strip(MU_SRC)}\nreturn { parseStoreText, mutate };`);
+  const { parseStoreText, mutate } = factory(
+    C.normalizeStore,
+    async (ctx) => (await ctx.store.get('config', {})) || {},
+  );
 
   /* ---------------- 1. 判据本身 ---------------- */
   const BAD = '{"tasks":[{"id":"a",';   // 写一半被中断
@@ -109,6 +120,9 @@ if (PS_SRC && MU_SRC) {
 
   /* ---------------- 2. 核心契约：坏了不能写盘 ---------------- */
   const mkCtx = (text, log) => ({
+    /* uiDir 会读已保存配置；这里返回空配置，让它兜底回调用点传的 /d，
+       与这组「坏 JSON 不写盘」用例原本的目录一致。 */
+    store: { get: async () => ({}) },
     invoke: async (cmd, args) => {
       log.push(cmd);
       if (cmd === 'tb_read_store') return text;
