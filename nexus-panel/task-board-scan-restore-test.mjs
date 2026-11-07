@@ -125,23 +125,30 @@ async function loadScanDir() {
   if (!fnSrc) throw new Error('没切到 scanDir（定位特征变了？）');
   /*
     r48 起降级路径的还原点走 uiDir（磁盘值），它又依赖 readSavedConfig /
-    normalizeConfig。桩只注入 normalizeConfig 这一个最小替身，其余两个
-    都从**产品源码**切真身 —— 否则会变成纯模拟器，产品退化时照样全绿。
+    normalizeConfig。桩只注入 normalizeConfig 这一个最小替身，其余都从
+    **产品源码**切真身 —— 否则会变成纯模拟器，产品退化时照样全绿。
+
+    r49：readSavedConfig 又收了一层 configSnapshot（读失败统一兜底），
+    连它带模块级 lastGoodConfig 一起切进来。少切一个就是
+    ReferenceError: configSnapshot is not defined，整套 21 项根本不执行
+    —— 测试脚手架也得跟着判据一起长。
   */
   const clean = stripComments(src);
+  const snapFn = sliceSimpleFn(clean, 'async function configSnapshot(');
   const readFn = sliceSimpleFn(clean, 'export async function readSavedConfig(');
   const uiFn = sliceSimpleFn(clean, 'async function uiDir(');
-  if (!readFn || !uiFn) throw new Error('没切到 readSavedConfig / uiDir（定位特征变了？）');
+  if (!snapFn || !readFn || !uiFn) throw new Error('没切到 configSnapshot / readSavedConfig / uiDir（定位特征变了？）');
   const bundle = [
+    'let lastGoodConfig = null;',
     'function normalizeConfig(c) { return { dataDir: (c && c.dataDir) || "" }; }',
-    readFn, uiFn, fnSrc,
+    snapFn, readFn, uiFn, fnSrc,
   ].join('\n');
   const out = esbuild.transformSync(bundle, { loader: 'ts', format: 'esm' });
   const tmp = path.join(os.tmpdir(), `tb-scan-restore-${process.pid}.mjs`);
   fs.writeFileSync(tmp, out.code);
   const mod = await import('file://' + tmp);
   fs.unlinkSync(tmp);
-  return { scanDir: mod.scanDir, fnSrc };
+  return { scanDir: mod.scanDir, readSavedConfig: mod.readSavedConfig, fnSrc };
 }
 
 /** 造一个 invoke 可控抛错的 ctx 桩，并记录调用序列 */
@@ -173,7 +180,7 @@ function makeCtx({ scanOk = true, restoreThrows = false, savedDir = '/cur/tasks'
   return { ctx, calls };
 }
 
-const { scanDir, fnSrc } = await loadScanDir();
+const { scanDir, readSavedConfig, fnSrc } = await loadScanDir();
 
 /* ---------- 1. 跑真身：切回成功 ---------- */
 {
@@ -225,12 +232,15 @@ const { scanDir, fnSrc } = await loadScanDir();
   t('r48：结论照旧返回，restoreFailed 不误报', r && r.degraded === true && r.restoreFailed === false ? true : JSON.stringify(r));
 }
 {
-  /* KV 读不出时 uiDir 兜底回 hint，不能把读写掐断 */
+  /* r49：KV 读不出时按 configSnapshot 退回最近一次好配置 /b，
+     不再回落导入弹窗的内存 hint /a —— 那会与授权表（磁盘值）分叉。
+     显式先成功读一次 /b 登记，避免依赖本文件里前面用例的执行顺序。 */
+  await readSavedConfig({ store: { get: async () => ({ dataDir: '/b' }) } });
   const { ctx, calls } = makeCtx({ scanOk: false, kvThrows: true });
   await scanDir(ctx, '/scan/target', '/cur/tasks');
-  t('r48：配置读失败时兜底回 hint', (() => {
+  t('r49：配置读失败时兜底回最近一次好配置 /b，不回落内存 hint', (() => {
     const back = calls.filter((c) => c.cmd === 'tb_set_data_dir' && c.dir !== '/scan/target');
-    return back.length === 1 && back[0].dir === '/cur/tasks' ? true : JSON.stringify(back.map((c) => c.dir));
+    return back.length === 1 && back[0].dir === '/b' ? true : JSON.stringify(back.map((c) => c.dir));
   })());
 }
 
