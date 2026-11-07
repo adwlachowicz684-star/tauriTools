@@ -192,7 +192,8 @@
     "test:async-await-guard": "node async-call-await-test.mjs",
     "test:external-plugin-registry": "node external-plugin-registry-test.mjs",
     "test:check-updates-indeterminate": "node check-updates-indeterminate-test.mjs",
-    "test:resolve-update-parity": "node resolve-update-parity-test.mjs"
+    "test:resolve-update-parity": "node resolve-update-parity-test.mjs",
+    "test:origin-evidence-contract": "node origin-evidence-contract-test.mjs"
   },
   "dependencies": {
     "@plantuml/core": "1.2026.8",

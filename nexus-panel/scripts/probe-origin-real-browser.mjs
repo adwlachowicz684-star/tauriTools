@@ -13,6 +13,12 @@
  *
  * 被验证对象是仓库 runtime-plugins/ 下的真实构建产物，不是手写夹具。
  * 证据写入 scripts/origin-evidence.json（与脚本同目录）。
+ *
+ * 第 213 轮：evidence 的字段契约与那份证据文件**逐键一致**（重跑不会把
+ * 「contentDocumentReadable/readyReceived」改成另一套名字，否则任何按证据
+ * 字段读结论的复核工具会拿到满屏 undefined 并把 PASS 抹成 INCONCLUSIVE）。
+ * 外链 bundle 的插件 id 由 runtime-plugins/ 的真实 HTML 形态统计得出，
+ * 不写死任何插件 id；形态变了宁可显式报错，也不静默跑出 PASS。
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -41,6 +47,19 @@ const mime = (p) => p.endsWith('.html') ? 'text/html; charset=utf-8'
 const ids = fs.readdirSync(ROOT).filter((d) => fs.statSync(path.join(ROOT, d)).isDirectory()).sort();
 const assetRequests = [], xjsRequests = [];
 
+/* 产物形态由真实 index.html 的 script 标签决定，不写死插件 id。
+   谁把某个插件改成外链 bundle，第四象限自动跟着换样本；反过来若 12 份
+   全变成内联，下面这道闸门会明确报错，而不是让 verdict 静默保持 PASS。 */
+const shape = {};
+for (const id of ids) {
+  const html = fs.readFileSync(path.join(ROOT, id, 'index.html'), 'utf8');
+  const tags = [...html.matchAll(/<script\b[^>]*>/gi)].map((m) => m[0]);
+  shape[id] = { scripts: tags.length, external: tags.filter((t) => /\bsrc\s*=/.test(t)).length };
+}
+const EXTERNAL_IDS = Object.keys(shape).filter((id) => shape[id].external > 0);
+const EXTERNAL_ID = EXTERNAL_IDS[0] || null;
+if (!EXTERNAL_ID) throw new Error('产物里没有外链 bundle：第四象限无从复现，不许静默跑出 PASS');
+
 function pluginFile(id, rel) {
   const base = path.join(ROOT, id);
   const p = path.resolve(base, rel.replace(/^\/+/, ''));
@@ -58,7 +77,7 @@ const assetSrv = http.createServer((req, res) => {
   try {
     let body = pluginFile(m[1], m[2]);
     // 唯一外链 bundle：把 ./assets/ 改指真正跨源的 8804，其余字节不动
-    if (m[1] === 'project-group' && m[2] === 'index.html') {
+    if (m[1] === EXTERNAL_ID && m[2] === 'index.html') {
       body = Buffer.from(body.toString('utf8').replace(/(["'])\.\/assets\//g, `$1http://127.0.0.1:${PORT_XJS}/assets/`));
     }
     res.end(body);
@@ -70,15 +89,29 @@ const xjsSrv = http.createServer((req, res) => {
   xjsRequests.push({ path: u.pathname, origin: req.headers.origin || null });
   res.setHeader('Access-Control-Allow-Origin', FIXED_ACAO);
   res.setHeader('Content-Type', mime(u.pathname));
-  try { res.end(pluginFile('project-group', u.pathname)); }
+  try { res.end(pluginFile(EXTERNAL_ID, u.pathname)); }
   catch { res.statusCode = 404; res.end('missing'); }
 });
+
+/* 结论判据只有这一份：既给探针自己用，也被守卫切真身喂落盘证据实跑。
+   字段名必须跟 origin-evidence.json 一致 —— 写成旧的 docReadable/ready
+   会让四个场景全 undefined，PASS 被静默抹成 INCONCLUSIVE。 */
+function verdictOf(evidence) {
+  const s = evidence && evidence.scenario;
+  if (!s) return false;
+  return !!(s.sameOriginRuntime.readyReceived
+    && s.installedSameOriginProjection.readyReceived
+    && s.crossOriginInlineBundle.readyReceived
+    && s.crossOriginInlineBundle.contentDocumentReadable === false
+    && s.crossOriginExternalBundle.externalModuleDownloaded > 0
+    && s.crossOriginExternalBundle.readyReceived === false);
+}
 
 const HOST = `<!doctype html><html><head><meta charset="utf-8"><title>origin probe shell</title></head><body>
 <iframe id="same" src="/same/index.html"></iframe>
 <iframe id="installed" src="/installed-plugins/index.html"></iframe>
 <iframe id="assetInline" src="http://127.0.0.1:${PORT_ASSET}/p/demo-light/index.html"></iframe>
-<iframe id="assetExternal" src="http://127.0.0.1:${PORT_ASSET}/p/project-group/index.html"></iframe>
+<iframe id="assetExternal" src="http://127.0.0.1:${PORT_ASSET}/p/${EXTERNAL_ID}/index.html"></iframe>
 <script>
 window.__msgs=[];window.__errs=[];
 window.addEventListener('error',e=>window.__errs.push(String(e.message)));
@@ -121,30 +154,42 @@ async function run() {
     });
     const by = (w) => out.msgs.filter((m) => m.who === w);
     const extJs = xjsRequests.filter((r) => /\.(js|mjs)$/.test(r.path));
-    const shape = {};
-    for (const id of ids) {
-      const html = fs.readFileSync(path.join(ROOT, id, 'index.html'), 'utf8');
-      const tags = [...html.matchAll(/<script\b[^>]*>/gi)].map((m) => m[0]);
-      shape[id] = { scripts: tags.length, external: tags.filter((t) => /\bsrc\s*=/.test(t)).length };
-    }
     const inline = Object.values(shape).filter((s) => s.external === 0).length;
+    const readyOf = (who) => by(who).some((m) => m.type === 'ready');
+    const readyOrigins = (who) => [...new Set(by(who).filter((m) => m.type === 'ready').map((m) => m.origin))];
     const evidence = {
-      pluginCount: ids.length, productShape: { inlineBundle: inline, externalBundle: ids.length - inline, shape },
+      pluginCount: ids.length,
+      productShape: {
+        inlineBundle: inline, externalBundle: ids.length - inline,
+        externalBundleId: EXTERNAL_ID, shape,
+      },
       scenario: {
-        sameOriginRuntime: { docReadable: out.same.docReadable, ready: by('same').some((m) => m.type === 'ready') },
-        installedSameOriginProjection: { docReadable: out.installed.docReadable, ready: by('installed').some((m) => m.type === 'ready') },
-        crossOriginInlineBundle: { docReadable: out.assetInline.docReadable, ready: by('assetInline').some((m) => m.type === 'ready') },
-        crossOriginExternalBundle: { docReadable: out.assetExternal.docReadable, ready: by('assetExternal').some((m) => m.type === 'ready'), moduleDownloaded: extJs.length, fixedACAO: FIXED_ACAO },
+        sameOriginRuntime: {
+          contentDocumentReadable: out.same.docReadable, readyReceived: readyOf('same'),
+        },
+        installedSameOriginProjection: {
+          contentDocumentReadable: out.installed.docReadable, readyReceived: readyOf('installed'),
+        },
+        crossOriginInlineBundle: {
+          contentDocumentReadable: out.assetInline.docReadable,
+          readyReceived: readyOf('assetInline'),
+          readyOrigin: readyOrigins('assetInline'),
+        },
+        crossOriginExternalBundle: {
+          contentDocumentReadable: out.assetExternal.docReadable,
+          readyReceived: readyOf('assetExternal'),
+          externalModuleDownloaded: extJs.length,
+          downloadedPaths: [...new Set(extJs.map((r) => r.path))],
+          requestOrigins: [...new Set(xjsRequests.map((r) => r.origin))],
+          fixedACAO: FIXED_ACAO,
+        },
       },
       consoleErrors: consoleErrs, windowErrors: out.errs, rawMessages: out.msgs,
     };
     const outPath = fileURLToPath(new URL('./origin-evidence.json', import.meta.url));
     fs.writeFileSync(outPath, JSON.stringify(evidence, null, 2));
     console.log(JSON.stringify(evidence, null, 2));
-    const s = evidence.scenario;
-    const ok = s.sameOriginRuntime.ready && s.installedSameOriginProjection.ready
-      && s.crossOriginInlineBundle.ready && !s.crossOriginInlineBundle.docReadable
-      && s.crossOriginExternalBundle.moduleDownloaded > 0 && !s.crossOriginExternalBundle.ready;
+    const ok = verdictOf(evidence);
     console.log(ok ? 'VERDICT: PASS (mechanism reproduced)' : 'VERDICT: INCONCLUSIVE');
     process.exitCode = ok ? 0 : 2;
   } finally {

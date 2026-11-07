@@ -76,3 +76,35 @@
    同源投影，两者都保留「投影目录不可达时给可读错误」的兜底。
 4. 改动 `js/host.js` 会触发 12 个私有仓共享镜像刷新（host.js 在 73 文件集合内），
    按 `refresh-plugin-repos.mjs` 的 sha 乐观锁流程收敛后再转 `bound`。
+
+
+## 七、证据字段契约（第 213 轮补齐，不改产品行为）
+
+第 61 轮落下这三份文件时明说「不新增守卫、不进 CI」。实测两处脱节，
+都不报错、体检单全绿：
+
+1. **探针与证据不是同一套字段名**。探针原来写出 `docReadable` / `ready` /
+   `moduleDownloaded`，本文件引用的证据却是 `contentDocumentReadable` /
+   `readyReceived` / `externalModuleDownloaded`。重跑复现脚本会**覆盖**
+   `origin-evidence.json`，产出一份任何按现有字段复核结论的工具都读不动的
+   JSON —— 四个场景全 `undefined`，PASS 被静默抹成 INCONCLUSIVE。
+   换句话说，这份证据不可能由当前探针产出，而没有任何判据发现得了。
+2. **「哪个插件是外链 bundle」是写死的**。探针三处硬编码 `project-group`，
+   证据里的 `externalBundleId` 也是手写常量。产物形态一变（比如另一个插件
+   改成外链，或 12 份全内联），第四象限换不了样本，verdict 却仍可能 PASS。
+
+已修正为：探针 evidence 字段与证据文件**逐键一致**；`externalBundleId` 由
+`runtime-plugins/` 真实 HTML 的 script 标签统计得出；没有外链产物时显式抛错
+而不是静默跑出 PASS；结论判据抽成 `verdictOf(evidence)` 一份真身，探针自己
+与守卫共用。探针会额外写 `productShape.shape` 逐插件明细，证据是精简快照、
+不含该字段 —— 守卫按「证据的每个键探针都必须产出」的**单向包含**判据核，
+不把明细当成必须落盘的字段。
+
+守卫 `origin-evidence-contract-test.mjs`（34 项）零依赖、不跑 playwright、
+不进产品链路：切 `verdictOf` 真身喂落盘证据与 5 个反例实跑，交叉核对文档
+表格数字与证据数值，并配注释喂饱／防恒真／空文本元断言。
+
+本轮**没有**改 `js/host.js`、`resolveFrameSrc()` 或任何产品代码，第六节那
+四步工程欠账（更正 `market-binding-debt.json` 的 `runtime-load.why`、
+`tarball` 产物形态取证、落 installed 分支、随之刷新 12 仓共享镜像）仍原样
+留着，不代为推进。
