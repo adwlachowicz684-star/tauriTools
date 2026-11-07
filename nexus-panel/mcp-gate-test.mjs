@@ -33,6 +33,9 @@ const GATE_RS = path.join(HERE, 'src-tauri/src/mcp_gate.rs');
 const CARD = path.join(HERE, 'plugins/settings/McpGatewayCard.tsx');
 const APP = path.join(HERE, 'plugins/settings/App.tsx');
 const HOST = path.join(HERE, 'js/host.js');
+/* 卸载清理的键名已改成由 plugin-store.js 唯一派生，host.js 只调函数；
+   判据必须跟到定义文件，不能继续在 host.js 里找硬编码模板字符串。 */
+const STORE = path.join(HERE, 'js/plugin-store.js');
 const SHELL = path.join(HERE, 'js/shell.js');
 const REACT_SHELL = path.join(HERE, 'src/App.tsx');
 const NO_BUILD_SETTINGS = path.join(HERE, 'plugins/settings/index.js');
@@ -74,6 +77,7 @@ const gateSrc = fs.readFileSync(GATE_RS, 'utf8');
 const cardSrc = fs.readFileSync(CARD, 'utf8');
 const appSrc = fs.readFileSync(APP, 'utf8');
 const hostSrc = fs.readFileSync(HOST, 'utf8');
+const storeSrc = fs.readFileSync(STORE, 'utf8');
 const shellSrc = fs.readFileSync(SHELL, 'utf8');
 const reactShellSrc = fs.readFileSync(REACT_SHELL, 'utf8');
 const noBuildSrc = fs.readFileSync(NO_BUILD_SETTINGS, 'utf8');
@@ -367,11 +371,34 @@ t(
   && /forgetToolbarPlugin/.test(hostSrc) && /dropServiceInstance/.test(hostSrc)
   && /cleanupMcpForPlugin/.test(hostSrc),
 );
+/* 键名改由 js/plugin-store.js 的 storePrefix / pluginCfgKey 唯一派生后，
+   旧判据硬编码 `nexus:${pid}:` 模板字符串，在 host.js 里已 0 命中 → 恒红。
+   修法是跟到定义文件验「两边用的是同一套派生」，不是把红改成恒真消掉。 */
+function cleanupKeysOk(hostText, storeText) {
+  const purge = hostText.match(/function purgePluginStorage[\s\S]*?\n}/)?.[0] || '';
+  const pre = storeText.match(/export function storePrefix[\s\S]*?\n}/)?.[0] || '';
+  const cfg = storeText.match(/export function pluginCfgKey[\s\S]*?\n}/)?.[0] || '';
+  return /storePrefix\(pid\)/.test(purge)
+    && /pluginCfgKey\(pid\)/.test(purge)
+    && !/fsclaim/.test(purge)
+    && !/localStorage\.clear\(\)/.test(purge)
+    && /STORE_NS\s*=\s*'nexus'/.test(storeText)
+    && /\$\{STORE_NS\}:\$\{pluginId\}:/.test(pre)
+    && /\$\{STORE_NS\}:plugin-cfg:\$\{pluginId\}/.test(cfg);
+}
 t(
-  '本地存储清理只碰本插件命名空间（nexus:<id>: 与 nexus:plugin-cfg:<id>，不误伤 fs 账本）',
-  /nexus:\$\{pid\}:/.test(hostSrc) && /nexus:plugin-cfg:\$\{pid\}/.test(hostSrc)
-  && !/fsclaim/.test(hostSrc.match(/function purgePluginStorage[\s\S]*?\n}/)?.[0] || ''),
+  '本地存储清理只碰本插件命名空间（键名由 plugin-store 唯一派生，不误伤 fs 账本）',
+  cleanupKeysOk(hostSrc, storeSrc),
 );
+/* 元断言：坏输入必须判假，否则上面的绿毫无意义 */
+t('（元）删掉 cfgKey 调用 → 判据应为假',
+  !cleanupKeysOk(hostSrc.replace('const cfgKey = pluginCfgKey(pid);', () => ''), storeSrc));
+t('（元）storePrefix 丢掉结尾冒号分隔符 → 判据应为假',
+  !cleanupKeysOk(hostSrc, storeSrc.replace('`${STORE_NS}:${pluginId}:`', () => '`${STORE_NS}:${pluginId}`')));
+t('（元）purge 里注入宽泛 localStorage.clear → 判据应为假',
+  !cleanupKeysOk(hostSrc.replace('const doomed = [];', () => 'localStorage.clear();\n    const doomed = [];'), storeSrc));
+t('（元）purge 里注入 fsclaim → 判据应为假',
+  !cleanupKeysOk(hostSrc.replace('const doomed = [];', () => '// fsclaim\n    const doomed = [];'), storeSrc));
 t(
   '服务实例缓存卸载即拆（不拆的话重启前仍可调用已卸载的服务）',
   /services\.delete\(id\)/.test(hostSrc) && /await safeTeardown\(inst\)/.test(hostSrc),
