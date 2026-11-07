@@ -103,22 +103,58 @@ function sliceScanDir(src) {
   return null;
 }
 
+/** 简单括号配平切片（这几个函数返回类型里没有花括号，第一个 { 就是函数体） */
+function sliceSimpleFn(src, marker) {
+  const start = src.indexOf(marker);
+  if (start < 0) return null;
+  const b = src.indexOf('{', start);
+  let depth = 0;
+  for (let i = b; i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 async function loadScanDir() {
   const src = fs.readFileSync(STORE_TS, 'utf8');
   const fnSrc = sliceScanDir(src);
   if (!fnSrc) throw new Error('没切到 scanDir（定位特征变了？）');
-  const out = esbuild.transformSync(fnSrc, { loader: 'ts', format: 'esm' });
+  /*
+    r48 起降级路径的还原点走 uiDir（磁盘值），它又依赖 readSavedConfig /
+    normalizeConfig。桩只注入 normalizeConfig 这一个最小替身，其余两个
+    都从**产品源码**切真身 —— 否则会变成纯模拟器，产品退化时照样全绿。
+  */
+  const clean = stripComments(src);
+  const readFn = sliceSimpleFn(clean, 'export async function readSavedConfig(');
+  const uiFn = sliceSimpleFn(clean, 'async function uiDir(');
+  if (!readFn || !uiFn) throw new Error('没切到 readSavedConfig / uiDir（定位特征变了？）');
+  const bundle = [
+    'function normalizeConfig(c) { return { dataDir: (c && c.dataDir) || "" }; }',
+    readFn, uiFn, fnSrc,
+  ].join('\n');
+  const out = esbuild.transformSync(bundle, { loader: 'ts', format: 'esm' });
   const tmp = path.join(os.tmpdir(), `tb-scan-restore-${process.pid}.mjs`);
-  fs.writeFileSync(tmp, out.code.replace('export async function', 'export async function'));
+  fs.writeFileSync(tmp, out.code);
   const mod = await import('file://' + tmp);
   fs.unlinkSync(tmp);
   return { scanDir: mod.scanDir, fnSrc };
 }
 
 /** 造一个 invoke 可控抛错的 ctx 桩，并记录调用序列 */
-function makeCtx({ scanOk = true, restoreThrows = false } = {}) {
+function makeCtx({ scanOk = true, restoreThrows = false, savedDir = '/cur/tasks', kvThrows = false } = {}) {
   const calls = [];
   const ctx = {
+    /* r48：磁盘上已保存的配置（uiDir 真身会读它） */
+    store: {
+      get: async () => {
+        if (kvThrows) throw new Error('kv down');
+        return { dataDir: savedDir };
+      },
+    },
     invoke: async (cmd, args) => {
       calls.push({ cmd, dir: args && args.dir });
       if (cmd === 'tb_scan_dir') {
@@ -127,7 +163,7 @@ function makeCtx({ scanOk = true, restoreThrows = false } = {}) {
       }
       if (cmd === 'tb_set_data_dir') {
         // 切回当前项目时按需抛错（模拟授权表拒绝 / 后端出错）
-        if (restoreThrows && args && args.dir === '/cur/tasks') throw new Error('切回被拒');
+        if (restoreThrows && args && args.dir !== '/scan/target') throw new Error('切回被拒');
         return null;
       }
       if (cmd === 'tb_read_store') return '{}';
@@ -172,6 +208,30 @@ const { scanDir, fnSrc } = await loadScanDir();
   t('非降级路径：restoreFailed 为 false', r.restoreFailed === false ? true : `restoreFailed=${r.restoreFailed}`);
   t('非降级路径：不碰 data_dir（不临时授权）', calls.every((c) => c.cmd !== 'tb_set_data_dir') ? true : `多出 ${JSON.stringify(calls.map((c) => c.cmd))}`);
   t('非降级路径：统计值照旧透出', r.mdCount === 3 && r.tasksJson === true ? true : JSON.stringify(r));
+}
+
+/* ---------- 3b. r48：授权还原按磁盘值，不吃内存快照 ---------- */
+{
+  /* 扫描期间另一个 iframe 切了项目：磁盘 /b，导入弹窗还拿着 /a */
+  const { ctx, calls } = makeCtx({ scanOk: false, savedDir: '/b' });
+  const r = await scanDir(ctx, '/scan/target', '/a');
+  t('r48：还原按磁盘值 /b，不按内存快照 /a', (() => {
+    const back = calls.filter((c) => c.cmd === 'tb_set_data_dir' && c.dir !== '/scan/target');
+    return back.length === 1 && back[0].dir === '/b' ? true : `切回 ${JSON.stringify(back.map((c) => c.dir))}`;
+  })());
+  t('r48：扫描目标仍是用户选的目录（临时授权没被 uiDir 改掉）', (() => {
+    return calls.some((c) => c.cmd === 'tb_set_data_dir' && c.dir === '/scan/target') ? true : '临时授权目标丢了';
+  })());
+  t('r48：结论照旧返回，restoreFailed 不误报', r && r.degraded === true && r.restoreFailed === false ? true : JSON.stringify(r));
+}
+{
+  /* KV 读不出时 uiDir 兜底回 hint，不能把读写掐断 */
+  const { ctx, calls } = makeCtx({ scanOk: false, kvThrows: true });
+  await scanDir(ctx, '/scan/target', '/cur/tasks');
+  t('r48：配置读失败时兜底回 hint', (() => {
+    const back = calls.filter((c) => c.cmd === 'tb_set_data_dir' && c.dir !== '/scan/target');
+    return back.length === 1 && back[0].dir === '/cur/tasks' ? true : JSON.stringify(back.map((c) => c.dir));
+  })());
 }
 
 /* ---------- 4. 源码侧：降级路径不再静默 ---------- */
