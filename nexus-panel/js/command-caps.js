@@ -322,6 +322,10 @@ export const COMMAND_CAPS = {
    * 定高会让第三方插件无谓地被禁掉 —— 分级决定的是"谁能调"，不是"危不危险"。
    */
   fpx_rt_dep_versions: 'R',
+
+  /* GitHub release asset 后端代下：绕过 webview 的 CORS（302 落点无
+   * Access-Control-Allow-Origin）。只读远端、不碰本地文件，按 R 记。 */
+  gh_asset_fetch: 'R',
   /*
    * purge（整包卸载）定 **W**，与 remove 同级：它删的是工具自己的
    * deps 目录，不涉及用户数据，也不是从远端取代码执行（那是 install，M）。

@@ -61,6 +61,17 @@ import { getTauri } from './tauri-core.js';
  * @returns {Promise<{ok:boolean, reason?:string, message?:string,
  *                    market?:object, setToken?:(t:string|null)=>void}>}
  */
+/**
+ * 是否为 release asset 下载请求 —— 唯一判据，装配层与守卫共用一份。
+ * plugin-store-client.downloadAsset 用 ghHeaders({octet:true}) 发
+ * `Accept: application/octet-stream`；其它 GitHub API 请求是
+ * application/vnd.github+json，响应带 CORS 头，可以继续走 webview 直连。
+ */
+export function isAssetDownload(opts) {
+  const h = (opts && opts.headers) || {};
+  return String(h.Accept ?? h.accept ?? '').includes('application/octet-stream');
+}
+
 export async function createWebviewMarket(p = {}) {
   const o = p || {};
   /* sessionToken 是唯一的凭据存放处。它活在这个闭包里，不落盘、不进日志。 */
@@ -112,9 +123,23 @@ export async function createWebviewMarket(p = {}) {
     dataRoot,
     dataStore,
     fs,
-    /* 每次请求前再刷一次：用户可能是在面板打开之后才输入 PAT 的。 */
+    /* 每次请求前再刷一次：用户可能是在面板打开之后才输入 PAT 的。
+     *
+     * 🔴 只有 release asset 下载（Accept: octet-stream）走后端代下：
+     * 私有仓 asset.url 会 302 到 release-assets.githubusercontent.com，
+     * 那个 200 响应没有 CORS 头，webview fetch 必然 "Failed to fetch"。
+     * 其它 GitHub API 响应都带 Access-Control-Allow-Origin，继续直连。
+     * 测试注入 fetchFn 时整条链仍走 mock，不碰 Tauri invoke（守卫 ⑥k/⑥l）。 */
     fetch: (url, opts = {}) => {
       applyToken();
+      if (!fetchFn && isAssetDownload(opts)) {
+        return invoke('gh_asset_fetch', { url, token: getToken() || '' })
+          .then((bytes) => ({
+            status: 200,
+            ok: true,
+            arrayBuffer: async () => new Uint8Array(bytes).buffer,
+          }));
+      }
       return (fetchFn || fetch)(url, opts);
     },
     headers: headerBox,

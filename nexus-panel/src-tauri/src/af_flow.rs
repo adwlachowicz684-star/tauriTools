@@ -1951,3 +1951,107 @@ mod tests {
         let _ = kid.wait();
     }
 }
+
+/* ================================================================== */
+/* GitHub release asset 后端代下（真机 CORS 实证后补）                */
+/* ==================================================================
+ * 为什么必须有它：私有仓 release asset 走 api.github.com 的 asset.url，
+ * 带 Accept: octet-stream 会 302 到 release-assets.githubusercontent.com，
+ * 而那个 200 响应**没有 Access-Control-Allow-Origin**（2026-11-07 curl 实取）。
+ * webview 的 fetch 跟随跨域重定向后读不到响应，直接抛
+ * "Failed to fetch"（阶段 download）。CSP 只管能不能发请求，管不了 CORS
+ * 能不能读 —— 再加域名也救不了。Node / curl 不检查 CORS，所以离线 e2e
+ * 全绿、真机必挂，又是一处「测试假绿」。
+ *
+ * 复用已注册的 tauri_plugin_http::reqwest（rt_dep.rs 同款），在 Rust 侧发
+ * 请求并跟随 302，绕过 webview 的 CSP 与 CORS。
+ *
+ * 🔴 安全边界：只放行 api.github.com 的 release asset 端点，绝不接受前端
+ * 传来的任意 URL，否则这条命令就是一个 SSRF 代理。token 只经 IPC 参数
+ * 传入，不写日志、不落盘；reqwest 跨 host 重定向时会剥离 Authorization，
+ * 而签名 URL 本来也不需要它。
+ * ================================================================== */
+
+/// 是否为允许代下的 GitHub release asset URL。
+/// 形如 `https://api.github.com/repos/<owner>/<repo>/releases/assets/<数字 id>`，
+/// 且不得带 query / fragment / 反斜杠 / 多余路径段。
+fn is_gh_asset_url(raw: &str) -> bool {
+    const PREFIX: &str = "https://api.github.com/repos/";
+    let s = raw.trim();
+    if !s.starts_with(PREFIX) || s.contains('?') || s.contains('#') || s.contains('\\') {
+        return false;
+    }
+    let mut parts = s[PREFIX.len()..].split('/');
+    let owner = parts.next().unwrap_or("");
+    let repo = parts.next().unwrap_or("");
+    let releases = parts.next().unwrap_or("");
+    let assets = parts.next().unwrap_or("");
+    let id = parts.next().unwrap_or("");
+    if parts.next().is_some() {
+        return false;
+    }
+    !owner.is_empty()
+        && !repo.is_empty()
+        && releases == "releases"
+        && assets == "assets"
+        && !id.is_empty()
+        && id.chars().all(|c| c.is_ascii_digit())
+}
+
+/// 后端代下 release asset，返回原始字节（前端包装成 Response 形态）。
+#[tauri::command]
+pub async fn gh_asset_fetch(url: String, token: String) -> Result<Vec<u8>, String> {
+    if !is_gh_asset_url(&url) {
+        return Err("拒绝代下非 GitHub release asset 地址".to_string());
+    }
+    let client = tauri_plugin_http::reqwest::Client::new();
+    let mut req = client
+        .get(url.trim())
+        .header("Accept", "application/octet-stream")
+        .header("User-Agent", "nexus-panel");
+    if !token.trim().is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", token.trim()));
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("资产下载失败: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!("资产下载失败 HTTP {}", status.as_u16()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取资产内容失败: {e}"))?;
+    Ok(bytes.to_vec())
+}
+
+#[cfg(test)]
+mod gh_asset_tests {
+    use super::is_gh_asset_url;
+
+    #[test]
+    fn accepts_real_asset_url() {
+        assert!(is_gh_asset_url(
+            "https://api.github.com/repos/adwlachowicz684-star/nexusPanel_plugin_githubManager/releases/assets/718270783"
+        ));
+    }
+
+    #[test]
+    fn rejects_everything_else() {
+        for u in [
+            "",
+            "http://api.github.com/repos/a/b/releases/assets/1",
+            "https://evil.com/repos/a/b/releases/assets/1",
+            "https://api.github.com/repos/a/b/releases/assets/1?token=x",
+            "https://api.github.com/repos/a/b/releases/assets/1#f",
+            "https://api.github.com/repos/a/b/releases/assets/1/extra",
+            "https://api.github.com/repos/a/b/releases/assets/not-a-number",
+            "https://api.github.com/repos/a/b/releases/assets/1\\..",
+            "https://api.github.com/repos//b/releases/assets/1",
+        ] {
+            assert!(!is_gh_asset_url(u), "不该放行: {u}");
+        }
+    }
+}
