@@ -204,16 +204,23 @@ iframe 是独立文档，UA 默认白底，且不受父级 `color-scheme` 影响
 
 ### 3.4 任务管理器现状核查（按 §0.1）
 
-从独立仓 `plugins/task-board/styles.css`（2886 行）实测：
+从独立仓 `plugins/task-board/styles.css` 实测。**主体合规**：引入 `tokens.css`，
+颜色走 `--divider` / `--accent` / `--text*` / `--bg`，间距圆角阴影时长全走令牌。
 
-| | 现状 | 按 §0.1 判定 |
+**已整改（2026-11-08，插件仓 r57）**，与本文同步落盘：
+
+| 原问题 | 违反 | 整改后 |
 |---|---|---|
-| 主体 | 引入 `tokens.css`，112 处 `--sp-2`、63 处 `--divider`、61 处 `--accent`、50 处 `--text-mute`、44 处 `--text`、26 处 `--bg` … | ✓ 合规 |
-| 私有变量 | 4 处 `var(--nx-fg / --nx-fg-dim / --nx-bd-strong, #9ca3af / #e5e7eb)`；这三个变量在主仓与插件仓**都没有定义** | ✗ 实际生效的是写死兜底色，属"自己定义" |
-| 明暗互换 | 2 处 `color: var(--bg)`、2 处 `background: var(--text-mute)` | ✗ 把主题变量翻过来用，属"自己定义深浅"，需逐个复核 |
+| 4 处 `var(--nx-fg / --nx-fg-dim / --nx-bd-strong, #9ca3af / #e5e7eb)`，三个私有变量两仓都无定义 | 14.2 / 14.3 | `.tb-swatch-more` 改 `var(--text-mute)` / `var(--text)` / `var(--divider)`，hex 兜底全部移除 |
+| 2 处 `color: var(--bg)`（文档提示角标、侧栏选中态） | 14.4 | 角标改淡化 accent 底 + `var(--text)` 字（实测对比度 ≥ 4.5，不反相）；选中态改 `var(--text)` |
+| 2 处 `background: var(--text-mute)`（列状态点、服务灯） | 14.4 | 改 `color-mix(in srgb, var(--text-mute) 45%, transparent)`，与文件既有的淡化派生同源 |
+| 侧栏反相派生 `color-mix(in srgb, var(--text) 86%, var(--bg))` 作底、 `--bg` 混入文字色 | 14.4 | 底板改 `color-mix(in srgb, var(--bg) 92%, var(--accent))`（与顶栏同源），文字取 `var(--text)` / `var(--text-dim)`；深浅完全由宿主变量决定 |
 
-这些是**按本条要求的待整改项**。本文只落规范，不改插件 CSS；整改要动插件仓
-`plugins/task-board/styles.css`，属另一次变更。
+整改后 `styles.css` 中私有颜色变量、写死色值、裸 `color: var(--bg)`、
+裸 `background: var(--text*)`、把 `--text*` 当底板 / `--bg` 当文字的反相 `color-mix`
+**均为 0 处**，由插件仓 `task-board-test.mjs` 的回归守卫盯住。
+以下写法属合规派生，不算反相：主题色的半透明淡化叠层（如 `var(--bg) 12%`、
+`var(--text) 8%`）、`var(--accent)` 的浓度差、首帧防白闪兜底。
 
 ### 3.5 自检命令（主仓 `nexus-panel/` 下）
 
